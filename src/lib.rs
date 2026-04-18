@@ -8,6 +8,7 @@
 
 pub mod config;
 pub mod domain;
+pub mod extract;
 pub mod graph;
 pub mod lang;
 pub mod path;

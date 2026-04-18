@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use specdev_analyzer::validate::{self, Inputs};
+use specdev_analyzer::{extract, validate::{self, Inputs}};
 
 #[derive(Parser)]
 #[command(
@@ -32,9 +32,15 @@ enum Command {
     },
     /// Emit canonical YAML extraction for codegen.
     Extract {
+        /// Project root (directory containing spec.toml). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Explicit path to the domain config (domain.toml).
+        #[arg(long)]
+        domain: Option<PathBuf>,
+        /// Output directory for canonical YAML files.
         #[arg(short, long)]
-        output: String,
-        paths: Vec<String>,
+        output: PathBuf,
     },
     /// Compare extracted specs against source code for drift.
     Audit {
@@ -58,11 +64,11 @@ fn main() -> ExitCode {
             domain,
             no_color,
         } => run_validate(project, domain, no_color),
-        Command::Extract { output, paths } => {
-            eprintln!("specdev-analyzer extract — not yet implemented (Phase 5).");
-            eprintln!("output={output}, paths={}", paths.len());
-            ExitCode::SUCCESS
-        }
+        Command::Extract {
+            project,
+            domain,
+            output,
+        } => run_extract(project, domain, output),
         Command::Audit { source, extracted } => {
             eprintln!("specdev-analyzer audit — not yet implemented (Phase 8).");
             eprintln!("source={source}, extracted={extracted}");
@@ -110,5 +116,36 @@ fn run_validate(
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn run_extract(
+    project: PathBuf,
+    domain: Option<PathBuf>,
+    output: PathBuf,
+) -> ExitCode {
+    let inputs: Inputs = match validate::resolve_inputs(&project, domain.as_deref()) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let result = match extract::run(&inputs) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(1);
+        }
+    };
+    match extract::write(&result, &output) {
+        Ok(paths) => {
+            eprintln!("wrote {} file(s) to {}", paths.len(), output.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            ExitCode::from(2)
+        }
     }
 }
