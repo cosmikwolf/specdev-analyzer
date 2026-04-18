@@ -13,5 +13,6 @@ pub mod graph;
 pub mod lang;
 pub mod path;
 pub mod report;
+pub mod resolve;
 pub mod schema;
 pub mod validate;

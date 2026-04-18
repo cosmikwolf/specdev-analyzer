@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use specdev_analyzer::{extract, validate::{self, Inputs}};
+use specdev_analyzer::{extract, resolve, validate::{self, Inputs}};
 
 #[derive(Parser)]
 #[command(
@@ -51,8 +51,12 @@ enum Command {
     },
     /// Print the resolved context (domain, language, schema paths) for a project.
     Resolve {
+        /// Project root (directory containing spec.toml). Defaults to cwd.
         #[arg(long, default_value = ".")]
-        project: String,
+        project: PathBuf,
+        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
+        #[arg(long)]
+        plugin_root: Option<PathBuf>,
     },
 }
 
@@ -74,11 +78,7 @@ fn main() -> ExitCode {
             eprintln!("source={source}, extracted={extracted}");
             ExitCode::SUCCESS
         }
-        Command::Resolve { project } => {
-            eprintln!("specdev-analyzer resolve — not yet implemented (Phase 7).");
-            eprintln!("project={project}");
-            ExitCode::SUCCESS
-        }
+        Command::Resolve { project, plugin_root } => run_resolve(project, plugin_root),
     }
 }
 
@@ -117,6 +117,21 @@ fn run_validate(
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn run_resolve(project: PathBuf, plugin_root: Option<PathBuf>) -> ExitCode {
+    let plugin_root = plugin_root.or_else(|| {
+        std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from)
+    });
+    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    print!("{}", resolve::render(&ctx));
+    ExitCode::SUCCESS
 }
 
 fn run_extract(
