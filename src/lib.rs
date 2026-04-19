@@ -6,6 +6,7 @@
 //!   * extract pipeline   — Phase 5
 //!   * audit + language adapters — Phase 8
 
+pub mod audit;
 pub mod config;
 pub mod domain;
 pub mod extract;

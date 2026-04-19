@@ -2,7 +2,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use specdev_analyzer::{extract, resolve, validate::{self, Inputs}};
+use specdev_analyzer::{
+    audit::{self, AuditOptions},
+    extract, resolve,
+    validate::{self, Inputs},
+};
 
 #[derive(Parser)]
 #[command(
@@ -44,10 +48,21 @@ enum Command {
     },
     /// Compare extracted specs against source code for drift.
     Audit {
+        /// Project root (directory containing spec.toml). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
         #[arg(long)]
-        source: String,
+        plugin_root: Option<PathBuf>,
+        /// Only audit one module (exact name match).
         #[arg(long)]
-        extracted: String,
+        filter: Option<String>,
+        /// Report functions/types in code that are not in the spec.
+        #[arg(long)]
+        show_uncovered: bool,
+        /// Expand macros (cargo expand / cc -E) before parsing.
+        #[arg(long)]
+        expand: bool,
     },
     /// Print the resolved context (domain, language, schema paths) for a project.
     Resolve {
@@ -73,11 +88,13 @@ fn main() -> ExitCode {
             domain,
             output,
         } => run_extract(project, domain, output),
-        Command::Audit { source, extracted } => {
-            eprintln!("specdev-analyzer audit — not yet implemented (Phase 8).");
-            eprintln!("source={source}, extracted={extracted}");
-            ExitCode::SUCCESS
-        }
+        Command::Audit {
+            project,
+            plugin_root,
+            filter,
+            show_uncovered,
+            expand,
+        } => run_audit(project, plugin_root, filter, show_uncovered, expand),
         Command::Resolve { project, plugin_root } => run_resolve(project, plugin_root),
     }
 }
@@ -113,6 +130,49 @@ fn run_validate(
         errors, warnings, infos
     );
     if report.has_errors() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_audit(
+    project: PathBuf,
+    plugin_root: Option<PathBuf>,
+    filter: Option<String>,
+    show_uncovered: bool,
+    expand: bool,
+) -> ExitCode {
+    let plugin_root = plugin_root.or_else(|| {
+        std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from)
+    });
+    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let options = AuditOptions {
+        show_uncovered,
+        expand,
+        module_filter: filter.as_deref(),
+        type_map: None,
+    };
+    let report = match audit::run_project(&ctx, options) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    print!("{}", audit::format_text(&report));
+    let summary = report.summary();
+    eprintln!(
+        "{} match, {} missing, {} mismatch, {} uncovered",
+        summary.matches, summary.missing, summary.mismatches, summary.uncovered
+    );
+    if summary.missing > 0 || summary.mismatches > 0 {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
