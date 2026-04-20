@@ -79,7 +79,7 @@ impl Report {
                 Severity::Info => "info",
             };
             let loc = match (&f.file, f.pointer.as_str()) {
-                (Some(file), "") => format!("{file}"),
+                (Some(file), "") => file.to_string(),
                 (Some(file), ptr) => format!("{file}{ptr}"),
                 (None, ptr) => ptr.to_string(),
             };

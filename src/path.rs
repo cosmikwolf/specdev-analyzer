@@ -60,24 +60,23 @@ fn descend(value: &Value, steps: &[Step], pointer: String, out: &mut Vec<Pick>) 
             value: value.clone(),
         }),
         Some(step) => match step {
-            Step::Key(name) => match value {
-                Value::Object(map) => {
+            Step::Key(name) => {
+                if let Value::Object(map) = value {
                     if let Some(inner) = map.get(name) {
                         let new_ptr = format!("{pointer}/{}", escape_ptr(name));
                         descend(inner, &steps[1..], new_ptr, out);
                     }
                 }
-                _ => {} // path misses — silent. Caller can distinguish empty result.
-            },
-            Step::Each => match value {
-                Value::Array(items) => {
+                // else: path misses silently. Caller can distinguish empty result.
+            }
+            Step::Each => {
+                if let Value::Array(items) = value {
                     for (i, item) in items.iter().enumerate() {
                         let new_ptr = format!("{pointer}/{i}");
                         descend(item, &steps[1..], new_ptr, out);
                     }
                 }
-                _ => {}
-            },
+            }
         },
     }
 }

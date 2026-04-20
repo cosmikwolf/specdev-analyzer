@@ -143,6 +143,7 @@ pub fn reachability(
 }
 
 /// REACHABILITY scoped per ancestor array index.
+#[allow(clippy::too_many_arguments)]
 pub fn reachability_per(
     root: &Value,
     nodes_field: &str,

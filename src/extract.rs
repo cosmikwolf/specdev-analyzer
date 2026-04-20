@@ -1,14 +1,13 @@
 //! Extract pipeline — emit canonical YAML from validated TOML specs.
 //!
 //! Produces:
-//!   * `<out>/<ModuleName>.yaml`        — one per module, passthrough of the
-//!                                        spec with keys canonicalized.
-//!   * `<out>/architecture.yaml`        — synthesized summary with a
-//!                                        dependency_graph and per-module
-//!                                        (name, layer) pairs, plus the
-//!                                        raw connections from
-//!                                        `specs/architecture.toml` if present.
-//!   * `<out>/requirements.yaml`        — flattened list of requirements.
+//!
+//! * `<out>/<ModuleName>.yaml` — one per module, passthrough of the spec
+//!   with keys canonicalized.
+//! * `<out>/architecture.yaml` — synthesized summary with a
+//!   dependency_graph and per-module (name, layer) pairs, plus the raw
+//!   connections from `specs/architecture.toml` if present.
+//! * `<out>/requirements.yaml` — flattened list of requirements.
 //!
 //! Output is deterministic: every map key is re-ordered alphabetically
 //! before serialization so two runs on identical input produce

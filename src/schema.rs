@@ -8,28 +8,56 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use jsonschema::JSONSchema;
+use jsonschema::{Retrieve, Uri, Validator};
 use serde_json::Value;
 
 use crate::domain::Severity;
 use crate::report::Finding;
 
+/// Resolves `$ref` targets by URI or bare filename against a pre-loaded
+/// document map. We register every schema under both its declared `$id`
+/// and its filename so cross-file refs like `enums.schema.yaml#/$defs/X`
+/// resolve without any network I/O.
+struct MapRetriever {
+    docs: Arc<HashMap<String, Value>>,
+}
+
+impl Retrieve for MapRetriever {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let s = uri.as_str();
+        if let Some(v) = self.docs.get(s) {
+            return Ok(v.clone());
+        }
+        // Fall back to the last path segment (e.g. `file:///x/enums.schema.yaml`
+        // → `enums.schema.yaml`) so references that got resolved against a
+        // synthetic base URI still land on our filename-keyed entries.
+        if let Some(tail) = s.rsplit('/').next() {
+            if let Some(v) = self.docs.get(tail) {
+                return Ok(v.clone());
+            }
+        }
+        Err(format!("schema not found: {s}").into())
+    }
+}
+
 pub struct SchemaRegistry {
-    /// Every loaded schema keyed by its `$id` (or filename fallback). All of
-    /// these are registered as external documents when compiling any one
-    /// schema, so cross-file `$ref`s resolve.
-    docs: Vec<(String, Value)>,
-    /// Path (filename stem + extension) → compiled schema, lazy filled.
-    /// We compile on demand because compilation is not trivially cheap.
+    /// Every loaded schema keyed by its `$id` and its filename (both point at
+    /// the same value). The Retrieve impl resolves against this map.
+    docs: Arc<HashMap<String, Value>>,
+    /// "module" → the parsed schema value. Used to pick which schema to compile.
     by_name: HashMap<String, Value>,
 }
 
 impl SchemaRegistry {
     /// Load every `*.schema.yaml` from `dir`.
     pub fn load_dir(dir: &Path) -> Result<Self> {
-        let mut docs = Vec::new();
+        let mut docs: HashMap<String, Value> = HashMap::new();
         let mut by_name = HashMap::new();
 
         let entries = std::fs::read_dir(dir)
@@ -53,24 +81,28 @@ impl SchemaRegistry {
             by_name.insert(schema_key(&fname), value.clone());
 
             if let Some(id) = value.get("$id").and_then(Value::as_str) {
-                docs.push((id.to_string(), value.clone()));
+                docs.insert(id.to_string(), value.clone());
             }
-            docs.push((fname, value));
+            docs.insert(fname, value);
         }
 
-        Ok(Self { docs, by_name })
+        Ok(Self {
+            docs: Arc::new(docs),
+            by_name,
+        })
     }
 
     fn raw(&self, name: &str) -> Option<&Value> {
         self.by_name.get(name)
     }
 
-    fn compile(&self, schema: &Value) -> Result<JSONSchema> {
-        let mut opts = JSONSchema::options();
-        for (uri, doc) in &self.docs {
-            opts.with_document(uri.clone(), doc.clone());
-        }
-        opts.compile(schema)
+    fn compile(&self, schema: &Value) -> Result<Validator> {
+        let retriever = MapRetriever {
+            docs: Arc::clone(&self.docs),
+        };
+        jsonschema::options()
+            .with_retriever(retriever)
+            .build(schema)
             .map_err(|e| anyhow::anyhow!("compiling schema: {e}"))
     }
 
@@ -87,18 +119,12 @@ impl SchemaRegistry {
         };
         let compiled = self.compile(raw)?;
         let mut out = Vec::new();
-        if let Err(errors) = compiled.validate(value) {
-            for err in errors {
-                out.push(
-                    Finding::new(
-                        "SCHEMA",
-                        Severity::Error,
-                        format!("{err}"),
-                    )
+        for err in compiled.iter_errors(value) {
+            out.push(
+                Finding::new("SCHEMA", Severity::Error, format!("{err}"))
                     .with_file(file.to_string())
-                    .with_pointer(err.instance_path.to_string()),
-                );
-            }
+                    .with_pointer(err.instance_path().to_string()),
+            );
         }
         Ok(out)
     }
