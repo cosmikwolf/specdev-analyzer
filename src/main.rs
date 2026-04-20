@@ -72,6 +72,11 @@ enum Command {
         /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
         #[arg(long)]
         plugin_root: Option<PathBuf>,
+        /// When spec.toml is missing, emit an informational header and exit 0
+        /// instead of erroring. Used by skills that must load even before
+        /// spec.toml exists (e.g. /spec-init).
+        #[arg(long)]
+        allow_missing: bool,
     },
 }
 
@@ -95,7 +100,11 @@ fn main() -> ExitCode {
             show_uncovered,
             expand,
         } => run_audit(project, plugin_root, filter, show_uncovered, expand),
-        Command::Resolve { project, plugin_root } => run_resolve(project, plugin_root),
+        Command::Resolve {
+            project,
+            plugin_root,
+            allow_missing,
+        } => run_resolve(project, plugin_root, allow_missing),
     }
 }
 
@@ -179,19 +188,32 @@ fn run_audit(
     }
 }
 
-fn run_resolve(project: PathBuf, plugin_root: Option<PathBuf>) -> ExitCode {
+fn run_resolve(
+    project: PathBuf,
+    plugin_root: Option<PathBuf>,
+    allow_missing: bool,
+) -> ExitCode {
     let plugin_root = plugin_root.or_else(|| {
         std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from)
     });
-    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
+    match resolve::resolve(&project, plugin_root.as_deref()) {
+        Ok(ctx) => {
+            print!("{}", resolve::render(&ctx));
+            ExitCode::SUCCESS
         }
-    };
-    print!("{}", resolve::render(&ctx));
-    ExitCode::SUCCESS
+        Err(e) => {
+            if allow_missing && resolve::is_missing_spec(&e) {
+                print!(
+                    "{}",
+                    resolve::render_missing(&project, plugin_root.as_deref())
+                );
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("{e:#}");
+                ExitCode::from(2)
+            }
+        }
+    }
 }
 
 fn run_extract(

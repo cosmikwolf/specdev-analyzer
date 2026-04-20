@@ -57,9 +57,16 @@ pub struct ResolvedContext {
     pub codegen_dir: Resolved,
 }
 
+pub const MISSING_SPEC_MARKER: &str = "SPECDEV_MISSING_SPEC_TOML";
+
+pub fn is_missing_spec(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains(MISSING_SPEC_MARKER)
+}
+
 pub fn resolve(project: &Path, plugin_root: Option<&Path>) -> Result<ResolvedContext> {
-    let spec_toml = crate::config::find_spec_toml(project)
-        .context("spec.toml not found — run /spec-init or cd into a project directory")?;
+    let spec_toml = crate::config::find_spec_toml(project).with_context(|| {
+        format!("spec.toml not found — run /spec-init or cd into a project directory [{MISSING_SPEC_MARKER}]")
+    })?;
     let project_root = spec_toml
         .parent()
         .map(|p| p.to_path_buf())
@@ -200,6 +207,31 @@ pub fn render(ctx: &ResolvedContext) -> String {
         "  not from hard-coded plugin locations. This honors `.specdev/` overrides and\n",
     );
     out.push_str("  `[paths.overrides]` entries in `spec.toml`.\n");
+    out
+}
+
+pub fn render_missing(project: &Path, plugin_root: Option<&Path>) -> String {
+    let mut out = String::new();
+    out.push_str("## Spec Context\n\n");
+    out.push_str("- **Status:** no `spec.toml` found in this project.\n");
+    out.push_str(&format!("- Working directory: `{}`\n", project.display()));
+    if let Some(root) = plugin_root {
+        out.push_str(&format!("- Plugin root: `{}`\n", root.display()));
+    } else {
+        out.push_str("- Plugin root: (unset — CLAUDE_PLUGIN_ROOT not provided)\n");
+    }
+    out.push('\n');
+    out.push_str("## Notes\n\n");
+    out.push_str(
+        "- The project has not been initialized yet. Skills that need a resolved\n",
+    );
+    out.push_str(
+        "  schema/domain/language/codegen path cannot operate. If this skill can\n",
+    );
+    out.push_str(
+        "  bootstrap the project (e.g. `/spec-init`, `/spec-reverse`), proceed by\n",
+    );
+    out.push_str("  running the init flow first. Otherwise, stop and tell the user to run `/spec-init`.\n");
     out
 }
 
