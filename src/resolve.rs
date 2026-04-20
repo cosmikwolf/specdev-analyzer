@@ -174,7 +174,10 @@ fn resolve_kind(
 pub fn render(ctx: &ResolvedContext) -> String {
     let mut out = String::new();
     out.push_str("## Spec Context\n\n");
-    out.push_str(&format!("- Project root: `{}`\n", ctx.project_root.display()));
+    out.push_str(&format!(
+        "- Project root: `{}`\n",
+        ctx.project_root.display()
+    ));
     out.push_str(&format!("- spec.toml: `{}`\n", ctx.spec_toml.display()));
     out.push_str(&format!("- Domain: `{}`\n", ctx.domain));
     out.push_str(&format!("- Language: `{}`\n", ctx.language));
@@ -190,7 +193,12 @@ pub fn render(ctx: &ResolvedContext) -> String {
     }
     out.push('\n');
     out.push_str("## Resolved Paths\n\n");
-    for r in [&ctx.schema, &ctx.domain_dir, &ctx.language_dir, &ctx.codegen_dir] {
+    for r in [
+        &ctx.schema,
+        &ctx.domain_dir,
+        &ctx.language_dir,
+        &ctx.codegen_dir,
+    ] {
         out.push_str(&format!(
             "- {:<8} `{}`  _(from {})_\n",
             format!("{}:", cap(r.kind)),
@@ -203,9 +211,7 @@ pub fn render(ctx: &ResolvedContext) -> String {
     out.push_str(
         "- Skills should read language/codegen/domain guidance from the resolved paths above,\n",
     );
-    out.push_str(
-        "  not from hard-coded plugin locations. This honors `.specdev/` overrides and\n",
-    );
+    out.push_str("  not from hard-coded plugin locations. This honors `.specdev/` overrides and\n");
     out.push_str("  `[paths.overrides]` entries in `spec.toml`.\n");
     out
 }
@@ -222,16 +228,12 @@ pub fn render_missing(project: &Path, plugin_root: Option<&Path>) -> String {
     }
     out.push('\n');
     out.push_str("## Notes\n\n");
+    out.push_str("- The project has not been initialized yet. Skills that need a resolved\n");
+    out.push_str("  schema/domain/language/codegen path cannot operate. If this skill can\n");
+    out.push_str("  bootstrap the project (e.g. `/spec-init`, `/spec-reverse`), proceed by\n");
     out.push_str(
-        "- The project has not been initialized yet. Skills that need a resolved\n",
+        "  running the init flow first. Otherwise, stop and tell the user to run `/spec-init`.\n",
     );
-    out.push_str(
-        "  schema/domain/language/codegen path cannot operate. If this skill can\n",
-    );
-    out.push_str(
-        "  bootstrap the project (e.g. `/spec-init`, `/spec-reverse`), proceed by\n",
-    );
-    out.push_str("  running the init flow first. Otherwise, stop and tell the user to run `/spec-init`.\n");
     out
 }
 
@@ -262,15 +264,13 @@ mod tests {
 
     fn rand_suffix() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
     }
 
-    fn write_spec(
-        project: &Path,
-        domain: &str,
-        language: &str,
-        extra: &str,
-    ) {
+    fn write_spec(project: &Path, domain: &str, language: &str, extra: &str) {
         let toml = format!(
             r#"spec_version = "1.0"
 [project]
@@ -294,10 +294,7 @@ language = "{language}"
         assert_eq!(ctx.domain_dir.source, Source::PluginDefault);
         assert_eq!(ctx.language_dir.source, Source::PluginDefault);
         assert_eq!(ctx.codegen_dir.source, Source::PluginDefault);
-        assert!(ctx
-            .schema
-            .path
-            .ends_with("schema/firmware/v1"));
+        assert!(ctx.schema.path.ends_with("schema/firmware/v1"));
         assert!(ctx.codegen_dir.path.ends_with("codegen/firmware-rust"));
     }
 

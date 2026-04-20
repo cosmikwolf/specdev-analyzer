@@ -35,8 +35,8 @@ fn blinky_root() -> PathBuf {
 
 #[test]
 fn blinky_a2dp_passes_cleanly() {
-    let inputs = validate::resolve_inputs(&blinky_root(), Some(&domain_file()))
-        .expect("resolve inputs");
+    let inputs =
+        validate::resolve_inputs(&blinky_root(), Some(&domain_file())).expect("resolve inputs");
     let report = validate::run(&inputs).expect("validate");
     let findings = report.findings();
     assert!(
@@ -49,8 +49,7 @@ fn blinky_a2dp_passes_cleanly() {
 #[test]
 fn invalid_metadata_typo_flagged() {
     let fixture = repo_root().join("tests/specs/invalid/metadata_typo.toml");
-    let report = validate::validate_standalone_module(&fixture, &schema_dir())
-        .expect("validate");
+    let report = validate::validate_standalone_module(&fixture, &schema_dir()).expect("validate");
     let rendered = report.render_plain();
     assert!(
         rendered.contains("ConcurrenceModel")
@@ -64,8 +63,7 @@ fn invalid_metadata_typo_flagged() {
 #[test]
 fn invalid_bad_layer_flagged() {
     let fixture = repo_root().join("tests/specs/invalid/bad_layer.toml");
-    let report = validate::validate_standalone_module(&fixture, &schema_dir())
-        .expect("validate");
+    let report = validate::validate_standalone_module(&fixture, &schema_dir()).expect("validate");
     let rendered = report.render_plain();
     assert!(
         rendered.contains("drivers") || rendered.to_lowercase().contains("enum"),
@@ -76,8 +74,7 @@ fn invalid_bad_layer_flagged() {
 #[test]
 fn invalid_fsm_missing_event_flagged() {
     let fixture = repo_root().join("tests/specs/invalid/fsm_missing_event.toml");
-    let report = validate::validate_standalone_module(&fixture, &schema_dir())
-        .expect("validate");
+    let report = validate::validate_standalone_module(&fixture, &schema_dir()).expect("validate");
     let rendered = report.render_plain();
     assert!(
         rendered.contains("event") || rendered.to_lowercase().contains("required"),

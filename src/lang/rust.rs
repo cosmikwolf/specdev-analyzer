@@ -43,8 +43,12 @@ impl LanguageAdapter for RustAdapter {
                 "identifier" if name.is_empty() => {
                     name = source[child.byte_range()].to_string();
                 }
-                "reference_type" | "type_identifier" | "generic_type"
-                | "scoped_type_identifier" | "primitive_type" | "array_type"
+                "reference_type"
+                | "type_identifier"
+                | "generic_type"
+                | "scoped_type_identifier"
+                | "primitive_type"
+                | "array_type"
                 | "tuple_type" => {
                     type_name = source[child.byte_range()].to_string();
                 }

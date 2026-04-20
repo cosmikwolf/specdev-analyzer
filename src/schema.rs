@@ -6,6 +6,7 @@
 //! declared `$id` and its filename-based URI, then compile whichever schema
 //! the caller asks to validate against.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -52,6 +53,10 @@ pub struct SchemaRegistry {
     docs: Arc<HashMap<String, Value>>,
     /// "module" → the parsed schema value. Used to pick which schema to compile.
     by_name: HashMap<String, Value>,
+    /// Lazily-built validators keyed by schema name. Compiling a jsonschema
+    /// is expensive (tens of ms on our schemas), so we cache after the first
+    /// call and reuse across all files of the same kind.
+    compiled: RefCell<HashMap<String, Arc<Validator>>>,
 }
 
 impl SchemaRegistry {
@@ -89,6 +94,7 @@ impl SchemaRegistry {
         Ok(Self {
             docs: Arc::new(docs),
             by_name,
+            compiled: RefCell::new(HashMap::new()),
         })
     }
 
@@ -96,28 +102,37 @@ impl SchemaRegistry {
         self.by_name.get(name)
     }
 
-    fn compile(&self, schema: &Value) -> Result<Validator> {
+    fn compile(&self, name: &str, schema: &Value) -> Result<Validator> {
         let retriever = MapRetriever {
             docs: Arc::clone(&self.docs),
         };
         jsonschema::options()
             .with_retriever(retriever)
             .build(schema)
-            .map_err(|e| anyhow::anyhow!("compiling schema: {e}"))
+            .map_err(|e| anyhow::anyhow!("compiling schema `{name}`: {e}"))
+    }
+
+    fn validator(&self, name: &str) -> Result<Arc<Validator>> {
+        if let Some(v) = self.compiled.borrow().get(name) {
+            return Ok(Arc::clone(v));
+        }
+        let Some(raw) = self.raw(name) else {
+            let known: Vec<&str> = self.by_name.keys().map(String::as_str).collect();
+            return Err(anyhow::anyhow!(
+                "schema `{name}` not loaded — check `[schemas]` in domain.toml. Loaded schemas: {known:?}"
+            ));
+        };
+        let v = Arc::new(self.compile(name, raw)?);
+        self.compiled
+            .borrow_mut()
+            .insert(name.to_string(), Arc::clone(&v));
+        Ok(v)
     }
 
     /// Validate `value` against the schema named `name` (e.g. "module").
     /// Emits one Finding per structural error.
-    pub fn validate(
-        &self,
-        name: &str,
-        value: &Value,
-        file: &str,
-    ) -> Result<Vec<Finding>> {
-        let Some(raw) = self.raw(name) else {
-            return Err(anyhow::anyhow!("schema `{name}` not loaded"));
-        };
-        let compiled = self.compile(raw)?;
+    pub fn validate(&self, name: &str, value: &Value, file: &str) -> Result<Vec<Finding>> {
+        let compiled = self.validator(name)?;
         let mut out = Vec::new();
         for err in compiled.iter_errors(value) {
             out.push(
@@ -149,7 +164,10 @@ fn schema_key(filename: &str) -> String {
 
 /// Convenience: resolve schema paths from `domain.schemas` map into a
 /// directory. Panics if the map is empty or entries diverge.
-pub fn schemas_dir(domain_file: &Path, schemas: &std::collections::BTreeMap<String, String>) -> Option<PathBuf> {
+pub fn schemas_dir(
+    domain_file: &Path,
+    schemas: &std::collections::BTreeMap<String, String>,
+) -> Option<PathBuf> {
     let first = schemas.values().next()?;
     let base = domain_file.parent()?;
     let joined = base.join(first);

@@ -20,11 +20,7 @@ pub struct Finding {
 }
 
 impl Finding {
-    pub fn new(
-        rule: impl Into<String>,
-        severity: Severity,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(rule: impl Into<String>, severity: Severity, message: impl Into<String>) -> Self {
         Self {
             rule: rule.into(),
             severity,
@@ -64,9 +60,7 @@ impl Report {
     }
 
     pub fn has_errors(&self) -> bool {
-        self.findings
-            .iter()
-            .any(|f| f.severity == Severity::Error)
+        self.findings.iter().any(|f| f.severity == Severity::Error)
     }
 
     /// Plain-text render (no ANSI). Used by snapshot tests.

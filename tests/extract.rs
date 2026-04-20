@@ -20,8 +20,7 @@ fn blinky_root() -> PathBuf {
 }
 
 fn tmp_out(tag: &str) -> PathBuf {
-    let p = std::env::temp_dir()
-        .join(format!("specdev-extract-{tag}-{}", std::process::id()));
+    let p = std::env::temp_dir().join(format!("specdev-extract-{tag}-{}", std::process::id()));
     // Ensure clean.
     let _ = std::fs::remove_dir_all(&p);
     p
@@ -29,8 +28,8 @@ fn tmp_out(tag: &str) -> PathBuf {
 
 #[test]
 fn extract_blinky_writes_expected_files() {
-    let inputs = validate::resolve_inputs(&blinky_root(), Some(&domain_file()))
-        .expect("resolve inputs");
+    let inputs =
+        validate::resolve_inputs(&blinky_root(), Some(&domain_file())).expect("resolve inputs");
     let result = extract::run(&inputs).expect("extract run");
     let out = tmp_out("files");
     let written = extract::write(&result, &out).expect("write");
@@ -58,8 +57,8 @@ fn extract_blinky_writes_expected_files() {
 
 #[test]
 fn extract_is_deterministic() {
-    let inputs = validate::resolve_inputs(&blinky_root(), Some(&domain_file()))
-        .expect("resolve inputs");
+    let inputs =
+        validate::resolve_inputs(&blinky_root(), Some(&domain_file())).expect("resolve inputs");
 
     let out1 = tmp_out("det1");
     let out2 = tmp_out("det2");
@@ -86,8 +85,8 @@ fn extract_is_deterministic() {
 
 #[test]
 fn extract_architecture_has_summary_and_connections() {
-    let inputs = validate::resolve_inputs(&blinky_root(), Some(&domain_file()))
-        .expect("resolve inputs");
+    let inputs =
+        validate::resolve_inputs(&blinky_root(), Some(&domain_file())).expect("resolve inputs");
     let result = extract::run(&inputs).expect("extract run");
     let arch = &result.architecture;
 

@@ -29,12 +29,7 @@ fn group_by_ancestor(picks: Vec<Pick>, nth: usize) -> BTreeMap<String, Vec<Pick>
 }
 
 /// UNIQUE: every pick's scalar value must appear at most once.
-pub fn unique(
-    root: &Value,
-    field: &str,
-    rule: &str,
-    severity: Severity,
-) -> Vec<Finding> {
+pub fn unique(root: &Value, field: &str, rule: &str, severity: Severity) -> Vec<Finding> {
     let picks = select(root, field);
     let mut seen: HashMap<String, String> = HashMap::new();
     let mut out = Vec::new();
@@ -138,7 +133,14 @@ pub fn reachability(
     severity: Severity,
 ) -> Vec<Finding> {
     reach_impl(
-        root, nodes_field, edges_from, edges_to, entry_field, None, rule, severity,
+        root,
+        nodes_field,
+        edges_from,
+        edges_to,
+        entry_field,
+        None,
+        rule,
+        severity,
     )
 }
 
@@ -155,7 +157,14 @@ pub fn reachability_per(
     severity: Severity,
 ) -> Vec<Finding> {
     reach_impl(
-        root, nodes_field, edges_from, edges_to, entry_field, Some(nth), rule, severity,
+        root,
+        nodes_field,
+        edges_from,
+        edges_to,
+        entry_field,
+        Some(nth),
+        rule,
+        severity,
     )
 }
 
@@ -193,9 +202,7 @@ fn reach_impl(
                 None => picks.to_vec(),
                 Some(n) => picks
                     .iter()
-                    .filter(|p| {
-                        ancestor_at_array(&p.pointer, n).as_deref() == Some(&g)
-                    })
+                    .filter(|p| ancestor_at_array(&p.pointer, n).as_deref() == Some(&g))
                     .cloned()
                     .collect(),
             }
@@ -292,15 +299,17 @@ pub fn acyclic(
             nodes.insert(t.clone());
         }
     }
-    let mut indeg: HashMap<String, usize> =
-        nodes.iter().map(|n| (n.clone(), 0)).collect();
+    let mut indeg: HashMap<String, usize> = nodes.iter().map(|n| (n.clone(), 0)).collect();
     for ts in adj.values() {
         for t in ts {
             *indeg.entry(t.clone()).or_insert(0) += 1;
         }
     }
-    let mut q: VecDeque<String> =
-        indeg.iter().filter(|(_, &d)| d == 0).map(|(n, _)| n.clone()).collect();
+    let mut q: VecDeque<String> = indeg
+        .iter()
+        .filter(|(_, &d)| d == 0)
+        .map(|(n, _)| n.clone())
+        .collect();
     let mut removed = 0usize;
     while let Some(n) = q.pop_front() {
         removed += 1;

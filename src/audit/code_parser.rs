@@ -84,22 +84,13 @@ fn match_to_construct(
     None
 }
 
-fn capture_text<'a>(
-    query: &Query,
-    m: &QueryMatch,
-    source: &'a str,
-    name: &str,
-) -> Option<&'a str> {
+fn capture_text<'a>(query: &Query, m: &QueryMatch, source: &'a str, name: &str) -> Option<&'a str> {
     let idx = query.capture_names().iter().position(|n| *n == name)?;
     let cap = m.captures.iter().find(|c| c.index as usize == idx)?;
     Some(&source[cap.node.byte_range()])
 }
 
-fn capture_node<'a>(
-    query: &'a Query,
-    m: &'a QueryMatch<'a, 'a>,
-    name: &str,
-) -> Option<Node<'a>> {
+fn capture_node<'a>(query: &'a Query, m: &'a QueryMatch<'a, 'a>, name: &str) -> Option<Node<'a>> {
     let idx = query.capture_names().iter().position(|n| *n == name)?;
     let cap = m.captures.iter().find(|c| c.index as usize == idx)?;
     Some(cap.node)
@@ -352,8 +343,14 @@ pub struct StatusLed { pin: u8 }
 pub fn init(pin: u8) -> StatusLed { StatusLed { pin } }
 "#;
         let out = parse(src, "rust");
-        let fns: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Function).collect();
-        let structs: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Struct).collect();
+        let fns: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Function)
+            .collect();
+        let structs: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Struct)
+            .collect();
         assert_eq!(fns.len(), 1);
         assert_eq!(fns[0].name, "init");
         assert_eq!(fns[0].parameters[0].name, "pin");
@@ -397,8 +394,14 @@ typedef struct {
 void status_led_init(int pin) {}
 "#;
         let out = parse(src, "c");
-        let fns: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Function).collect();
-        let structs: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Struct).collect();
+        let fns: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Function)
+            .collect();
+        let structs: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Struct)
+            .collect();
         assert_eq!(fns.len(), 1);
         assert_eq!(fns[0].name, "status_led_init");
         assert!(
@@ -419,8 +422,14 @@ public:
 void free_fn() {}
 "#;
         let out = parse(src, "cpp");
-        let structs: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Struct).collect();
-        let fns: Vec<_> = out.iter().filter(|c| c.kind == ConstructKind::Function).collect();
+        let structs: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Struct)
+            .collect();
+        let fns: Vec<_> = out
+            .iter()
+            .filter(|c| c.kind == ConstructKind::Function)
+            .collect();
         assert!(structs.iter().any(|s| s.name == "StatusLed"));
         let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"free_fn"), "fns={names:?}");

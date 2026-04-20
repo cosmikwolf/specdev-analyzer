@@ -89,8 +89,12 @@ pub fn run(
     options: AuditOptions<'_>,
 ) -> Result<AuditReport> {
     let language = &spec_cfg.project.language;
-    let adapter = lang::adapter_for(language)
-        .with_context(|| format!("no language adapter for `{language}`"))?;
+    let adapter = lang::adapter_for(language).with_context(|| {
+        format!(
+            "no language adapter for `{language}`; supported: rust, c, cpp. \
+             Fix `[project].language` in spec.toml or add an adapter."
+        )
+    })?;
 
     let source_root = spec_cfg
         .source
@@ -123,7 +127,7 @@ pub fn run(
             Some(p) => {
                 let source = read_source(p, adapter.as_ref(), options.expand)?;
                 let constructs = code_parser::parse_source(&source, adapter.as_ref(), None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    .map_err(|e| anyhow::anyhow!("parsing `{}`: {e}", p.display()))?;
                 compare::compare_module(
                     module,
                     &constructs,
@@ -153,10 +157,12 @@ fn read_source(path: &Path, adapter: &dyn LanguageAdapter, expand: bool) -> Resu
         if let Some(text) = try_expand(path, adapter.name()) {
             return Ok(text);
         }
-        eprintln!("warning: macro expansion failed for {}; using raw source", path.display());
+        eprintln!(
+            "warning: macro expansion failed for {}; using raw source",
+            path.display()
+        );
     }
-    std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))
+    std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
 }
 
 fn try_expand(path: &Path, language: &str) -> Option<String> {
@@ -255,10 +261,7 @@ impl AuditReport {
 }
 
 /// End-to-end convenience: validate → extract → audit. Used by the CLI.
-pub fn run_project(
-    ctx: &ResolvedContext,
-    options: AuditOptions<'_>,
-) -> Result<AuditReport> {
+pub fn run_project(ctx: &ResolvedContext, options: AuditOptions<'_>) -> Result<AuditReport> {
     let inputs = Inputs {
         project_root: ctx.project_root.clone(),
         spec_file: ctx.spec_toml.clone(),

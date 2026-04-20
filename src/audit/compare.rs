@@ -21,7 +21,10 @@ fn strip_reference(t: &str) -> &str {
 
 fn translate(spec_type: &str, map: Option<&HashMap<String, String>>) -> String {
     match map {
-        Some(m) => m.get(spec_type).cloned().unwrap_or_else(|| spec_type.to_string()),
+        Some(m) => m
+            .get(spec_type)
+            .cloned()
+            .unwrap_or_else(|| spec_type.to_string()),
         None => spec_type.to_string(),
     }
 }
@@ -73,8 +76,7 @@ pub fn compare_module(
             let snake = snake_case(action_name);
 
             let found = code.iter().enumerate().find(|(_, c)| {
-                c.kind == ConstructKind::Function
-                    && (c.name == action_name || c.name == snake)
+                c.kind == ConstructKind::Function && (c.name == action_name || c.name == snake)
             });
 
             let spec_params = action
@@ -170,9 +172,7 @@ pub fn compare_module(
                     items.push(AuditItem::Missing {
                         kind: "action".into(),
                         name: action_name.into(),
-                        detail: format!(
-                            "fn not found (tried: {action_name}, {snake})"
-                        ),
+                        detail: format!("fn not found (tried: {action_name}, {snake})"),
                     });
                 }
             }
@@ -201,9 +201,7 @@ pub fn compare_module(
 
             let found = code.iter().enumerate().find(|(_, c)| {
                 c.kind == ConstructKind::Enum
-                    && (c.name == expect_enum
-                        || c.name == alt
-                        || c.name.ends_with("State"))
+                    && (c.name == expect_enum || c.name == alt || c.name.ends_with("State"))
             });
 
             match found {
@@ -374,7 +372,10 @@ mod tests {
             construct_enum("StatusLedState", &["Off", "On"]),
         ];
         let items = compare_module(&module, &code, false, None);
-        let matches = items.iter().filter(|i| matches!(i, AuditItem::Match { .. })).count();
+        let matches = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Match { .. }))
+            .count();
         assert_eq!(matches, 3, "items: {items:?}");
     }
 
@@ -388,7 +389,10 @@ mod tests {
         });
         let code: Vec<CodeConstruct> = vec![];
         let items = compare_module(&module, &code, false, None);
-        let missing = items.iter().filter(|i| matches!(i, AuditItem::Missing { .. })).count();
+        let missing = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Missing { .. }))
+            .count();
         assert_eq!(missing, 2, "items: {items:?}");
     }
 
@@ -402,12 +406,12 @@ mod tests {
                 ]},
             ],
         });
-        let code = vec![
-            construct_struct("StatusLed"),
-            construct_fn("init", vec![]),
-        ];
+        let code = vec![construct_struct("StatusLed"), construct_fn("init", vec![])];
         let items = compare_module(&module, &code, false, None);
-        let mismatches = items.iter().filter(|i| matches!(i, AuditItem::Mismatch { .. })).count();
+        let mismatches = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Mismatch { .. }))
+            .count();
         assert_eq!(mismatches, 1, "items: {items:?}");
     }
 
@@ -419,7 +423,10 @@ mod tests {
             construct_fn("debug_dump", vec![]),
         ];
         let items = compare_module(&module, &code, true, None);
-        let uncovered = items.iter().filter(|i| matches!(i, AuditItem::Uncovered { .. })).count();
+        let uncovered = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Uncovered { .. }))
+            .count();
         assert_eq!(uncovered, 1, "items: {items:?}");
     }
 
@@ -439,7 +446,10 @@ mod tests {
         ];
         let type_map: HashMap<String, String> = [("Integer".into(), "i32".into())].into();
         let items = compare_module(&module, &code, false, Some(&type_map));
-        let matches = items.iter().filter(|i| matches!(i, AuditItem::Match { kind, .. } if kind == "action")).count();
+        let matches = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Match { kind, .. } if kind == "action"))
+            .count();
         assert_eq!(matches, 1, "items: {items:?}");
     }
 
@@ -459,7 +469,10 @@ mod tests {
         ];
         let type_map: HashMap<String, String> = HashMap::new();
         let items = compare_module(&module, &code, false, Some(&type_map));
-        let matches = items.iter().filter(|i| matches!(i, AuditItem::Match { kind, .. } if kind == "action")).count();
+        let matches = items
+            .iter()
+            .filter(|i| matches!(i, AuditItem::Match { kind, .. } if kind == "action"))
+            .count();
         assert_eq!(matches, 1, "items: {items:?}");
     }
 }

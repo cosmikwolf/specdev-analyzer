@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: rule_codes(&report)
+---
+error SCHEMA

@@ -108,11 +108,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_validate(
-    project: PathBuf,
-    domain: Option<PathBuf>,
-    no_color: bool,
-) -> ExitCode {
+fn run_validate(project: PathBuf, domain: Option<PathBuf>, no_color: bool) -> ExitCode {
     let inputs: Inputs = match validate::resolve_inputs(&project, domain.as_deref()) {
         Ok(i) => i,
         Err(e) => {
@@ -152,9 +148,8 @@ fn run_audit(
     show_uncovered: bool,
     expand: bool,
 ) -> ExitCode {
-    let plugin_root = plugin_root.or_else(|| {
-        std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from)
-    });
+    let plugin_root =
+        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
     let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
         Ok(c) => c,
         Err(e) => {
@@ -188,14 +183,9 @@ fn run_audit(
     }
 }
 
-fn run_resolve(
-    project: PathBuf,
-    plugin_root: Option<PathBuf>,
-    allow_missing: bool,
-) -> ExitCode {
-    let plugin_root = plugin_root.or_else(|| {
-        std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from)
-    });
+fn run_resolve(project: PathBuf, plugin_root: Option<PathBuf>, allow_missing: bool) -> ExitCode {
+    let plugin_root =
+        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
     match resolve::resolve(&project, plugin_root.as_deref()) {
         Ok(ctx) => {
             print!("{}", resolve::render(&ctx));
@@ -216,11 +206,7 @@ fn run_resolve(
     }
 }
 
-fn run_extract(
-    project: PathBuf,
-    domain: Option<PathBuf>,
-    output: PathBuf,
-) -> ExitCode {
+fn run_extract(project: PathBuf, domain: Option<PathBuf>, output: PathBuf) -> ExitCode {
     let inputs: Inputs = match validate::resolve_inputs(&project, domain.as_deref()) {
         Ok(i) => i,
         Err(e) => {

@@ -1,0 +1,17 @@
+---
+source: tests/snapshots.rs
+expression: yaml
+---
+requirements:
+- id: REQ-AUDIO-001
+  satisfies: []
+  text: The system shall decode SBC audio at 44.1 kHz with no more than 20 ms end-to-end latency from Bluetooth RX to I2S DAC output.
+  verified_by:
+  - BtA2dpSink.init
+  - AudioPipeline.run
+- id: REQ-AUDIO-002
+  satisfies:
+  - REQ-AUDIO-001
+  text: Audio pipeline underruns shall be surfaced as PipelineError::BufferUnderrun and visibly indicated on the status LED within 100 ms.
+  verified_by:
+  - AudioPipeline.run

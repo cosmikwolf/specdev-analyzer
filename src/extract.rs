@@ -67,7 +67,11 @@ pub fn run(inputs: &Inputs) -> Result<ExtractionResult> {
     let mut summaries: Vec<Value> = Vec::new();
     let mut edges: Vec<(String, String)> = Vec::new();
     for (_, m) in &modules {
-        let name = m.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+        let name = m
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let layer = m.get("layer").and_then(Value::as_str).map(str::to_string);
         let mut sum = Map::new();
         sum.insert("name".into(), Value::String(name.clone()));
@@ -181,10 +185,10 @@ fn to_yaml(value: &Value) -> Result<String> {
 }
 
 fn load_toml(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let raw: toml::Value = toml::from_str(&text)
-        .with_context(|| format!("parsing TOML {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let raw: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing TOML {}", path.display()))?;
     let value = serde_json::to_value(&raw)
         .with_context(|| format!("converting TOML to JSON for {}", path.display()))?;
     Ok(value)
@@ -205,9 +209,7 @@ fn canonicalize(value: Value) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(items) => {
-            Value::Array(items.into_iter().map(canonicalize).collect())
-        }
+        Value::Array(items) => Value::Array(items.into_iter().map(canonicalize).collect()),
         other => other,
     }
 }

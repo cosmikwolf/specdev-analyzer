@@ -37,7 +37,9 @@ pub fn resolve_source_path(
     let ext = adapter.file_extension();
     let snake = snake_case(name);
 
-    let flat = project_root.join(source_root).join(format!("{snake}.{ext}"));
+    let flat = project_root
+        .join(source_root)
+        .join(format!("{snake}.{ext}"));
     if flat.exists() {
         return Some(flat);
     }

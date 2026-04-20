@@ -39,8 +39,11 @@ impl LanguageAdapter for CppAdapter {
                 "identifier" | "pointer_declarator" | "reference_declarator" => {
                     name = source[child.byte_range()].to_string();
                 }
-                "type_identifier" | "primitive_type" | "sized_type_specifier"
-                | "qualified_identifier" | "template_type" => {
+                "type_identifier"
+                | "primitive_type"
+                | "sized_type_specifier"
+                | "qualified_identifier"
+                | "template_type" => {
                     type_name = source[child.byte_range()].to_string();
                 }
                 _ => {}

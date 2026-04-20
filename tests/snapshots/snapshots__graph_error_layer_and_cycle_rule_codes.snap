@@ -1,0 +1,6 @@
+---
+source: tests/snapshots.rs
+expression: snapshot
+---
+error LAYER001
+error LAYER002

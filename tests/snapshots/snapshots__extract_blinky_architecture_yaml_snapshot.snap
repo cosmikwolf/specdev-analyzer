@@ -1,0 +1,30 @@
+---
+source: tests/snapshots.rs
+expression: yaml
+---
+connections:
+- flow_type: PcmFrame
+  from: BtA2dpSink.audio_out
+  to: AudioPipeline.audio_in
+- flow_type: PcmFrame
+  from: AudioPipeline.audio_write
+  to: I2sOutput.i2s_in
+- flow_type: StatusPattern
+  from: AudioPipeline.led_cmd
+  to: StatusLed.led_in
+dependency_graph:
+- from: AudioPipeline
+  to: BtA2dpSink
+- from: AudioPipeline
+  to: I2sOutput
+- from: AudioPipeline
+  to: StatusLed
+modules:
+- layer: middleware
+  name: AudioPipeline
+- layer: driver
+  name: BtA2dpSink
+- layer: driver
+  name: I2sOutput
+- layer: driver
+  name: StatusLed
