@@ -2,7 +2,7 @@
 
 Domain-agnostic CLI that turns TOML specs into first-class engineering artifacts: schema-validated, graph-checked, extractable to codegen-ready YAML, and auditable against real source code.
 
-Pairs with the [`specdev`](https://github.com/tenkai/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin.
+Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin.
 
 ## What it does
 
@@ -14,7 +14,7 @@ Pairs with the [`specdev`](https://github.com/tenkai/specdev) Claude Code plugin
 ## Install
 
 ```
-cargo install --git https://github.com/tenkai/specdev-analyzer
+cargo install --git https://github.com/cosmikwolf/specdev-analyzer
 ```
 
 Requires a stable Rust toolchain.
@@ -33,18 +33,75 @@ specdev-analyzer resolve  [--project <dir>] [--plugin-root <dir>] [--allow-missi
 ### Example
 
 ```
-$ specdev-analyzer validate --project ./my-firmware
-✓ 4 modules validated, 6 requirements, 3 connections
-  no findings
+$ specdev-analyzer validate --project ./blinky-a2dp
+0 error(s), 0 warning(s), 0 info(s)
 
-$ specdev-analyzer extract --project ./my-firmware --output ./gen
-wrote gen/AudioPipeline.yaml
-wrote gen/BtA2dpSink.yaml
-wrote gen/I2sOutput.yaml
-wrote gen/StatusLed.yaml
-wrote gen/architecture.yaml
-wrote gen/requirements.yaml
+$ specdev-analyzer extract --project ./blinky-a2dp --output ./gen
+wrote 6 file(s) to ./gen
 ```
+
+`extract` writes one YAML per module plus `architecture.yaml` and `requirements.yaml`.
+
+### Audit
+
+`audit` compares the extracted spec to the project's source tree. Run it after a
+`spec-gen` pass (or against a hand-written source tree) to see drift:
+
+```
+$ specdev-analyzer audit --project ./blinky-a2dp --show-uncovered
+AudioPipeline (not found):
+  + file AudioPipeline — no source file found for module `AudioPipeline`
+
+BtA2dpSink (not found):
+  + file BtA2dpSink — no source file found for module `BtA2dpSink`
+
+…
+
+0 match, 4 missing, 0 mismatch, 0 uncovered
+```
+
+A fully-generated project produces a `match` line per module and zero `missing`.
+
+### Resolve
+
+`resolve` is primarily for skills: it prints the effective domain, language, and
+codegen paths after applying the `spec.toml` → `.specdev/` → plugin-defaults
+cascade, so a skill's context header always points at the right files.
+
+```
+$ specdev-analyzer resolve --project ./blinky-a2dp
+## Spec Context
+
+- Project root: `/.../blinky-a2dp`
+- Domain: `firmware`
+- Language: `rust`
+- Codegen name: `firmware-rust`
+
+## Resolved Paths
+
+- Schema:   `.../schema/firmware/v1`          _(from plugin default)_
+- Domains:  `.../domains/firmware`            _(from plugin default)_
+- Languages:`.../languages/rust`              _(from plugin default)_
+- Codegen:  `.../codegen/firmware-rust`       _(from plugin default)_
+```
+
+Each line's provenance tag shifts to `from spec.toml` or `from .specdev/` once a
+project starts overriding.
+
+### Validation errors
+
+Errors carry a stable rule id and a structured path pointer. Example —
+`AudioPipeline` (middleware) declared a dependency on `StatusLed` (also
+middleware), which the firmware layer rules disallow:
+
+```
+$ specdev-analyzer validate --project ./blinky-broken
+error: [LAYER001] project/modules/0/depends_on/2: module `AudioPipeline` (layer middleware) depends on `StatusLed` (layer middleware), not in allowed_deps ["driver", "HAL", "PAC"]
+1 error(s), 0 warning(s), 0 info(s)
+```
+
+Rule ids (`SCHEMA`, `LAYER001`, `FSM020`, `PORT030`, `OWN050`, `ISR060`, …) are
+stable across versions; skills and CI rely on them to suggest specific fixes.
 
 ## Project layout
 
