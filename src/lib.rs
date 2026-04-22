@@ -14,6 +14,7 @@ pub mod graph;
 pub mod lang;
 pub mod packages;
 pub mod path;
+pub mod reduction;
 pub mod report;
 pub mod resolve;
 pub mod schema;

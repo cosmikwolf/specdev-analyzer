@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use specdev_analyzer::{
     audit::{self, AuditOptions},
-    extract, resolve,
+    extract, reduction, resolve,
     validate::{self, Inputs},
 };
 
@@ -64,6 +64,27 @@ enum Command {
         #[arg(long)]
         expand: bool,
     },
+    /// Execute the domain reduction and emit a universal entity/relation graph.
+    Reduce {
+        /// Project root (directory containing spec.toml). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Explicit path to the reduction.yaml. Defaults to the sibling
+        /// `specdev/domains/<domain>/reduction.yaml` discovered via the
+        /// domain-config lookup.
+        #[arg(long)]
+        reduction: Option<PathBuf>,
+        /// Metaschema directory (holding the `*.schema.yaml` for reductions).
+        /// Defaults to `<plugin_root>/schema/meta/v1`.
+        #[arg(long)]
+        meta_dir: Option<PathBuf>,
+        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
+        #[arg(long)]
+        plugin_root: Option<PathBuf>,
+        /// Write the graph YAML to this path. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Print the resolved context (domain, language, schema paths) for a project.
     Resolve {
         /// Project root (directory containing spec.toml). Defaults to cwd.
@@ -100,6 +121,13 @@ fn main() -> ExitCode {
             show_uncovered,
             expand,
         } => run_audit(project, plugin_root, filter, show_uncovered, expand),
+        Command::Reduce {
+            project,
+            reduction,
+            meta_dir,
+            plugin_root,
+            output,
+        } => run_reduce(project, reduction, meta_dir, plugin_root, output),
         Command::Resolve {
             project,
             plugin_root,
@@ -230,5 +258,105 @@ fn run_extract(project: PathBuf, domain: Option<PathBuf>, output: PathBuf) -> Ex
             eprintln!("{e:#}");
             ExitCode::from(2)
         }
+    }
+}
+
+fn run_reduce(
+    project: PathBuf,
+    reduction_path: Option<PathBuf>,
+    meta_dir: Option<PathBuf>,
+    plugin_root: Option<PathBuf>,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let plugin_root =
+        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
+    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let reduction_file = match reduction_path {
+        Some(p) => p,
+        None => ctx.domain_dir.path.join("reduction.yaml"),
+    };
+    if !reduction_file.is_file() {
+        eprintln!(
+            "reduction spec not found at {} — pass --reduction <path> or create it under specdev/domains/{}/",
+            reduction_file.display(),
+            ctx.domain
+        );
+        return ExitCode::from(2);
+    }
+
+    let meta_dir = match meta_dir {
+        Some(p) => p,
+        None => match &ctx.plugin_root {
+            Some(root) => root.join("schema").join("meta").join("v1"),
+            None => {
+                eprintln!(
+                    "cannot locate metaschema directory — pass --meta-dir <path> or set CLAUDE_PLUGIN_ROOT"
+                );
+                return ExitCode::from(2);
+            }
+        },
+    };
+
+    let spec = match reduction::load_reduction_spec(&reduction_file, &meta_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let (graph, report) = match reduction::execute(&spec, &ctx.project_root) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let yaml = match reduction::to_yaml(&graph) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+
+    match output {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        eprintln!("creating {}: {e:#}", parent.display());
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            if let Err(e) = std::fs::write(&path, &yaml) {
+                eprintln!("writing {}: {e:#}", path.display());
+                return ExitCode::from(2);
+            }
+            eprintln!("wrote reduction graph to {}", path.display());
+        }
+        None => print!("{yaml}"),
+    }
+
+    eprint!("{}", report.render_plain());
+    let (errors, warnings, infos) = report.counts();
+    eprintln!(
+        "{} error(s), {} warning(s), {} info(s)",
+        errors, warnings, infos
+    );
+
+    if report.has_errors() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }

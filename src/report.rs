@@ -10,12 +10,39 @@ use owo_colors::OwoColorize;
 
 use crate::domain::Severity;
 
+/// Source-location tuple carried by findings. `line` is best-effort: the TOML
+/// crate only exposes spans when loaders opt into `toml::Spanned`, which we
+/// haven't threaded through every call site. Reduction-execution errors (phase
+/// 14) set it explicitly; pre-reduction findings leave it `None`.
+#[derive(Debug, Clone, Default)]
+pub struct Provenance {
+    pub source_file: String,
+    pub pointer: String,
+    pub line: Option<u32>,
+}
+
+impl Provenance {
+    pub fn new(source_file: impl Into<String>, pointer: impl Into<String>) -> Self {
+        Self {
+            source_file: source_file.into(),
+            pointer: pointer.into(),
+            line: None,
+        }
+    }
+
+    pub fn with_line(mut self, line: u32) -> Self {
+        self.line = Some(line);
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub rule: String,
     pub severity: Severity,
     pub file: Option<String>,
     pub pointer: String,
+    pub line: Option<u32>,
     pub message: String,
 }
 
@@ -26,6 +53,7 @@ impl Finding {
             severity,
             file: None,
             pointer: String::new(),
+            line: None,
             message: message.into(),
         }
     }
@@ -37,6 +65,18 @@ impl Finding {
 
     pub fn with_pointer(mut self, pointer: impl Into<String>) -> Self {
         self.pointer = pointer.into();
+        self
+    }
+
+    pub fn with_line(mut self, line: u32) -> Self {
+        self.line = Some(line);
+        self
+    }
+
+    pub fn with_provenance(mut self, prov: Provenance) -> Self {
+        self.file = Some(prov.source_file);
+        self.pointer = prov.pointer;
+        self.line = prov.line;
         self
     }
 }
@@ -72,11 +112,7 @@ impl Report {
                 Severity::Warning => "warning",
                 Severity::Info => "info",
             };
-            let loc = match (&f.file, f.pointer.as_str()) {
-                (Some(file), "") => file.to_string(),
-                (Some(file), ptr) => format!("{file}{ptr}"),
-                (None, ptr) => ptr.to_string(),
-            };
+            let loc = render_loc(&f.file, f.pointer.as_str(), f.line);
             let rule = if f.rule.is_empty() {
                 String::new()
             } else {
@@ -96,11 +132,7 @@ impl Report {
                 Severity::Warning => "warning".yellow().bold().to_string(),
                 Severity::Info => "info".blue().bold().to_string(),
             };
-            let loc = match (&f.file, f.pointer.as_str()) {
-                (Some(file), "") => file.clone(),
-                (Some(file), ptr) => format!("{file}{ptr}"),
-                (None, ptr) => ptr.to_string(),
-            };
+            let loc = render_loc(&f.file, f.pointer.as_str(), f.line);
             let rule = if f.rule.is_empty() {
                 String::new()
             } else {
@@ -123,5 +155,19 @@ impl Report {
             }
         }
         (e, w, i)
+    }
+}
+
+/// Render the `{file}:{line}{pointer}` prefix for a finding. Line is additive:
+/// when absent, output is byte-identical to the pre-phase-14 format
+/// (`{file}{pointer}` or `{pointer}` alone).
+fn render_loc(file: &Option<String>, pointer: &str, line: Option<u32>) -> String {
+    match (file, pointer, line) {
+        (Some(f), "", None) => f.clone(),
+        (Some(f), ptr, None) => format!("{f}{ptr}"),
+        (Some(f), "", Some(n)) => format!("{f}:{n}"),
+        (Some(f), ptr, Some(n)) => format!("{f}:{n}{ptr}"),
+        (None, ptr, None) => ptr.to_string(),
+        (None, ptr, Some(n)) => format!(":{n}{ptr}"),
     }
 }

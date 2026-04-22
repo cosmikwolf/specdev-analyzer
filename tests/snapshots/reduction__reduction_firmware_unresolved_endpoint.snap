@@ -1,0 +1,7 @@
+---
+source: tests/reduction.rs
+assertion_line: 170
+expression: rendered
+---
+error [REDUCE_UNRESOLVED] specs/architecture.toml/connections/0: unresolved port endpoint `LoneModule.out_port` (relation `connects`)
+error [REDUCE_UNRESOLVED] specs/architecture.toml/connections/0: unresolved port endpoint `Nowhere.in_port` (relation `connects`)
