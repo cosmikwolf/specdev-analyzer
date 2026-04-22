@@ -117,6 +117,30 @@ pub struct Graph {
     pub relations: Vec<Relation>,
 }
 
+/// Library-friendly entry point: resolve the project context, locate the
+/// sibling `reduction.yaml` and plugin metaschema directory, validate the
+/// spec, and execute it. Returns the graph plus any findings (unresolved
+/// endpoints etc.).
+pub fn run_project(project: &Path, plugin_root: Option<&Path>) -> Result<(Graph, Report)> {
+    let ctx = crate::resolve::resolve(project, plugin_root)?;
+    let reduction_file = ctx.domain_dir.path.join("reduction.yaml");
+    if !reduction_file.is_file() {
+        bail!(
+            "reduction spec not found at {} — domain `{}` does not ship one",
+            reduction_file.display(),
+            ctx.domain
+        );
+    }
+    let meta_dir = match &ctx.plugin_root {
+        Some(root) => root.join("schema").join("meta").join("v1"),
+        None => {
+            bail!("cannot locate metaschema directory — pass plugin_root or set CLAUDE_PLUGIN_ROOT")
+        }
+    };
+    let spec = load_reduction_spec(&reduction_file, &meta_dir)?;
+    execute(&spec, &ctx.project_root)
+}
+
 /// Load and metaschema-validate a `reduction.yaml`.
 pub fn load_reduction_spec(path: &Path, meta_dir: &Path) -> Result<ReductionSpec> {
     let text = std::fs::read_to_string(path)

@@ -46,6 +46,16 @@ pub struct ExtractedModule {
     pub value: Value,
 }
 
+/// Library-friendly entry point: resolve the project context (honoring the
+/// plugin_root / `.specdev/` / `[paths.overrides]` chain) and run extract
+/// end-to-end. Returns an error if validation fails, matching `run`.
+pub fn run_project(project: &Path, plugin_root: Option<&Path>) -> Result<ExtractionResult> {
+    let ctx = crate::resolve::resolve(project, plugin_root)?;
+    let domain_file = ctx.domain_dir.path.join("domain.toml");
+    let inputs = validate::resolve_inputs(project, Some(&domain_file))?;
+    run(&inputs)
+}
+
 /// Run the extract pipeline. Returns an error if validation fails.
 pub fn run(inputs: &Inputs) -> Result<ExtractionResult> {
     let report = validate::run(inputs)?;

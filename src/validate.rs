@@ -108,6 +108,20 @@ fn default_domain_file(project_root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Library-friendly entry point: resolve the project context (honoring the
+/// plugin_root / `.specdev/` / `[paths.overrides]` chain from `D13`) and run
+/// validation end-to-end. Use when the caller has a `project` directory and
+/// an optional `plugin_root` but no hand-specified domain file.
+///
+/// The two-step `resolve_inputs` + `run` form stays available for callers
+/// that pass a `--domain` override or otherwise want to customize `Inputs`.
+pub fn run_project(project: &Path, plugin_root: Option<&Path>) -> Result<Report> {
+    let ctx = crate::resolve::resolve(project, plugin_root)?;
+    let domain_file = ctx.domain_dir.path.join("domain.toml");
+    let inputs = resolve_inputs(project, Some(&domain_file))?;
+    run(&inputs)
+}
+
 pub fn run(inputs: &Inputs) -> Result<Report> {
     let cfg = SpecConfig::load(&inputs.spec_file)?;
     let dom = DomainConfig::load(&inputs.domain_file)?;

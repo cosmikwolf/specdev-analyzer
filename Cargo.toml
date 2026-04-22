@@ -8,6 +8,10 @@ license = "MIT"
 repository = "https://github.com/tenkai/specdev-analyzer"
 readme = "README.md"
 
+[lib]
+name = "specdev_analyzer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "specdev-analyzer"
 path = "src/main.rs"
