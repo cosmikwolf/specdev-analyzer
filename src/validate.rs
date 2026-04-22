@@ -4,6 +4,7 @@
 //! TOML spec file into JSON, run structural validation via the schema
 //! registry, compose the project view, then run graph-check primitives.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -12,6 +13,7 @@ use serde_json::{json, Value};
 use crate::config::{self, SpecConfig};
 use crate::domain::{DomainConfig, GraphCheck};
 use crate::graph;
+use crate::packages;
 use crate::report::{Finding, Report};
 use crate::schema::{self, SchemaRegistry};
 
@@ -116,25 +118,68 @@ pub fn run(inputs: &Inputs) -> Result<Report> {
 
     // ---- Structural validation + composition ----
     let mut modules: Vec<Value> = Vec::new();
+    let mut module_packages: Vec<Option<String>> = Vec::new();
     let modules_dir = specs_dir.join("modules");
-    if modules_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&modules_dir)?
-            .filter_map(Result::ok)
-            .collect();
-        entries.sort_by_key(|e| e.path());
-        for entry in entries {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
-                continue;
-            }
-            let value = load_toml_as_json(&path)?;
-            let rel = relpath(&path, &inputs.project_root);
-            report.extend(registry.validate("module", &value, &rel)?);
-            modules.push(value);
+    let (module_files, depth_findings) =
+        packages::collect_module_files(&modules_dir, &inputs.project_root);
+    report.extend(depth_findings);
+
+    // PKG040 / PKG041 placement findings.
+    let pkg040_sev = dom.severity_of("PKG040");
+    let pkg041_sev = dom.severity_of("PKG041");
+    report.extend(packages::package_placement_findings(
+        &module_files,
+        &cfg.packages,
+        &inputs.project_root,
+        pkg040_sev,
+        pkg041_sev,
+    ));
+
+    // PKG042 — declared source_path must exist.
+    let pkg042_sev = dom.severity_of("PKG042");
+    report.extend(packages::package_source_path_findings(
+        &cfg.packages,
+        &inputs.project_root,
+        pkg042_sev,
+    ));
+
+    let declared: std::collections::HashSet<&str> =
+        cfg.packages.iter().map(|p| p.name.as_str()).collect();
+    for mf in &module_files {
+        let value = load_toml_as_json(&mf.path)?;
+        let rel = relpath(&mf.path, &inputs.project_root);
+        report.extend(registry.validate("module", &value, &rel)?);
+        // Only treat a subdirectory as a real package if it was declared;
+        // undeclared subdirs (PKG040) degrade to unpackaged downstream.
+        let pkg = match &mf.package {
+            Some(p) if declared.contains(p.as_str()) => Some(p.clone()),
+            _ => None,
+        };
+        module_packages.push(pkg);
+        modules.push(value);
+    }
+
+    // Build name → package map for reference normalization.
+    let mut pkg_by_name: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for (m, pkg) in modules.iter().zip(module_packages.iter()) {
+        if let Some(name) = m.get("name").and_then(Value::as_str) {
+            pkg_by_name.insert(name.to_string(), pkg.clone());
         }
     }
 
+    // Normalize `depends_on[]` references to fully-qualified form.
+    let pkg043_sev = dom.severity_of("PKG043");
+    let pkg044_sev = dom.severity_of("PKG044");
+    report.extend(packages::normalize_depends_on(
+        &mut modules,
+        &cfg.packages,
+        &pkg_by_name,
+        pkg043_sev,
+        pkg044_sev,
+    ));
+
     let mut requirements: Vec<Value> = Vec::new();
+    let mut sources: Vec<Value> = Vec::new();
     let req_dir = specs_dir.join("requirements");
     if req_dir.is_dir() {
         for entry in std::fs::read_dir(&req_dir)?.filter_map(Result::ok) {
@@ -148,6 +193,9 @@ pub fn run(inputs: &Inputs) -> Result<Report> {
             if let Some(arr) = value.get("requirement").and_then(Value::as_array) {
                 requirements.extend(arr.iter().cloned());
             }
+            if let Some(arr) = value.get("source").and_then(Value::as_array) {
+                sources.extend(arr.iter().cloned());
+            }
         }
     }
 
@@ -158,6 +206,38 @@ pub fn run(inputs: &Inputs) -> Result<Report> {
         let rel = relpath(&arch_file, &inputs.project_root);
         report.extend(registry.validate("architecture", &value, &rel)?);
         architecture = value;
+        if !cfg.packages.is_empty() {
+            report.extend(packages::normalize_architecture(
+                &mut architecture,
+                &modules,
+                &cfg.packages,
+                &pkg_by_name,
+                pkg043_sev,
+                pkg044_sev,
+            ));
+        }
+    }
+
+    // ---- Domain-declared collections ----
+    let mut extra_collections: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for coll in &dom.collections {
+        let mut items: Vec<Value> = Vec::new();
+        let dir = specs_dir.join(&coll.dir);
+        if dir.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&dir)?.filter_map(Result::ok).collect();
+            entries.sort_by_key(|e| e.path());
+            for entry in entries {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                    continue;
+                }
+                let value = load_toml_as_json(&path)?;
+                let rel = relpath(&path, &inputs.project_root);
+                report.extend(registry.validate(&coll.schema, &value, &rel)?);
+                items.push(value);
+            }
+        }
+        extra_collections.insert(coll.name.clone(), items);
     }
 
     // ---- Required metadata (META010) ----
@@ -187,13 +267,19 @@ pub fn run(inputs: &Inputs) -> Result<Report> {
     }
 
     // ---- Project composition ----
-    let project = compose_project(&modules, &architecture, &requirements);
+    let project = compose_project(
+        &modules,
+        &module_packages,
+        &architecture,
+        &requirements,
+        &sources,
+        &extra_collections,
+    );
 
     // ---- Project-level graph checks ----
     let sub = run_checks(&project, &dom.project.graph_checks, &dom, "project");
     report.extend(sub);
 
-    let _ = cfg; // spec config reserved for later phases (schema major etc.)
     Ok(report)
 }
 
@@ -270,16 +356,32 @@ fn run_checks(root: &Value, checks: &[GraphCheck], dom: &DomainConfig, file: &st
 /// Build the composite project value that project-level graph checks inspect.
 /// Adds `qualified_name` to each port so PORT030 checks work against
 /// `architecture.connections[].from`.
-fn compose_project(modules: &[Value], architecture: &Value, requirements: &[Value]) -> Value {
+fn compose_project(
+    modules: &[Value],
+    module_packages: &[Option<String>],
+    architecture: &Value,
+    requirements: &[Value],
+    sources: &[Value],
+    extra: &BTreeMap<String, Vec<Value>>,
+) -> Value {
     let mods: Vec<Value> = modules
         .iter()
-        .map(|m| {
+        .zip(module_packages.iter())
+        .map(|(m, pkg)| {
             let mut m = m.clone();
-            let name = m
+            let bare = m
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
+            let qualified = packages::qualify(pkg.as_deref(), &bare);
+            // Rewrite `name` in the composed view to the qualified form so
+            // every `modules[].name` target matches qualified `depends_on[]`
+            // and qualified architecture endpoints. The per-module extract
+            // output still uses the bare `name`.
+            if let Some(obj) = m.as_object_mut() {
+                obj.insert("name".to_string(), Value::String(qualified.clone()));
+            }
             if let Some(ports) = m.get_mut("ports").and_then(Value::as_array_mut) {
                 for p in ports.iter_mut() {
                     let pname = p
@@ -290,7 +392,7 @@ fn compose_project(modules: &[Value], architecture: &Value, requirements: &[Valu
                     if let Some(obj) = p.as_object_mut() {
                         obj.insert(
                             "qualified_name".to_string(),
-                            Value::String(format!("{name}.{pname}")),
+                            Value::String(format!("{qualified}.{pname}")),
                         );
                     }
                 }
@@ -299,11 +401,18 @@ fn compose_project(modules: &[Value], architecture: &Value, requirements: &[Valu
         })
         .collect();
 
-    json!({
+    let mut out = json!({
         "modules": mods,
         "architecture": architecture,
         "requirements": requirements,
-    })
+        "sources": sources,
+    });
+    if let Some(obj) = out.as_object_mut() {
+        for (k, v) in extra {
+            obj.insert(k.clone(), Value::Array(v.clone()));
+        }
+    }
+    out
 }
 
 fn load_toml_as_json(path: &Path) -> Result<Value> {

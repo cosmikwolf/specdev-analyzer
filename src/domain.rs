@@ -21,6 +21,24 @@ pub struct DomainConfig {
     pub module: ModuleSection,
     #[serde(default)]
     pub project: ProjectSection,
+    /// Additional per-file spec collections beyond the built-in
+    /// `specs/modules/`, `specs/requirements/`, and `specs/architecture.toml`
+    /// that the analyzer has always scanned. Each collection declares a
+    /// subdirectory under `specs/` and a schema key to validate entries
+    /// against. Entries appear at `project.<name>[]` for project-level
+    /// graph checks, and are extracted to `<out>/<name>/<Item>.yaml`.
+    #[serde(default, rename = "collections")]
+    pub collections: Vec<Collection>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Collection {
+    /// Key the collection occupies in the project composite (e.g. `stores`).
+    pub name: String,
+    /// Subdirectory under `specs/` to scan (e.g. `stores`).
+    pub dir: String,
+    /// Schema registry key each file is validated against (e.g. `store`).
+    pub schema: String,
 }
 
 #[derive(Debug, Deserialize)]

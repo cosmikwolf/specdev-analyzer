@@ -33,6 +33,23 @@ fn blinky_root() -> PathBuf {
     workspace_root().join("specdev/examples/blinky-a2dp")
 }
 
+fn multi_pkg_root() -> PathBuf {
+    repo_root().join("tests/specs/multi-pkg")
+}
+
+#[test]
+fn multi_pkg_validates_cleanly() {
+    let inputs =
+        validate::resolve_inputs(&multi_pkg_root(), Some(&domain_file())).expect("resolve inputs");
+    let report = validate::run(&inputs).expect("validate");
+    let findings = report.findings();
+    assert!(
+        findings.is_empty(),
+        "expected no findings on multi-pkg; got:\n{}",
+        report.render_plain()
+    );
+}
+
 #[test]
 fn blinky_a2dp_passes_cleanly() {
     let inputs =

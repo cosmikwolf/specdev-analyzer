@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::config::SpecConfig;
 use crate::extract::{self};
@@ -85,7 +84,7 @@ pub struct AuditOptions<'a> {
 pub fn run(
     project_root: &Path,
     spec_cfg: &SpecConfig,
-    modules: &[(String, Value)],
+    modules: &[crate::extract::ExtractedModule],
     options: AuditOptions<'_>,
 ) -> Result<AuditReport> {
     let language = &spec_cfg.project.language;
@@ -96,7 +95,7 @@ pub fn run(
         )
     })?;
 
-    let source_root = spec_cfg
+    let project_source_root = spec_cfg
         .source
         .root
         .clone()
@@ -108,18 +107,32 @@ pub fn run(
         .unwrap_or_else(|| "flat".to_string());
 
     let mut out = Vec::new();
-    for (name, module) in modules {
+    for em in modules {
+        let name = &em.name;
+        let module = &em.value;
         if let Some(filter) = options.module_filter {
-            if name != filter {
+            // Filter matches either the bare name or the qualified form.
+            let qualified = crate::packages::qualify(em.package.as_deref(), name);
+            if name != filter && qualified != filter {
                 continue;
             }
         }
+
+        // Package source_path overrides the project-wide source.root for
+        // this module when the module lives under a declared package.
+        let source_root: &str = match &em.package {
+            Some(pkg) => match spec_cfg.find_package(pkg) {
+                Some(ps) => ps.source_path.as_str(),
+                None => project_source_root.as_str(),
+            },
+            None => project_source_root.as_str(),
+        };
 
         let path = source_map::resolve_source_path(
             module,
             adapter.as_ref(),
             project_root,
-            &source_root,
+            source_root,
             &layout,
         );
 

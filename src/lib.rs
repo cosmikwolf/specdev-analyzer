@@ -12,6 +12,7 @@ pub mod domain;
 pub mod extract;
 pub mod graph;
 pub mod lang;
+pub mod packages;
 pub mod path;
 pub mod report;
 pub mod resolve;

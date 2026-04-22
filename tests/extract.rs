@@ -19,6 +19,10 @@ fn blinky_root() -> PathBuf {
     workspace_root().join("specdev/examples/blinky-a2dp")
 }
 
+fn multi_pkg_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/specs/multi-pkg")
+}
+
 fn tmp_out(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("specdev-extract-{tag}-{}", std::process::id()));
     // Ensure clean.
@@ -81,6 +85,53 @@ fn extract_is_deterministic() {
 
     let _ = std::fs::remove_dir_all(&out1);
     let _ = std::fs::remove_dir_all(&out2);
+}
+
+#[test]
+fn extract_multi_pkg_nests_output_by_package() {
+    let inputs =
+        validate::resolve_inputs(&multi_pkg_root(), Some(&domain_file())).expect("resolve inputs");
+    let result = extract::run(&inputs).expect("extract run");
+    let out = tmp_out("multi-pkg");
+    let written = extract::write(&result, &out).expect("write");
+
+    assert!(
+        written.iter().any(|p| p.ends_with("core/Clock.yaml")),
+        "core/Clock.yaml missing; got {written:?}"
+    );
+    assert!(
+        written.iter().any(|p| p.ends_with("drivers/Led.yaml")),
+        "drivers/Led.yaml missing; got {written:?}"
+    );
+
+    // Qualified dependency_graph edge.
+    let graph = result
+        .architecture
+        .get("dependency_graph")
+        .and_then(|v| v.as_array())
+        .expect("dependency_graph");
+    assert!(
+        graph.iter().any(
+            |e| e.get("from").and_then(|v| v.as_str()) == Some("drivers::Led")
+                && e.get("to").and_then(|v| v.as_str()) == Some("core::Clock")
+        ),
+        "qualified edge drivers::Led → core::Clock missing; got {graph:?}"
+    );
+
+    // `package` field present on each module summary.
+    let modules = result
+        .architecture
+        .get("modules")
+        .and_then(|v| v.as_array())
+        .expect("modules summary");
+    for m in modules {
+        assert!(
+            m.get("package").and_then(|v| v.as_str()).is_some(),
+            "module summary missing `package`: {m:?}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&out);
 }
 
 #[test]

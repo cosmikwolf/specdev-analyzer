@@ -55,6 +55,9 @@ pub struct ResolvedContext {
     pub domain_dir: Resolved,
     pub language_dir: Resolved,
     pub codegen_dir: Resolved,
+    /// Declared `[[packages]]` from spec.toml, as `(name, source_path)` pairs.
+    /// Empty for single-package (flat) projects.
+    pub packages: Vec<(String, String)>,
 }
 
 pub const MISSING_SPEC_MARKER: &str = "SPECDEV_MISSING_SPEC_TOML";
@@ -113,6 +116,12 @@ pub fn resolve(project: &Path, plugin_root: Option<&Path>) -> Result<ResolvedCon
         plugin_root,
     );
 
+    let packages = cfg
+        .packages
+        .iter()
+        .map(|p| (p.name.clone(), p.source_path.clone()))
+        .collect();
+
     Ok(ResolvedContext {
         project_root,
         spec_toml,
@@ -126,6 +135,7 @@ pub fn resolve(project: &Path, plugin_root: Option<&Path>) -> Result<ResolvedCon
         domain_dir,
         language_dir,
         codegen_dir,
+        packages,
     })
 }
 
@@ -205,6 +215,15 @@ pub fn render(ctx: &ResolvedContext) -> String {
             r.path.display(),
             r.source.label()
         ));
+    }
+    out.push('\n');
+    out.push_str("## Packages\n\n");
+    if ctx.packages.is_empty() {
+        out.push_str("- (none — single-package project)\n");
+    } else {
+        for (name, source_path) in &ctx.packages {
+            out.push_str(&format!("- `{name}` — `{source_path}`\n"));
+        }
     }
     out.push('\n');
     out.push_str("## Notes\n\n");

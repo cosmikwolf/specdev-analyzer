@@ -1,0 +1,41 @@
+name = "Led"
+layer = "driver"
+description = "Blinks an LED on a fixed cadence using Clock ticks."
+depends_on = ["core::Clock"]
+satisfies = []
+
+[metadata.MemoryModel]
+allocation = "static_alloc"
+max_instances = 1
+owner = "owned"
+
+[metadata.ConcurrencyModel]
+protection = "none"
+isr_safe = false
+reentrant = false
+shared_state = []
+
+[metadata.ErrorHandling]
+strategy = "result_type"
+error_type = "LedError"
+
+[metadata.Ownership]
+owner = "owned"
+
+[[ports]]
+name = "tick_in"
+port_type = "TickPort"
+direction = "in"
+flow_type = "Tick"
+
+[[actions]]
+name = "on_tick"
+params = [{ name = "now", type = "u64", direction = "in" }]
+returns = "Result<(), LedError>"
+blocking = false
+isr_safe = false
+description = "Advance blink state by one tick."
+
+[[errors]]
+variant = "GpioError"
+description = "Underlying GPIO write failed."

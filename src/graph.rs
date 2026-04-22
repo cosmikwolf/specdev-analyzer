@@ -282,14 +282,31 @@ pub fn acyclic(
     rule: &str,
     severity: Severity,
 ) -> Vec<Finding> {
+    // Group both endpoints by their containing array element (e.g. for
+    // `modules[].name` and `modules[].depends_on[]`, the top-level `modules[]`
+    // ancestor). This pairs each source with the dependency array that lives
+    // on the same module, instead of zipping the two flat lists in
+    // declaration order.
     let froms = select(root, edges_from);
     let tos = select(root, edges_to);
+    let mut from_by_anc: HashMap<String, String> = HashMap::new();
+    for p in &froms {
+        if let Some(anc) = ancestor_at_array(&p.pointer, 0) {
+            if let Some(s) = p.value.as_str() {
+                from_by_anc.insert(anc, s.to_string());
+            }
+        }
+    }
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-    for (a, b) in froms.iter().zip(tos.iter()) {
-        let (Some(f), Some(t)) = (a.value.as_str(), b.value.as_str()) else {
+    for p in &tos {
+        let Some(anc) = ancestor_at_array(&p.pointer, 0) else {
             continue;
         };
-        adj.entry(f.to_string()).or_default().push(t.to_string());
+        let Some(from) = from_by_anc.get(&anc) else {
+            continue;
+        };
+        let Some(t) = p.value.as_str() else { continue };
+        adj.entry(from.clone()).or_default().push(t.to_string());
     }
     // Kahn's algorithm on a distinct-node subgraph derived from edges.
     let mut nodes: BTreeSet<String> = BTreeSet::new();

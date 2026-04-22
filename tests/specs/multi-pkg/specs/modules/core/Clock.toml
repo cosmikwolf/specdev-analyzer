@@ -1,0 +1,41 @@
+name = "Clock"
+layer = "HAL"
+description = "Wall-clock abstraction over a hardware timer."
+depends_on = []
+satisfies = []
+
+[metadata.MemoryModel]
+allocation = "static_alloc"
+max_instances = 1
+owner = "owned"
+
+[metadata.ConcurrencyModel]
+protection = "none"
+isr_safe = false
+reentrant = false
+shared_state = []
+
+[metadata.ErrorHandling]
+strategy = "result_type"
+error_type = "ClockError"
+
+[metadata.Ownership]
+owner = "owned"
+
+[[ports]]
+name = "tick_out"
+port_type = "TickPort"
+direction = "out"
+flow_type = "Tick"
+
+[[actions]]
+name = "now"
+params = []
+returns = "Result<u64, ClockError>"
+blocking = false
+isr_safe = true
+description = "Return the current monotonic tick count."
+
+[[errors]]
+variant = "NotInitialized"
+description = "Timer peripheral was not started before use."
