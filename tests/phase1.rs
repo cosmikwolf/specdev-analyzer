@@ -60,20 +60,27 @@ fn skeleton_minimal_validates_with_no_errors() {
 }
 
 #[test]
-fn skeleton_with_stray_module_emits_layout_005_info_per_module() {
+fn skeleton_with_stray_module_validates_against_compiled_schema() {
+    // Phase 1 emitted one LAYOUT-005 info per module (stub-deferred). Phase 2
+    // compiles the aggregator schema and validates each module against it; a
+    // clean fixture with a permissive `dummy` block schema produces no SCHEMA
+    // findings.
     let report = validate::run_project(&fixture("skeleton-with-stray-module"), None)
         .expect("skeleton-with-stray-module validates");
     assert!(
         !report.has_errors(),
-        "stray module should not error in Phase 1: {}",
+        "stray module should not error: {}",
         report.render_plain()
     );
-    let layout_005 = report
+    let schema = report
         .findings()
         .iter()
-        .filter(|f| f.rule == "LAYOUT-005")
+        .filter(|f| f.rule == "SCHEMA")
         .count();
-    assert_eq!(layout_005, 1, "expected one LAYOUT-005 info per module");
+    assert_eq!(
+        schema, 0,
+        "permissive dummy schema should produce no SCHEMA errors"
+    );
 }
 
 #[test]

@@ -12,8 +12,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use jsonschema::{Retrieve, Uri, Validator};
 use serde_json::Value;
 use tracing::{event, instrument, Level};
 
@@ -100,17 +102,17 @@ pub fn resolve(layout: &LayoutContext, report: &mut Report) -> Result<Aggregator
         }
     }
 
-    // Cycle detection is warn-only in Phase 1; the aggregator is not
-    // compiled here.
+    // Phase 2 promotes cycle detection from warn → error. Doc 10's
+    // commitment: "Phase 2 will fail at compile time" — we now do.
     let cycles = detect_cycles(&fragments);
     summary.cycles_detected = cycles.len();
     for cycle in &cycles {
         let path = cycle.join(" → ");
-        event!(Level::WARN, cycle = %path, "cycle_detected");
+        event!(Level::ERROR, cycle = %path, "cycle_detected");
         report.push(Finding::new(
             "AGGREGATOR-003",
-            crate::domain::Severity::Warning,
-            format!("AGGREGATOR-003 cycle detected through inlined fragments: {path} (warn-only in Phase 1; Phase 2 will fail at compile time)"),
+            crate::domain::Severity::Error,
+            format!("AGGREGATOR-003 cycle detected through inlined fragments: {path}"),
         ));
     }
 
@@ -326,6 +328,139 @@ fn dfs_for_cycle(
         }
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// Phase-2 schema compilation: assemble the aggregator + inlined fragments
+// into a `jsonschema::Validator` callers can reuse across module TOMLs.
+// ---------------------------------------------------------------------------
+
+/// Compile the aggregator schema into a reusable [`Validator`]. Returns
+/// `Ok(None)` if the aggregator file is absent (skeleton projects). Errors
+/// surface as findings on `report`; the caller decides whether to halt.
+///
+/// This runs the Phase-1 [`resolve`] walk first (which now treats cycles as
+/// errors in Phase 2) and then performs the actual `jsonschema` build.
+/// Any unresolved-`$ref` / duplicate-`$id` / cycle finding emitted by
+/// `resolve` will be present in `report`; the caller should refuse to use
+/// the returned validator if `report.has_errors()` is true.
+#[instrument(level = "info", skip(layout, report), fields(aggregator = %layout.module_schema_path.display()))]
+pub fn compile(layout: &LayoutContext, report: &mut Report) -> Result<Option<Arc<Validator>>> {
+    let _summary = resolve(layout, report)?;
+
+    if !layout.module_schema_path.is_file() {
+        return Ok(None);
+    }
+    if report.findings().iter().any(|f| f.rule == "AGGREGATOR-003") {
+        // Cycles are fatal at compile time — refuse to build a Validator.
+        return Ok(None);
+    }
+
+    let docs = build_retriever_docs(layout)?;
+    let aggregator_text = std::fs::read_to_string(&layout.module_schema_path)
+        .with_context(|| format!("reading {}", layout.module_schema_path.display()))?;
+    let aggregator_value: Value = serde_yaml::from_str(&aggregator_text).map_err(|e| {
+        anyhow::Error::new(LocatedError::from_yaml_error(
+            &layout.module_schema_path,
+            &e,
+        ))
+    })?;
+
+    let retriever = MapRetriever {
+        docs: Arc::new(docs),
+    };
+    match jsonschema::options()
+        .with_retriever(retriever)
+        .build(&aggregator_value)
+    {
+        Ok(v) => Ok(Some(Arc::new(v))),
+        Err(e) => {
+            report.push(
+                Finding::new(
+                    "AGGREGATOR-005",
+                    crate::domain::Severity::Error,
+                    format!("AGGREGATOR-005 failed to compile aggregator schema: {e}"),
+                )
+                .with_file(layout.module_schema_path.display().to_string()),
+            );
+            Ok(None)
+        }
+    }
+}
+
+struct MapRetriever {
+    docs: Arc<HashMap<String, Value>>,
+}
+
+impl Retrieve for MapRetriever {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+        let s = uri.as_str();
+        if let Some(v) = self.docs.get(s) {
+            return Ok(v.clone());
+        }
+        // Fall back to filename-only.
+        if let Some(tail) = s.rsplit('/').next() {
+            if let Some(v) = self.docs.get(tail) {
+                return Ok(v.clone());
+            }
+        }
+        // Try `inlined/blocks/<name>` and `inlined/bridges/<name>` style
+        // paths used by the aggregator's `$ref` strings.
+        for prefix in ["inlined/blocks/", "inlined/bridges/"] {
+            if let Some(idx) = s.find(prefix) {
+                let suffix = &s[idx..];
+                if let Some(v) = self.docs.get(suffix) {
+                    return Ok(v.clone());
+                }
+            }
+        }
+        Err(format!("schema not found in retriever: {s}").into())
+    }
+}
+
+fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
+    let mut docs: HashMap<String, Value> = HashMap::new();
+    for (dir, prefix) in [
+        (&layout.inlined_blocks_dir, "inlined/blocks/"),
+        (&layout.inlined_bridges_dir, "inlined/bridges/"),
+    ] {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(dir)
+            .with_context(|| format!("reading {}", dir.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+            if !ext.eq_ignore_ascii_case("yaml") && !ext.eq_ignore_ascii_case("yml") {
+                continue;
+            }
+            let fname = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let value: Value = serde_yaml::from_str(&text)
+                .map_err(|e| anyhow::Error::new(LocatedError::from_yaml_error(&path, &e)))?;
+            // Register under: $id, plain filename, and the relative path the
+            // aggregator's $refs typically use.
+            if let Some(id) = value.get("$id").and_then(Value::as_str) {
+                docs.insert(id.to_string(), value.clone());
+            }
+            docs.insert(fname.clone(), value.clone());
+            docs.insert(format!("{prefix}{fname}"), value);
+        }
+    }
+    Ok(docs)
 }
 
 #[cfg(test)]

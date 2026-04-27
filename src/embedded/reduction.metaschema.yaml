@@ -1,0 +1,204 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/reduction.metaschema.yaml"
+title: "Reduction metaschema (v1, open-vocabulary)"
+description: >
+  Validates the *shape* of a reduction file (`reductions/project.yaml`,
+  `reductions/blocks/<name>.yaml`, `reductions/bridges/<a>+<b>.yaml`,
+  `reductions/bridges/local/<a>+<b>.yaml`).
+
+  This metaschema enforces the path grammar for kinds and the
+  required-extends rule, but does NOT enforce that `extends` chains
+  resolve to a canonical anchor — that is the resolver's job
+  (`reductions::resolve` in the analyzer crate). Likewise, lex-ordering
+  of bridge owner names is enforced in code at parse time and
+  reduction-load time, not here.
+
+  Replaces the prior-arc closed-enum reduction.schema.yaml, which gated
+  `kind` / `from_kind` / `to_kind` on closed enums. The blocks +
+  bridges + profiles arc opens those fields to path-qualified strings;
+  the closed enums remain the *base* vocabulary and are referenced
+  through `extends`.
+
+type: object
+additionalProperties: false
+required:
+  - metaschema_version
+  - entities
+  - relations
+properties:
+  metaschema_version:
+    description: Version of this metaschema the reduction targets. Only "v1" is defined.
+    type: string
+    const: "v1"
+
+  entities:
+    type: array
+    items:
+      $ref: "#/$defs/EntityDecl"
+
+  relations:
+    type: array
+    items:
+      $ref: "#/$defs/RelationDecl"
+
+$defs:
+  EntityKindPath:
+    description: >
+      Entity kind path. Either an unqualified PascalCase name
+      (resolves under the file's enclosing namespace — profile-root for
+      `project.yaml`, block-name for `blocks/<name>.yaml`) or a
+      block-qualified path `<block>.<Type>`. Bridges do not declare
+      entities — bridges contribute relations only — so the bridge
+      form is rejected here.
+    type: string
+    pattern: "^([a-z][a-z0-9-]*\\.)?[A-Z][A-Za-z0-9]*$"
+
+  RelationKindPath:
+    description: >
+      Relation kind path. Unqualified snake_case (resolves under the
+      file's enclosing namespace), block-qualified (`<block>.<relation>`),
+      or bridge-qualified (`<a>+<b>.<relation>`). Lex-ordering of bridge
+      owners is enforced by the resolver, not by this regex.
+    type: string
+    pattern: "^([a-z][a-z0-9-]*(\\+[a-z][a-z0-9-]*)?\\.)?[a-z][a-z0-9_]*$"
+
+  EntityExtendsValue:
+    description: >
+      Extends target for a non-canonical entity. Shape-checked here
+      against the entity-kind grammar (canonical roots are bare PascalCase
+      identifiers but the canonical-root enum membership is checked by
+      the resolver, not by this regex; see canonical.rs). The resolver
+      walks the chain and rejects targets that don't transitively reach
+      a canonical root.
+    type: string
+    pattern: "^([a-z][a-z0-9-]*\\.)?[A-Za-z][A-Za-z0-9_]*$"
+
+  RelationExtendsValue:
+    description: >
+      Extends target for a non-canonical relation. Shape-checked here
+      against the relation-kind grammar; canonical-relation membership
+      and chain reachability are checked by the resolver.
+    type: string
+    pattern: "^([a-z][a-z0-9-]*(\\+[a-z][a-z0-9-]*)?\\.)?[a-z][a-z0-9_]*$"
+
+  EntityDecl:
+    type: object
+    additionalProperties: false
+    required:
+      - kind
+      - extends
+      - from
+      - name
+    properties:
+      kind:
+        description: >
+          Entity kind path. Unqualified or block-qualified — see EntityKindPath.
+        $ref: "#/$defs/EntityKindPath"
+      extends:
+        description: >
+          Required on every non-canonical entity. Shape-checked here;
+          canonical-anchor reachability is checked by the resolver.
+        $ref: "#/$defs/EntityExtendsValue"
+      from:
+        description: >
+          Glob (relative to project root) matching the authored TOML files
+          that materialize instances of this entity.
+        type: string
+        minLength: 1
+      for_each:
+        description: >
+          Optional selector. When present, one entity is materialized per
+          element the selector picks out of each file. When absent, one
+          entity per file.
+        type: string
+      name:
+        description: >
+          Template string that yields the entity's unique name. May
+          reference the current element (${.field}) and the enclosing
+          file's root (${...}).
+        type: string
+        minLength: 1
+      attrs:
+        description: >
+          Map of attribute name → selector. Selectors are evaluated against
+          the current for_each element (or the file root, if no for_each).
+        type: object
+        additionalProperties:
+          type: string
+      render:
+        $ref: "#/$defs/RenderHint"
+
+  RelationDecl:
+    type: object
+    additionalProperties: false
+    required:
+      - kind
+      - extends
+      - from_kind
+      - to_kind
+      - from_spec
+      - endpoints
+    properties:
+      kind:
+        description: >
+          Relation kind path. Unqualified, block-qualified, or
+          bridge-qualified — see RelationKindPath.
+        $ref: "#/$defs/RelationKindPath"
+      extends:
+        description: >
+          Required on every non-canonical relation (new in this metaschema
+          revision; the prior closed-enum form did not require it because
+          relations were enum-typed directly).
+        $ref: "#/$defs/RelationExtendsValue"
+      from_kind:
+        description: >
+          Entity kind of the source endpoint. Unqualified resolves under
+          the file's enclosing namespace; full path required for cross-namespace.
+        $ref: "#/$defs/EntityKindPath"
+      to_kind:
+        description: >
+          Entity kind of the target endpoint. Unqualified or block-qualified.
+        $ref: "#/$defs/EntityKindPath"
+      from_spec:
+        description: Glob matching the authored TOML files this relation is read from.
+        type: string
+        minLength: 1
+      for_each:
+        description: Optional per-element iterator, as in EntityDecl.
+        type: string
+      endpoints:
+        type: object
+        additionalProperties: false
+        required:
+          - from
+          - to
+        properties:
+          from:
+            description: Template string resolving to the name of an existing entity.
+            type: string
+            minLength: 1
+          to:
+            type: string
+            minLength: 1
+      attrs:
+        type: object
+        additionalProperties:
+          type: string
+
+  RenderHint:
+    type: object
+    additionalProperties: false
+    properties:
+      shape:
+        description: Closed v1 shape enum.
+        type: string
+        enum: [box, rounded_rect, diamond, port, swimlane]
+      arrow_style:
+        description: Closed v1 arrow-style enum.
+        type: string
+        enum: [solid, dashed, dotted, bold]
+      group_by:
+        description: >
+          Attribute name or canonical root kind to group this entity under
+          in default views.
+        type: string

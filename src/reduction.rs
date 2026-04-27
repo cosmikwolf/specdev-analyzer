@@ -1,77 +1,31 @@
-//! Reduction executor — per-domain `reduction.yaml` → universal
-//! `(entities, relations)` graph.
+//! Reduction executor — open-vocabulary `(entities, relations)` graph.
 //!
-//! A reduction spec describes how to map authored TOML specs under `specs/`
-//! into an extend-only set of Entity and Relation records keyed by canonical
-//! root/relation kinds (see `schema/meta/v1/`). Authored TOML is never
-//! modified — this is a derived, read-only view.
+//! Phase 2 rewires the executor to drive off the [`EffectiveKindSet`]
+//! produced by [`crate::reductions::resolve`], rather than a closed-enum
+//! `ReductionSpec`. Entity and Relation records are keyed by *qualified*
+//! kind paths (e.g. `embassy.Task`, `embassy+lvgl.renders`). Cross-domain
+//! dispatch happens through the `extends` chain on each record.
 //!
-//! See `specdev-next/10-metaschema.md` for motivation and the deliberate
-//! v1 cut line. This module implements steps 3–4 of that doc's seven-step
-//! migration (metaschema + executor running alongside the existing
-//! extractor, not replacing it).
-//!
-//! # Scoping rules (v1)
+//! The doc-10 §"Scoping rules (v1)" semantics are preserved verbatim:
 //!
 //! * `parent.name` in a `for_each` scope resolves to the file-root's `name`
 //!   field. Nested-parent references (`parent.parent.*`) are rejected.
 //! * Attribute selectors that yield zero picks are omitted (absent ≠ null).
 //! * Endpoint resolution is post-entity-materialization: relations whose
-//!   `from`/`to` don't land on an existing `(kind, name)` emit a
+//!   `from`/`to` don't land on an existing `(qualified-kind, name)` emit a
 //!   `REDUCE_UNRESOLVED` finding carrying TOML provenance.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{Context, Result};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::domain::Severity;
 use crate::path::{eval_template, select, Scope};
 use crate::report::{Finding, Provenance, Report};
-use crate::schema::SchemaRegistry;
-
-/// Parsed `reduction.yaml`. Matches the metaschema at
-/// `schema/meta/v1/reduction.schema.yaml`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ReductionSpec {
-    pub metaschema_version: String,
-    pub entities: Vec<EntityDecl>,
-    pub relations: Vec<RelationDecl>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct EntityDecl {
-    pub kind: String,
-    pub extends: String,
-    pub from: String,
-    pub name: String,
-    #[serde(default)]
-    pub for_each: Option<String>,
-    #[serde(default)]
-    pub attrs: BTreeMap<String, String>,
-    // `render` is ignored by the executor; metaschema validates shape.
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RelationDecl {
-    pub kind: String,
-    pub from_kind: String,
-    pub to_kind: String,
-    pub from_spec: String,
-    #[serde(default)]
-    pub for_each: Option<String>,
-    pub endpoints: Endpoints,
-    #[serde(default)]
-    pub attrs: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Endpoints {
-    pub from: String,
-    pub to: String,
-}
+use crate::resolved::{EffectiveKindSet, ResolvedEntityDecl, ResolvedRelationDecl};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Entity {
@@ -117,105 +71,42 @@ pub struct Graph {
     pub relations: Vec<Relation>,
 }
 
-/// Library-friendly entry point.
-///
-/// Phase 1 stub: the prior-arc executor depended on the metaschema directory
-/// shipped from the plugin (`<plugin_root>/schema/meta/v1`) and on the
-/// `[paths.overrides]` cascade from `D13`. Both are retired by doc 15 §11
-/// invariant 5 ("no resolution chain at analyze time"). Phase 2's metaschema
-/// amendment + path-qualified kind resolver replace them; until then,
-/// reduction execution bails.
+/// Library-friendly entry point. Discovers the layout, loads + resolves
+/// the project's reductions, and runs the executor against the resulting
+/// [`EffectiveKindSet`]. The returned `Report` carries every finding from
+/// the resolver pass plus any executor-level `REDUCE_UNRESOLVED` errors.
 pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<(Graph, Report)> {
     let layout = crate::layout::LayoutContext::discover(start, explicit_spec_path)?;
-    bail!(
-        "specdev-analyzer reduce is available in Phase 2 once kind resolution lands. \
-         Phase 1 ships layout discovery only (project: {}).",
-        layout.project_root.display()
-    );
-}
-
-/// Load and metaschema-validate a `reduction.yaml`.
-pub fn load_reduction_spec(path: &Path, meta_dir: &Path) -> Result<ReductionSpec> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading reduction spec {}", path.display()))?;
-    let value: Value = serde_yaml::from_str(&text)
-        .with_context(|| format!("parsing reduction spec {}", path.display()))?;
-
-    let registry = SchemaRegistry::load_dir(meta_dir)
-        .with_context(|| format!("loading metaschema from {}", meta_dir.display()))?;
-    let findings = registry.validate("reduction", &value, &path.display().to_string())?;
-    if !findings.is_empty() {
-        let msgs: Vec<String> = findings.iter().map(|f| f.message.clone()).collect();
-        bail!(
-            "reduction spec {} failed metaschema:\n  - {}",
-            path.display(),
-            msgs.join("\n  - ")
-        );
-    }
-
-    let spec: ReductionSpec = serde_yaml::from_str(&text)
-        .with_context(|| format!("deserializing reduction spec {}", path.display()))?;
-    Ok(spec)
-}
-
-/// Run the reduction. The returned `Report` captures unresolved-endpoint
-/// findings (and any other semantic failures); the `Graph` is always
-/// populated with whichever entities/relations did resolve so callers can
-/// inspect partial output.
-pub fn execute(spec: &ReductionSpec, project_root: &Path) -> Result<(Graph, Report)> {
-    let mut graph = Graph::default();
+    let inv = crate::reductions::load_all(&layout)?;
+    let (kindset, kindset_findings) = crate::reductions::resolve(&inv);
     let mut report = Report::default();
+    report.extend(kindset_findings);
+    let graph = execute_kindset(&kindset, &layout.project_root, &mut report)?;
+    Ok((graph, report))
+}
+
+/// Materialize the project graph from a resolved [`EffectiveKindSet`] and
+/// the project root. Open-vocabulary entry point — entity and relation
+/// records are keyed by qualified kind paths (e.g. `embassy.Task`,
+/// `embassy+lvgl.renders`), with `extends` carrying the canonical anchor
+/// the qualified kind classifies under.
+pub fn execute_kindset(
+    kindset: &EffectiveKindSet,
+    project_root: &Path,
+    report: &mut Report,
+) -> Result<Graph> {
+    let mut graph = Graph::default();
 
     // ---- Pass 1: entities ----
-    for decl in &spec.entities {
-        let files = glob_from_root(project_root, &decl.from)?;
-        for file in files {
-            let rel_file = relpath(&file, project_root);
-            let root_value = load_toml_as_json(&file)?;
-            let parent_name = file_root_name(&root_value);
-
-            let iterations = iterate(
-                &root_value,
-                decl.for_each.as_deref(),
-                parent_name.as_deref(),
-            );
-            for iter in iterations {
-                let scope = Scope {
-                    root: &root_value,
-                    current: Some(iter.current),
-                    parent_name: iter.parent_name,
-                };
-                let name = eval_template(&decl.name, &scope).with_context(|| {
-                    format!(
-                        "evaluating entity `{}` name template in {}",
-                        decl.kind, rel_file
-                    )
-                })?;
-
-                let mut attrs = BTreeMap::new();
-                for (k, selector) in &decl.attrs {
-                    let picks = select(iter.current, selector);
-                    match picks.len() {
-                        0 => {}
-                        1 => {
-                            attrs.insert(k.clone(), picks[0].value.clone());
-                        }
-                        _ => {
-                            let arr: Vec<Value> = picks.into_iter().map(|p| p.value).collect();
-                            attrs.insert(k.clone(), Value::Array(arr));
-                        }
-                    }
-                }
-
-                graph.entities.push(Entity {
-                    kind: decl.kind.clone(),
-                    extends: decl.extends.clone(),
-                    name,
-                    attrs,
-                    provenance: Provenance::new(rel_file.clone(), iter.pointer).into(),
-                });
-            }
-        }
+    for (qualified_path, decl) in &kindset.entities {
+        materialize_entity(
+            qualified_path,
+            decl,
+            kindset,
+            project_root,
+            &mut graph,
+            report,
+        )?;
     }
 
     let mut index: std::collections::HashMap<(String, String), usize> =
@@ -225,93 +116,230 @@ pub fn execute(spec: &ReductionSpec, project_root: &Path) -> Result<(Graph, Repo
     }
 
     // ---- Pass 2: relations ----
-    for decl in &spec.relations {
-        let files = glob_from_root(project_root, &decl.from_spec)?;
-        for file in files {
-            let rel_file = relpath(&file, project_root);
-            let root_value = load_toml_as_json(&file)?;
-            let parent_name = file_root_name(&root_value);
-
-            let iterations = iterate(
-                &root_value,
-                decl.for_each.as_deref(),
-                parent_name.as_deref(),
-            );
-            for iter in iterations {
-                let scope = Scope {
-                    root: &root_value,
-                    current: Some(iter.current),
-                    parent_name: iter.parent_name,
-                };
-                let from_name = eval_template(&decl.endpoints.from, &scope).with_context(|| {
-                    format!(
-                        "evaluating relation `{}` endpoints.from in {}",
-                        decl.kind, rel_file
-                    )
-                })?;
-                let to_name = eval_template(&decl.endpoints.to, &scope).with_context(|| {
-                    format!(
-                        "evaluating relation `{}` endpoints.to in {}",
-                        decl.kind, rel_file
-                    )
-                })?;
-
-                let provenance = Provenance::new(rel_file.clone(), iter.pointer.clone());
-                let mut unresolved = false;
-                if !index.contains_key(&(decl.from_kind.clone(), from_name.clone())) {
-                    report.push(
-                        Finding::new(
-                            "REDUCE_UNRESOLVED",
-                            Severity::Error,
-                            format!(
-                                "unresolved {} endpoint `{from_name}` (relation `{}`)",
-                                decl.from_kind, decl.kind
-                            ),
-                        )
-                        .with_provenance(provenance.clone()),
-                    );
-                    unresolved = true;
-                }
-                if !index.contains_key(&(decl.to_kind.clone(), to_name.clone())) {
-                    report.push(
-                        Finding::new(
-                            "REDUCE_UNRESOLVED",
-                            Severity::Error,
-                            format!(
-                                "unresolved {} endpoint `{to_name}` (relation `{}`)",
-                                decl.to_kind, decl.kind
-                            ),
-                        )
-                        .with_provenance(provenance.clone()),
-                    );
-                    unresolved = true;
-                }
-                if unresolved {
-                    continue;
-                }
-
-                let mut attrs = BTreeMap::new();
-                for (k, selector) in &decl.attrs {
-                    let picks = select(iter.current, selector);
-                    if let Some(p) = picks.into_iter().next() {
-                        attrs.insert(k.clone(), p.value);
-                    }
-                }
-
-                graph.relations.push(Relation {
-                    kind: decl.kind.clone(),
-                    from_kind: decl.from_kind.clone(),
-                    to_kind: decl.to_kind.clone(),
-                    from: from_name,
-                    to: to_name,
-                    attrs,
-                    provenance: provenance.into(),
-                });
-            }
-        }
+    for (qualified_path, decl) in &kindset.relations {
+        materialize_relation(
+            qualified_path,
+            decl,
+            project_root,
+            &index,
+            &mut graph,
+            report,
+        )?;
     }
 
-    Ok((graph, report))
+    Ok(graph)
+}
+
+fn materialize_entity(
+    qualified_path: &str,
+    decl: &ResolvedEntityDecl,
+    kindset: &EffectiveKindSet,
+    project_root: &Path,
+    graph: &mut Graph,
+    _report: &mut Report,
+) -> Result<()> {
+    let body = decl_body(&decl.raw);
+    let from = body
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let name_template = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let for_each = body
+        .get("for_each")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let attrs_map = body
+        .get("attrs")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let canonical_root = kindset
+        .entity_canonical_root(qualified_path)
+        .unwrap_or_else(|| "structural".to_string());
+
+    if from.is_empty() {
+        return Ok(());
+    }
+    let files = glob_from_root(project_root, &from)?;
+    for file in files {
+        let rel_file = relpath(&file, project_root);
+        let root_value = load_toml_as_json(&file)?;
+        let parent_name = file_root_name(&root_value);
+
+        let iterations = iterate(&root_value, for_each.as_deref(), parent_name.as_deref());
+        for iter in iterations {
+            let scope = Scope {
+                root: &root_value,
+                current: Some(iter.current),
+                parent_name: iter.parent_name,
+            };
+            let name = eval_template(&name_template, &scope).with_context(|| {
+                format!("evaluating entity `{qualified_path}` name template in {rel_file}")
+            })?;
+
+            let mut attrs = BTreeMap::new();
+            for (k, selector_value) in &attrs_map {
+                let Some(selector) = selector_value.as_str() else {
+                    continue;
+                };
+                let picks = select(iter.current, selector);
+                match picks.len() {
+                    0 => {}
+                    1 => {
+                        attrs.insert(k.clone(), picks[0].value.clone());
+                    }
+                    _ => {
+                        let arr: Vec<Value> = picks.into_iter().map(|p| p.value).collect();
+                        attrs.insert(k.clone(), Value::Array(arr));
+                    }
+                }
+            }
+
+            graph.entities.push(Entity {
+                kind: qualified_path.to_string(),
+                extends: canonical_root.clone(),
+                name,
+                attrs,
+                provenance: Provenance::new(rel_file.clone(), iter.pointer).into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn materialize_relation(
+    qualified_path: &str,
+    decl: &ResolvedRelationDecl,
+    project_root: &Path,
+    index: &std::collections::HashMap<(String, String), usize>,
+    graph: &mut Graph,
+    report: &mut Report,
+) -> Result<()> {
+    let body = decl_body(&decl.raw);
+    let from_spec = body
+        .get("from_spec")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let for_each = body
+        .get("for_each")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let endpoints = body.get("endpoints").and_then(|v| v.as_object()).cloned();
+    let endpoints_from = endpoints
+        .as_ref()
+        .and_then(|e| e.get("from").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let endpoints_to = endpoints
+        .as_ref()
+        .and_then(|e| e.get("to").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let attrs_map = body
+        .get("attrs")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let from_kind_str = decl.from_kind.to_string();
+    let to_kind_str = decl.to_kind.to_string();
+
+    if from_spec.is_empty() {
+        return Ok(());
+    }
+    let files = glob_from_root(project_root, &from_spec)?;
+    for file in files {
+        let rel_file = relpath(&file, project_root);
+        let root_value = load_toml_as_json(&file)?;
+        let parent_name = file_root_name(&root_value);
+
+        let iterations = iterate(&root_value, for_each.as_deref(), parent_name.as_deref());
+        for iter in iterations {
+            let scope = Scope {
+                root: &root_value,
+                current: Some(iter.current),
+                parent_name: iter.parent_name,
+            };
+            let from_name = eval_template(&endpoints_from, &scope).with_context(|| {
+                format!("evaluating relation `{qualified_path}` endpoints.from in {rel_file}")
+            })?;
+            let to_name = eval_template(&endpoints_to, &scope).with_context(|| {
+                format!("evaluating relation `{qualified_path}` endpoints.to in {rel_file}")
+            })?;
+
+            let provenance = Provenance::new(rel_file.clone(), iter.pointer.clone());
+            let mut unresolved = false;
+            if !index.contains_key(&(from_kind_str.clone(), from_name.clone())) {
+                report.push(
+                    Finding::new(
+                        "REDUCE_UNRESOLVED",
+                        Severity::Error,
+                        format!(
+                            "unresolved {from_kind_str} endpoint `{from_name}` (relation `{qualified_path}`)"
+                        ),
+                    )
+                    .with_provenance(provenance.clone()),
+                );
+                unresolved = true;
+            }
+            if !index.contains_key(&(to_kind_str.clone(), to_name.clone())) {
+                report.push(
+                    Finding::new(
+                        "REDUCE_UNRESOLVED",
+                        Severity::Error,
+                        format!(
+                            "unresolved {to_kind_str} endpoint `{to_name}` (relation `{qualified_path}`)"
+                        ),
+                    )
+                    .with_provenance(provenance.clone()),
+                );
+                unresolved = true;
+            }
+            if unresolved {
+                continue;
+            }
+
+            let mut attrs = BTreeMap::new();
+            for (k, selector_value) in &attrs_map {
+                let Some(selector) = selector_value.as_str() else {
+                    continue;
+                };
+                let picks = select(iter.current, selector);
+                if let Some(p) = picks.into_iter().next() {
+                    attrs.insert(k.clone(), p.value);
+                }
+            }
+
+            graph.relations.push(Relation {
+                kind: qualified_path.to_string(),
+                from_kind: from_kind_str.clone(),
+                to_kind: to_kind_str.clone(),
+                from: from_name,
+                to: to_name,
+                attrs,
+                provenance: provenance.into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Translate the YAML body retained on a [`ResolvedEntityDecl`] /
+/// [`ResolvedRelationDecl`] into a JSON map for selector evaluation. The
+/// YAML carries the verbatim `from`/`name`/`attrs`/`endpoints` fields.
+fn decl_body(raw: &serde_yaml::Value) -> serde_json::Map<String, Value> {
+    let json: Value = match serde_json::to_value(raw) {
+        Ok(v) => v,
+        Err(_) => return serde_json::Map::new(),
+    };
+    json.as_object().cloned().unwrap_or_default()
 }
 
 /// Deterministic YAML rendering for graphs. Keys are already canonical

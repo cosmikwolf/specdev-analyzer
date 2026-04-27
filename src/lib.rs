@@ -23,11 +23,13 @@
 
 pub mod aggregator;
 pub mod audit;
+pub mod canonical;
 pub mod config;
 pub mod diagnostics;
 pub mod domain;
 pub mod extract;
 pub mod graph;
+pub mod kinds;
 pub mod lang;
 pub mod layout;
 pub mod path;
@@ -35,6 +37,7 @@ pub mod reduction;
 pub mod reductions;
 pub mod report;
 pub mod resolve;
+pub mod resolved;
 pub mod schema;
 pub mod validate;
 

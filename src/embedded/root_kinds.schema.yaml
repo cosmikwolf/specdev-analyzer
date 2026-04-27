@@ -1,0 +1,20 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/root_kinds.schema.yaml"
+title: "Canonical root kinds (v1)"
+description: >
+  Closed vocabulary of root kinds every entity ultimately extends. Adding
+  or renaming a root kind is a metaschema version bump. Embedded in the
+  analyzer per doc 15 §11 invariant 5 (no plugin lookup at analyze time).
+  See specdev-next/10-metaschema.md for rationale.
+
+$defs:
+  RootKind:
+    type: string
+    enum:
+      - structural  # has identity, occupies the architecture (module, port, view, widget, state_machine, ...)
+      - behavioral  # happens or can be invoked (action, transition)
+      - event       # async message/signal (payload-carrying trigger)
+      - state       # discrete condition of a structural thing
+      - data        # named type or shape (type, enum, interface)
+      - statement   # intent or constraint (requirement, invariant)
+      - grouping    # organizational overlay (layer, package, workspace)

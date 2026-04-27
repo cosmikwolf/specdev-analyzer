@@ -11,14 +11,22 @@
 //! path-qualification, no canonical-vs-local enforcement at load time.
 //! Phase 2's metaschema amendment cuts that work in.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
 use tracing::{event, instrument, Level};
 
+use crate::canonical::{canonical_relation_kinds, canonical_root_kinds};
 use crate::diagnostics::LocatedError;
+use crate::domain::Severity;
+use crate::kinds::{self, KindPath};
 use crate::layout::LayoutContext;
+use crate::report::Finding;
+use crate::resolved::{
+    EffectiveKindSet, ResolvedEntityDecl, ResolvedExtends, ResolvedRelationDecl,
+};
 
 #[derive(Debug, Clone)]
 pub struct ReductionInventory {
@@ -44,6 +52,10 @@ pub struct RawReduction {
     pub namespace: ReductionNamespace,
     pub raw: serde_yaml::Value,
     pub kind_declarations: Vec<RawKindDecl>,
+    /// Original YAML text, retained for source-line lookup during Phase-2
+    /// resolution. Re-reading from disk would work but this avoids a second
+    /// I/O per file when resolve() is called.
+    pub source_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +183,7 @@ fn load_one(path: &Path, namespace: ReductionNamespace) -> Result<RawReduction> 
         namespace,
         raw,
         kind_declarations,
+        source_text: text,
     })
 }
 
@@ -261,6 +274,605 @@ fn parse_bridge_namespace(stem: &str, is_local: bool) -> Option<ReductionNamespa
             right: right.to_string(),
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase-2 resolver: open-vocabulary kind resolution.
+// ---------------------------------------------------------------------------
+
+/// Walk every loaded reduction, rewrite unqualified kind names to qualified
+/// form by file location, validate the path grammar, resolve `extends`
+/// chains to canonical anchors, and produce the [`EffectiveKindSet`].
+///
+/// Findings emitted (rule codes per the Phase-2 plan):
+///
+/// * `METASCHEMA-001` — non-canonical entity/relation missing `extends:`.
+/// * `METASCHEMA-002` — `extends:` target does not name a canonical anchor
+///   nor a previously-resolved qualified kind. Catches both unresolved
+///   references and `extends` cycles.
+/// * `METASCHEMA-003` — bridge filename is not lex-ordered (e.g.
+///   `lvgl+embassy.yaml` instead of `embassy+lvgl.yaml`).
+/// * `METASCHEMA-004` — same `<a>+<b>` pair is declared in both
+///   `bridges/` and `bridges/local/`. Warning; canonical wins.
+/// * `METASCHEMA-005` — kind path violates the grammar
+///   (`Type` / `<block>.<Kind>` / `<a>+<b>.<relation>`).
+///
+/// Lex-order is also enforced inside [`crate::kinds::parse`] for path
+/// strings inside reduction bodies; the filesystem-name check here is the
+/// distinct, complementary check (plan §"Lex-order is enforced in two
+/// places, intentionally").
+pub fn resolve(inv: &ReductionInventory) -> (EffectiveKindSet, Vec<Finding>) {
+    let mut findings: Vec<Finding> = Vec::new();
+
+    bridge_filesystem_checks(inv, &mut findings);
+
+    // Canonical-vs-local shadow: shadowed local bridges are warned about
+    // (METASCHEMA-004) but excluded from declaration walking — canonical
+    // wins.
+    let canonical_pairs: BTreeSet<String> = inv
+        .bridges_canonical
+        .iter()
+        .filter_map(|r| match &r.namespace {
+            ReductionNamespace::BridgeCanonical { left, right } => Some(format!("{left}+{right}")),
+            _ => None,
+        })
+        .collect();
+
+    let walk_order: Vec<&RawReduction> = inv
+        .project
+        .iter()
+        .chain(inv.blocks.iter())
+        .chain(inv.bridges_canonical.iter())
+        .chain(inv.bridges_local.iter().filter(|r| match &r.namespace {
+            ReductionNamespace::BridgeLocal { left, right } => {
+                !canonical_pairs.contains(&format!("{left}+{right}"))
+            }
+            _ => true,
+        }))
+        .collect();
+
+    let mut pending_entities: Vec<PendingEntity> = Vec::new();
+    let mut pending_relations: Vec<PendingRelation> = Vec::new();
+    for r in walk_order {
+        walk_file(
+            r,
+            &mut pending_entities,
+            &mut pending_relations,
+            &mut findings,
+        );
+    }
+
+    let (entities, relations) =
+        resolve_extends_chains(pending_entities, pending_relations, &mut findings);
+
+    let kindset = EffectiveKindSet {
+        canonical_roots: canonical_root_kinds().clone(),
+        canonical_relations: canonical_relation_kinds().clone(),
+        entities,
+        relations,
+    };
+    (kindset, findings)
+}
+
+fn bridge_filesystem_checks(inv: &ReductionInventory, findings: &mut Vec<Finding>) {
+    // METASCHEMA-003 — lex-order on bridge filesystem names. Distinct from
+    // the path-string lex-order check inside `kinds::parse`; both point at
+    // the same human error class but catch it at different lifecycle stages.
+    for r in inv.bridges_canonical.iter().chain(inv.bridges_local.iter()) {
+        let (left, right) = match &r.namespace {
+            ReductionNamespace::BridgeCanonical { left, right }
+            | ReductionNamespace::BridgeLocal { left, right } => (left, right),
+            _ => continue,
+        };
+        if left >= right {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-003",
+                    Severity::Error,
+                    format!(
+                        "bridge filename `{}` is not lex-ordered: rename to `{}+{}.yaml` (left < right)",
+                        r.source_path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("?"),
+                        right,
+                        left
+                    ),
+                )
+                .with_file(r.source_path.display().to_string()),
+            );
+        }
+    }
+
+    // METASCHEMA-004 — canonical/local shadow. Warning per doc 10
+    // §"Declaration sites and resolution"; canonical takes precedence.
+    let canonical_files: BTreeMap<String, PathBuf> = inv
+        .bridges_canonical
+        .iter()
+        .filter_map(|r| match &r.namespace {
+            ReductionNamespace::BridgeCanonical { left, right } => {
+                Some((format!("{left}+{right}"), r.source_path.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    for r in &inv.bridges_local {
+        let key = match &r.namespace {
+            ReductionNamespace::BridgeLocal { left, right } => format!("{left}+{right}"),
+            _ => continue,
+        };
+        if let Some(canonical_path) = canonical_files.get(&key) {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-004",
+                    Severity::Warning,
+                    format!(
+                        "local bridge `{}` is shadowed by canonical bridge `{}`; canonical wins. \
+                         Remove or rename one to silence this warning.",
+                        r.source_path.display(),
+                        canonical_path.display()
+                    ),
+                )
+                .with_file(r.source_path.display().to_string()),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PendingEntity {
+    qualified: String,
+    extends_string: String,
+    decl: ResolvedEntityDecl,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRelation {
+    qualified: String,
+    extends_string: String,
+    decl: ResolvedRelationDecl,
+}
+
+fn walk_file(
+    r: &RawReduction,
+    pending_entities: &mut Vec<PendingEntity>,
+    pending_relations: &mut Vec<PendingRelation>,
+    findings: &mut Vec<Finding>,
+) {
+    // Convert YAML → JSON for easy walking; both share tree shape.
+    let json: JsonValue = match serde_yaml::from_value(r.raw.clone()) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    if let Some(arr) = json.get("entities").and_then(JsonValue::as_array) {
+        for (idx, item) in arr.iter().enumerate() {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            walk_entity(r, idx, obj, pending_entities, findings);
+        }
+    }
+
+    if let Some(arr) = json.get("relations").and_then(JsonValue::as_array) {
+        for (idx, item) in arr.iter().enumerate() {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            walk_relation(r, idx, obj, pending_relations, findings);
+        }
+    }
+}
+
+fn walk_entity(
+    r: &RawReduction,
+    _idx: usize,
+    obj: &serde_json::Map<String, JsonValue>,
+    pending: &mut Vec<PendingEntity>,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(kind_str) = obj.get("kind").and_then(JsonValue::as_str) else {
+        return;
+    };
+    let source_line = find_line_of(&r.source_text, kind_str);
+
+    // Bridges declare relations only.
+    if matches!(
+        r.namespace,
+        ReductionNamespace::BridgeCanonical { .. } | ReductionNamespace::BridgeLocal { .. }
+    ) {
+        findings.push(
+            Finding::new(
+                "METASCHEMA-005",
+                Severity::Error,
+                format!(
+                    "bridge reductions declare relations only; entity `{}` is not allowed in {}",
+                    kind_str,
+                    r.source_path.display()
+                ),
+            )
+            .with_file(r.source_path.display().to_string())
+            .with_line(source_line),
+        );
+        return;
+    }
+
+    let qualified_path = match qualify_declared_kind(kind_str, &r.namespace, true) {
+        Ok(p) => p,
+        Err(msg) => {
+            findings.push(
+                Finding::new("METASCHEMA-005", Severity::Error, msg)
+                    .with_file(r.source_path.display().to_string())
+                    .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let extends_str = match obj.get("extends").and_then(JsonValue::as_str) {
+        Some(s) => s.to_string(),
+        None => {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-001",
+                    Severity::Error,
+                    format!("entity `{}` is missing required `extends:`", qualified_path),
+                )
+                .with_file(r.source_path.display().to_string())
+                .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let raw_yaml: serde_yaml::Value = serde_json::from_value(JsonValue::Object(obj.clone()))
+        .ok()
+        .and_then(|j: JsonValue| serde_yaml::to_value(j).ok())
+        .unwrap_or(serde_yaml::Value::Null);
+
+    let decl = ResolvedEntityDecl {
+        path: qualified_path.clone(),
+        extends: ResolvedExtends::Canonical(String::new()), // placeholder, filled in resolve_extends_chains
+        source_path: r.source_path.clone(),
+        source_line,
+        raw: raw_yaml,
+    };
+    pending.push(PendingEntity {
+        qualified: qualified_path.to_string(),
+        extends_string: extends_str,
+        decl,
+    });
+}
+
+fn walk_relation(
+    r: &RawReduction,
+    _idx: usize,
+    obj: &serde_json::Map<String, JsonValue>,
+    pending: &mut Vec<PendingRelation>,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(kind_str) = obj.get("kind").and_then(JsonValue::as_str) else {
+        return;
+    };
+    let source_line = find_line_of(&r.source_text, kind_str);
+
+    let qualified_path = match qualify_declared_kind(kind_str, &r.namespace, false) {
+        Ok(p) => p,
+        Err(msg) => {
+            findings.push(
+                Finding::new("METASCHEMA-005", Severity::Error, msg)
+                    .with_file(r.source_path.display().to_string())
+                    .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let extends_str = match obj.get("extends").and_then(JsonValue::as_str) {
+        Some(s) => s.to_string(),
+        None => {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-001",
+                    Severity::Error,
+                    format!(
+                        "relation `{}` is missing required `extends:`",
+                        qualified_path
+                    ),
+                )
+                .with_file(r.source_path.display().to_string())
+                .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let from_kind = match obj
+        .get("from_kind")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| "missing `from_kind`".to_string())
+        .and_then(|s| qualify_endpoint_kind(s, &r.namespace))
+    {
+        Ok(p) => p,
+        Err(msg) => {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-005",
+                    Severity::Error,
+                    format!("relation `{qualified_path}`: {msg}"),
+                )
+                .with_file(r.source_path.display().to_string())
+                .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let to_kind = match obj
+        .get("to_kind")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| "missing `to_kind`".to_string())
+        .and_then(|s| qualify_endpoint_kind(s, &r.namespace))
+    {
+        Ok(p) => p,
+        Err(msg) => {
+            findings.push(
+                Finding::new(
+                    "METASCHEMA-005",
+                    Severity::Error,
+                    format!("relation `{qualified_path}`: {msg}"),
+                )
+                .with_file(r.source_path.display().to_string())
+                .with_line(source_line),
+            );
+            return;
+        }
+    };
+
+    let raw_yaml: serde_yaml::Value = serde_json::from_value(JsonValue::Object(obj.clone()))
+        .ok()
+        .and_then(|j: JsonValue| serde_yaml::to_value(j).ok())
+        .unwrap_or(serde_yaml::Value::Null);
+
+    let decl = ResolvedRelationDecl {
+        path: qualified_path.clone(),
+        extends: ResolvedExtends::Canonical(String::new()), // placeholder
+        from_kind,
+        to_kind,
+        source_path: r.source_path.clone(),
+        source_line,
+        raw: raw_yaml,
+    };
+    pending.push(PendingRelation {
+        qualified: qualified_path.to_string(),
+        extends_string: extends_str,
+        decl,
+    });
+}
+
+/// Rewrite a `kind:` value to its qualified form based on the file's
+/// namespace. `is_entity` selects PascalCase vs snake_case grammar
+/// expectations; bridges only ever call this with `is_entity = false`
+/// (that case is filtered before the call).
+fn qualify_declared_kind(
+    kind_str: &str,
+    namespace: &ReductionNamespace,
+    is_entity: bool,
+) -> Result<KindPath, String> {
+    // First, parse the literal to see what shape the user wrote.
+    let parsed = kinds::parse(kind_str).map_err(|e| e.to_string())?;
+    match (&parsed, namespace) {
+        // Unqualified: rewrite to the file's namespace.
+        (KindPath::Unqualified(name), ReductionNamespace::Project) => {
+            // Project namespace stays unqualified.
+            if is_entity && !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                return Err(format!(
+                    "entity kinds must be PascalCase; `{name}` is not"
+                ));
+            }
+            if !is_entity && name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                return Err(format!(
+                    "relation kinds must be snake_case; `{name}` is not"
+                ));
+            }
+            Ok(parsed)
+        }
+        (KindPath::Unqualified(name), ReductionNamespace::Block(block)) => Ok(KindPath::Block {
+            block: block.clone(),
+            name: name.clone(),
+        }),
+        (KindPath::Unqualified(name), ReductionNamespace::BridgeCanonical { left, right })
+        | (KindPath::Unqualified(name), ReductionNamespace::BridgeLocal { left, right }) => {
+            if is_entity {
+                // Filtered earlier; defensive.
+                Err("bridge files cannot declare entities".into())
+            } else {
+                Ok(KindPath::Bridge {
+                    left: left.clone(),
+                    right: right.clone(),
+                    relation: name.clone(),
+                })
+            }
+        }
+
+        // Already-qualified: must match the file's namespace.
+        (KindPath::Block { block, .. }, ReductionNamespace::Block(file_block)) => {
+            if block != file_block {
+                Err(format!(
+                    "kind `{kind_str}` declares namespace `{block}` but file is in namespace `{file_block}`",
+                ))
+            } else {
+                Ok(parsed)
+            }
+        }
+        (KindPath::Bridge { left, right, .. }, ReductionNamespace::BridgeCanonical { left: fl, right: fr })
+        | (KindPath::Bridge { left, right, .. }, ReductionNamespace::BridgeLocal { left: fl, right: fr }) => {
+            if left != fl || right != fr {
+                Err(format!(
+                    "kind `{kind_str}` declares namespace `{left}+{right}` but file is in namespace `{fl}+{fr}`",
+                ))
+            } else {
+                Ok(parsed)
+            }
+        }
+
+        // Cross-namespace declarations are not allowed in `kind:`.
+        (KindPath::Block { block, .. }, ReductionNamespace::Project) => Err(format!(
+            "project reduction cannot declare block-qualified kind `{kind_str}` (block `{block}` belongs in `blocks/{block}.yaml`)",
+        )),
+        (KindPath::Bridge { .. }, ReductionNamespace::Project) => Err(format!(
+            "project reduction cannot declare bridge-qualified kind `{kind_str}`",
+        )),
+        (KindPath::Bridge { .. }, ReductionNamespace::Block(b)) => Err(format!(
+            "block `{b}` cannot declare bridge-qualified kind `{kind_str}`",
+        )),
+        (KindPath::Block { .. }, ReductionNamespace::BridgeCanonical { .. })
+        | (KindPath::Block { .. }, ReductionNamespace::BridgeLocal { .. }) => Err(format!(
+            "bridge cannot declare block-qualified kind `{kind_str}`",
+        )),
+    }
+}
+
+/// Rewrite a `from_kind:`/`to_kind:` value based on the file's namespace.
+/// Bare names resolve under the file's namespace; full paths pass through
+/// after grammar validation. Bridges always use full paths (entities are
+/// foreign to the bridge by construction); a bare name in a bridge resolves
+/// to one of the bridge's owning blocks — that ambiguity is rejected.
+fn qualify_endpoint_kind(s: &str, namespace: &ReductionNamespace) -> Result<KindPath, String> {
+    let parsed = kinds::parse(s).map_err(|e| e.to_string())?;
+    match (&parsed, namespace) {
+        (KindPath::Unqualified(_), ReductionNamespace::Project) => Ok(parsed),
+        (KindPath::Unqualified(name), ReductionNamespace::Block(block)) => Ok(KindPath::Block {
+            block: block.clone(),
+            name: name.clone(),
+        }),
+        (KindPath::Unqualified(_), ReductionNamespace::BridgeCanonical { .. })
+        | (KindPath::Unqualified(_), ReductionNamespace::BridgeLocal { .. }) => Err(format!(
+            "bridge endpoints must use full paths; bare `{s}` is ambiguous between the two owners",
+        )),
+        // Block-qualified or already-bridge-qualified pass through.
+        _ => Ok(parsed),
+    }
+}
+
+/// Fixed-point resolution of `extends` chains. After each pass, every
+/// pending decl whose extends string matches a canonical anchor or an
+/// already-resolved qualified entry is moved into the resolved map.
+/// When no progress is made, remaining pending entries are reported as
+/// `METASCHEMA-002` (unresolved).
+fn resolve_extends_chains(
+    pending_entities: Vec<PendingEntity>,
+    pending_relations: Vec<PendingRelation>,
+    findings: &mut Vec<Finding>,
+) -> (
+    BTreeMap<String, ResolvedEntityDecl>,
+    BTreeMap<String, ResolvedRelationDecl>,
+) {
+    let mut entities: BTreeMap<String, ResolvedEntityDecl> = BTreeMap::new();
+    let mut relations: BTreeMap<String, ResolvedRelationDecl> = BTreeMap::new();
+
+    let mut pending_e = pending_entities;
+    loop {
+        let before = pending_e.len();
+        pending_e.retain(|p| {
+            // Try canonical-root first.
+            if canonical_root_kinds().contains(&p.extends_string) {
+                let mut decl = p.decl.clone();
+                decl.extends = ResolvedExtends::Canonical(p.extends_string.clone());
+                entities.insert(p.qualified.clone(), decl);
+                return false;
+            }
+            // Try previously-resolved qualified entity.
+            if let Some(_target) = entities.get(&p.extends_string) {
+                let target_path = match kinds::parse(&p.extends_string) {
+                    Ok(kp) => kp,
+                    Err(_) => return true, // shouldn't happen at this point
+                };
+                let mut decl = p.decl.clone();
+                decl.extends = ResolvedExtends::Qualified(target_path);
+                entities.insert(p.qualified.clone(), decl);
+                return false;
+            }
+            true
+        });
+        if pending_e.len() == before {
+            break;
+        }
+    }
+
+    for p in pending_e {
+        findings.push(
+            Finding::new(
+                "METASCHEMA-002",
+                Severity::Error,
+                format!(
+                    "entity `{}`: `extends: {}` does not name a canonical root \
+                     (one of: {}) nor a previously-resolved qualified entity. \
+                     Either declare a known root or fix the typo (cycles in `extends` chains \
+                     also surface here).",
+                    p.qualified,
+                    p.extends_string,
+                    canonical_list(canonical_root_kinds()),
+                ),
+            )
+            .with_file(p.decl.source_path.display().to_string())
+            .with_line(p.decl.source_line),
+        );
+    }
+
+    let mut pending_r = pending_relations;
+    loop {
+        let before = pending_r.len();
+        pending_r.retain(|p| {
+            if canonical_relation_kinds().contains(&p.extends_string) {
+                let mut decl = p.decl.clone();
+                decl.extends = ResolvedExtends::Canonical(p.extends_string.clone());
+                relations.insert(p.qualified.clone(), decl);
+                return false;
+            }
+            if relations.contains_key(&p.extends_string) {
+                let target_path = match kinds::parse(&p.extends_string) {
+                    Ok(kp) => kp,
+                    Err(_) => return true,
+                };
+                let mut decl = p.decl.clone();
+                decl.extends = ResolvedExtends::Qualified(target_path);
+                relations.insert(p.qualified.clone(), decl);
+                return false;
+            }
+            true
+        });
+        if pending_r.len() == before {
+            break;
+        }
+    }
+
+    for p in pending_r {
+        findings.push(
+            Finding::new(
+                "METASCHEMA-002",
+                Severity::Error,
+                format!(
+                    "relation `{}`: `extends: {}` does not name a canonical relation \
+                     (one of: {}) nor a previously-resolved qualified relation. \
+                     Either declare a known relation or fix the typo (cycles in `extends` chains \
+                     also surface here).",
+                    p.qualified,
+                    p.extends_string,
+                    canonical_list(canonical_relation_kinds()),
+                ),
+            )
+            .with_file(p.decl.source_path.display().to_string())
+            .with_line(p.decl.source_line),
+        );
+    }
+
+    (entities, relations)
+}
+
+fn canonical_list(set: &BTreeSet<String>) -> String {
+    let v: Vec<String> = set.iter().cloned().collect();
+    v.join(", ")
 }
 
 #[cfg(test)]
@@ -374,6 +986,279 @@ source = "src"
             Some("Module")
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------
+    // Phase-2 resolver tests
+    // -----------------------------------------------------------------
+
+    fn write_project_yaml(root: &Path, body: &str) {
+        std::fs::create_dir_all(root.join("specs/specdev/reductions")).unwrap();
+        std::fs::write(root.join("specs/specdev/reductions/project.yaml"), body).unwrap();
+    }
+
+    fn write_block(root: &Path, name: &str, body: &str) {
+        std::fs::create_dir_all(root.join("specs/specdev/reductions/blocks")).unwrap();
+        std::fs::write(
+            root.join(format!("specs/specdev/reductions/blocks/{name}.yaml")),
+            body,
+        )
+        .unwrap();
+    }
+
+    fn write_bridge(root: &Path, name: &str, body: &str) {
+        std::fs::create_dir_all(root.join("specs/specdev/reductions/bridges")).unwrap();
+        std::fs::write(
+            root.join(format!("specs/specdev/reductions/bridges/{name}.yaml")),
+            body,
+        )
+        .unwrap();
+    }
+
+    fn write_local_bridge(root: &Path, name: &str, body: &str) {
+        std::fs::create_dir_all(root.join("specs/specdev/reductions/bridges/local")).unwrap();
+        std::fs::write(
+            root.join(format!(
+                "specs/specdev/reductions/bridges/local/{name}.yaml"
+            )),
+            body,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn resolve_block_entity_qualifies_and_resolves_to_canonical() {
+        let root = tmp("resolve-block-ok");
+        write_skeleton(&root);
+        write_block(
+            &root,
+            "embassy",
+            r#"metaschema_version: "v1"
+entities:
+  - kind: Task
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (kindset, findings) = resolve(&inv);
+        assert!(!findings.iter().any(|f| f.severity == Severity::Error));
+        let task = kindset.entity("embassy.Task").expect("embassy.Task entity");
+        assert_eq!(
+            task.extends,
+            ResolvedExtends::Canonical("structural".into())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_chain_through_profile_unqualified_kind() {
+        let root = tmp("resolve-chain");
+        write_skeleton(&root);
+        write_project_yaml(
+            &root,
+            r#"metaschema_version: "v1"
+entities:
+  - kind: Module
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        write_block(
+            &root,
+            "embassy",
+            r#"metaschema_version: "v1"
+entities:
+  - kind: Task
+    extends: Module
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (kindset, findings) = resolve(&inv);
+        assert!(
+            !findings.iter().any(|f| f.severity == Severity::Error),
+            "unexpected findings: {:?}",
+            findings
+        );
+        let task = kindset.entity("embassy.Task").unwrap();
+        match &task.extends {
+            ResolvedExtends::Qualified(p) => assert_eq!(p.to_string(), "Module"),
+            other => panic!("expected Qualified(Module), got {other:?}"),
+        }
+        // Chain walks through: embassy.Task → Module → structural.
+        assert_eq!(
+            kindset.entity_canonical_root("embassy.Task").as_deref(),
+            Some("structural")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_emits_metaschema_001_on_missing_extends() {
+        let root = tmp("missing-extends");
+        write_skeleton(&root);
+        write_block(
+            &root,
+            "embassy",
+            r#"metaschema_version: "v1"
+entities:
+  - kind: Task
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (_kindset, findings) = resolve(&inv);
+        assert!(findings.iter().any(|f| f.rule == "METASCHEMA-001"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_emits_metaschema_002_on_unresolved_extends() {
+        let root = tmp("unresolved");
+        write_skeleton(&root);
+        write_block(
+            &root,
+            "embassy",
+            r#"metaschema_version: "v1"
+entities:
+  - kind: Task
+    extends: NotARealKind
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (_, findings) = resolve(&inv);
+        assert!(findings.iter().any(|f| f.rule == "METASCHEMA-002"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_emits_metaschema_002_on_extends_cycle() {
+        let root = tmp("cycle");
+        write_skeleton(&root);
+        write_project_yaml(
+            &root,
+            r#"metaschema_version: "v1"
+entities:
+  - kind: A
+    extends: B
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+  - kind: B
+    extends: A
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (_, findings) = resolve(&inv);
+        // Both entities should fail to resolve and surface as METASCHEMA-002.
+        let count = findings
+            .iter()
+            .filter(|f| f.rule == "METASCHEMA-002")
+            .count();
+        assert_eq!(count, 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_emits_metaschema_003_on_lex_order_violation() {
+        let root = tmp("lex-order");
+        write_skeleton(&root);
+        // Filename `lvgl+embassy.yaml` violates lex ordering.
+        write_bridge(
+            &root,
+            "lvgl+embassy",
+            r#"metaschema_version: "v1"
+entities: []
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (_, findings) = resolve(&inv);
+        assert!(findings.iter().any(|f| f.rule == "METASCHEMA-003"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_emits_metaschema_004_on_canonical_local_shadow() {
+        let root = tmp("shadow");
+        write_skeleton(&root);
+        write_bridge(
+            &root,
+            "embassy+lvgl",
+            r#"metaschema_version: "v1"
+entities: []
+relations:
+  - kind: renders
+    extends: depends_on
+    from_kind: embassy.Task
+    to_kind: lvgl.Widget
+    from_spec: "specs/modules/*.toml"
+    endpoints: { from: "${.from}", to: "${.to}" }
+"#,
+        );
+        write_local_bridge(
+            &root,
+            "embassy+lvgl",
+            r#"metaschema_version: "v1"
+entities: []
+relations: []
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (_, findings) = resolve(&inv);
+        assert!(findings.iter().any(|f| f.rule == "METASCHEMA-004"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_bridge_relation_qualifies_and_resolves() {
+        let root = tmp("bridge-ok");
+        write_skeleton(&root);
+        write_bridge(
+            &root,
+            "embassy+lvgl",
+            r#"metaschema_version: "v1"
+entities: []
+relations:
+  - kind: renders
+    extends: depends_on
+    from_kind: embassy.Task
+    to_kind: lvgl.Widget
+    from_spec: "specs/modules/*.toml"
+    endpoints: { from: "${.from}", to: "${.to}" }
+"#,
+        );
+        let layout = LayoutContext::discover(&root, None).unwrap();
+        let inv = load_all(&layout).unwrap();
+        let (kindset, findings) = resolve(&inv);
+        assert!(!findings.iter().any(|f| f.severity == Severity::Error));
+        let renders = kindset.relation("embassy+lvgl.renders").unwrap();
+        assert_eq!(
+            renders.extends,
+            ResolvedExtends::Canonical("depends_on".into())
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }
