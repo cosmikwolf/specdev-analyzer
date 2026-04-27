@@ -1,0 +1,6 @@
+[domain]
+name = "skeleton-minimal"
+description = "Phase 1 minimal skeleton fixture"
+
+[schemas]
+module = "schemas/module.schema.yaml"

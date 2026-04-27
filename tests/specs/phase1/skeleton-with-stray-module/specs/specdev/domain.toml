@@ -1,0 +1,6 @@
+[domain]
+name = "stray-module"
+description = "Phase 1 fixture with one stray module"
+
+[schemas]
+module = "schemas/module.schema.yaml"

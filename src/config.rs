@@ -1,133 +1,155 @@
-//! `spec.toml` loader — project-level config.
+//! `spec.toml` loader — project-level manifest.
 //!
-//! Full override resolution (explicit paths → `.specdev/` → plugin defaults)
-//! lands in Phase 7. For now we read whatever paths `spec.toml` provides
-//! directly or fall back to caller-supplied `--schema` / `--domain` flags.
+//! Phase 1 of the blocks + bridges + profiles arc. `spec.toml` is parsed and
+//! validated against an embedded JSON Schema that the analyzer ships
+//! (`src/embedded/spec.schema.yaml`). Two-pass validation:
+//!
+//! 1. `toml::from_str` — catches structural TOML errors with byte-span
+//!    pointers, rendered as `<path>:<line>:<col>: <msg>` via [`LocatedError`].
+//! 2. JSON Schema validation of the deserialized JSON tree — catches missing
+//!    fields, value-shape errors, and unknown keys (`additionalProperties:
+//!    false`).
+//!
+//! There is **no resolution chain at analyze time** (doc 15 §11 invariant 5):
+//! `spec.toml` carries the entire project shape directly, with `[paths].specs`
+//! and `[paths].source` resolved relative to the manifest's location.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+use crate::diagnostics::LocatedError;
+
+const SPEC_SCHEMA_YAML: &str = include_str!("embedded/spec.schema.yaml");
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct SpecConfig {
     pub spec_version: String,
     pub project: ProjectSection,
-    #[serde(default)]
-    pub source: SourceSection,
-    #[serde(default)]
     pub paths: PathsSection,
-    #[serde(default, rename = "packages")]
-    pub packages: Vec<PackageSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProjectSection {
     pub name: String,
-    pub domain: String,
+    pub profile: String,
     pub language: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct SourceSection {
-    #[serde(default)]
-    pub root: Option<String>,
-    #[serde(default)]
-    pub layout: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PathsSection {
-    #[serde(default)]
-    pub overrides: OverrideSection,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct OverrideSection {
-    #[serde(default)]
-    pub schema: Option<String>,
-    #[serde(default)]
-    pub domain: Option<String>,
-    #[serde(default)]
-    pub language: Option<String>,
-    #[serde(default)]
-    pub codegen: Option<String>,
-}
-
-/// A logical package — a filesystem grouping of modules under
-/// `specs/modules/<name>/`. Multi-package projects (Rust workspaces,
-/// CMake multi-subproject trees) declare one entry per package; single-package
-/// projects leave the `[[packages]]` array empty.
-#[derive(Debug, Deserialize)]
-pub struct PackageSection {
-    pub name: String,
-    pub source_path: String,
+    /// Directory containing the project's `specs/` tree (machinery +
+    /// modules), relative to `spec.toml`. Conventionally `"specs"`.
+    pub specs: String,
+    /// Source-code directory the analyzer audits and reverse-engineers
+    /// against, relative to `spec.toml`. Conventionally `"src"`.
+    pub source: String,
 }
 
 impl SpecConfig {
+    /// Load `spec.toml` from a path. Returns a [`LocatedError`]-bearing
+    /// `anyhow::Error` on failure so the CLI's `report_error` helper can
+    /// render `<path>:<line>:<col>: <msg>`.
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let cfg: SpecConfig =
-            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        cfg.validate_packages()
-            .with_context(|| format!("validating {}", path.display()))?;
+        Self::parse(path, &text)
+    }
+
+    /// Parse + validate from in-memory text. Useful for tests.
+    pub fn parse(path: &Path, text: &str) -> Result<Self> {
+        // Pass 1: TOML parse → JSON value (for schema validation) and a typed
+        // value (returned to caller). Use `toml::de` directly so we can recover
+        // byte spans on error.
+        let raw_json: serde_json::Value = match toml::from_str(text) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(anyhow!(LocatedError::from_toml_error(path, text, &e))
+                    .context(format!("parsing {}", path.display())));
+            }
+        };
+
+        // Pass 2: validate against the embedded JSON Schema.
+        let validator = spec_schema_validator();
+        if let Err(err) = validator.validate(&raw_json) {
+            // The jsonschema 0.46 API: `validate` returns the first error; use
+            // `iter_errors` for the full set. Phase 1 surfaces the first one
+            // with file:line precision; later phases can fan out to multi-error
+            // reporting per finding.
+            let pointer = err.instance_path().to_string();
+            let (line, col) = locate_error_in_toml(text, &pointer);
+            let field = humanize_pointer(&pointer);
+            let msg = format!("{}: {}", field, err);
+            return Err(anyhow!(LocatedError::new(path, line, col, msg))
+                .context(format!("validating {}", path.display())));
+        }
+
+        // Now that the schema accepted the document, deserialize into the
+        // typed shape. This cannot fail for any document the schema accepts.
+        let cfg: SpecConfig = serde_json::from_value(raw_json)
+            .with_context(|| format!("deserializing {}", path.display()))?;
         Ok(cfg)
     }
+}
 
-    /// Structural validation of `[[packages]]`. Checks name syntax, uniqueness,
-    /// and non-empty `source_path`. Does *not* check that `source_path` exists
-    /// on disk — that's a validate-time warning (PKG042).
-    fn validate_packages(&self) -> Result<()> {
-        let mut seen: HashSet<&str> = HashSet::new();
-        for pkg in &self.packages {
-            if pkg.name.is_empty() {
-                bail!("[[packages]] entry has empty `name`");
-            }
-            if !is_snake_case(&pkg.name) {
-                bail!(
-                    "[[packages]] name `{}` must be snake_case (lowercase letters, digits, underscores; must start with a letter)",
-                    pkg.name
-                );
-            }
-            if !seen.insert(pkg.name.as_str()) {
-                bail!("[[packages]] name `{}` declared more than once", pkg.name);
-            }
-            if pkg.source_path.trim().is_empty() {
-                bail!("[[packages]] `{}` has empty `source_path`", pkg.name);
-            }
+fn spec_schema_validator() -> &'static jsonschema::Validator {
+    static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
+    VALIDATOR.get_or_init(|| {
+        let schema_yaml: serde_json::Value = serde_yaml::from_str(SPEC_SCHEMA_YAML)
+            .expect("embedded spec.schema.yaml parses as YAML");
+        jsonschema::options()
+            .build(&schema_yaml)
+            .expect("embedded spec.schema.yaml is a well-formed JSON Schema")
+    })
+}
+
+/// Best-effort line/col lookup for a JSON pointer error in TOML source.
+/// JSON Schema gives us a pointer like `/project/profile`; we walk the source
+/// for the first occurrence of `[project]` to anchor the line. If no anchor
+/// is found, return `(1, 1)` so the user still sees the file path.
+fn locate_error_in_toml(source: &str, pointer: &str) -> (u32, u32) {
+    if pointer.is_empty() {
+        return (1, 1);
+    }
+    let mut parts = pointer.split('/').filter(|s| !s.is_empty());
+    let Some(top) = parts.next() else {
+        return (1, 1);
+    };
+    let table_open = format!("[{top}]");
+    let table_array_open = format!("[[{top}]]");
+    for (idx, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(&table_open) || trimmed.starts_with(&table_array_open) {
+            return ((idx + 1) as u32, 1);
         }
-        Ok(())
     }
-
-    /// Look up a declared package by name.
-    pub fn find_package(&self, name: &str) -> Option<&PackageSection> {
-        self.packages.iter().find(|p| p.name == name)
+    // Fall back to the top-level `key =` form.
+    for (idx, line) in source.lines().enumerate() {
+        if line.trim_start().starts_with(&format!("{top} =")) {
+            return ((idx + 1) as u32, 1);
+        }
     }
-
-    /// Major version prefix used for the versioned schema directory.
-    /// "1.0" → "v1".
-    pub fn schema_major(&self) -> String {
-        let major = self
-            .spec_version
-            .split('.')
-            .next()
-            .unwrap_or(&self.spec_version);
-        format!("v{major}")
-    }
+    (1, 1)
 }
 
-fn is_snake_case(s: &str) -> bool {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_lowercase() => {}
-        _ => return false,
+fn humanize_pointer(pointer: &str) -> String {
+    if pointer.is_empty() {
+        return "spec.toml".to_string();
     }
-    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    let segs: Vec<&str> = pointer.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() <= 1 {
+        return segs.join(".");
+    }
+    // /project/profile → [project].profile
+    let head = segs[0];
+    let tail = segs[1..].join(".");
+    format!("[{head}].{tail}")
 }
 
-/// Locate `spec.toml` by walking up from `start`.
+/// Locate `spec.toml` by walking up from `start`. Returns `None` if no
+/// manifest is found before reaching the filesystem root.
 pub fn find_spec_toml(start: &Path) -> Option<PathBuf> {
     let start = std::fs::canonicalize(start).ok()?;
     let mut dir = start.as_path();
@@ -143,83 +165,154 @@ pub fn find_spec_toml(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Discover `spec.toml` honoring an explicit `--spec-path` override.
+/// `explicit` short-circuits the CWD walk; otherwise [`find_spec_toml`] is
+/// used. Returns the canonicalized absolute path on success.
+pub fn discover_spec_toml(start: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        if !p.is_file() {
+            anyhow::bail!(
+                "--spec-path {} does not exist or is not a file",
+                p.display()
+            );
+        }
+        return std::fs::canonicalize(p).with_context(|| format!("canonicalizing {}", p.display()));
+    }
+    find_spec_toml(start).ok_or_else(|| {
+        anyhow!(
+            "no spec.toml found at or above {} — pass --spec-path to point at one explicitly",
+            start.display()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(toml_str: &str) -> Result<SpecConfig> {
-        let cfg: SpecConfig = toml::from_str(toml_str)?;
-        cfg.validate_packages()?;
-        Ok(cfg)
-    }
-
-    const BASE: &str = r#"
+    const GOOD: &str = r#"
 spec_version = "1.0"
+
 [project]
 name = "demo"
-domain = "firmware"
+profile = "firmware-layered"
 language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"
 "#;
 
-    #[test]
-    fn parses_without_packages() {
-        let cfg = parse(BASE).unwrap();
-        assert!(cfg.packages.is_empty());
-        assert!(cfg.find_package("anything").is_none());
+    fn parse_str(text: &str) -> Result<SpecConfig> {
+        SpecConfig::parse(Path::new("/tmp/spec.toml"), text)
     }
 
     #[test]
-    fn parses_multi_package() {
-        let src = format!(
-            "{BASE}\n[[packages]]\nname = \"core\"\nsource_path = \"crates/core\"\n\
-             [[packages]]\nname = \"drivers\"\nsource_path = \"crates/drivers\"\n"
-        );
-        let cfg = parse(&src).unwrap();
-        assert_eq!(cfg.packages.len(), 2);
-        assert_eq!(cfg.find_package("core").unwrap().source_path, "crates/core");
-        assert_eq!(
-            cfg.find_package("drivers").unwrap().source_path,
-            "crates/drivers"
-        );
+    fn embedded_schema_loads() {
+        let _v = spec_schema_validator();
     }
 
     #[test]
-    fn rejects_duplicate_package_name() {
-        let src = format!(
-            "{BASE}\n[[packages]]\nname = \"core\"\nsource_path = \"crates/core\"\n\
-             [[packages]]\nname = \"core\"\nsource_path = \"crates/core2\"\n"
-        );
-        let err = parse(&src).unwrap_err().to_string();
-        assert!(err.contains("declared more than once"), "got: {err}");
+    fn parses_minimal_well_formed_spec() {
+        let cfg = parse_str(GOOD).expect("good spec parses");
+        assert_eq!(cfg.spec_version, "1.0");
+        assert_eq!(cfg.project.name, "demo");
+        assert_eq!(cfg.project.profile, "firmware-layered");
+        assert_eq!(cfg.project.language, "rust");
+        assert_eq!(cfg.paths.specs, "specs");
+        assert_eq!(cfg.paths.source, "src");
     }
 
     #[test]
-    fn rejects_empty_source_path() {
-        let src = format!("{BASE}\n[[packages]]\nname = \"core\"\nsource_path = \"\"\n");
-        let err = parse(&src).unwrap_err().to_string();
-        assert!(err.contains("empty `source_path`"), "got: {err}");
+    fn rejects_missing_profile_with_field_name_in_message() {
+        let bad = r#"
+spec_version = "1.0"
+
+[project]
+name = "demo"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"
+"#;
+        let err = parse_str(bad).unwrap_err();
+        let s = format!("{err:#}");
+        assert!(s.contains("project"), "missing-field message: {s}");
     }
 
     #[test]
-    fn rejects_non_snake_case_name() {
-        let src = format!("{BASE}\n[[packages]]\nname = \"Core\"\nsource_path = \"crates/core\"\n");
-        let err = parse(&src).unwrap_err().to_string();
-        assert!(err.contains("snake_case"), "got: {err}");
+    fn rejects_legacy_domain_field_with_unknown_key() {
+        // The new schema is closed (`additionalProperties: false`); any
+        // prior-arc `[project].domain` field must reject.
+        let bad = r#"
+spec_version = "1.0"
+
+[project]
+name = "demo"
+profile = "firmware-layered"
+language = "rust"
+domain = "firmware"
+
+[paths]
+specs = "specs"
+source = "src"
+"#;
+        let err = parse_str(bad).unwrap_err();
+        let s = format!("{err:#}");
+        assert!(s.contains("project"), "{s}");
     }
 
     #[test]
-    fn accepts_digit_and_underscore_in_name() {
-        let src = format!("{BASE}\n[[packages]]\nname = \"pkg_v2\"\nsource_path = \"crates/v2\"\n");
-        let cfg = parse(&src).unwrap();
-        assert_eq!(cfg.packages.len(), 1);
+    fn rejects_unknown_language() {
+        let bad = r#"
+spec_version = "1.0"
+
+[project]
+name = "demo"
+profile = "firmware-layered"
+language = "ada"
+
+[paths]
+specs = "specs"
+source = "src"
+"#;
+        let err = parse_str(bad).unwrap_err();
+        let s = format!("{err:#}");
+        assert!(s.contains("project") || s.contains("language"), "{s}");
     }
 
     #[test]
-    fn is_snake_case_rejects_leading_digit_or_underscore() {
-        assert!(!is_snake_case("1pkg"));
-        assert!(!is_snake_case("_pkg"));
-        assert!(!is_snake_case(""));
-        assert!(is_snake_case("pkg"));
-        assert!(is_snake_case("a_b_c"));
+    fn rejects_bad_syntax_with_file_line_col() {
+        let bad = r#"
+spec_version = "1.0"
+
+[project
+name = "demo"
+"#;
+        let err = parse_str(bad).unwrap_err();
+        let loc = err.downcast_ref::<LocatedError>();
+        assert!(loc.is_some(), "expected LocatedError; got: {err:#}");
+        let loc = loc.unwrap();
+        assert!(loc.line >= 1, "{loc}");
+    }
+
+    #[test]
+    fn rejects_invalid_spec_version() {
+        let bad = r#"
+spec_version = "2.0"
+
+[project]
+name = "demo"
+profile = "firmware-layered"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"
+"#;
+        let err = parse_str(bad).unwrap_err();
+        let s = format!("{err:#}");
+        assert!(s.contains("spec_version") || s.contains("pattern"), "{s}");
     }
 }

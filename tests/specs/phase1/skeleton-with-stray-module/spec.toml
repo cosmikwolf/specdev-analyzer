@@ -1,0 +1,10 @@
+spec_version = "1.0"
+
+[project]
+name = "stray-module"
+profile = "firmware-layered"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"

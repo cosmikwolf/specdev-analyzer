@@ -1,0 +1,47 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schemas/spec.toml.v1"
+title: spec.toml
+description: |
+  JSON Schema for the project-level `spec.toml` manifest. Embedded in the
+  analyzer crate; the analyzer is the source of truth for what a valid
+  `spec.toml` is. Phase 1 invariant 5 (no resolution chain at analyze time)
+  forbids loading this from a plugin.
+type: object
+additionalProperties: false
+required: [spec_version, project, paths]
+properties:
+  spec_version:
+    type: string
+    description: Schema version line. v1 accepts only `1.x`; later versions widen.
+    pattern: "^1\\.[0-9]+$"
+  project:
+    type: object
+    additionalProperties: false
+    required: [name, profile, language]
+    properties:
+      name:
+        type: string
+        description: Project name. Lowercase letters, digits, underscores, hyphens; must start with a letter.
+        pattern: "^[a-z][a-z0-9_-]*$"
+        maxLength: 64
+      profile:
+        type: string
+        description: Profile owning the project shape (e.g. firmware-layered, library-api).
+        pattern: "^[a-z][a-z0-9_-]*$"
+      language:
+        type: string
+        description: Target language for codegen. Widens in Phase 9 when C lands.
+        enum: [rust, c]
+  paths:
+    type: object
+    additionalProperties: false
+    required: [specs, source]
+    properties:
+      specs:
+        type: string
+        description: Directory containing the project's specs/ tree (machinery + module files), relative to spec.toml. Conventionally "specs".
+        minLength: 1
+      source:
+        type: string
+        description: Source code directory the analyzer audits/reverses against, relative to spec.toml. Conventionally "src".
+        minLength: 1

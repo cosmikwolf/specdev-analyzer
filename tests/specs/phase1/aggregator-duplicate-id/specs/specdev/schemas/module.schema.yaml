@@ -1,0 +1,6 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/module.v1"
+type: object
+allOf:
+  - $ref: "inlined/blocks/a.schema.yaml"
+  - $ref: "inlined/bridges/b.schema.yaml"

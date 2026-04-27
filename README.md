@@ -2,14 +2,17 @@
 
 Domain-agnostic CLI that turns TOML specs into first-class engineering artifacts: schema-validated, graph-checked, extractable to codegen-ready YAML, and auditable against real source code.
 
-Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin.
+Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin at analyze time (doc 15 §11 invariant 5: no resolution chain at analyze time).
 
-## What it does
+## Status — Phase 1 of the blocks + bridges + profiles arc
 
-- **`validate`** — parses every spec file under `specs/`, checks it against its JSON Schema (authored in YAML, compiled at startup), and runs the graph-level invariants the active domain declares (layer ordering, reachability from the initial state of a state machine, port wiring, resource ownership, acyclic module dependencies, …). Errors carry stable rule ids (`LAYER001`, `FSM020`, `PORT030`, …) so skills and CI can map them to fixes.
-- **`extract`** — emits canonical, byte-stable YAML for codegen: one file per module, plus a synthesized `architecture.yaml` (module summaries + dependency graph + raw connections) and a flattened `requirements.yaml`. All keys alphabetized at every level so diffs are meaningful.
-- **`audit`** — parses the project's Rust / C / C++ source with tree-sitter and cross-checks it against the extracted spec, reporting Match / Missing / Mismatch / Uncovered per module. Use it to catch drift as code evolves faster than the spec.
-- **`resolve`** — prints the effective domain, language, schema, and codegen paths for a project, respecting the `spec.toml` → `.specdev/` → plugin defaults override chain. Skills embed its output as their context header.
+This branch ships **Phase 1**: layout discovery, the aggregator `$ref` resolver, the reduction loader, and a Phase-1 stub for module structural validation. Subcommands and current behavior:
+
+- **`validate`** — discovers `spec.toml`, builds a layout context for `specs/specdev/`, enumerates every expected directory and file (`LAYOUT-002`/`LAYOUT-003`/`LAYOUT-004`), runs the aggregator `$ref` resolver (`AGGREGATOR-001` unresolved-ref / `AGGREGATOR-002` duplicate-`$id` / `AGGREGATOR-003` cycle), loads project / block / bridge reductions (`REDUCTION-001`), and emits one `LAYOUT-005` info per module discovered under `specs/modules/` (structural module validation lands in Phase 2).
+- **`extract`**, **`audit`**, **`reduce`** — Phase-1 stubs. Each bails with a clear "available in Phase 2 once kind resolution lands" message. Phase 2's metaschema amendment (path-qualified kinds + `extends`) wires them in.
+- **`resolve`** — prints the discovered project layout as YAML for skill consumers.
+
+Errors carry a structured `<path>:<line>:<col>: <message>` payload via `LocatedError` so editors and CI can jump to the failing site.
 
 ## Install
 
@@ -17,148 +20,75 @@ Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code pl
 cargo install --git https://github.com/cosmikwolf/specdev-analyzer
 ```
 
-Requires a stable Rust toolchain.
+Requires a stable Rust toolchain (MSRV 1.75).
 
 ## Usage
 
 ```
-specdev-analyzer validate [--project <dir>] [--domain <domain.toml>] [--no-color]
-specdev-analyzer extract  --output <dir> [--project <dir>] [--domain <domain.toml>]
-specdev-analyzer audit    [--project <dir>] [--filter <Module>] [--show-uncovered] [--expand]
-specdev-analyzer resolve  [--project <dir>] [--plugin-root <dir>] [--allow-missing]
+specdev-analyzer validate [--project <dir>] [--strict] [--no-color]
+specdev-analyzer extract  --output <dir> [--project <dir>]   # Phase 2 stub
+specdev-analyzer audit    [--project <dir>] [--filter <Module>] [--show-uncovered] [--expand]   # Phase 2 stub
+specdev-analyzer reduce   [--project <dir>] [--output <path>]   # Phase 2 stub
+specdev-analyzer resolve  [--project <dir>]
 ```
 
-`--project` defaults to the current directory. The project root is the directory containing `spec.toml`.
+Every subcommand also accepts `--spec-path <path>` to short-circuit `spec.toml` discovery.
 
-### Example
+`--project` defaults to the current directory. The project root is the directory containing `spec.toml`. The CWD walk discovers `spec.toml` automatically.
 
-```
-$ specdev-analyzer validate --project ./blinky-a2dp
-0 error(s), 0 warning(s), 0 info(s)
+Set `RUST_LOG=specdev_analyzer=info` for progress events, `RUST_LOG=specdev_analyzer=debug` for per-file enumeration.
 
-$ specdev-analyzer extract --project ./blinky-a2dp --output ./gen
-wrote 6 file(s) to ./gen
-```
+### `spec.toml` shape (Phase 1)
 
-`extract` writes one YAML per module plus `architecture.yaml` and `requirements.yaml`.
+```toml
+spec_version = "1.0"
 
-### Audit
+[project]
+name = "my-firmware"
+profile = "firmware-layered"
+language = "rust"
 
-`audit` compares the extracted spec to the project's source tree. Run it after a
-`spec-gen` pass (or against a hand-written source tree) to see drift:
-
-```
-$ specdev-analyzer audit --project ./blinky-a2dp --show-uncovered
-AudioPipeline (not found):
-  + file AudioPipeline — no source file found for module `AudioPipeline`
-
-BtA2dpSink (not found):
-  + file BtA2dpSink — no source file found for module `BtA2dpSink`
-
-…
-
-0 match, 4 missing, 0 mismatch, 0 uncovered
+[paths]
+specs = "specs"
+source = "src"
 ```
 
-A fully-generated project produces a `match` line per module and zero `missing`.
+Validated against an embedded JSON Schema at parse time. The analyzer is the source of truth for `spec.toml`; nothing in the schema comes from the plugin.
 
-### Resolve
-
-`resolve` is primarily for skills: it prints the effective domain, language, and
-codegen paths after applying the `spec.toml` → `.specdev/` → plugin-defaults
-cascade, so a skill's context header always points at the right files.
-
-```
-$ specdev-analyzer resolve --project ./blinky-a2dp
-## Spec Context
-
-- Project root: `/.../blinky-a2dp`
-- Domain: `firmware`
-- Language: `rust`
-- Codegen name: `firmware-rust`
-
-## Resolved Paths
-
-- Schema:   `.../schema/firmware/v1`          _(from plugin default)_
-- Domains:  `.../domains/firmware`            _(from plugin default)_
-- Languages:`.../languages/rust`              _(from plugin default)_
-- Codegen:  `.../codegen/firmware-rust`       _(from plugin default)_
-```
-
-Each line's provenance tag shifts to `from spec.toml` or `from .specdev/` once a
-project starts overriding.
-
-### Validation errors
-
-Errors carry a stable rule id and a structured path pointer. Example —
-`AudioPipeline` (middleware) declared a dependency on `StatusLed` (also
-middleware), which the firmware layer rules disallow:
-
-```
-$ specdev-analyzer validate --project ./blinky-broken
-error: [LAYER001] project/modules/0/depends_on/2: module `AudioPipeline` (layer middleware) depends on `StatusLed` (layer middleware), not in allowed_deps ["driver", "HAL", "PAC"]
-1 error(s), 0 warning(s), 0 info(s)
-```
-
-Rule ids (`SCHEMA`, `LAYER001`, `FSM020`, `PORT030`, `OWN050`, `ISR060`, …) are
-stable across versions; skills and CI rely on them to suggest specific fixes.
-
-## Project layout
-
-A single-crate project looks like:
+### Project layout (single-package)
 
 ```
 my-firmware/
-├── spec.toml                  # project config (domain, language, spec_version, paths)
-├── src/                       # source code
+├── spec.toml                                   # project manifest
+├── src/                                        # source code (audit / reverse target)
 └── specs/
-    ├── architecture.toml      # cross-module wiring (connections, mounts, navigation)
-    ├── modules/*.toml         # one module per file
-    └── requirements/*.toml    # requirements referenced by modules
+    ├── modules/*.toml                          # user-authored module specs
+    ├── architecture.toml                       # cross-module wiring (Phase 2+)
+    ├── requirements.toml                       # requirements (Phase 2+)
+    └── specdev/                                # CLI-managed machinery
+        ├── domain.toml                         # project graph-check declarations
+        ├── lineage.toml                        # provenance for inlined units
+        ├── schemas/
+        │   ├── module.schema.yaml              # aggregator: allOf $refs to inlined/
+        │   └── inlined/
+        │       ├── blocks/<name>.schema.yaml   # one per inlined block
+        │       └── bridges/<name>.schema.yaml  # one per inlined bridge
+        ├── reductions/
+        │   ├── project.yaml
+        │   ├── blocks/<name>.yaml
+        │   ├── bridges/<name>.yaml             # canonical bridges
+        │   └── bridges/local/<name>.yaml       # project-local bridges
+        └── codegen/<lang>/
+            ├── module.conventions.md
+            ├── blocks/<name>/README.md
+            └── bridges/<name>/README.md
 ```
 
-A multi-crate workspace declares `[[packages]]` in `spec.toml` and nests module specs one level deeper:
+Multi-package projects are per-package independent under doc 15 §9.2: each package owns its own `spec.toml` and `specs/specdev/` tree. There is no workspace-level `[[packages]]` table.
 
-```
-my-workspace/
-├── spec.toml                  # [[packages]] name + source_path per crate
-├── crates/core/     src/…
-├── crates/drivers/  src/…
-└── specs/
-    ├── architecture.toml      # endpoints may be <pkg>::<Module>.<port>
-    ├── modules/
-    │   ├── core/Clock.toml
-    │   └── drivers/Led.toml   # depends_on = ["core::Clock"]
-    └── requirements/*.toml    # requirements are not packaged
-```
+## Library API (Phase 1)
 
-The `package` for each module is derived from the filesystem path, never written inside the TOML. Cross-package references use `<pkg>::<Module>` syntax; unqualified names resolve within the same package first, then globally (ambiguous resolution is a hard error).
-
-## Domains, languages, and overrides
-
-The analyzer core is **domain-agnostic**: it loads schemas, domain rules, and language adapters from external directories rather than hard-coding them. The paired `specdev` plugin ships two domains (`firmware`, `egui`) and three languages (`rust`, `c`, `cpp`); you can add more without touching this crate.
-
-Resolution order for each kind of artifact (schema / domain / language / codegen):
-
-1. Explicit path in `spec.toml` `[paths.overrides]`
-2. `<project>/.specdev/<kind>/<name>/`
-3. Plugin defaults shipped alongside the plugin
-
-This lets you fork a domain locally, prototype a new schema rule, or extend a language adapter without modifying upstream.
-
-## Checks at a glance
-
-Every domain declares its graph checks in `domain.toml` as thin wrappers over five declarative primitives:
-
-| Primitive         | Use case                                                     |
-|-------------------|--------------------------------------------------------------|
-| `unique`          | No two modules own the same pin; no duplicate requirement id |
-| `reference_exists`| `satisfies` ids resolve; connection endpoints are declared   |
-| `reachability`    | Every FSM state reachable from the initial state             |
-| `acyclic`         | Module dependencies form a DAG                               |
-| `layer_dependency`| Dependencies flow downward only (HAL → PAC, never upward)    |
-
-Rule ids are stable across versions so CI and editor integrations can rely on them.
+The crate exports a small library surface for tools that want to drive the same plumbing. See `src/lib.rs` for the entry-point map. Phase 2 will reintroduce a contract test against `specdev-visualizer`'s consumption shape.
 
 ## License
 

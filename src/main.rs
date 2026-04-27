@@ -4,56 +4,60 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use specdev_analyzer::{
     audit::{self, AuditOptions},
-    extract, reduction, resolve,
-    validate::{self, Inputs},
+    diagnostics::report_error,
+    extract,
+    layout::LayoutContext,
+    reduction, resolve, validate,
 };
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
     name = "specdev-analyzer",
     version,
-    about = "Domain-agnostic analyzer for TOML specs."
+    about = "Domain-agnostic analyzer for TOML specs (Phase 1 of the blocks + bridges + profiles arc)."
 )]
 struct Cli {
+    /// Explicit path to the project's spec.toml. Overrides CWD-walking
+    /// discovery. Shared by every subcommand that reads project state.
+    #[arg(long, global = true)]
+    spec_path: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Validate spec files against their JSON Schema and run graph checks.
+    /// Validate the project layout and (Phase 2) module structure.
     Validate {
-        /// Project root (directory containing spec.toml). Defaults to cwd.
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Explicit path to the domain config (domain.toml). When omitted
-        /// the analyzer looks for a sibling `specdev/domains/<d>/domain.toml`.
+        /// Treat missing layout entries as errors, not warnings.
         #[arg(long)]
-        domain: Option<PathBuf>,
+        strict: bool,
         /// Suppress ANSI colors.
         #[arg(long)]
         no_color: bool,
     },
     /// Emit canonical YAML extraction for codegen.
+    ///
+    /// Phase 1 stub: bails until Phase 2 lands kind resolution.
     Extract {
-        /// Project root (directory containing spec.toml). Defaults to cwd.
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Explicit path to the domain config (domain.toml).
-        #[arg(long)]
-        domain: Option<PathBuf>,
         /// Output directory for canonical YAML files.
         #[arg(short, long)]
         output: PathBuf,
     },
     /// Compare extracted specs against source code for drift.
+    ///
+    /// Phase 1 stub: bails until Phase 2 lands kind resolution + extract.
     Audit {
-        /// Project root (directory containing spec.toml). Defaults to cwd.
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
-        #[arg(long)]
-        plugin_root: Option<PathBuf>,
         /// Only audit one module (exact name match).
         #[arg(long)]
         filter: Option<String>,
@@ -64,90 +68,71 @@ enum Command {
         #[arg(long)]
         expand: bool,
     },
-    /// Execute the domain reduction and emit a universal entity/relation graph.
+    /// Execute the reduction and emit a universal entity/relation graph.
+    ///
+    /// Phase 1 stub: bails until Phase 2 lands kind resolution.
     Reduce {
-        /// Project root (directory containing spec.toml). Defaults to cwd.
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Explicit path to the reduction.yaml. Defaults to the sibling
-        /// `specdev/domains/<domain>/reduction.yaml` discovered via the
-        /// domain-config lookup.
-        #[arg(long)]
-        reduction: Option<PathBuf>,
-        /// Metaschema directory (holding the `*.schema.yaml` for reductions).
-        /// Defaults to `<plugin_root>/schema/meta/v1`.
-        #[arg(long)]
-        meta_dir: Option<PathBuf>,
-        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
-        #[arg(long)]
-        plugin_root: Option<PathBuf>,
         /// Write the graph YAML to this path. Without it, prints to stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Print the resolved context (domain, language, schema paths) for a project.
+    /// Print the resolved project layout for skill consumers.
     Resolve {
-        /// Project root (directory containing spec.toml). Defaults to cwd.
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Plugin root. Defaults to $CLAUDE_PLUGIN_ROOT.
-        #[arg(long)]
-        plugin_root: Option<PathBuf>,
-        /// When spec.toml is missing, emit an informational header and exit 0
-        /// instead of erroring. Used by skills that must load even before
-        /// spec.toml exists (e.g. /spec-init).
-        #[arg(long)]
-        allow_missing: bool,
     },
 }
 
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 fn main() -> ExitCode {
+    init_tracing();
     let cli = Cli::parse();
+    let spec_path = cli.spec_path;
     match cli.command {
         Command::Validate {
             project,
-            domain,
+            strict,
             no_color,
-        } => run_validate(project, domain, no_color),
-        Command::Extract {
-            project,
-            domain,
-            output,
-        } => run_extract(project, domain, output),
+        } => run_validate(project, spec_path.as_deref(), strict, no_color),
+        Command::Extract { project, output } => run_extract(project, spec_path.as_deref(), output),
         Command::Audit {
             project,
-            plugin_root,
             filter,
             show_uncovered,
             expand,
-        } => run_audit(project, plugin_root, filter, show_uncovered, expand),
-        Command::Reduce {
+        } => run_audit(
             project,
-            reduction,
-            meta_dir,
-            plugin_root,
-            output,
-        } => run_reduce(project, reduction, meta_dir, plugin_root, output),
-        Command::Resolve {
-            project,
-            plugin_root,
-            allow_missing,
-        } => run_resolve(project, plugin_root, allow_missing),
+            spec_path.as_deref(),
+            filter,
+            show_uncovered,
+            expand,
+        ),
+        Command::Reduce { project, output } => run_reduce(project, spec_path.as_deref(), output),
+        Command::Resolve { project } => run_resolve(project, spec_path.as_deref()),
     }
 }
 
-fn run_validate(project: PathBuf, domain: Option<PathBuf>, no_color: bool) -> ExitCode {
-    let inputs: Inputs = match validate::resolve_inputs(&project, domain.as_deref()) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
-        }
-    };
-    let report = match validate::run(&inputs) {
+fn run_validate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    strict: bool,
+    no_color: bool,
+) -> ExitCode {
+    let report = match validate::run_project(&project, spec_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("{e:#}");
+            report_error(&e);
             return ExitCode::from(2);
         }
     };
@@ -158,30 +143,37 @@ fn run_validate(project: PathBuf, domain: Option<PathBuf>, no_color: bool) -> Ex
         report.render_colored()
     };
     print!("{rendered}");
-    eprintln!(
-        "{} error(s), {} warning(s), {} info(s)",
-        errors, warnings, infos
-    );
-    if report.has_errors() {
+    eprintln!("{errors} error(s), {warnings} warning(s), {infos} info(s)");
+    let strict_warns = strict && warnings > 0;
+    if errors > 0 || strict_warns {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
     }
 }
 
+fn run_extract(project: PathBuf, spec_path: Option<&std::path::Path>, output: PathBuf) -> ExitCode {
+    let _ = output; // unused in Phase 1 stub
+    match extract::run_project(&project, spec_path) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn run_audit(
     project: PathBuf,
-    plugin_root: Option<PathBuf>,
+    spec_path: Option<&std::path::Path>,
     filter: Option<String>,
     show_uncovered: bool,
     expand: bool,
 ) -> ExitCode {
-    let plugin_root =
-        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
-    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
-        Ok(c) => c,
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
         Err(e) => {
-            eprintln!("{e:#}");
+            report_error(&e);
             return ExitCode::from(2);
         }
     };
@@ -191,71 +183,22 @@ fn run_audit(
         module_filter: filter.as_deref(),
         type_map: None,
     };
-    let report = match audit::run_project(&ctx, options) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
-        }
-    };
-    print!("{}", audit::format_text(&report));
-    let summary = report.summary();
-    eprintln!(
-        "{} match, {} missing, {} mismatch, {} uncovered",
-        summary.matches, summary.missing, summary.mismatches, summary.uncovered
-    );
-    if summary.missing > 0 || summary.mismatches > 0 {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    }
-}
-
-fn run_resolve(project: PathBuf, plugin_root: Option<PathBuf>, allow_missing: bool) -> ExitCode {
-    let plugin_root =
-        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
-    match resolve::resolve(&project, plugin_root.as_deref()) {
-        Ok(ctx) => {
-            print!("{}", resolve::render(&ctx));
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            if allow_missing && resolve::is_missing_spec(&e) {
-                print!(
-                    "{}",
-                    resolve::render_missing(&project, plugin_root.as_deref())
-                );
-                ExitCode::SUCCESS
+    match audit::run_project(&layout, options) {
+        Ok(report) => {
+            print!("{}", audit::format_text(&report));
+            let summary = report.summary();
+            eprintln!(
+                "{} match, {} missing, {} mismatch, {} uncovered",
+                summary.matches, summary.missing, summary.mismatches, summary.uncovered
+            );
+            if summary.missing > 0 || summary.mismatches > 0 {
+                ExitCode::from(1)
             } else {
-                eprintln!("{e:#}");
-                ExitCode::from(2)
+                ExitCode::SUCCESS
             }
         }
-    }
-}
-
-fn run_extract(project: PathBuf, domain: Option<PathBuf>, output: PathBuf) -> ExitCode {
-    let inputs: Inputs = match validate::resolve_inputs(&project, domain.as_deref()) {
-        Ok(i) => i,
         Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
-        }
-    };
-    let result = match extract::run(&inputs) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(1);
-        }
-    };
-    match extract::write(&result, &output) {
-        Ok(paths) => {
-            eprintln!("wrote {} file(s) to {}", paths.len(), output.display());
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{e:#}");
+            report_error(&e);
             ExitCode::from(2)
         }
     }
@@ -263,100 +206,28 @@ fn run_extract(project: PathBuf, domain: Option<PathBuf>, output: PathBuf) -> Ex
 
 fn run_reduce(
     project: PathBuf,
-    reduction_path: Option<PathBuf>,
-    meta_dir: Option<PathBuf>,
-    plugin_root: Option<PathBuf>,
+    spec_path: Option<&std::path::Path>,
     output: Option<PathBuf>,
 ) -> ExitCode {
-    let plugin_root =
-        plugin_root.or_else(|| std::env::var("CLAUDE_PLUGIN_ROOT").ok().map(PathBuf::from));
-    let ctx = match resolve::resolve(&project, plugin_root.as_deref()) {
-        Ok(c) => c,
+    let _ = output; // unused in Phase 1 stub
+    match reduction::run_project(&project, spec_path) {
+        Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
+            report_error(&e);
+            ExitCode::from(2)
         }
-    };
-
-    let reduction_file = match reduction_path {
-        Some(p) => p,
-        None => ctx.domain_dir.path.join("reduction.yaml"),
-    };
-    if !reduction_file.is_file() {
-        eprintln!(
-            "reduction spec not found at {} — pass --reduction <path> or create it under specdev/domains/{}/",
-            reduction_file.display(),
-            ctx.domain
-        );
-        return ExitCode::from(2);
     }
+}
 
-    let meta_dir = match meta_dir {
-        Some(p) => p,
-        None => match &ctx.plugin_root {
-            Some(root) => root.join("schema").join("meta").join("v1"),
-            None => {
-                eprintln!(
-                    "cannot locate metaschema directory — pass --meta-dir <path> or set CLAUDE_PLUGIN_ROOT"
-                );
-                return ExitCode::from(2);
-            }
-        },
-    };
-
-    let spec = match reduction::load_reduction_spec(&reduction_file, &meta_dir) {
-        Ok(s) => s,
+fn run_resolve(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    match resolve::run(&project, spec_path) {
+        Ok(yaml) => {
+            print!("{yaml}");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(1);
+            report_error(&e);
+            ExitCode::from(2)
         }
-    };
-
-    let (graph, report) = match reduction::execute(&spec, &ctx.project_root) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(1);
-        }
-    };
-
-    let yaml = match reduction::to_yaml(&graph) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("{e:#}");
-            return ExitCode::from(2);
-        }
-    };
-
-    match output {
-        Some(path) => {
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        eprintln!("creating {}: {e:#}", parent.display());
-                        return ExitCode::from(2);
-                    }
-                }
-            }
-            if let Err(e) = std::fs::write(&path, &yaml) {
-                eprintln!("writing {}: {e:#}", path.display());
-                return ExitCode::from(2);
-            }
-            eprintln!("wrote reduction graph to {}", path.display());
-        }
-        None => print!("{yaml}"),
-    }
-
-    eprint!("{}", report.render_plain());
-    let (errors, warnings, infos) = report.counts();
-    eprintln!(
-        "{} error(s), {} warning(s), {} info(s)",
-        errors, warnings, infos
-    );
-
-    if report.has_errors() {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
     }
 }

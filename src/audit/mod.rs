@@ -13,10 +13,8 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::config::SpecConfig;
-use crate::extract::{self};
 use crate::lang::{self, LanguageAdapter};
-use crate::resolve::ResolvedContext;
-use crate::validate::{self, Inputs};
+use crate::layout::LayoutContext;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuditError {
@@ -95,38 +93,25 @@ pub fn run(
         )
     })?;
 
-    let project_source_root = spec_cfg
-        .source
-        .root
-        .clone()
-        .unwrap_or_else(|| "src".to_string());
-    let layout = spec_cfg
-        .source
-        .layout
-        .clone()
-        .unwrap_or_else(|| "flat".to_string());
+    let project_source_root = spec_cfg.paths.source.clone();
+    // Phase 1: source-layout convention is "flat". Phase 2 may add layout
+    // hints back via profile or spec.toml as profiles surface real needs.
+    let layout = "flat".to_string();
 
     let mut out = Vec::new();
     for em in modules {
         let name = &em.name;
         let module = &em.value;
         if let Some(filter) = options.module_filter {
-            // Filter matches either the bare name or the qualified form.
-            let qualified = crate::packages::qualify(em.package.as_deref(), name);
-            if name != filter && qualified != filter {
+            if name != filter {
                 continue;
             }
         }
 
-        // Package source_path overrides the project-wide source.root for
-        // this module when the module lives under a declared package.
-        let source_root: &str = match &em.package {
-            Some(pkg) => match spec_cfg.find_package(pkg) {
-                Some(ps) => ps.source_path.as_str(),
-                None => project_source_root.as_str(),
-            },
-            None => project_source_root.as_str(),
-        };
+        // Phase 1: per-package source_path is gone (multi-package machinery
+        // is per-package independent under doc 15 §9.2). Use the
+        // project-wide source root for every module.
+        let source_root: &str = project_source_root.as_str();
 
         let path = source_map::resolve_source_path(
             module,
@@ -273,23 +258,14 @@ impl AuditReport {
     }
 }
 
-/// End-to-end convenience: validate → extract → audit. Used by the CLI.
-pub fn run_project(ctx: &ResolvedContext, options: AuditOptions<'_>) -> Result<AuditReport> {
-    let inputs = Inputs {
-        project_root: ctx.project_root.clone(),
-        spec_file: ctx.spec_toml.clone(),
-        schema_dir: ctx.schema.path.clone(),
-        domain_file: ctx.domain_dir.path.join("domain.toml"),
-    };
-    // Drive validation/extraction for its side-effect of surfacing fatal
-    // errors before we try to parse source code.
-    let report = validate::run(&inputs)?;
-    anyhow::ensure!(
-        !report.has_errors(),
-        "refusing to audit: {} validation error(s)",
-        report.counts().0
+/// End-to-end convenience.
+///
+/// Phase 1 stub: audit drives off the extract pipeline, which is itself a
+/// Phase-2 stub. Until extract lands, audit bails with a Phase-2 message.
+pub fn run_project(layout: &LayoutContext, _options: AuditOptions<'_>) -> Result<AuditReport> {
+    anyhow::bail!(
+        "specdev-analyzer audit is available in Phase 2 once kind resolution + extract land. \
+         Phase 1 ships layout discovery only (project: {}).",
+        layout.project_root.display()
     );
-    let extraction = extract::run(&inputs)?;
-    let spec_cfg = SpecConfig::load(&ctx.spec_toml)?;
-    run(&ctx.project_root, &spec_cfg, &extraction.modules, options)
 }

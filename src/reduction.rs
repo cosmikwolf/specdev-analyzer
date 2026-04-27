@@ -117,28 +117,21 @@ pub struct Graph {
     pub relations: Vec<Relation>,
 }
 
-/// Library-friendly entry point: resolve the project context, locate the
-/// sibling `reduction.yaml` and plugin metaschema directory, validate the
-/// spec, and execute it. Returns the graph plus any findings (unresolved
-/// endpoints etc.).
-pub fn run_project(project: &Path, plugin_root: Option<&Path>) -> Result<(Graph, Report)> {
-    let ctx = crate::resolve::resolve(project, plugin_root)?;
-    let reduction_file = ctx.domain_dir.path.join("reduction.yaml");
-    if !reduction_file.is_file() {
-        bail!(
-            "reduction spec not found at {} — domain `{}` does not ship one",
-            reduction_file.display(),
-            ctx.domain
-        );
-    }
-    let meta_dir = match &ctx.plugin_root {
-        Some(root) => root.join("schema").join("meta").join("v1"),
-        None => {
-            bail!("cannot locate metaschema directory — pass plugin_root or set CLAUDE_PLUGIN_ROOT")
-        }
-    };
-    let spec = load_reduction_spec(&reduction_file, &meta_dir)?;
-    execute(&spec, &ctx.project_root)
+/// Library-friendly entry point.
+///
+/// Phase 1 stub: the prior-arc executor depended on the metaschema directory
+/// shipped from the plugin (`<plugin_root>/schema/meta/v1`) and on the
+/// `[paths.overrides]` cascade from `D13`. Both are retired by doc 15 §11
+/// invariant 5 ("no resolution chain at analyze time"). Phase 2's metaschema
+/// amendment + path-qualified kind resolver replace them; until then,
+/// reduction execution bails.
+pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<(Graph, Report)> {
+    let layout = crate::layout::LayoutContext::discover(start, explicit_spec_path)?;
+    bail!(
+        "specdev-analyzer reduce is available in Phase 2 once kind resolution lands. \
+         Phase 1 ships layout discovery only (project: {}).",
+        layout.project_root.display()
+    );
 }
 
 /// Load and metaschema-validate a `reduction.yaml`.

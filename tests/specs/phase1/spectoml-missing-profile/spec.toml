@@ -1,0 +1,9 @@
+spec_version = "1.0"
+
+[project]
+name = "missing-profile"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"

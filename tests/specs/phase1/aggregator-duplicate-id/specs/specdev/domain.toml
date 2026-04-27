@@ -1,0 +1,6 @@
+[domain]
+name = "agg-dup"
+description = "Phase 1 aggregator-duplicate-id fixture"
+
+[schemas]
+module = "schemas/module.schema.yaml"
