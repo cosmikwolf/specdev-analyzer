@@ -1,0 +1,7 @@
+metaschema_version: "v1"
+entities:
+  - kind: Module
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []

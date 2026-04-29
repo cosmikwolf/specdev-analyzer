@@ -11,18 +11,22 @@
 //!      compiled aggregated schema, and resolves the kind references in
 //!      every `domain.toml` graph-check entry against the effective set.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::Result;
+use serde_json::Value as JsonValue;
 use tracing::{event, instrument, Level};
 
 use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
+use crate::graph as graph_checks;
 use crate::kinds;
 use crate::layout::{LayoutContext, LayoutKind};
+use crate::reduction::{self, Graph};
 use crate::reductions;
 use crate::report::{Finding, Report};
-use crate::resolved::EffectiveKindSet;
+use crate::resolved::{EffectiveKindSet, ResolvedExtends};
 
 /// Legacy compatibility shim — old callers expected an `Inputs` struct. The
 /// new shape is a [`LayoutContext`]; this alias keeps the public API surface
@@ -44,7 +48,9 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
     Ok(report)
 }
 
-/// Phase 1 layout pass: enumerate, aggregator, reductions, domain.toml.
+/// Layout pass: enumerate `specs/specdev/`, run the aggregator
+/// `$ref` resolver, load reductions, and surface `domain.toml`'s
+/// graph-check entry count. Findings only — does not gate later passes.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     let inv = layout.enumerate();
@@ -126,7 +132,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             "REDUCTION-001",
             Severity::Info,
             format!(
-                "loaded project reduction from {} ({} kind declaration(s); kind resolution deferred to Phase 2)",
+                "loaded project reduction from {} ({} kind declaration(s))",
                 p.source_path.display(),
                 p.kind_declarations.len()
             ),
@@ -142,7 +148,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             "REDUCTION-001",
             Severity::Info,
             format!(
-                "loaded {} reduction from {} ({} kind declaration(s); kind resolution deferred to Phase 2)",
+                "loaded {} reduction from {} ({} kind declaration(s))",
                 r.namespace.label(),
                 r.source_path.display(),
                 r.kind_declarations.len()
@@ -158,10 +164,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
                 report.push(Finding::new(
                     "DOMAIN-001",
                     Severity::Info,
-                    format!(
-                        "loaded domain.toml ({} graph-check entries; kind validation deferred to Phase 2)",
-                        count
-                    ),
+                    format!("loaded domain.toml ({} graph-check entries)", count),
                 ));
             }
             Err(e) => {
@@ -191,6 +194,10 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
 ///    compiled aggregated schema; emit `SCHEMA` findings.
 /// 4. Resolve `domain.toml` graph-check kind references against the
 ///    [`EffectiveKindSet`]; emit DOMAIN-003 for unresolved references.
+/// 5. Run the reduction executor against the kind set and execute
+///    `domain.toml` graph_checks against the resulting graph, with
+///    transitive-extends matching when a check's `scope` names a
+///    canonical (or qualified) kind.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     let inv = layout.enumerate();
@@ -273,7 +280,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
         }
     }
 
-    // Step 4: domain.toml graph-check resolution.
+    // Step 4: domain.toml graph-check resolution + execution.
     if layout.domain_toml_path.is_file() {
         match DomainConfig::load(&layout.domain_toml_path) {
             Ok(dom) => {
@@ -291,6 +298,36 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                     "project",
                     report,
                 );
+
+                // Step 5: run executor + project graph_checks.
+                let mut exec_report = Report::default();
+                let graph =
+                    reduction::execute_kindset(&kindset, &layout.project_root, &mut exec_report)?;
+                report.extend(exec_report.findings().to_vec());
+
+                execute_graph_checks(
+                    &dom.project.graph_checks,
+                    "project",
+                    &kindset,
+                    &graph,
+                    &dom,
+                    report,
+                );
+                // Module-scoped checks are reserved for per-module
+                // execution in a future phase; emit an info instead of
+                // running them at the project level.
+                for check in &dom.module.graph_checks {
+                    let rule = check.rule.as_deref().unwrap_or("?");
+                    report.push(Finding::new(
+                        "DOMAIN-001",
+                        Severity::Info,
+                        format!(
+                            "module-scope graph_check `{rule}` registered (module-scoped \
+                             execution lands when per-module scoping wires through the \
+                             open-vocabulary executor)",
+                        ),
+                    ));
+                }
             }
             Err(_) => {
                 // The DOMAIN-002 parse error is already emitted by
@@ -300,6 +337,199 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
     }
 
     Ok(())
+}
+
+/// Run domain.toml graph_checks against the executor's project graph.
+///
+/// The executor's [`Graph`] is serialized to a JSON value and walked via
+/// the existing selector primitives in [`crate::graph`]. Two Phase-2
+/// adaptations:
+///
+/// 1. **Transitive-extends pre-filtering.** When a check's `scope` field
+///    names a canonical or qualified kind, the relations / entities in the
+///    JSON view are filtered to those whose `extends` chain reaches the
+///    target. A check on canonical `depends_on` matches any relation
+///    whose chain reaches `depends_on` (e.g. `embassy.spawns`); a check
+///    on `embassy.spawns` matches only that exact qualified path.
+/// 2. **Primitive dispatch.** `check.kind` names the primitive
+///    (`unique` / `reference_exists` / `reachability` / `acyclic` /
+///    `layer_dependency`); the check's selector fields drive the call.
+///    Unknown primitives surface as `DOMAIN-003` warnings so authoring
+///    typos surface visibly.
+fn execute_graph_checks(
+    checks: &[GraphCheck],
+    section: &str,
+    kindset: &EffectiveKindSet,
+    graph: &Graph,
+    domain: &DomainConfig,
+    report: &mut Report,
+) {
+    let graph_json = match serde_json::to_value(graph) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    for check in checks {
+        let rule = check.rule.as_deref().unwrap_or("?");
+        let severity = domain.severity_of(rule);
+        let primitive = check.kind.as_str();
+
+        let view = filter_graph_for_check(&graph_json, check, kindset);
+
+        let findings = match primitive {
+            "unique" => check
+                .field
+                .as_deref()
+                .map(|f| graph_checks::unique(&view, f, rule, severity))
+                .unwrap_or_default(),
+            "reference_exists" => {
+                match (check.source_field.as_deref(), check.target_field.as_deref()) {
+                    (Some(s), Some(t)) => {
+                        graph_checks::reference_exists(&view, s, t, rule, severity)
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            "reachability" => match (
+                check.nodes_field.as_deref(),
+                check.edges_from.as_deref(),
+                check.edges_to.as_deref(),
+                check.entry_field.as_deref(),
+            ) {
+                (Some(n), Some(ef), Some(et), Some(e)) => {
+                    graph_checks::reachability(&view, n, ef, et, e, rule, severity)
+                }
+                _ => Vec::new(),
+            },
+            "acyclic" => match (check.edges_from.as_deref(), check.edges_to.as_deref()) {
+                (Some(ef), Some(et)) => graph_checks::acyclic(&view, ef, et, rule, severity),
+                _ => Vec::new(),
+            },
+            "layer_dependency" => match (
+                check.module_layer_field.as_deref(),
+                check.module_deps_field.as_deref(),
+            ) {
+                (Some(lf), Some(df)) => graph_checks::layer_dependency(
+                    &view,
+                    lf,
+                    df,
+                    &domain.layers.allowed_deps,
+                    rule,
+                    severity,
+                ),
+                _ => Vec::new(),
+            },
+            other => vec![Finding::new(
+                "DOMAIN-003",
+                Severity::Warning,
+                format!(
+                    "domain.toml [{section}] graph_check (rule `{rule}`): \
+                     unknown primitive `{other}` — supported: \
+                     unique, reference_exists, reachability, acyclic, layer_dependency"
+                ),
+            )],
+        };
+
+        report.extend(findings);
+    }
+}
+
+/// Pre-filter the executor's graph JSON view based on the check's `scope`
+/// field. When `scope` parses as a kind path that resolves in the
+/// effective set, relations or entities are filtered to those whose
+/// extends chain reaches the target. Checks without a kind-shaped scope
+/// see the full graph.
+fn filter_graph_for_check(
+    graph_json: &JsonValue,
+    check: &GraphCheck,
+    kindset: &EffectiveKindSet,
+) -> JsonValue {
+    let Some(scope) = check.scope.as_deref() else {
+        return graph_json.clone();
+    };
+    let Ok(parsed) = kinds::parse(scope) else {
+        return graph_json.clone();
+    };
+    let key = parsed.to_string();
+
+    let is_relation =
+        kindset.canonical_relations.contains(&key) || kindset.relation(&key).is_some();
+    let is_entity = kindset.canonical_roots.contains(&key) || kindset.entity(&key).is_some();
+
+    if !(is_relation || is_entity) {
+        // Already flagged as DOMAIN-003 in resolve_graph_check_kinds.
+        return graph_json.clone();
+    }
+
+    let mut filtered = graph_json.clone();
+    if is_relation {
+        if let Some(relations) = filtered.get_mut("relations").and_then(|v| v.as_array_mut()) {
+            relations.retain(|r| {
+                let Some(rkind) = r.get("kind").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                relation_extends_to(kindset, rkind, &key)
+            });
+        }
+    } else if let Some(entities) =
+        filtered.get_mut("entities").and_then(|v| v.as_array_mut())
+    {
+        entities.retain(|e| {
+            let Some(ekind) = e.get("kind").and_then(|v| v.as_str()) else {
+                return false;
+            };
+            entity_extends_to(kindset, ekind, &key)
+        });
+    }
+    filtered
+}
+
+fn relation_extends_to(kindset: &EffectiveKindSet, rkind: &str, target: &str) -> bool {
+    if rkind == target {
+        return true;
+    }
+    let mut cursor = rkind.to_string();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while seen.insert(cursor.clone()) {
+        let Some(decl) = kindset.relation(&cursor) else {
+            break;
+        };
+        match &decl.extends {
+            ResolvedExtends::Canonical(s) => return s == target,
+            ResolvedExtends::Qualified(p) => {
+                let s = p.to_string();
+                if s == target {
+                    return true;
+                }
+                cursor = s;
+            }
+        }
+    }
+    false
+}
+
+fn entity_extends_to(kindset: &EffectiveKindSet, ekind: &str, target: &str) -> bool {
+    if ekind == target {
+        return true;
+    }
+    let mut cursor = ekind.to_string();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while seen.insert(cursor.clone()) {
+        let Some(decl) = kindset.entity(&cursor) else {
+            break;
+        };
+        match &decl.extends {
+            ResolvedExtends::Canonical(s) => return s == target,
+            ResolvedExtends::Qualified(p) => {
+                let s = p.to_string();
+                if s == target {
+                    return true;
+                }
+                cursor = s;
+            }
+        }
+    }
+    false
 }
 
 /// Resolve every kind-string field of every graph-check entry against

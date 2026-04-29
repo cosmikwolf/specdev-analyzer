@@ -1,0 +1,6 @@
+metaschema_version: "v1"
+entities:
+  - kind: Task
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+relations: []

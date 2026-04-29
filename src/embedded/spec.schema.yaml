@@ -45,3 +45,12 @@ properties:
         type: string
         description: Source code directory the analyzer audits/reverses against, relative to spec.toml. Conventionally "src".
         minLength: 1
+      plugin_root:
+        type: string
+        description: |
+          Optional path to the plugin tree, relative to spec.toml. When set, this overrides the
+          SPECDEV_PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT environment variables for inline / bootstrap
+          / inline-bridge commands. The CLI flag --plugin-root still takes precedence over this
+          field. Per doc 15 §9.2, multi-package workspaces may legitimately set this per-package;
+          conflicting values across packages are accepted at CLI time.
+        minLength: 1

@@ -1,0 +1,7 @@
+name = "Blinky"
+
+[embassy]
+tasks = [
+  { name = "led_blink", priority = "high" },
+  { name = "heartbeat", priority = "low" },
+]

@@ -1,15 +1,23 @@
-//! Layout-level reduction loader (Phase 1).
+//! Layout-level reduction loader and Phase-2 path-qualified resolver.
 //!
-//! Distinct from [`crate::reduction`], which is the prior-arc reduction
-//! executor. This module owns the new layout's reduction loading: walk
-//! `reductions/project.yaml`, `reductions/blocks/*.yaml`,
-//! `reductions/bridges/*.yaml`, and `reductions/bridges/local/*.yaml`,
-//! parse each file to a `serde_yaml::Value`, and compute the namespace
-//! from the file's filesystem location.
+//! Two layers:
 //!
-//! Phase 1 produces strings only — no `extends:` resolution, no kind
-//! path-qualification, no canonical-vs-local enforcement at load time.
-//! Phase 2's metaschema amendment cuts that work in.
+//! 1. [`load_all`] walks `reductions/project.yaml`,
+//!    `reductions/blocks/*.yaml`, `reductions/bridges/*.yaml`, and
+//!    `reductions/bridges/local/*.yaml`, parses each to a
+//!    `serde_yaml::Value`, and computes the namespace from filesystem
+//!    location. Pure I/O + parsing — no `extends:` resolution, no kind
+//!    path-qualification.
+//! 2. [`resolve`] (Phase 2) takes the [`ReductionInventory`] and produces
+//!    an [`crate::resolved::EffectiveKindSet`]: rewrites unqualified
+//!    declarations to qualified form, validates the path grammar,
+//!    resolves `extends` chains via fixed-point iteration, and detects
+//!    canonical-vs-local bridge shadowing. Findings are returned
+//!    alongside the kind set; the caller pushes them into a
+//!    [`crate::report::Report`].
+//!
+//! [`crate::reduction`] is the executor that consumes
+//! [`crate::resolved::EffectiveKindSet`] to produce the project graph.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

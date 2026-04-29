@@ -46,6 +46,12 @@ pub struct PathsSection {
     /// Source-code directory the analyzer audits and reverse-engineers
     /// against, relative to `spec.toml`. Conventionally `"src"`.
     pub source: String,
+    /// Optional plugin-root override (path relative to `spec.toml`).
+    /// Used by `bootstrap` / `inline` / `inline-bridge` when no
+    /// `--plugin-root` flag is passed. See [`crate::plugin_root`] for the
+    /// full resolution chain.
+    #[serde(default)]
+    pub plugin_root: Option<String>,
 }
 
 impl SpecConfig {

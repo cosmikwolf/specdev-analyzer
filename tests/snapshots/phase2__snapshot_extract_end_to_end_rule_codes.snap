@@ -1,0 +1,9 @@
+---
+source: tests/phase2.rs
+expression: render_findings(&report)
+---
+Info DOMAIN-001
+Info LAYOUT-002
+Info REDUCTION-001
+Warning LAYOUT-003
+Warning LAYOUT-004

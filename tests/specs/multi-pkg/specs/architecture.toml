@@ -1,4 +1,0 @@
-[[connections]]
-from = "core::Clock.tick_out"
-to = "drivers::Led.tick_in"
-flow_type = "Tick"

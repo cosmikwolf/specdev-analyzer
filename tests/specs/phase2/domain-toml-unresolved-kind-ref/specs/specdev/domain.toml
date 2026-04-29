@@ -1,0 +1,15 @@
+[domain]
+name = "unresolved-kind-ref"
+
+[validation]
+[validation.rules]
+phantom = "error"
+
+[[project.graph_checks]]
+kind = "reachability"
+rule = "phantom"
+scope = "nonexistent.Foo"
+nodes_field = "entities[].name"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+entry_field = "entities[0].name"

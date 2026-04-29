@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/architecture.v1"
+type: object
+properties:
+  connections:
+    type: array
+    items:
+      type: object

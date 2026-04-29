@@ -1,0 +1,9 @@
+metaschema_version: "v1"
+entities: []
+relations:
+  - kind: renders
+    extends: depends_on
+    from: "specs/modules/*.toml"
+    for_each: "bindings.embassy+lvgl.renders[]"
+    from_ref: ".task"
+    to_ref: ".screen"

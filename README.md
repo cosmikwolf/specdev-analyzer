@@ -4,12 +4,14 @@ Domain-agnostic CLI that turns TOML specs into first-class engineering artifacts
 
 Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin at analyze time (doc 15 §11 invariant 5: no resolution chain at analyze time).
 
-## Status — Phase 1 of the blocks + bridges + profiles arc
+## Status — Phase 2 of the blocks + bridges + profiles arc
 
-This branch ships **Phase 1**: layout discovery, the aggregator `$ref` resolver, the reduction loader, and a Phase-1 stub for module structural validation. Subcommands and current behavior:
+This branch ships **Phase 2**: the metaschema amendment (path-qualified kinds + required `extends`), the open-vocabulary effective kind set, the compiled aggregated module schema, and the executor + extract + audit chain end-to-end. Canonical root-kind and relation-kind enums are embedded in the analyzer (doc 15 §11 invariant 5: no plugin lookup at analyze time). Subcommand behavior:
 
-- **`validate`** — discovers `spec.toml`, builds a layout context for `specs/specdev/`, enumerates every expected directory and file (`LAYOUT-002`/`LAYOUT-003`/`LAYOUT-004`), runs the aggregator `$ref` resolver (`AGGREGATOR-001` unresolved-ref / `AGGREGATOR-002` duplicate-`$id` / `AGGREGATOR-003` cycle), loads project / block / bridge reductions (`REDUCTION-001`), and emits one `LAYOUT-005` info per module discovered under `specs/modules/` (structural module validation lands in Phase 2).
-- **`extract`**, **`audit`**, **`reduce`** — Phase-1 stubs. Each bails with a clear "available in Phase 2 once kind resolution lands" message. Phase 2's metaschema amendment (path-qualified kinds + `extends`) wires them in.
+- **`validate`** — discovers `spec.toml`, builds a layout context, enumerates the `specs/specdev/` tree (`LAYOUT-002`/`LAYOUT-003`/`LAYOUT-004`), runs the aggregator `$ref` resolver and compiles the aggregated module schema (`AGGREGATOR-001` unresolved / `AGGREGATOR-002` duplicate-`$id` / `AGGREGATOR-003` cycle / `AGGREGATOR-005` compile-fail), resolves the open-vocabulary kind set from project + block + bridge reductions (`METASCHEMA-001..005`), validates each module TOML against the compiled schema (`SCHEMA`), and runs the reduction executor and `domain.toml` graph_checks against the resulting graph (`REDUCE_UNRESOLVED` / `DOMAIN-003`).
+- **`extract`** — runs validate, then the executor, and writes canonical YAML under `--output`: `modules/<Name>.yaml` (one per source module), `architecture.yaml` (full executor graph), `requirements.yaml` (entities whose `extends` chain reaches `statement`). Output is byte-stable across runs.
+- **`reduce`** — runs the executor and emits the `(entities, relations)` graph YAML to stdout or `--output`.
+- **`audit`** — validate → extract → tree-sitter compare via the configured language adapter (Rust, C, C++).
 - **`resolve`** — prints the discovered project layout as YAML for skill consumers.
 
 Errors carry a structured `<path>:<line>:<col>: <message>` payload via `LocatedError` so editors and CI can jump to the failing site.
@@ -26,9 +28,9 @@ Requires a stable Rust toolchain (MSRV 1.75).
 
 ```
 specdev-analyzer validate [--project <dir>] [--strict] [--no-color]
-specdev-analyzer extract  --output <dir> [--project <dir>]   # Phase 2 stub
-specdev-analyzer audit    [--project <dir>] [--filter <Module>] [--show-uncovered] [--expand]   # Phase 2 stub
-specdev-analyzer reduce   [--project <dir>] [--output <path>]   # Phase 2 stub
+specdev-analyzer extract  --output <dir> [--project <dir>]
+specdev-analyzer audit    [--project <dir>] [--filter <Module>] [--show-uncovered] [--expand]
+specdev-analyzer reduce   [--project <dir>] [--output <path>]
 specdev-analyzer resolve  [--project <dir>]
 ```
 
@@ -38,7 +40,7 @@ Every subcommand also accepts `--spec-path <path>` to short-circuit `spec.toml` 
 
 Set `RUST_LOG=specdev_analyzer=info` for progress events, `RUST_LOG=specdev_analyzer=debug` for per-file enumeration.
 
-### `spec.toml` shape (Phase 1)
+### `spec.toml` shape
 
 ```toml
 spec_version = "1.0"

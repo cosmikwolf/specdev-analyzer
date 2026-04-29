@@ -1,0 +1,14 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/lvgl.v1"
+type: object
+properties:
+  lvgl:
+    type: object
+    properties:
+      screens:
+        type: array
+        items:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }

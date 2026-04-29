@@ -1,0 +1,8 @@
+metaschema_version: "v1"
+entities:
+  - kind: Screen
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "lvgl.screens[]"
+    name: "${.name}"
+relations: []

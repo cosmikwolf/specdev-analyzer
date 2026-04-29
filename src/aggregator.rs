@@ -1,14 +1,16 @@
-//! Aggregator schema `$ref` resolver.
+//! Aggregator schema `$ref` resolver and compiler.
 //!
-//! Phase 1: load `specs/specdev/schemas/module.schema.yaml`, walk its
-//! top-level `allOf` array, and resolve each `$ref` against the inlined
-//! fragments under `inlined/blocks/` and `inlined/bridges/`. Validates that
-//! every fragment carries a unique `$id` (the risk called out in the plan).
+//! Two passes:
 //!
-//! Phase 1 deliberately does NOT compile the aggregated schema — that's
-//! Phase 2's job once the metaschema amendment lands. Cycle detection is
-//! warn-only here; cycles become fatal in Phase 2 when the schema is
-//! actually compiled.
+//! 1. [`resolve`] loads `specs/specdev/schemas/module.schema.yaml`, walks
+//!    its top-level `allOf` array, and resolves each `$ref` against the
+//!    inlined fragments under `inlined/blocks/` and `inlined/bridges/`.
+//!    Validates that every fragment carries a unique `$id` and that the
+//!    fragment graph is acyclic.
+//! 2. [`compile`] (Phase 2) runs the resolver pass first, then assembles
+//!    the aggregated schema into a [`jsonschema::Validator`] for use by
+//!    [`crate::validate::validate_modules`]. Cycles in the fragment graph
+//!    are fatal at this stage (AGGREGATOR-003).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -54,9 +56,9 @@ pub fn resolve(layout: &LayoutContext, report: &mut Report) -> Result<Aggregator
     let fragments = load_fragments(layout, report)?;
     summary.fragments_loaded = fragments.len();
 
-    // Aggregator schema may not exist yet on a skeleton project. Phase 1
-    // emits a missing-file finding (LAYOUT-003) elsewhere; here we just
-    // skip aggregator walking.
+    // Aggregator schema may not exist yet on a skeleton project. The
+    // layout pass emits a missing-file finding (LAYOUT-003) elsewhere;
+    // here we skip aggregator walking.
     if !layout.module_schema_path.is_file() {
         return Ok(summary);
     }
@@ -134,7 +136,7 @@ struct Fragment {
     /// Declared `$id` if present in the YAML.
     id: Option<String>,
     /// Set of `$ref` strings this fragment itself contains (used for cycle
-    /// detection in Phase 1; minimal walk since Phase 2 will replace this).
+    /// detection; minimal walk that the resolver runs as a pre-compile gate.
     refs: Vec<String>,
 }
 
@@ -282,9 +284,9 @@ fn resolve_ref<'a>(
         .find(|f| f.id.as_deref() == Some(reference))
 }
 
-/// Detect cycles among fragments by following each fragment's $refs. Phase 1
-/// is approximate — it follows refs by basename only; Phase 2 will do this
-/// properly via jsonschema compilation.
+/// Detect cycles among fragments by following each fragment's $refs.
+/// Approximate — follows refs by basename only — and runs as a pre-compile
+/// gate; the actual jsonschema build catches anything this misses.
 fn detect_cycles(fragments: &HashMap<String, Fragment>) -> Vec<Vec<String>> {
     let mut cycles: Vec<Vec<String>> = Vec::new();
     for start in fragments.keys() {
@@ -339,8 +341,8 @@ fn dfs_for_cycle(
 /// `Ok(None)` if the aggregator file is absent (skeleton projects). Errors
 /// surface as findings on `report`; the caller decides whether to halt.
 ///
-/// This runs the Phase-1 [`resolve`] walk first (which now treats cycles as
-/// errors in Phase 2) and then performs the actual `jsonschema` build.
+/// This runs the [`resolve`] walk first (cycle detection promoted to
+/// errors at compile time) and then performs the actual `jsonschema` build.
 /// Any unresolved-`$ref` / duplicate-`$id` / cycle finding emitted by
 /// `resolve` will be present in `report`; the caller should refuse to use
 /// the returned validator if `report.has_errors()` is true.

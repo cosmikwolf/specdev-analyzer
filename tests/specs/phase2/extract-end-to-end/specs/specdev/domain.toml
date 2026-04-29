@@ -1,0 +1,11 @@
+[domain]
+name = "phase2-e2e"
+
+[validation]
+[validation.rules]
+unique_module_names = "error"
+
+[[project.graph_checks]]
+kind = "unique"
+rule = "unique_module_names"
+field = "entities[].name"

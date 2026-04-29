@@ -1,7 +1,0 @@
-# Expected error: `layer` value "drivers" is not a member of LayerKind.
-
-name = "StatusLed"
-layer = "drivers"
-
-[metadata.MemoryModel]
-allocation = "static_alloc"

@@ -1,0 +1,551 @@
+//! `specdev inline <block>` and `specdev inline-bridge <a>+<b>`.
+//!
+//! Deterministic file copies plugin → project, with a single rolled-up
+//! [`crate::lineage`] entry recording origin + version + content hash. Re-inline
+//! is unconditionally refused in Phase 3; `--merge` is Phase 4.
+//!
+//! Layout assumed in the plugin tree (Phase 3 fixture; Phases 5–9 produce
+//! the canonical content):
+//!
+//! ```text
+//! <plugin-root>/
+//!   .claude-plugin/plugin.json
+//!   blocks/<name>/
+//!     schema.yaml
+//!     reduction.yaml
+//!     codegen/<lang>/README.md       # zero or more, one per supported language
+//!     README.md                       # author-facing, NOT inlined
+//!   bridges/<a>+<b>/
+//!     bindings.schema.yaml
+//!     reduction.yaml
+//!     codegen/<lang>/README.md
+//!     README.md
+//! ```
+//!
+//! Files copied to the project tree (matches doc 15 §4 layout):
+//!
+//! - block schema      → `specs/specdev/schemas/inlined/blocks/<name>.schema.yaml`
+//! - block reduction   → `specs/specdev/reductions/blocks/<name>.yaml`
+//! - block codegen     → `specs/specdev/codegen/<lang>/blocks/<name>/README.md` (per language)
+//! - bridge schema     → `specs/specdev/schemas/inlined/bridges/<a>+<b>.schema.yaml`
+//! - bridge reduction  → `specs/specdev/reductions/bridges/<a>+<b>.yaml`
+//! - bridge codegen    → `specs/specdev/codegen/<lang>/bridges/<a>+<b>/README.md`
+//!
+//! After per-unit copies, the unit's schema fragment gets a `$ref` entry
+//! appended to `module.schema.yaml`'s `allOf` array (the aggregator slot).
+//! The aggregator file is project-managed, not byte-faithfully copied; only
+//! the unit files contribute to `content_hash`.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, Context, Result};
+use sha2::{Digest, Sha256};
+
+use crate::hash::content_hash;
+use crate::layout::LayoutContext;
+use crate::lineage::{Entry, Lineage};
+use crate::upstream::{self, UnitKind};
+
+/// Split a bridge owner name into its two component blocks. Errors with
+/// `BRIDGE-LEX-001` when the components are not lexicographically ordered
+/// (`a < b`). Used by both the runtime preflight in `run_inline_bridge`
+/// and the plugin-author `plugin-lint` subcommand.
+pub fn lex_order_bridge(name: &str) -> Result<(&str, &str)> {
+    let Some((a, b)) = name.split_once('+') else {
+        return Err(anyhow!(
+            "[BRIDGE-LEX-001] bridge name {name:?} must be of the form `<a>+<b>`",
+        ));
+    };
+    if a.is_empty() || b.is_empty() {
+        return Err(anyhow!(
+            "[BRIDGE-LEX-001] bridge name {name:?} must have non-empty components on both sides of `+`",
+        ));
+    }
+    if a.contains('+') || b.contains('+') {
+        return Err(anyhow!(
+            "[BRIDGE-LEX-001] bridge name {name:?} contains more than one `+`; n-ary bridges are deferred (doc 15 §12)",
+        ));
+    }
+    if a >= b {
+        return Err(anyhow!(
+            "[BRIDGE-LEX-001] bridge owner names must be lex-ordered; did you mean `{b}+{a}`?"
+        ));
+    }
+    Ok((a, b))
+}
+
+/// One unit-file copy: project-destination path, plugin-source-relative
+/// path within the unit dir, and the bytes the analyzer read.
+#[derive(Debug, Clone)]
+pub(crate) struct UnitFile {
+    /// Path inside `specs/specdev/`, used as the lex-sort key for the
+    /// rolled-up hash and as the destination path under `specdev_root`.
+    pub(crate) rel_dst: PathBuf,
+    /// Path inside the unit's plugin-source directory (e.g. `schema.yaml`,
+    /// `codegen/rust/README.md`). Used by `upstream::write_upstream_files`
+    /// to mirror the plugin layout under `specs/specdev/upstream/`.
+    pub(crate) rel_src_in_unit: PathBuf,
+    /// Bytes the analyzer copied. Captured at preflight read so the hash
+    /// witnesses what was actually deployed (D33).
+    pub(crate) bytes: Vec<u8>,
+}
+
+fn read_file(path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path).with_context(|| format!("reading {}", path.display()))
+}
+
+/// Read the plugin's `plugin.json` and return the `version` field. Phase 3
+/// uses this to populate `origin_version` on inlined units. Falls back to
+/// `"unknown"` if the field is missing — plugin-author-CI lints this in a
+/// follow-up phase.
+fn plugin_version(plugin_root: &Path) -> Result<String> {
+    let manifest = plugin_root.join(crate::plugin_root::PLUGIN_MARKER);
+    let text =
+        std::fs::read_to_string(&manifest).with_context(|| format!("reading {}", manifest.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing {}", manifest.display()))?;
+    let v = value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    Ok(v.to_string())
+}
+
+/// Enumerate the supported languages a block or bridge ships codegen for, by
+/// walking `<unit_dir>/codegen/`. Returns sorted directory names.
+fn supported_languages(unit_dir: &Path) -> Result<Vec<String>> {
+    let codegen_dir = unit_dir.join("codegen");
+    if !codegen_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut langs: Vec<String> = std::fs::read_dir(&codegen_dir)
+        .with_context(|| format!("reading {}", codegen_dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    langs.sort();
+    Ok(langs)
+}
+
+/// Collect the file set for a block from the plugin tree.
+pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<UnitFile>> {
+    let unit_dir = plugin_root.join("blocks").join(name);
+    if !unit_dir.is_dir() {
+        return Err(anyhow!(
+            "[INLINE-001] block {name:?} not found at {}",
+            unit_dir.display(),
+        ));
+    }
+
+    let mut files: Vec<UnitFile> = Vec::new();
+
+    let schema_src = unit_dir.join("schema.yaml");
+    if !schema_src.is_file() {
+        return Err(anyhow!(
+            "[INLINE-001] block {name:?} is missing schema.yaml at {}",
+            schema_src.display(),
+        ));
+    }
+    files.push(UnitFile {
+        rel_dst: PathBuf::from(format!("schemas/inlined/blocks/{name}.schema.yaml")),
+        rel_src_in_unit: PathBuf::from("schema.yaml"),
+        bytes: read_file(&schema_src)?,
+    });
+
+    let reduction_src = unit_dir.join("reduction.yaml");
+    if !reduction_src.is_file() {
+        return Err(anyhow!(
+            "[INLINE-001] block {name:?} is missing reduction.yaml at {}",
+            reduction_src.display(),
+        ));
+    }
+    files.push(UnitFile {
+        rel_dst: PathBuf::from(format!("reductions/blocks/{name}.yaml")),
+        rel_src_in_unit: PathBuf::from("reduction.yaml"),
+        bytes: read_file(&reduction_src)?,
+    });
+
+    for lang in supported_languages(&unit_dir)? {
+        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
+        if !codegen_src.is_file() {
+            continue; // empty `codegen/<lang>/` is allowed; CI will lint
+        }
+        files.push(UnitFile {
+            rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/README.md")),
+            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
+            bytes: read_file(&codegen_src)?,
+        });
+    }
+
+    files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+    Ok(files)
+}
+
+/// Collect the file set for a bridge from the plugin tree.
+pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec<UnitFile>> {
+    let unit_dir = plugin_root.join("bridges").join(name);
+    if !unit_dir.is_dir() {
+        return Err(anyhow!(
+            "[INLINE-001] bridge {name:?} not found at {}",
+            unit_dir.display(),
+        ));
+    }
+
+    let mut files: Vec<UnitFile> = Vec::new();
+
+    let schema_src = unit_dir.join("bindings.schema.yaml");
+    if !schema_src.is_file() {
+        return Err(anyhow!(
+            "[INLINE-001] bridge {name:?} is missing bindings.schema.yaml at {}",
+            schema_src.display(),
+        ));
+    }
+    files.push(UnitFile {
+        rel_dst: PathBuf::from(format!("schemas/inlined/bridges/{name}.schema.yaml")),
+        rel_src_in_unit: PathBuf::from("bindings.schema.yaml"),
+        bytes: read_file(&schema_src)?,
+    });
+
+    let reduction_src = unit_dir.join("reduction.yaml");
+    if !reduction_src.is_file() {
+        return Err(anyhow!(
+            "[INLINE-001] bridge {name:?} is missing reduction.yaml at {}",
+            reduction_src.display(),
+        ));
+    }
+    files.push(UnitFile {
+        rel_dst: PathBuf::from(format!("reductions/bridges/{name}.yaml")),
+        rel_src_in_unit: PathBuf::from("reduction.yaml"),
+        bytes: read_file(&reduction_src)?,
+    });
+
+    for lang in supported_languages(&unit_dir)? {
+        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
+        if !codegen_src.is_file() {
+            continue;
+        }
+        files.push(UnitFile {
+            rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/README.md")),
+            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
+            bytes: read_file(&codegen_src)?,
+        });
+    }
+
+    files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+    Ok(files)
+}
+
+/// Compute the rolled-up content hash for a unit. Format: per-file lines
+/// `<sha256-hex>  <rel-path>\n` in lex-sorted order, then SHA-256 of the
+/// concatenation. Mirrors the `sha256sum` output convention so per-file
+/// hashes stay debuggable.
+fn rollup_hash(files: &[UnitFile]) -> String {
+    let mut summary = String::new();
+    for f in files {
+        let mut h = Sha256::new();
+        h.update(&f.bytes);
+        let digest = h.finalize();
+        for byte in digest {
+            use std::fmt::Write;
+            let _ = write!(&mut summary, "{byte:02x}");
+        }
+        summary.push_str("  ");
+        // PathBuf → Display uses platform separators, but the rel_dst is
+        // built from forward slashes above; convert defensively.
+        let s = f.rel_dst.to_string_lossy().replace('\\', "/");
+        summary.push_str(&s);
+        summary.push('\n');
+    }
+    content_hash(summary.as_bytes())
+}
+
+/// Refuse if any destination is already an existing file — both the active
+/// project copies and the upstream/ snapshot. Belt-and-suspenders alongside
+/// the lineage-entry check; catches the case where the lineage was
+/// hand-deleted but files remain.
+fn refuse_if_dst_exists(
+    specdev_root: &Path,
+    files: &[UnitFile],
+    kind: UnitKind,
+    name: &str,
+    unit_label: &str,
+) -> Result<()> {
+    for f in files {
+        let dst = specdev_root.join(&f.rel_dst);
+        if dst.exists() {
+            return Err(anyhow!(
+                "[INLINE-002] {unit_label}: refuse to overwrite existing {}; use `specdev inline --merge` (Phase 4) or `git checkout -- specs/specdev/...` to reset",
+                dst.display(),
+            ));
+        }
+        let upstream_dst = upstream::upstream_dir(specdev_root, kind, name).join(&f.rel_src_in_unit);
+        if upstream_dst.exists() {
+            return Err(anyhow!(
+                "[INLINE-002] {unit_label}: refuse to overwrite existing {}; the upstream/ snapshot already exists. Run `specdev drift` to inspect, or `git checkout -- specs/specdev/upstream/...` to reset.",
+                upstream_dst.display(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Write each unit file to its destination under `specdev_root`. Bytes are
+/// copied verbatim; no newline normalization, no YAML re-emission.
+fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Result<()> {
+    for f in files {
+        let dst = specdev_root.join(&f.rel_dst);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dst, &f.bytes).with_context(|| format!("writing {}", dst.display()))?;
+    }
+    Ok(())
+}
+
+/// Append a `$ref` to the aggregator's `allOf:` array, then write back. The
+/// aggregator file is project-managed (not under the determinism invariant
+/// for content_hash), so re-emit via `serde_yaml` is acceptable. Idempotent:
+/// running the same insertion twice produces a single entry. Phase-3
+/// callers always run this on a fresh inline (caller has already refused
+/// re-inline); idempotency guards against double-runs from test harnesses.
+fn aggregator_add_ref(module_schema_path: &Path, ref_path: &str) -> Result<()> {
+    let text = std::fs::read_to_string(module_schema_path)
+        .with_context(|| format!("reading {}", module_schema_path.display()))?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&text)
+        .with_context(|| format!("parsing {}", module_schema_path.display()))?;
+
+    // Locate or create allOf as a sequence at the root level.
+    let mapping = value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow!("{} root is not a YAML mapping", module_schema_path.display()))?;
+    let key = serde_yaml::Value::from("allOf");
+    let entry = mapping
+        .entry(key)
+        .or_insert(serde_yaml::Value::Sequence(Vec::new()));
+    let seq = entry
+        .as_sequence_mut()
+        .ok_or_else(|| anyhow!("{} `allOf` is not a sequence", module_schema_path.display()))?;
+
+    // Idempotent: only add if no existing entry has the same $ref.
+    let already = seq.iter().any(|item| {
+        item.as_mapping()
+            .and_then(|m| m.get(serde_yaml::Value::from("$ref")))
+            .and_then(|v| v.as_str())
+            .map(|s| s == ref_path)
+            .unwrap_or(false)
+    });
+    if !already {
+        let mut entry_map = serde_yaml::Mapping::new();
+        entry_map.insert(
+            serde_yaml::Value::from("$ref"),
+            serde_yaml::Value::from(ref_path),
+        );
+        seq.push(serde_yaml::Value::Mapping(entry_map));
+    }
+
+    let out = serde_yaml::to_string(&value)
+        .with_context(|| format!("re-emitting {}", module_schema_path.display()))?;
+    std::fs::write(module_schema_path, out)
+        .with_context(|| format!("writing {}", module_schema_path.display()))?;
+    Ok(())
+}
+
+fn now_iso8601() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Run `specdev inline <block>` against a discovered project layout and
+/// resolved plugin root.
+pub fn run_inline_block(layout: &LayoutContext, plugin_root: &Path, name: &str) -> Result<()> {
+    let mut lineage = Lineage::load(&layout.specdev_root)?;
+    if lineage.has_block(name) {
+        return Err(anyhow!(
+            "[INLINE-002] block {name:?} is already inlined (lineage entry present); use `specdev inline {name} --merge` (Phase 4) to update from upstream, or `git checkout -- specs/specdev/...` to reset",
+        ));
+    }
+    let files = collect_block_files(plugin_root, name)?;
+    refuse_if_dst_exists(&layout.specdev_root, &files, UnitKind::Block, name, &format!("block {name}"))?;
+
+    write_unit_files(&layout.specdev_root, &files)?;
+
+    let upstream_files: Vec<(PathBuf, Vec<u8>)> = files
+        .iter()
+        .map(|f| (f.rel_src_in_unit.clone(), f.bytes.clone()))
+        .collect();
+    upstream::write_upstream_files(&layout.specdev_root, UnitKind::Block, name, &upstream_files)?;
+
+    aggregator_add_ref(
+        &layout.module_schema_path,
+        &format!("inlined/blocks/{name}.schema.yaml"),
+    )?;
+
+    let entry = Entry {
+        origin: "plugin".into(),
+        origin_version: plugin_version(plugin_root)?,
+        inlined_at: now_iso8601(),
+        content_hash: rollup_hash(&files),
+    };
+    lineage.blocks.insert(name.to_string(), entry);
+    lineage.save(&layout.specdev_root)?;
+    Ok(())
+}
+
+/// Run `specdev inline-bridge <a>+<b>`. Preflight: lex-order + both blocks
+/// already inlined.
+pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str) -> Result<()> {
+    // Preflight 1: lex-order.
+    let (a, b) = lex_order_bridge(name)?;
+
+    // Preflight 2: both blocks already inlined.
+    let mut lineage = Lineage::load(&layout.specdev_root)?;
+    for needed in [a, b] {
+        if !lineage.has_block(needed) {
+            return Err(anyhow!(
+                "[INLINE-003] bridge `{name}` requires `{needed}` to be inlined first"
+            ));
+        }
+    }
+
+    if lineage.has_bridge(name) {
+        return Err(anyhow!(
+            "[INLINE-002] bridge `{name}` is already inlined (lineage entry present); use `specdev inline-bridge {name} --merge` (Phase 4) to update",
+        ));
+    }
+
+    let files = collect_bridge_files(plugin_root, name)?;
+    refuse_if_dst_exists(
+        &layout.specdev_root,
+        &files,
+        UnitKind::Bridge,
+        name,
+        &format!("bridge {name}"),
+    )?;
+
+    write_unit_files(&layout.specdev_root, &files)?;
+
+    let upstream_files: Vec<(PathBuf, Vec<u8>)> = files
+        .iter()
+        .map(|f| (f.rel_src_in_unit.clone(), f.bytes.clone()))
+        .collect();
+    upstream::write_upstream_files(&layout.specdev_root, UnitKind::Bridge, name, &upstream_files)?;
+
+    aggregator_add_ref(
+        &layout.module_schema_path,
+        &format!("inlined/bridges/{name}.schema.yaml"),
+    )?;
+
+    let entry = Entry {
+        origin: "plugin".into(),
+        origin_version: plugin_version(plugin_root)?,
+        inlined_at: now_iso8601(),
+        content_hash: rollup_hash(&files),
+    };
+    lineage.bridges.insert(name.to_string(), entry);
+    lineage.save(&layout.specdev_root)?;
+    Ok(())
+}
+
+/// Plugin-author lint: walk `<plugin-root>/bridges/` and assert every
+/// directory name is lex-ordered. Returns a list of offending entries.
+/// Same lex-order check as the runtime `inline-bridge` preflight.
+pub fn lint_plugin_bridges(plugin_root: &Path) -> Result<Vec<String>> {
+    let bridges_dir = plugin_root.join("bridges");
+    if !bridges_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(&bridges_dir)
+        .with_context(|| format!("reading {}", bridges_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Some(name) = entry.file_name().into_string().ok() else {
+            continue;
+        };
+        if let Err(e) = lex_order_bridge(&name) {
+            offenders.push(format!("{name}: {e}"));
+        }
+    }
+    offenders.sort();
+    Ok(offenders)
+}
+
+/// Public for `bootstrap.rs` — returns a `BTreeMap<rel_path, bytes>` shape
+/// useful for snapshot-friendly diagnostics. Not used by the inline path
+/// itself.
+#[allow(dead_code)]
+pub(crate) fn block_file_map(plugin_root: &Path, name: &str) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+    let files = collect_block_files(plugin_root, name)?;
+    Ok(files.into_iter().map(|f| (f.rel_dst, f.bytes)).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lex_order_accepts_a_before_b() {
+        let (a, b) = lex_order_bridge("embassy+lvgl").unwrap();
+        assert_eq!(a, "embassy");
+        assert_eq!(b, "lvgl");
+    }
+
+    #[test]
+    fn lex_order_rejects_swapped_with_did_you_mean() {
+        let err = lex_order_bridge("lvgl+embassy").unwrap_err();
+        let s = format!("{err:#}");
+        assert!(s.contains("BRIDGE-LEX-001"), "{s}");
+        assert!(s.contains("`embassy+lvgl`"), "{s}");
+    }
+
+    #[test]
+    fn lex_order_rejects_equal_components() {
+        // `a == b` is not strictly less-than.
+        let err = lex_order_bridge("foo+foo").unwrap_err();
+        assert!(format!("{err:#}").contains("BRIDGE-LEX-001"));
+    }
+
+    #[test]
+    fn lex_order_rejects_n_ary() {
+        let err = lex_order_bridge("a+b+c").unwrap_err();
+        assert!(format!("{err:#}").contains("BRIDGE-LEX-001"));
+    }
+
+    #[test]
+    fn lex_order_rejects_no_separator() {
+        let err = lex_order_bridge("embassy").unwrap_err();
+        assert!(format!("{err:#}").contains("BRIDGE-LEX-001"));
+    }
+
+    #[test]
+    fn lex_order_rejects_empty_components() {
+        assert!(lex_order_bridge("+lvgl").is_err());
+        assert!(lex_order_bridge("embassy+").is_err());
+    }
+
+    #[test]
+    fn rollup_hash_is_order_independent() {
+        // Two physical orderings of the same file set must roll up to the
+        // same hash because we sort by rel_dst before hashing.
+        let mk = |order: &[(&str, &[u8])]| -> Vec<UnitFile> {
+            let mut files: Vec<UnitFile> = order
+                .iter()
+                .map(|(p, b)| UnitFile {
+                    rel_dst: PathBuf::from(*p),
+                    rel_src_in_unit: PathBuf::from(*p),
+                    bytes: b.to_vec(),
+                })
+                .collect();
+            files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+            files
+        };
+        let ab = mk(&[("a/x", b"hello"), ("b/y", b"world")]);
+        let ba = mk(&[("b/y", b"world"), ("a/x", b"hello")]);
+        assert_eq!(rollup_hash(&ab), rollup_hash(&ba));
+    }
+}

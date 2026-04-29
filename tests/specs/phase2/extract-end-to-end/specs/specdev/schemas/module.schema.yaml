@@ -1,0 +1,20 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/module.v1"
+type: object
+required: [name]
+properties:
+  name:
+    type: string
+  embassy:
+    type: object
+    properties:
+      tasks:
+        type: array
+        items:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }
+            priority: { type: string }
+allOf:
+  - $ref: "inlined/blocks/embassy.schema.yaml"

@@ -1,0 +1,10 @@
+spec_version = "1.0"
+
+[project]
+name = "unresolved-kind-ref"
+profile = "firmware-layered"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"

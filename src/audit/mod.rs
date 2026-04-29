@@ -258,14 +258,13 @@ impl AuditReport {
     }
 }
 
-/// End-to-end convenience.
-///
-/// Phase 1 stub: audit drives off the extract pipeline, which is itself a
-/// Phase-2 stub. Until extract lands, audit bails with a Phase-2 message.
-pub fn run_project(layout: &LayoutContext, _options: AuditOptions<'_>) -> Result<AuditReport> {
-    anyhow::bail!(
-        "specdev-analyzer audit is available in Phase 2 once kind resolution + extract land. \
-         Phase 1 ships layout discovery only (project: {}).",
-        layout.project_root.display()
-    );
+/// End-to-end convenience: validate → extract → audit.
+pub fn run_project(layout: &LayoutContext, options: AuditOptions<'_>) -> Result<AuditReport> {
+    let extraction = crate::extract::run(layout)?;
+    run(
+        &layout.project_root,
+        &layout.spec,
+        &extraction.modules,
+        options,
+    )
 }

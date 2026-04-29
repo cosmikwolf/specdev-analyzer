@@ -1,0 +1,10 @@
+metaschema_version: "v1"
+entities:
+  - kind: Task
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "embassy.tasks[]"
+    name: "${.name}"
+    attrs:
+      priority: ".priority"
+relations: []
