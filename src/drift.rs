@@ -341,4 +341,41 @@ mod tests {
         // but drift's job is observation, not resolution.)
         assert_eq!(classify(b"x", b"y", b"y"), FileCategory::Both);
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(128))]
+
+        /// Property: classify maps strictly per the (base==ours, base==theirs)
+        /// truth table. Random byte triples cover patterns the four hand-
+        /// picked unit tests can't enumerate (empty bytes, identical
+        /// prefixes with different suffixes, very large buffers, equal
+        /// edits on both sides, etc.).
+        #[test]
+        fn classify_truth_table(
+            base in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256),
+            ours in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256),
+            theirs in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256),
+        ) {
+            let category = classify(&base, &ours, &theirs);
+            let plugin_moved = base != theirs;
+            let locally_edited = base != ours;
+            let expected = match (plugin_moved, locally_edited) {
+                (false, false) => FileCategory::Clean,
+                (true, false) => FileCategory::PluginMoved,
+                (false, true) => FileCategory::LocallyEdited,
+                (true, true) => FileCategory::Both,
+            };
+            proptest::prop_assert_eq!(category, expected);
+        }
+
+        /// Property: classify(b, b, b) is always Clean for any b.
+        /// Sanity-check: the "all three equal" branch is the only path
+        /// to Clean.
+        #[test]
+        fn classify_clean_iff_all_equal(
+            v in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256),
+        ) {
+            proptest::prop_assert_eq!(classify(&v, &v, &v), FileCategory::Clean);
+        }
+    }
 }

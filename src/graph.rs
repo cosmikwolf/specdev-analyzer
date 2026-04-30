@@ -694,4 +694,121 @@ mod tests {
         );
         assert_eq!(f.len(), 1);
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// Property: `unique` reports exactly N - distinct(N) findings
+        /// for an array of N name strings. The unit test covers the
+        /// 2-of-2-duplicates case; this widens to arbitrary sizes and
+        /// patterns including all-distinct and all-same.
+        #[test]
+        fn unique_reports_dup_count(
+            names in proptest::collection::vec("[a-z]{1,4}", 0..30)
+        ) {
+            let items: Vec<serde_json::Value> = names
+                .iter()
+                .map(|n| json!({ "name": n }))
+                .collect();
+            let v = json!({ "items": items });
+            let f = unique(&v, "items[].name", "U", Severity::Error);
+            let distinct = names.iter().collect::<BTreeSet<_>>().len();
+            let expected_dups = names.len() - distinct;
+            proptest::prop_assert_eq!(f.len(), expected_dups);
+        }
+
+        /// Property: `acyclic` produces no findings when all edges go
+        /// from a lower-indexed node to a higher-indexed node (a valid
+        /// topological order). Generated graphs cover sizes 2..15
+        /// nodes and any subset of forward edges.
+        #[test]
+        fn acyclic_clean_on_topologically_ordered_edges(
+            (n, edges) in dag_strategy(2usize..15)
+        ) {
+            let modules: Vec<serde_json::Value> = (0..n)
+                .map(|i| {
+                    let deps: Vec<String> = edges
+                        .iter()
+                        .filter(|(from, _)| *from == i)
+                        .map(|(_, to)| format!("n{to}"))
+                        .collect();
+                    json!({ "name": format!("n{i}"), "depends_on": deps })
+                })
+                .collect();
+            let v = json!({ "modules": modules });
+            let f = acyclic(
+                &v,
+                "modules[].name",
+                "modules[].depends_on[]",
+                "A",
+                Severity::Error,
+            );
+            proptest::prop_assert!(
+                f.is_empty(),
+                "DAG flagged as cyclic: edges={edges:?}, findings={f:?}",
+            );
+        }
+
+        /// Property: injecting a back-edge (from higher index to lower)
+        /// into an otherwise-DAG graph triggers an `acyclic` finding.
+        #[test]
+        fn acyclic_flags_back_edge(
+            (n, mut edges) in dag_strategy(2usize..10)
+        ) {
+            // Add a back-edge from the highest indexed node to the
+            // lowest (which must be reachable from n-1 transitively for
+            // some topological orderings; we ensure reachability by
+            // adding a forward edge 0→(n-1) too if it isn't there).
+            let forward = (0, n - 1);
+            if !edges.contains(&forward) {
+                edges.push(forward);
+            }
+            edges.push((n - 1, 0));
+
+            let modules: Vec<serde_json::Value> = (0..n)
+                .map(|i| {
+                    let deps: Vec<String> = edges
+                        .iter()
+                        .filter(|(from, _)| *from == i)
+                        .map(|(_, to)| format!("n{to}"))
+                        .collect();
+                    json!({ "name": format!("n{i}"), "depends_on": deps })
+                })
+                .collect();
+            let v = json!({ "modules": modules });
+            let f = acyclic(
+                &v,
+                "modules[].name",
+                "modules[].depends_on[]",
+                "A",
+                Severity::Error,
+            );
+            proptest::prop_assert!(
+                !f.is_empty(),
+                "back-edge graph not flagged: edges={edges:?}",
+            );
+        }
+    }
+
+    /// Strategy for a directed acyclic graph: returns `(n, edges)` where
+    /// `n` is the node count and every edge `(from, to)` satisfies `from
+    /// < to`. Used by the proptest cases above.
+    fn dag_strategy(
+        n_range: std::ops::Range<usize>,
+    ) -> impl proptest::strategy::Strategy<Value = (usize, Vec<(usize, usize)>)> {
+        use proptest::strategy::Strategy;
+        n_range.prop_flat_map(|n| {
+            // Generate a subset of all forward edges (i, j) with i < j.
+            // Cap edge count proportional to n to keep the search space
+            // tractable. The from-index is sampled from `0..n-1` because
+            // the last node has no valid successor in the forward graph.
+            let max_edges = (n * (n - 1) / 2).min(20);
+            proptest::collection::vec(
+                (0..n.saturating_sub(1))
+                    .prop_flat_map(move |i| (proptest::strategy::Just(i), (i + 1)..n)),
+                0..=max_edges,
+            )
+            .prop_map(move |edges| (n, edges))
+        })
+    }
 }
