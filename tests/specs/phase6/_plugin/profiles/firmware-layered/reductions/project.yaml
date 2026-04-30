@@ -1,0 +1,94 @@
+metaschema_version: "v1"
+
+# Project-level entity declarations: the kinds that exist at the profile
+# root, before any block or bridge contributes its own kinds. Blocks
+# inlined later (Phase 6) declare their own kinds via reductions/blocks/.
+
+entities:
+  # Modules — the core unit. Each `specs/modules/*.toml` produces one Module.
+  - kind: Module
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+    attrs:
+      layer: ".layer"
+
+  # Ports declared inside each module — used as the targets of architecture connections.
+  - kind: Port
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "ports[]"
+    # Qualified port name (e.g. "AudioSource.out") matches the architecture
+    # connection endpoints. The reduction concatenates parent module name
+    # with the port's local name.
+    name: "${parent.name}.${.name}"
+    attrs:
+      direction: ".direction"
+      port_type: ".port_type"
+
+  # Connections from `specs/architecture.toml`. The connection's name is
+  # synthesized from its endpoints so each is structurally unique.
+  - kind: Connection
+    extends: structural
+    from: "specs/architecture.toml"
+    for_each: "connections[]"
+    name: "${.from}->${.to}"
+    attrs:
+      from: ".from"
+      to: ".to"
+      flow_type: ".flow_type"
+
+  # Source documents from `specs/requirements.toml`.
+  - kind: Source
+    extends: structural
+    from: "specs/requirements.toml"
+    for_each: "source[]"
+    name: "${.id}"
+    attrs:
+      kind: ".kind"
+      title: ".title"
+
+  # Individual requirements.
+  - kind: Requirement
+    extends: structural
+    from: "specs/requirements.toml"
+    for_each: "requirement[]"
+    name: "${.id}"
+    attrs:
+      text: ".text"
+
+relations:
+  # Module-to-module dependency edges (drives modules_acyclic + layer_dependency).
+  - kind: depends_on
+    extends: depends_on
+    from_kind: Module
+    to_kind: Module
+    from_spec: "specs/modules/*.toml"
+    for_each: "depends_on[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Requirement-to-parent traceability (drives requirement_satisfies_resolves).
+  - kind: satisfies
+    extends: depends_on
+    from_kind: Requirement
+    to_kind: Requirement
+    from_spec: "specs/requirements.toml"
+    for_each: "requirement[].satisfies[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Module-to-requirement (drives module_satisfies_resolves). Distinct
+  # relation kind from the requirement-tree `satisfies` so graph checks
+  # can target each independently.
+  - kind: module_satisfies
+    extends: depends_on
+    from_kind: Module
+    to_kind: Requirement
+    from_spec: "specs/modules/*.toml"
+    for_each: "satisfies[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"

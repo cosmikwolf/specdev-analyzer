@@ -1,0 +1,40 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/library-api/architecture.schema.yaml"
+title: "library-api architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for library-api projects. Declares
+  the cargo features the library exposes and the dependency graph
+  between them. Modules reference these features via their top-level
+  `feature_gates` array; the `module_feature_gates_resolve` graph check
+  verifies every reference resolves.
+type: object
+additionalProperties: false
+properties:
+  features:
+    type: array
+    items: { $ref: "#/$defs/Feature" }
+
+$defs:
+  Feature:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name:
+        $ref: "enums.schema.yaml#/$defs/FeatureName"
+      description:
+        type: string
+      depends_on:
+        description: >
+          Other features that must be enabled for this feature to be
+          meaningful. The `feature_dependencies_resolve` graph check
+          verifies every entry names a declared feature.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
+        uniqueItems: true
+      default:
+        description: >
+          When `true`, this feature is in the crate's `[features]
+          default = [...]` set. Defaults to `false`.
+        type: boolean
+        default: false

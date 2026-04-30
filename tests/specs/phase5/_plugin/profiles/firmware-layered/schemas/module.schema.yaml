@@ -11,7 +11,13 @@ description: >
   contributions that close `bindings.<bridge-name>` to a bridge-specific
   shape. Until then, projects may author `[bindings.<key>]` tables freely.
 type: object
-additionalProperties: false
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas (e.g.
+# `[embassy]`, `[stm32f4]`) even when those are valid via the aggregator
+# `allOf:` slot. unevaluatedProperties IS allOf-aware: a property is
+# "evaluated" if any subschema in allOf/$ref references it.
+unevaluatedProperties: false
 required: [name, layer]
 properties:
   name:

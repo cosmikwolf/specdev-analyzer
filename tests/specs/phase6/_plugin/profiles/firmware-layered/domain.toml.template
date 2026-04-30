@@ -1,0 +1,108 @@
+# firmware-layered project graph checks.
+#
+# Each [[project.graph_checks]] runs after validate parses module +
+# architecture + requirements TOMLs and the reduction materializes the
+# universal (entities, relations) graph. The `scope` field pre-filters
+# the graph view to entries of a given kind via the extends chain
+# (e.g. scope = "Module" passes only Module-extending entities through
+# to the check). Unscoped checks see the full graph.
+#
+# Severity per rule is configured in [validation.rules].
+
+[domain]
+name = "{{project_name}}"
+
+[validation]
+[validation.rules]
+unique_module_names           = "error"
+modules_acyclic               = "error"
+layer_dependency              = "error"
+connection_endpoints_resolve  = "error"
+requirement_ids_unique        = "error"
+requirement_satisfies_resolves = "warning"
+module_satisfies_resolves     = "warning"
+
+# Module names must be unique across the project.
+[[project.graph_checks]]
+kind = "unique"
+rule = "unique_module_names"
+scope = "Module"
+field = "entities[].name"
+
+# Module dependency graph must be acyclic. The `depends_on` scope filters
+# relations to module-to-module edges; same-array-index pairing yields
+# (from, to) tuples for the cycle check.
+[[project.graph_checks]]
+kind = "acyclic"
+rule = "modules_acyclic"
+scope = "depends_on"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+
+# Layered architecture: application → middleware → driver → HAL → PAC.
+# Same-layer dependencies are allowed; upward dependencies (e.g. HAL → application)
+# violate the ordering and are flagged. The graph-shape `layer_dependency`
+# primitive jointly filters entities (by `entity_scope`) and relations
+# (by `relation_scope`), then checks each `(from, to)` edge against the
+# ordering top-down.
+[[project.graph_checks]]
+kind = "layer_dependency"
+rule = "layer_dependency"
+entity_scope = "Module"
+relation_scope = "depends_on"
+layer_field = "attrs.layer"
+layer_ordering = ["application", "middleware", "driver", "HAL", "PAC"]
+
+# Connection endpoints (`Module.port`) must name an existing qualified
+# port. Both the `from` and `to` sides are checked.
+#
+# These checks are unscoped (no `scope =` field). Reasoning: the source
+# field `entities[].attrs.from` only matches Connection entities (only
+# Connections have an `attrs.from` field, so the path-selector picks
+# naturally filter to Connections without needing kind-scope). The
+# target field `entities[].name` matches across all entity kinds —
+# correct here because Port qualified names (`Module.port`) are
+# structurally distinct from Module names (no `.`) and Connection
+# synthetic names (containing `->`), so a Connection.attrs.from value
+# only resolves against actual Port entries.
+#
+# If a real project surfaces a name-collision case (e.g. a Module named
+# `Foo.bar`), this check needs the two-scope form (separate
+# source_scope and target_scope), which is a future graph-check
+# primitive extension.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "connection_endpoints_resolve"
+source_field = "entities[].attrs.from"
+target_field = "entities[].name"
+
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "connection_endpoints_resolve"
+source_field = "entities[].attrs.to"
+target_field = "entities[].name"
+
+# Requirement ids must be unique.
+[[project.graph_checks]]
+kind = "unique"
+rule = "requirement_ids_unique"
+scope = "Requirement"
+field = "entities[].name"
+
+# Requirement-to-parent traceability: every entry in
+# Requirement.satisfies must reference an existing requirement id.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "requirement_satisfies_resolves"
+scope = "satisfies"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Module-to-requirement traceability: every entry in Module.satisfies
+# must reference an existing requirement id.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "module_satisfies_resolves"
+scope = "module_satisfies"
+source_field = "relations[].to"
+target_field = "entities[].name"
