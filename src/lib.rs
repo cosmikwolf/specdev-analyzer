@@ -57,6 +57,13 @@
 //! - `DRIFT-INVARIANT-001` — inlined file present, no upstream entry.
 //! - `DRIFT-INVARIANT-002` — upstream entry present, no inlined file.
 //! - `DRIFT-INVARIANT-003` — lineage entry points at no files at all.
+//!
+//! Phase-5 finding codes (in [`Report`] alongside the rest):
+//! - `LAYOUT-005` — `specs/architecture.toml` absent (info; project may
+//!   have no architecture-level wiring yet).
+//! - `LAYOUT-006` — `specs/requirements.toml` absent (info).
+//! - `SCHEMA-ARCH` — `architecture.toml` fails its profile-shipped schema.
+//! - `SCHEMA-REQ` — `requirements.toml` fails its profile-shipped schema.
 
 pub mod aggregator;
 pub mod audit;

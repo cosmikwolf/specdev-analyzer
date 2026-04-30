@@ -425,6 +425,41 @@ impl Retrieve for MapRetriever {
 
 fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
     let mut docs: HashMap<String, Value> = HashMap::new();
+
+    // Top-level sibling schemas under `specs/specdev/schemas/` —
+    // architecture.schema.yaml, requirements.schema.yaml,
+    // enums.schema.yaml, metadata.schema.yaml, etc. Module's $ref to
+    // `enums.schema.yaml#/...` resolves through this map.
+    if layout.schemas_dir.is_dir() {
+        for entry in std::fs::read_dir(&layout.schemas_dir)
+            .with_context(|| format!("reading {}", layout.schemas_dir.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let fname = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if !fname.ends_with(".schema.yaml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let value: Value = match serde_yaml::from_str(&text) {
+                Ok(v) => v,
+                Err(_) => continue, // surfaced elsewhere
+            };
+            if let Some(id) = value.get("$id").and_then(Value::as_str) {
+                docs.insert(id.to_string(), value.clone());
+            }
+            docs.insert(fname, value);
+        }
+    }
+
     for (dir, prefix) in [
         (&layout.inlined_blocks_dir, "inlined/blocks/"),
         (&layout.inlined_bridges_dir, "inlined/bridges/"),

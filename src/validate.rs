@@ -11,10 +11,12 @@
 //!      compiled aggregated schema, and resolves the kind references in
 //!      every `domain.toml` graph-check entry against the effective set.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use jsonschema::{Retrieve, Uri};
 use serde_json::Value as JsonValue;
 use tracing::{event, instrument, Level};
 
@@ -45,7 +47,203 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
     let mut report = Report::default();
     validate_layout(layout, &mut report)?;
     validate_modules(layout, &mut report)?;
+    validate_architecture(layout, &mut report)?;
+    validate_requirements(layout, &mut report)?;
     Ok(report)
+}
+
+/// Schema-validate `specs/architecture.toml` against
+/// `specs/specdev/schemas/architecture.schema.yaml`. Findings emitted via
+/// `SCHEMA-ARCH`. Phase 5+.
+#[instrument(level = "info", skip(layout, report))]
+pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+    validate_aux_toml(
+        layout,
+        &layout.architecture_schema_path,
+        &layout.architecture_toml_path,
+        "architecture",
+        "SCHEMA-ARCH",
+        "LAYOUT-005",
+        report,
+    )
+}
+
+/// Schema-validate `specs/requirements.toml` against
+/// `specs/specdev/schemas/requirements.schema.yaml`. Findings emitted via
+/// `SCHEMA-REQ`. Phase 5+.
+#[instrument(level = "info", skip(layout, report))]
+pub fn validate_requirements(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+    validate_aux_toml(
+        layout,
+        &layout.requirements_schema_path,
+        &layout.requirements_toml_path,
+        "requirements",
+        "SCHEMA-REQ",
+        "LAYOUT-006",
+        report,
+    )
+}
+
+/// Shared core for `architecture` + `requirements` schema validation.
+/// Both files are profile-owned, optional in practice (a project may have
+/// no architecture-level wiring or no requirements yet), and validated
+/// against a sibling schema that may `$ref` other schemas in the same
+/// directory (typically `enums.schema.yaml`).
+fn validate_aux_toml(
+    layout: &LayoutContext,
+    schema_path: &Path,
+    toml_path: &Path,
+    label: &str,
+    schema_rule: &str,
+    absent_rule: &str,
+    report: &mut Report,
+) -> Result<()> {
+    if !schema_path.is_file() {
+        // Already flagged by `validate_layout`'s file_entries pass; skip
+        // here so we don't double-report.
+        return Ok(());
+    }
+    if !toml_path.is_file() {
+        report.push(Finding::new(
+            absent_rule,
+            Severity::Info,
+            format!(
+                "{label}.toml absent at {} — no {label}-level entries authored yet",
+                toml_path.display()
+            ),
+        ));
+        return Ok(());
+    }
+
+    let docs = build_aux_retriever_docs(layout)?;
+    let retriever = AuxRetriever {
+        docs: Arc::new(docs),
+    };
+
+    let schema_text = std::fs::read_to_string(schema_path)
+        .with_context(|| format!("reading {}", schema_path.display()))?;
+    let schema_value: JsonValue = match serde_yaml::from_str(&schema_text) {
+        Ok(v) => v,
+        Err(e) => {
+            report.push(
+                Finding::new(
+                    schema_rule,
+                    Severity::Error,
+                    format!("{label}.schema.yaml is not valid YAML: {e}"),
+                )
+                .with_file(schema_path.display().to_string()),
+            );
+            return Ok(());
+        }
+    };
+
+    let validator = match jsonschema::options()
+        .with_retriever(retriever)
+        .build(&schema_value)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            report.push(
+                Finding::new(
+                    schema_rule,
+                    Severity::Error,
+                    format!("failed to compile {label}.schema.yaml: {e}"),
+                )
+                .with_file(schema_path.display().to_string()),
+            );
+            return Ok(());
+        }
+    };
+
+    let toml_text = std::fs::read_to_string(toml_path)
+        .with_context(|| format!("reading {}", toml_path.display()))?;
+    let toml_value: JsonValue = match toml::from_str(&toml_text) {
+        Ok(v) => v,
+        Err(e) => {
+            report.push(
+                Finding::new(
+                    schema_rule,
+                    Severity::Error,
+                    format!("{label}.toml is not valid TOML: {e}"),
+                )
+                .with_file(toml_path.display().to_string()),
+            );
+            return Ok(());
+        }
+    };
+
+    for err in validator.iter_errors(&toml_value) {
+        report.push(
+            Finding::new(
+                schema_rule,
+                Severity::Error,
+                format!("{label}.toml: {err}"),
+            )
+            .with_file(toml_path.display().to_string())
+            .with_pointer(err.instance_path().to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+/// Map-backed `Retrieve` for resolving `$ref` between sibling schema
+/// files in `specs/specdev/schemas/`. Mirrors `aggregator::MapRetriever`
+/// but scoped to the standalone schemas (architecture, requirements,
+/// enums, metadata). Inlined block/bridge schemas are out of scope here
+/// — those resolve via the aggregator's own retriever.
+struct AuxRetriever {
+    docs: Arc<HashMap<String, JsonValue>>,
+}
+
+impl Retrieve for AuxRetriever {
+    fn retrieve(
+        &self,
+        uri: &Uri<String>,
+    ) -> std::result::Result<JsonValue, Box<dyn std::error::Error + Send + Sync>> {
+        let s = uri.as_str();
+        if let Some(v) = self.docs.get(s) {
+            return Ok(v.clone());
+        }
+        if let Some(tail) = s.rsplit('/').next() {
+            if let Some(v) = self.docs.get(tail) {
+                return Ok(v.clone());
+            }
+        }
+        Err(format!("schema not found in retriever: {s}").into())
+    }
+}
+
+fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, JsonValue>> {
+    let mut docs: HashMap<String, JsonValue> = HashMap::new();
+    let dir = &layout.schemas_dir;
+    if !dir.is_dir() {
+        return Ok(docs);
+    }
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if !fname.ends_with(".schema.yaml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let value: JsonValue = match serde_yaml::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue, // schema parse errors are surfaced elsewhere
+        };
+        if let Some(id) = value.get("$id").and_then(JsonValue::as_str) {
+            docs.insert(id.to_string(), value.clone());
+        }
+        docs.insert(fname.to_string(), value);
+    }
+    Ok(docs)
 }
 
 /// Layout pass: enumerate `specs/specdev/`, run the aggregator
@@ -405,20 +603,14 @@ fn execute_graph_checks(
                 (Some(ef), Some(et)) => graph_checks::acyclic(&view, ef, et, rule, severity),
                 _ => Vec::new(),
             },
-            "layer_dependency" => match (
-                check.module_layer_field.as_deref(),
-                check.module_deps_field.as_deref(),
-            ) {
-                (Some(lf), Some(df)) => graph_checks::layer_dependency(
-                    &view,
-                    lf,
-                    df,
-                    &domain.layers.allowed_deps,
-                    rule,
-                    severity,
-                ),
-                _ => Vec::new(),
-            },
+            "layer_dependency" => layer_dependency_dispatch(
+                graph_json_full(&graph_json, &view),
+                check,
+                kindset,
+                domain,
+                rule,
+                severity,
+            ),
             other => vec![Finding::new(
                 "DOMAIN-003",
                 Severity::Warning,
@@ -432,6 +624,119 @@ fn execute_graph_checks(
 
         report.extend(findings);
     }
+}
+
+/// Returns whichever JSON value the layer_dependency dispatch should
+/// operate on. The pre-filter from `filter_graph_for_check` collapses the
+/// `scope` field to one kind (entity-only OR relation-only), but
+/// layer_dependency needs simultaneous filtering of entities (by
+/// `entity_scope`) and relations (by `relation_scope`). We always start
+/// from the unfiltered graph and let `filter_for_layer_dependency` do
+/// its own joint filtering.
+fn graph_json_full<'a>(
+    full: &'a JsonValue,
+    _scope_filtered: &'a JsonValue,
+) -> &'a JsonValue {
+    full
+}
+
+/// Dispatch for the layer_dependency primitive.
+///
+/// Two execution modes coexist:
+///
+/// 1. **Graph-shape mode (Phase 5+, preferred):** `entity_scope` +
+///    `relation_scope` + `layer_field` + `layer_ordering`. The graph is
+///    jointly filtered (entities of the entity kind, relations of the
+///    relation kind) and [`graph_checks::layer_dependency_graph`] is
+///    invoked.
+/// 2. **Legacy mode:** `module_layer_field` + `module_deps_field` +
+///    `[layers.allowed_deps]` table. Source-data shape; retained for
+///    pre-Phase-5 callers and the existing unit test.
+fn layer_dependency_dispatch(
+    full_graph: &JsonValue,
+    check: &GraphCheck,
+    kindset: &EffectiveKindSet,
+    domain: &DomainConfig,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    if let (Some(entity_scope), Some(relation_scope), Some(layer_field), Some(ordering)) = (
+        check.entity_scope.as_deref(),
+        check.relation_scope.as_deref(),
+        check.layer_field.as_deref(),
+        check.layer_ordering.as_ref(),
+    ) {
+        let view =
+            filter_for_layer_dependency(full_graph, entity_scope, relation_scope, kindset);
+        return graph_checks::layer_dependency_graph(&view, layer_field, ordering, rule, severity);
+    }
+
+    // Legacy fallback.
+    if let (Some(lf), Some(df)) = (
+        check.module_layer_field.as_deref(),
+        check.module_deps_field.as_deref(),
+    ) {
+        return graph_checks::layer_dependency(
+            full_graph,
+            lf,
+            df,
+            &domain.layers.allowed_deps,
+            rule,
+            severity,
+        );
+    }
+
+    Vec::new()
+}
+
+/// Filter the graph view jointly by `entity_scope` (applies to
+/// `entities[]`) and `relation_scope` (applies to `relations[]`). Used by
+/// the graph-shape `layer_dependency` dispatch which needs both filters
+/// at once.
+fn filter_for_layer_dependency(
+    graph_json: &JsonValue,
+    entity_scope: &str,
+    relation_scope: &str,
+    kindset: &EffectiveKindSet,
+) -> JsonValue {
+    let mut filtered = graph_json.clone();
+
+    if let Ok(parsed) = kinds::parse(entity_scope) {
+        let key = parsed.to_string();
+        let is_entity = kindset.canonical_roots.contains(&key) || kindset.entity(&key).is_some();
+        if is_entity {
+            if let Some(entities) =
+                filtered.get_mut("entities").and_then(|v| v.as_array_mut())
+            {
+                entities.retain(|e| {
+                    let Some(ekind) = e.get("kind").and_then(|v| v.as_str()) else {
+                        return false;
+                    };
+                    entity_extends_to(kindset, ekind, &key)
+                });
+            }
+        }
+    }
+
+    if let Ok(parsed) = kinds::parse(relation_scope) {
+        let key = parsed.to_string();
+        let is_relation =
+            kindset.canonical_relations.contains(&key) || kindset.relation(&key).is_some();
+        if is_relation {
+            if let Some(relations) =
+                filtered.get_mut("relations").and_then(|v| v.as_array_mut())
+            {
+                relations.retain(|r| {
+                    let Some(rkind) = r.get("kind").and_then(|v| v.as_str()) else {
+                        return false;
+                    };
+                    relation_extends_to(kindset, rkind, &key)
+                });
+            }
+        }
+    }
+
+    filtered
 }
 
 /// Pre-filter the executor's graph JSON view based on the check's `scope`

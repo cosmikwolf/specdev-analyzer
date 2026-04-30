@@ -1,0 +1,34 @@
+# Cargo features exposed by the library.
+#
+# Each [[features]] entry declares one feature. Modules reference these
+# features via their top-level `feature_gates = [...]` array; the
+# `module_feature_gates_resolve` graph check verifies every reference
+# resolves to a declared feature here.
+#
+# `depends_on` lists features that must be enabled for this feature to
+# be meaningful (cargo's feature dependency syntax).
+#
+# `default = true` puts the feature in the crate's `[features] default`
+# set. At most one feature per cargo project should be `default = true`
+# unless you genuinely intend multiple defaults.
+#
+# Delete the EXAMPLE entries below once the library has its own real
+# features; for a library with no optional features at all, leave this
+# file empty (just the comment header is fine).
+
+# EXAMPLE: a default `std` feature with no dependencies.
+# [[features]]
+# name = "std"
+# description = "Use Rust's std library; disable for no_std builds."
+# default = true
+
+# EXAMPLE: an optional `alloc` feature requiring nothing else.
+# [[features]]
+# name = "alloc"
+# description = "Use the alloc crate (heap-allocated types)."
+
+# EXAMPLE: a feature that pulls in another feature.
+# [[features]]
+# name = "serde"
+# description = "Serialize/deserialize support via serde."
+# depends_on = ["std"]

@@ -56,6 +56,18 @@ pub struct LayoutContext {
     pub domain_toml_path: PathBuf,
     /// `<specs_dir>/modules/` — user-authored module TOMLs (per profile convention).
     pub modules_dir: PathBuf,
+    /// `<specs_dir>/architecture.toml` — profile-owned architecture-level
+    /// authoring (firmware-layered: connections; library-api: features).
+    /// Phase 5+ adds this alongside the existing module TOMLs.
+    pub architecture_toml_path: PathBuf,
+    /// `<specs_dir>/requirements.toml` — sources + requirements (Phase 5+).
+    pub requirements_toml_path: PathBuf,
+    /// `<schemas_dir>/architecture.schema.yaml` — schema validating
+    /// architecture.toml.
+    pub architecture_schema_path: PathBuf,
+    /// `<schemas_dir>/requirements.schema.yaml` — schema validating
+    /// requirements.toml.
+    pub requirements_schema_path: PathBuf,
 }
 
 impl LayoutContext {
@@ -97,6 +109,10 @@ impl LayoutContext {
         let codegen_dir = specdev_root.join("codegen").join(&spec.project.language);
         let domain_toml_path = specdev_root.join("domain.toml");
         let modules_dir = specs_dir.join("modules");
+        let architecture_toml_path = specs_dir.join("architecture.toml");
+        let requirements_toml_path = specs_dir.join("requirements.toml");
+        let architecture_schema_path = schemas_dir.join("architecture.schema.yaml");
+        let requirements_schema_path = schemas_dir.join("requirements.schema.yaml");
 
         Self {
             project_root,
@@ -117,6 +133,10 @@ impl LayoutContext {
             codegen_dir,
             domain_toml_path,
             modules_dir,
+            architecture_toml_path,
+            requirements_toml_path,
+            architecture_schema_path,
+            requirements_schema_path,
         }
     }
 
@@ -152,10 +172,24 @@ impl LayoutContext {
             ("specs/modules/", &self.modules_dir),
         ];
 
+        // `architecture.toml` + `requirements.toml` are intentionally
+        // omitted from this list: they are project-authored and optional,
+        // so missing-on-disk should emit `LAYOUT-005`/`LAYOUT-006` info
+        // (handled by `validate::validate_aux_toml`), not the
+        // `LAYOUT-003` warning this list drives. Their schemas, however,
+        // are profile-shipped — missing is a real warning.
         let file_entries = vec![
             (
                 "specs/specdev/schemas/module.schema.yaml",
                 &self.module_schema_path,
+            ),
+            (
+                "specs/specdev/schemas/architecture.schema.yaml",
+                &self.architecture_schema_path,
+            ),
+            (
+                "specs/specdev/schemas/requirements.schema.yaml",
+                &self.requirements_schema_path,
             ),
             (
                 "specs/specdev/reductions/project.yaml",
@@ -289,6 +323,16 @@ source = "src"
         .unwrap();
         std::fs::write(
             root.join("specs/specdev/schemas/module.schema.yaml"),
+            "{}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("specs/specdev/schemas/architecture.schema.yaml"),
+            "{}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("specs/specdev/schemas/requirements.schema.yaml"),
             "{}\n",
         )
         .unwrap();

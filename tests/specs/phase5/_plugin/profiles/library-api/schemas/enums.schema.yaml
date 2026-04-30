@@ -1,0 +1,54 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/library-api/enums.schema.yaml"
+title: "library-api enums (v1)"
+description: >
+  Shared closed vocabularies used across the library-api profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+$defs:
+  Visibility:
+    description: >
+      Module visibility. `pub` is reachable from outside the crate;
+      `crate` is reachable within the crate only; `private` is reachable
+      within its parent module only. Mirrors Rust's `pub`, `pub(crate)`,
+      and bare-module visibility.
+    type: string
+    enum: [pub, crate, private]
+
+  ReExportVisibility:
+    description: >
+      Visibility of a re-export. `pub` makes the re-exported item part
+      of the crate's public API; `crate` re-exports for internal use.
+      A `private` re-export is meaningless (the item is already in the
+      file); excluded from the enum.
+    type: string
+    enum: [pub, crate]
+
+  Identifier:
+    description: snake_case or PascalCase identifier usable in Rust source.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier, or a
+      package-qualified `<package>::<Module>` form for multi-package
+      projects.
+    type: string
+    pattern: "^([a-z][a-z0-9_]*::)?[A-Za-z_][A-Za-z0-9_]*$"
+
+  FeatureName:
+    description: >
+      Cargo feature name. Lowercase, digits, hyphens, underscores.
+      Must start with a letter or digit. Matches cargo's accepted
+      feature-name grammar.
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_-]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: REQ-AREA-NUMBER (e.g. REQ-API-001).
+    type: string
+    pattern: "^REQ-[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

@@ -357,8 +357,128 @@ pub fn acyclic(
     }
 }
 
-/// LAYER_DEPENDENCY: for each module, every dependency's layer must be in the
-/// depending module's allowed_deps list.
+/// LAYER_DEPENDENCY (graph-shape, Phase-5): for each relation in the
+/// pre-filtered relation set, both endpoints must resolve to entities in
+/// the pre-filtered entity set, and the `from` entity's layer must appear
+/// in `ordering` at a position less than or equal to the `to` entity's
+/// position. Same-layer dependencies are allowed; "upward" dependencies
+/// (from a higher layer to a lower one in the ordering) are flagged.
+///
+/// Caller responsibilities:
+/// - Pre-filter `root` so that `entities[]` contains only the kinds that
+///   carry layers (e.g. Module-extending), and `relations[]` contains only
+///   the relation kind being checked (e.g. `depends_on`-extending). The
+///   filter pass lives in `validate.rs::filter_for_layer_dependency`.
+/// - Pass the path to the layer attribute on each entity (e.g.
+///   `"attrs.layer"`).
+/// - Pass the layer ordering top-down (e.g.
+///   `["application", "middleware", "driver", "HAL", "PAC"]`).
+pub fn layer_dependency_graph(
+    root: &Value,
+    layer_field: &str,
+    ordering: &[String],
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let order_index: HashMap<&str, usize> = ordering
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i))
+        .collect();
+
+    // Build name → layer over the (already filtered) entities[].
+    let mut layer_by_name: HashMap<String, String> = HashMap::new();
+    let layer_lookup_path = format!("entities[].{layer_field}");
+    let name_picks = select(root, "entities[].name");
+    let layer_picks = select(root, &layer_lookup_path);
+    let mut layer_by_anc: HashMap<String, String> = HashMap::new();
+    for p in &layer_picks {
+        if let Some(anc) = ancestor_at_array(&p.pointer, 0) {
+            if let Some(s) = p.value.as_str() {
+                layer_by_anc.insert(anc, s.to_string());
+            }
+        }
+    }
+    for p in &name_picks {
+        if let Some(anc) = ancestor_at_array(&p.pointer, 0) {
+            if let Some(nm) = p.value.as_str() {
+                if let Some(layer) = layer_by_anc.get(&anc) {
+                    layer_by_name.insert(nm.to_string(), layer.clone());
+                }
+            }
+        }
+    }
+
+    // Walk relations[] paired by ancestor: each relations[i] has a from
+    // and a to. Check the from-layer / to-layer ordering.
+    let froms = select(root, "relations[].from");
+    let tos = select(root, "relations[].to");
+    let mut from_by_anc: HashMap<String, (String, String)> = HashMap::new();
+    for p in &froms {
+        if let Some(anc) = ancestor_at_array(&p.pointer, 0) {
+            if let Some(s) = p.value.as_str() {
+                from_by_anc.insert(anc, (s.to_string(), p.pointer.clone()));
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for p in tos {
+        let Some(anc) = ancestor_at_array(&p.pointer, 0) else {
+            continue;
+        };
+        let Some((from_name, _from_ptr)) = from_by_anc.get(&anc) else {
+            continue;
+        };
+        let Some(to_name) = p.value.as_str() else { continue };
+        let Some(from_layer) = layer_by_name.get(from_name) else {
+            continue;
+        };
+        let Some(to_layer) = layer_by_name.get(to_name) else {
+            continue;
+        };
+        let Some(&from_pos) = order_index.get(from_layer.as_str()) else {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "module `{from_name}` declares unknown layer `{from_layer}` (not in ordering)"
+                ),
+            ));
+            continue;
+        };
+        let Some(&to_pos) = order_index.get(to_layer.as_str()) else {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "module `{to_name}` declares unknown layer `{to_layer}` (not in ordering)"
+                ),
+            ));
+            continue;
+        };
+        // Top-down ordering: lower index = higher layer. `from` may
+        // depend on same or lower layers (= same-or-higher index).
+        if from_pos > to_pos {
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!(
+                        "module `{from_name}` (layer {from_layer}) depends on `{to_name}` (layer {to_layer}); upward dependency violates ordering {ordering:?}"
+                    ),
+                )
+                .with_pointer(p.pointer),
+            );
+        }
+    }
+    out
+}
+
+/// LAYER_DEPENDENCY (legacy source-data shape): retained for the existing
+/// unit test and any caller that still passes raw `modules[].layer` /
+/// `modules[].depends_on[]` selectors. Phase 5+ uses
+/// [`layer_dependency_graph`] above.
 pub fn layer_dependency(
     root: &Value,
     module_layer_field: &str,
@@ -503,6 +623,54 @@ mod tests {
             Severity::Error,
         );
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn layer_dependency_graph_flags_upward_edge() {
+        // Module A is at layer "driver"; module B is at layer "application".
+        // A → B is upward (driver depends on application) which is a violation.
+        let v = json!({
+            "entities": [
+                { "kind": "Module", "name": "A", "attrs": { "layer": "driver" } },
+                { "kind": "Module", "name": "B", "attrs": { "layer": "application" } },
+            ],
+            "relations": [
+                { "kind": "depends_on", "from": "A", "to": "B" },
+            ],
+        });
+        let ordering = vec![
+            "application".to_string(),
+            "middleware".to_string(),
+            "driver".to_string(),
+            "HAL".to_string(),
+            "PAC".to_string(),
+        ];
+        let f = layer_dependency_graph(&v, "attrs.layer", &ordering, "L1", Severity::Error);
+        assert_eq!(f.len(), 1, "{f:?}");
+    }
+
+    #[test]
+    fn layer_dependency_graph_allows_same_and_downward() {
+        // application -> middleware (downward) and middleware -> middleware (same)
+        // should both pass.
+        let v = json!({
+            "entities": [
+                { "kind": "Module", "name": "App", "attrs": { "layer": "application" } },
+                { "kind": "Module", "name": "Mid1", "attrs": { "layer": "middleware" } },
+                { "kind": "Module", "name": "Mid2", "attrs": { "layer": "middleware" } },
+            ],
+            "relations": [
+                { "kind": "depends_on", "from": "App", "to": "Mid1" },
+                { "kind": "depends_on", "from": "Mid1", "to": "Mid2" },
+            ],
+        });
+        let ordering = vec![
+            "application".into(),
+            "middleware".into(),
+            "driver".into(),
+        ];
+        let f = layer_dependency_graph(&v, "attrs.layer", &ordering, "L1", Severity::Error);
+        assert!(f.is_empty(), "{f:?}");
     }
 
     #[test]
