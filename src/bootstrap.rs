@@ -116,12 +116,14 @@ struct ProfileFile {
     substitute: bool,
 }
 
-/// Build the per-language file plan for a profile. Returns the list of
-/// (src_rel, dst_rel, substitute) tuples in the order they should be
-/// copied; the order is deterministic because we hard-code it.
-fn profile_plan(profile: &str, language: &str) -> Vec<ProfileFile> {
-    let _ = profile; // structural; the caller already resolved <plugin>/profiles/<profile>/
-    vec![
+/// Build the per-language file plan for a profile. The required entries
+/// (manifest, domain, project reduction, language codegen conventions)
+/// are hard-coded; everything under `schemas/` is dynamically enumerated
+/// so a profile can ship arbitrary supporting schemas (e.g.
+/// firmware-layered's `metadata.schema.yaml`, library-api's smaller
+/// `enums.schema.yaml`) without touching this code.
+fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> {
+    let mut plan: Vec<ProfileFile> = vec![
         ProfileFile {
             src_rel: PathBuf::from("spec.toml.template"),
             dst_rel: PathBuf::from("spec.toml"),
@@ -133,18 +135,13 @@ fn profile_plan(profile: &str, language: &str) -> Vec<ProfileFile> {
             substitute: true,
         },
         ProfileFile {
-            src_rel: PathBuf::from("schemas/module.schema.yaml"),
-            dst_rel: PathBuf::from("specs/specdev/schemas/module.schema.yaml"),
+            src_rel: PathBuf::from("architecture.toml.template"),
+            dst_rel: PathBuf::from("specs/architecture.toml"),
             substitute: false,
         },
         ProfileFile {
-            src_rel: PathBuf::from("schemas/architecture.schema.yaml"),
-            dst_rel: PathBuf::from("specs/specdev/schemas/architecture.schema.yaml"),
-            substitute: false,
-        },
-        ProfileFile {
-            src_rel: PathBuf::from("schemas/requirements.schema.yaml"),
-            dst_rel: PathBuf::from("specs/specdev/schemas/requirements.schema.yaml"),
+            src_rel: PathBuf::from("requirements.toml.template"),
+            dst_rel: PathBuf::from("specs/requirements.toml"),
             substitute: false,
         },
         ProfileFile {
@@ -159,7 +156,40 @@ fn profile_plan(profile: &str, language: &str) -> Vec<ProfileFile> {
             )),
             substitute: false,
         },
-    ]
+    ];
+
+    // Dynamically enumerate the profile's schemas/ directory. Every
+    // `*.schema.yaml` file at the top level is copied verbatim. Profiles
+    // ship whatever set they need (firmware-layered: module + architecture
+    // + requirements + enums + metadata; library-api: module + architecture
+    // + requirements + enums).
+    let schemas_dir = profile_dir.join("schemas");
+    if schemas_dir.is_dir() {
+        let mut schema_entries: Vec<PathBuf> = std::fs::read_dir(&schemas_dir)
+            .with_context(|| format!("reading {}", schemas_dir.display()))?
+            .filter_map(|r| r.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.ends_with(".schema.yaml"))
+            })
+            .collect();
+        schema_entries.sort();
+        for entry in schema_entries {
+            let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            plan.push(ProfileFile {
+                src_rel: PathBuf::from(format!("schemas/{file_name}")),
+                dst_rel: PathBuf::from(format!("specs/specdev/schemas/{file_name}")),
+                substitute: false,
+            });
+        }
+    }
+
+    Ok(plan)
 }
 
 /// Empty directories the bootstrap creates so the layout enumerator and
@@ -216,7 +246,7 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
 
     // Copy files per the plan. Substitute templates; verbatim-copy schema
     // and codegen content (D33 — analyzer never re-emits YAML/Markdown).
-    let plan = profile_plan(&inputs.profile, &inputs.language);
+    let plan = profile_plan(&profile_dir, &inputs.language)?;
     for f in &plan {
         let src = profile_dir.join(&f.src_rel);
         if !src.is_file() {

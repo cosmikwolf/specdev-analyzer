@@ -1,0 +1,25 @@
+# Cross-module port connections.
+#
+# Each [[connections]] entry wires one module's port to another module's
+# port. Both endpoints use the form `Module.port`; the analyzer's
+# `connection_endpoints_resolve` graph check verifies that both names
+# exist in the project's module set.
+#
+# `flow_type` is optional and free-form; it documents what kind of data
+# flows across the connection (e.g. `audio_frame`, `midi_event`).
+#
+# Delete the EXAMPLE entries below once your project has its own
+# connections, or while the project has no connections leave this file
+# empty (just the comment header is fine).
+
+# EXAMPLE: an audio source feeds an audio sink.
+# [[connections]]
+# from = "AudioSource.out"
+# to = "AudioSink.in"
+# flow_type = "audio_frame"
+
+# EXAMPLE: a sensor exposes events to a controller.
+# [[connections]]
+# from = "RotaryEncoder.event_out"
+# to = "MainController.encoder_event_in"
+# flow_type = "encoder_event"

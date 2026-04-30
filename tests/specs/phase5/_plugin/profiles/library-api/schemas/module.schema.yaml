@@ -1,0 +1,72 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/library-api/module.schema.yaml"
+title: "library-api module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module
+  per file; filename should match the `name` field. library-api targets
+  Rust libraries where the load-bearing concerns are public-API surface,
+  re-exports, and feature flags. Modules carry visibility (pub / crate /
+  private), and may declare re-exports of other modules and feature
+  gates that conditionally include them.
+type: object
+additionalProperties: false
+required: [name, visibility]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  visibility:
+    $ref: "enums.schema.yaml#/$defs/Visibility"
+  description:
+    type: string
+  depends_on:
+    description: >
+      Other modules within this library this module depends on. The
+      `modules_acyclic` graph check enforces no cycles.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  satisfies:
+    description: >
+      Requirement ids this module satisfies. The
+      `module_satisfies_resolves` graph check verifies each id exists.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  re_exports:
+    description: >
+      Re-exports of other modules. The `re_exports_resolve` graph check
+      verifies every `target` references a module in the library.
+    type: array
+    items: { $ref: "#/$defs/ReExport" }
+  feature_gates:
+    description: >
+      Cargo features that conditionally include this module. The module
+      compiles only when at least one of the listed features is active
+      (treated as `#[cfg(any(feature = "f1", feature = "f2"))]`). An
+      empty list (or omitted field) means the module is unconditional.
+      `module_feature_gates_resolve` verifies every name is declared in
+      `architecture.toml`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
+    uniqueItems: true
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions (Phase 7+). Open in v1.
+    type: object
+    additionalProperties: true
+
+$defs:
+  ReExport:
+    type: object
+    additionalProperties: false
+    required: [target, visibility]
+    properties:
+      target:
+        $ref: "enums.schema.yaml#/$defs/ModuleRef"
+      visibility:
+        $ref: "enums.schema.yaml#/$defs/ReExportVisibility"
+      alias:
+        description: >
+          Optional rename on re-export (`pub use module::Item as Alias`).
+          When omitted, the original identifier is preserved.
+        $ref: "enums.schema.yaml#/$defs/Identifier"

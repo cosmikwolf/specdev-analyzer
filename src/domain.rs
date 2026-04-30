@@ -116,6 +116,27 @@ pub struct GraphCheck {
     pub module_deps_field: Option<String>,
     #[serde(default)]
     pub allowed_deps_table: Option<String>,
+    /// Phase-5 layer_dependency (graph-shape rewrite): entity-side kind
+    /// scope. Filters `entities[]` to entries whose kind extends this
+    /// kind. Used jointly with `relation_scope` and `layer_field`.
+    #[serde(default)]
+    pub entity_scope: Option<String>,
+    /// Phase-5 layer_dependency: relation-side kind scope. Filters
+    /// `relations[]` to entries whose kind extends this kind.
+    #[serde(default)]
+    pub relation_scope: Option<String>,
+    /// Phase-5 layer_dependency: path to the layer string on each
+    /// scoped entity (e.g. `attrs.layer`). Looked up against each entity
+    /// in the filtered view.
+    #[serde(default)]
+    pub layer_field: Option<String>,
+    /// Phase-5 layer_dependency: layers in declared order, top-most
+    /// first (e.g. `["application", "middleware", "driver", "HAL", "PAC"]`).
+    /// A relation's `from` layer must appear in `ordering` at a position
+    /// less-than-or-equal to its `to` layer's position. Same-layer
+    /// dependencies are allowed.
+    #[serde(default)]
+    pub layer_ordering: Option<Vec<String>>,
 }
 
 impl DomainConfig {

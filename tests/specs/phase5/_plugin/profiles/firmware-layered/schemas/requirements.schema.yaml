@@ -1,0 +1,93 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/requirements.schema.yaml"
+title: "firmware-layered requirements file (v1)"
+description: >
+  Shape of `specs/requirements.toml`. Groups related requirements and,
+  optionally, the external sources those requirements are derived from
+  (protocol specs, standards, user documents). Modules reference
+  requirements by id via their top-level `satisfies` array.
+type: object
+additionalProperties: false
+properties:
+  source:
+    description: >
+      External documents that requirements in this file may be derived from.
+      Declared once per source and referenced by id from each Requirement's
+      `source` array.
+    type: array
+    items: { $ref: "#/$defs/Source" }
+    uniqueItems: true
+  requirement:
+    type: array
+    items: { $ref: "#/$defs/Requirement" }
+
+$defs:
+  Source:
+    type: object
+    additionalProperties: false
+    required: [id, kind, title]
+    properties:
+      id:
+        description: >
+          Stable identifier referenced by Requirement.source[]. Lowercase
+          kebab-case (e.g. "midi2-ump", "user-stories").
+        type: string
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      kind:
+        description: >
+          Origin category. `protocol` = external technical spec or standard
+          (MIDI 2.0, USB, BLE). `user` = stakeholder/user requirements.
+          `regulatory` = compliance or certification (FCC, CE, UL).
+          `derived` = internal decisions with no external document.
+        type: string
+        enum: [protocol, user, regulatory, derived]
+      title:
+        type: string
+        minLength: 1
+      version:
+        description: Version or revision of the source document, if applicable.
+        type: string
+        minLength: 1
+      url:
+        type: string
+        format: uri
+
+  Requirement:
+    type: object
+    additionalProperties: false
+    required: [id, text]
+    properties:
+      id:
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      text:
+        type: string
+        minLength: 1
+      satisfies:
+        description: >
+          Parent requirement ids. Forms a requirement tree for traceability.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      source:
+        description: >
+          Ids of Source entries (declared at the top-level `source` array,
+          in this or any other requirements file) that this requirement is
+          derived from. May list multiple when a single requirement
+          satisfies clauses in more than one document.
+        type: array
+        items:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        uniqueItems: true
+      source_ref:
+        description: >
+          Free-form locator within the source document(s): section number,
+          page, table, clause. Applies to all ids listed in `source`.
+        type: string
+        minLength: 1
+      verified_by:
+        description: >
+          Dotted Module.action identifiers or test names that verify this
+          requirement. Free-form for v1.
+        type: array
+        items: { type: string, minLength: 1 }
