@@ -533,20 +533,43 @@ fn run_drift(
 }
 
 fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
-    match inline::lint_plugin_bridges(&plugin) {
-        Ok(offenders) if offenders.is_empty() => {
-            eprintln!("plugin lint OK at {}", plugin.display());
-            ExitCode::SUCCESS
-        }
-        Ok(offenders) => {
-            for o in &offenders {
-                eprintln!("[BRIDGE-LEX-001] {o}");
-            }
-            ExitCode::from(1)
-        }
+    let bridge_offenders = match inline::lint_plugin_bridges(&plugin) {
+        Ok(o) => o,
         Err(e) => {
             report_error(&e);
-            ExitCode::from(2)
+            return ExitCode::from(2);
         }
+    };
+    let block_offenders = match inline::lint_plugin_blocks(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    // Bridge offenders are name-only strings (single finding code is
+    // implicit — `BRIDGE-LEX-001`); we prefix at print time.
+    for o in &bridge_offenders {
+        eprintln!("[BRIDGE-LEX-001] {o}");
+    }
+    // Block offenders are pre-prefixed with their `BLOCK-LINT-NNN` code
+    // (different convention because there are 7 block codes vs 1 bridge
+    // code — per-line code visibility matters more for blocks).
+    for o in &block_offenders {
+        eprintln!("{o}");
+    }
+
+    let total = bridge_offenders.len() + block_offenders.len();
+    if total == 0 {
+        eprintln!("plugin lint OK at {}", plugin.display());
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "{total} plugin lint finding(s) ({} bridge, {} block)",
+            bridge_offenders.len(),
+            block_offenders.len()
+        );
+        ExitCode::from(1)
     }
 }

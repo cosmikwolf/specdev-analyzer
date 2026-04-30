@@ -448,6 +448,192 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
     Ok(())
 }
 
+/// Plugin-author lint: walk `<plugin-root>/blocks/` and run 7 structural
+/// checks per block. Returns pre-prefixed offender lines (each contains
+/// the block name + a `BLOCK-LINT-NNN` code + a one-line message). The
+/// CLI prints these as-is without additional prefixing.
+///
+/// Phase 6.5 work; complements `lint_plugin_bridges`. The two lints are
+/// independent walks; `run_plugin_lint` aggregates them.
+///
+/// Checks per block:
+/// - 001: `schema.yaml` exists.
+/// - 002: `reduction.yaml` exists.
+/// - 003: at least one `codegen/<lang>/README.md` exists under any language.
+/// - 004: top-level `README.md` exists.
+/// - 005: `schema.yaml` parses + compiles as a standalone JSON Schema.
+/// - 006: `schema.yaml` `$id` matches `https://specdev.dev/blocks/<name>.v1`
+///   where `<name>` is the directory name.
+/// - 007: `reduction.yaml` validates against the embedded reduction
+///   metaschema (catches missing `extends`, missing relation
+///   `from_kind`/`to_kind`/`from_spec`/`endpoints`, etc).
+pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
+    let blocks_dir = plugin_root.join("blocks");
+    if !blocks_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut offenders: Vec<String> = Vec::new();
+
+    let mut block_paths: Vec<PathBuf> = std::fs::read_dir(&blocks_dir)
+        .with_context(|| format!("reading {}", blocks_dir.display()))?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    block_paths.sort();
+
+    for block_path in block_paths {
+        let Some(block_name) = block_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(String::from)
+        else {
+            continue;
+        };
+
+        // Check 001: schema.yaml exists.
+        let schema_path = block_path.join("schema.yaml");
+        let has_schema = schema_path.is_file();
+        if !has_schema {
+            offenders.push(format!(
+                "{block_name}: [BLOCK-LINT-001] missing schema.yaml at {}",
+                schema_path.display()
+            ));
+        }
+
+        // Check 002: reduction.yaml exists.
+        let reduction_path = block_path.join("reduction.yaml");
+        let has_reduction = reduction_path.is_file();
+        if !has_reduction {
+            offenders.push(format!(
+                "{block_name}: [BLOCK-LINT-002] missing reduction.yaml at {}",
+                reduction_path.display()
+            ));
+        }
+
+        // Check 003: at least one codegen/<lang>/README.md.
+        let codegen_dir = block_path.join("codegen");
+        let mut has_any_codegen = false;
+        if codegen_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&codegen_dir) {
+                for sub in entries.flatten() {
+                    let lang_dir = sub.path();
+                    if lang_dir.is_dir() && lang_dir.join("README.md").is_file() {
+                        has_any_codegen = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !has_any_codegen {
+            offenders.push(format!(
+                "{block_name}: [BLOCK-LINT-003] no codegen/<lang>/README.md found under {}",
+                codegen_dir.display()
+            ));
+        }
+
+        // Check 004: README.md at block root.
+        let readme_path = block_path.join("README.md");
+        if !readme_path.is_file() {
+            offenders.push(format!(
+                "{block_name}: [BLOCK-LINT-004] missing README.md at {}",
+                readme_path.display()
+            ));
+        }
+
+        // Schema-dependent checks need the parsed schema. Skip 005/006
+        // gracefully if 001 already fired.
+        let schema_value = if has_schema {
+            match read_yaml_value(&schema_path) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    offenders.push(format!(
+                        "{block_name}: [BLOCK-LINT-005] schema.yaml is not valid YAML: {e}"
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(value) = &schema_value {
+            // Check 005: standalone JSON Schema compile.
+            if let Err(e) = jsonschema::options().build(value) {
+                offenders.push(format!(
+                    "{block_name}: [BLOCK-LINT-005] schema.yaml fails JSON Schema compile: {e}"
+                ));
+            }
+
+            // Check 006: $id convention.
+            let expected_id = format!("https://specdev.dev/blocks/{block_name}.v1");
+            let actual_id = value
+                .get("$id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if actual_id != expected_id {
+                offenders.push(format!(
+                    "{block_name}: [BLOCK-LINT-006] schema.yaml $id is {actual_id:?}; expected {expected_id:?}"
+                ));
+            }
+        }
+
+        // Check 007: reduction.yaml validates against the embedded metaschema.
+        if has_reduction {
+            match read_yaml_value(&reduction_path) {
+                Ok(red_value) => {
+                    let validator = reduction_metaschema_validator();
+                    let mut errs: Vec<String> = validator
+                        .iter_errors(&red_value)
+                        .map(|e| format!("{e}"))
+                        .collect();
+                    errs.sort();
+                    errs.dedup();
+                    for err in errs {
+                        offenders.push(format!(
+                            "{block_name}: [BLOCK-LINT-007] reduction.yaml: {err}"
+                        ));
+                    }
+                }
+                Err(e) => {
+                    offenders.push(format!(
+                        "{block_name}: [BLOCK-LINT-007] reduction.yaml is not valid YAML: {e}"
+                    ));
+                }
+            }
+        }
+    }
+
+    offenders.sort();
+    Ok(offenders)
+}
+
+/// Read a YAML file and parse it as a `serde_json::Value`. Used by
+/// `lint_plugin_blocks` for both schema and reduction parsing.
+fn read_yaml_value(path: &Path) -> Result<serde_json::Value> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    serde_yaml::from_str(&text)
+        .with_context(|| format!("parsing {}", path.display()))
+}
+
+/// Lazily-loaded validator for the embedded reduction metaschema.
+/// Shared across all lint invocations in a process.
+fn reduction_metaschema_validator() -> &'static jsonschema::Validator {
+    use std::sync::OnceLock;
+    static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
+    static METASCHEMA_YAML: &str =
+        include_str!("embedded/reduction.metaschema.yaml");
+    VALIDATOR.get_or_init(|| {
+        let value: serde_json::Value = serde_yaml::from_str(METASCHEMA_YAML)
+            .expect("embedded reduction.metaschema.yaml parses as YAML");
+        jsonschema::options()
+            .build(&value)
+            .expect("embedded reduction.metaschema.yaml is a well-formed JSON Schema")
+    })
+}
+
 /// Plugin-author lint: walk `<plugin-root>/bridges/` and assert every
 /// directory name is lex-ordered. Returns a list of offending entries.
 /// Same lex-order check as the runtime `inline-bridge` preflight.
