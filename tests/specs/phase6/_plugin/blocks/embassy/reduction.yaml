@@ -1,0 +1,37 @@
+metaschema_version: "v1"
+
+# embassy block reduction. Tasks and channels each materialize as
+# entities under the `embassy` namespace (the file's location establishes
+# the namespace; entity kind paths resolve to `embassy.Task`,
+# `embassy.Channel`).
+#
+# Both extend Module — they're sub-units of a module's runtime
+# composition. The qualified entity name combines the parent module name
+# with the local name (e.g. "Audio.process" for module=Audio, task=process)
+# so multiple modules' tasks coexist without collision.
+#
+# v1 declares no relations. Cross-task / cross-channel wiring (e.g. "task
+# X sends on channel Y") is implicit in the codegen prose; if a future
+# phase needs explicit graph-check coverage, promote to a relation here.
+
+entities:
+  - kind: Task
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "embassy.tasks[]"
+    name: "${parent.name}.${.name}"
+    attrs:
+      pool_size: ".pool_size"
+      priority: ".priority"
+
+  - kind: Channel
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "embassy.channels[]"
+    name: "${parent.name}.${.name}"
+    attrs:
+      payload_type: ".payload_type"
+      depth: ".depth"
+      kind: ".kind"
+
+relations: []

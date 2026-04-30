@@ -1,0 +1,9 @@
+{
+  "name": "specdev",
+  "description": "Spec-driven development plugin. Author TOML specs validated against JSON Schema, then generate or audit firmware code in Rust, C, or C++. Successor to spec-driven-dev.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Tenkai Kariya"
+  },
+  "skills": "./skills/"
+}

@@ -1,0 +1,75 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/metadata.schema.yaml"
+title: "firmware-layered metadata categories (v1)"
+description: >
+  Object shape of each metadata category a module may declare. The top-level
+  `metadata` object on a module spec is closed — only the categories named
+  below are accepted, and each category object is itself closed.
+
+$defs:
+  MetadataObject:
+    description: The value of `metadata` on a module spec. Closed.
+    type: object
+    additionalProperties: false
+    properties:
+      MemoryModel:      { $ref: "#/$defs/MemoryModel" }
+      ConcurrencyModel: { $ref: "#/$defs/ConcurrencyModel" }
+      ErrorHandling:    { $ref: "#/$defs/ErrorHandling" }
+      Ownership:        { $ref: "#/$defs/Ownership" }
+      Timing:           { $ref: "#/$defs/Timing" }
+
+  MemoryModel:
+    type: object
+    additionalProperties: false
+    required: [allocation]
+    properties:
+      allocation:
+        $ref: "enums.schema.yaml#/$defs/AllocationKind"
+      max_instances:
+        type: integer
+        minimum: 1
+      owner:
+        $ref: "enums.schema.yaml#/$defs/BufferOwnerKind"
+
+  ConcurrencyModel:
+    type: object
+    additionalProperties: false
+    required: [protection]
+    properties:
+      protection:
+        $ref: "enums.schema.yaml#/$defs/ProtectionKind"
+      isr_safe:
+        type: boolean
+      reentrant:
+        type: boolean
+      shared_state:
+        type: array
+        items: { type: string }
+
+  ErrorHandling:
+    type: object
+    additionalProperties: false
+    required: [strategy]
+    properties:
+      strategy:
+        $ref: "enums.schema.yaml#/$defs/ErrorKind"
+      error_type:
+        $ref: "enums.schema.yaml#/$defs/Identifier"
+
+  Ownership:
+    type: object
+    additionalProperties: false
+    required: [owner]
+    properties:
+      owner:
+        $ref: "enums.schema.yaml#/$defs/BufferOwnerKind"
+      borrow_lifetime:
+        type: string
+
+  Timing:
+    type: object
+    additionalProperties: false
+    properties:
+      worst_case_us: { type: integer, minimum: 0 }
+      typical_us:    { type: integer, minimum: 0 }
+      deadline_us:   { type: integer, minimum: 0 }

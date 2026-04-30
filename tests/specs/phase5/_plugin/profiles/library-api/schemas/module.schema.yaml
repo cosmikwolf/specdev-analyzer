@@ -9,7 +9,12 @@ description: >
   private), and may declare re-exports of other modules and feature
   gates that conditionally include them.
 type: object
-additionalProperties: false
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas even when
+# those are valid via the aggregator `allOf:` slot. unevaluatedProperties
+# IS allOf-aware.
+unevaluatedProperties: false
 required: [name, visibility]
 properties:
   name:

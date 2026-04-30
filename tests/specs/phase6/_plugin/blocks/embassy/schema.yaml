@@ -1,0 +1,98 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/embassy.v1"
+title: "embassy block (v1)"
+description: >
+  Schema fragment contributed by the `embassy` block. Adds a namespaced
+  `[embassy]` table to `Module` carrying async-runtime concerns: tasks
+  (`#[embassy_executor::task]` async functions) and inter-task channels
+  (`embassy_sync::channel::Channel<...>`).
+
+  v1 covers tasks + channels. Signals, mutexes, timers, and pubsub are
+  deferred — promote to v1.x when real projects need them.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  embassy:
+    type: object
+    additionalProperties: false
+    properties:
+      tasks:
+        description: >
+          Async tasks the runtime spawns. Each becomes a free function
+          annotated with `#[embassy_executor::task]` (NOT a method on the
+          module struct). Spawning happens in the module's init function.
+        type: array
+        items: { $ref: "#/$defs/Task" }
+      channels:
+        description: >
+          Inter-task channels for message passing. Each becomes a
+          `static CHANNEL: Channel<Mutex, Payload, Depth>` declaration.
+          Senders/receivers are passed to tasks at spawn time.
+        type: array
+        items: { $ref: "#/$defs/Channel" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Task:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      pool_size:
+        description: >
+          Number of independent task instances the runtime can spawn from
+          this declaration. embassy's task pool is sized at compile time.
+          Defaults to 1; raise when the same task body is spawned multiple
+          times concurrently (e.g. one task per peripheral instance).
+        type: integer
+        minimum: 1
+        default: 1
+      priority:
+        description: >
+          Optional priority hint for runtimes that support priority-based
+          scheduling. Free-form because embassy's executor is FIFO by
+          default; codegen may translate this to interrupt priority on
+          targets that wire tasks to NVIC priorities.
+        type: string
+        enum: [low, normal, high]
+
+  Channel:
+    type: object
+    additionalProperties: false
+    required: [name, payload_type, depth]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      payload_type:
+        description: >
+          Rust type expression for the channel's payload. Must implement
+          Send (codegen verifies). Examples: "u32", "Event", "[u8; 64]",
+          "MyMessage".
+        type: string
+        minLength: 1
+      depth:
+        description: >
+          Channel buffer depth. embassy's bounded channel is fixed-size;
+          the runtime drops or backpressures past `depth` queued items
+          per the `kind` semantics below.
+        type: integer
+        minimum: 1
+      kind:
+        description: >
+          Channel flavor. `bounded` = embassy_sync::channel::Channel
+          (drop-oldest or backpressure depending on send method). `watch` =
+          watch channel (latest-value broadcast; many receivers see the
+          same value). `signal` = single-value latch (a Signal that holds
+          one value; sender overwrites, receiver reads once).
+        type: string
+        enum: [bounded, watch, signal]
+        default: bounded
