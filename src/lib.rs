@@ -64,6 +64,19 @@
 //! - `LAYOUT-006` — `specs/requirements.toml` absent (info).
 //! - `SCHEMA-ARCH` — `architecture.toml` fails its profile-shipped schema.
 //! - `SCHEMA-REQ` — `requirements.toml` fails its profile-shipped schema.
+//!
+//! Phase-6.5 plugin-lint codes (emitted by `plugin-lint`, not via Report —
+//! these run at plugin-author CI time, before any project context):
+//! - `BLOCK-LINT-001` — block missing required `schema.yaml`.
+//! - `BLOCK-LINT-002` — block missing required `reduction.yaml`.
+//! - `BLOCK-LINT-003` — block has no `codegen/<lang>/README.md` under any language.
+//! - `BLOCK-LINT-004` — block missing required top-level `README.md`.
+//! - `BLOCK-LINT-005` — `schema.yaml` fails standalone JSON Schema compile.
+//! - `BLOCK-LINT-006` — `schema.yaml` `$id` doesn't match the convention
+//!   `https://specdev.dev/blocks/<name>.v1`.
+//! - `BLOCK-LINT-007` — `reduction.yaml` fails the embedded reduction
+//!   metaschema (missing `extends`, missing relation `from_kind`/`to_kind`/
+//!   `from_spec`/`endpoints`, etc).
 
 pub mod aggregator;
 pub mod audit;
