@@ -205,4 +205,84 @@ mod tests {
         let s = format!("{err:#}");
         assert!(s.contains("LINEAGE-001"), "{s}");
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// Property: `Lineage::load(save(x))` returns x for any
+        /// well-formed Lineage. Exercises arbitrary block names, bridge
+        /// names (containing `+`), origin URLs, version strings,
+        /// timestamps, and content_hashes — many more shapes than the
+        /// hand-built `round_trip_preserves_shape` test covers.
+        #[test]
+        fn save_load_round_trip(lineage in lineage_strategy()) {
+            let dir = std::env::temp_dir().join(format!(
+                "specdev-lineage-prop-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            lineage.save(&dir).unwrap();
+            let loaded = Lineage::load(&dir).unwrap();
+            let _ = fs::remove_dir_all(&dir);
+            proptest::prop_assert_eq!(loaded, lineage);
+        }
+    }
+
+    fn lineage_strategy() -> impl proptest::strategy::Strategy<Value = Lineage> {
+        use proptest::collection::btree_map;
+        use proptest::option;
+        use proptest::strategy::Strategy;
+        // Block names: identifier-shaped (matches real-world bootstrap output).
+        let block_name = "[a-z][a-z0-9_-]{0,12}";
+        // Bridge names: `<a>+<b>` with `a < b` lex-ordered. We don't
+        // enforce ordering in the strategy because lineage save/load
+        // doesn't care about lex order — that's `inline-bridge`'s job.
+        let bridge_name = "[a-z][a-z0-9_-]{0,8}\\+[a-z][a-z0-9_-]{0,8}";
+
+        let blocks = btree_map(block_name, entry_strategy(), 0..6);
+        let bridges = btree_map(bridge_name, entry_strategy(), 0..4);
+        let meta = option::of(meta_strategy());
+
+        (meta, blocks, bridges).prop_map(|(meta, blocks, bridges)| Lineage {
+            meta,
+            blocks,
+            bridges,
+        })
+    }
+
+    fn entry_strategy() -> impl proptest::strategy::Strategy<Value = Entry> {
+        use proptest::strategy::Strategy;
+        // Restrict strings to ASCII-printable (excluding TOML's escape-
+        // sensitive `"` `\` and control chars). The `toml` crate handles
+        // wider ranges, but we avoid edges we don't care about for v1.
+        let printable = "[a-zA-Z0-9_./:-]+";
+        let hash = "sha256:[0-9a-f]{64}";
+        let timestamp = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z";
+        (printable, printable, timestamp, hash).prop_map(
+            |(origin, origin_version, inlined_at, content_hash)| Entry {
+                origin,
+                origin_version,
+                inlined_at,
+                content_hash,
+            },
+        )
+    }
+
+    fn meta_strategy() -> impl proptest::strategy::Strategy<Value = MetaSection> {
+        use proptest::strategy::Strategy;
+        let printable = "[a-zA-Z0-9_./:-]+";
+        let timestamp = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z";
+        (printable, timestamp, printable).prop_map(
+            |(plugin_version, bootstrapped_at, profile)| MetaSection {
+                plugin_version,
+                bootstrapped_at,
+                profile,
+            },
+        )
+    }
 }

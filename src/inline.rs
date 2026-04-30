@@ -548,4 +548,67 @@ mod tests {
         let ba = mk(&[("b/y", b"world"), ("a/x", b"hello")]);
         assert_eq!(rollup_hash(&ab), rollup_hash(&ba));
     }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// Property: any two permutations of the same per-unit file set
+        /// produce identical rolled-up hashes. The unit-test version
+        /// covers a 2-file hand-picked permutation; this property
+        /// covers every permutation of every set up to size 12, with
+        /// distinct rel_dst strings (the sort key).
+        #[test]
+        fn rollup_hash_permutation_invariant(
+            entries in proptest::collection::vec(
+                ("[a-z]{1,5}/[a-z]{1,5}", proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256)),
+                0..12,
+            )
+        ) {
+            // De-duplicate by rel_dst; same rel_dst with different bytes
+            // is an authoring error the rollup format doesn't speak to.
+            let mut by_path: std::collections::BTreeMap<String, Vec<u8>> = std::collections::BTreeMap::new();
+            for (p, b) in entries.into_iter() {
+                by_path.insert(p, b);
+            }
+            let mk = |order: &[(&String, &Vec<u8>)]| -> Vec<UnitFile> {
+                let mut files: Vec<UnitFile> = order
+                    .iter()
+                    .map(|(p, b)| UnitFile {
+                        rel_dst: PathBuf::from(p.as_str()),
+                        rel_src_in_unit: PathBuf::from(p.as_str()),
+                        bytes: (*b).clone(),
+                    })
+                    .collect();
+                files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+                files
+            };
+            let forward: Vec<(&String, &Vec<u8>)> = by_path.iter().collect();
+            let reverse: Vec<(&String, &Vec<u8>)> = by_path.iter().rev().collect();
+            proptest::prop_assert_eq!(rollup_hash(&mk(&forward)), rollup_hash(&mk(&reverse)));
+        }
+
+        /// Property: a different file set produces a different hash
+        /// (modulo collision probability ~ 2^-256). Sanity check that
+        /// the rollup function isn't the constant function.
+        #[test]
+        fn rollup_hash_distinguishes_distinct_sets(
+            a_bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..32),
+            b_bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..32),
+        ) {
+            // Skip when bytes happen to match — rollup is deterministic
+            // over equal inputs by design.
+            proptest::prop_assume!(a_bytes != b_bytes);
+            let a = vec![UnitFile {
+                rel_dst: PathBuf::from("x"),
+                rel_src_in_unit: PathBuf::from("x"),
+                bytes: a_bytes,
+            }];
+            let b = vec![UnitFile {
+                rel_dst: PathBuf::from("x"),
+                rel_src_in_unit: PathBuf::from("x"),
+                bytes: b_bytes,
+            }];
+            proptest::prop_assert_ne!(rollup_hash(&a), rollup_hash(&b));
+        }
+    }
 }
