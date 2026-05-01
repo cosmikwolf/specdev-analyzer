@@ -6,7 +6,7 @@ use specdev_analyzer::{
     audit::{self, AuditOptions},
     bootstrap::{self, BootstrapInputs},
     diagnostics::report_error,
-    drift, extract, inline,
+    cargo_toml as cargo_toml_mod, drift, extract, inline,
     layout::LayoutContext,
     merge,
     plugin_root::{self, PluginRootInputs},
@@ -135,6 +135,19 @@ enum Command {
         #[arg(long)]
         plugin: PathBuf,
     },
+    /// Emit a deterministic Cargo.toml derived from the project's
+    /// spec.toml + architecture.toml + module-level external_deps.
+    /// Phase 6.7 commitment: every Cargo dep is captured in the spec;
+    /// this subcommand renders the OUTPUT half. Lex-sorted deps;
+    /// stable across runs. Conflict warnings on stderr.
+    CargoToml {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write Cargo.toml here. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Assemble the codegen prompt for one module. Reads the inlined
     /// blocks/bridges' codegen prose plus architecture + module specs
     /// and concatenates them deterministically. Plugin's `spec-gen`
@@ -208,7 +221,51 @@ fn main() -> ExitCode {
         } => run_inline_bridge(project, spec_path.as_deref(), plugin_flag, bridge, merge),
         Command::PluginLint { plugin } => run_plugin_lint(plugin),
         Command::Prompt { project, module } => run_prompt(project, spec_path.as_deref(), module),
+        Command::CargoToml { project, output } => {
+            run_cargo_toml(project, spec_path.as_deref(), output)
+        }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+    }
+}
+
+fn run_cargo_toml(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match cargo_toml_mod::render(&layout) {
+        Ok(rendered) => {
+            for w in &rendered.warnings {
+                eprintln!("warning: {w}");
+            }
+            match output {
+                Some(path) => match std::fs::write(&path, &rendered.text) {
+                    Ok(()) => {
+                        eprintln!("wrote Cargo.toml to {}", path.display());
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("failed to write {}: {e}", path.display());
+                        ExitCode::from(2)
+                    }
+                },
+                None => {
+                    print!("{}", rendered.text);
+                    ExitCode::SUCCESS
+                }
+            }
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
     }
 }
 

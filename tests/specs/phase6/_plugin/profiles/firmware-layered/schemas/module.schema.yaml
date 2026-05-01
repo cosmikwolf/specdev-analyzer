@@ -31,8 +31,17 @@ properties:
     items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
     uniqueItems: true
   external_deps:
+    description: |
+      External crate dependencies this module needs (Phase 6.7+
+      CrateReference shape). Each entry becomes a Cargo.toml
+      `[dependencies]` line at gen time; the union with
+      architecture-level `[[external_deps]]` determines the project's
+      full dep set. Use this for module-scoped crates that aren't
+      project-wide infrastructure (e.g., a UART driver pulling in
+      `nb` for non-blocking traits).
     type: array
-    items: { $ref: "#/$defs/ExternalDep" }
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
   satisfies:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
@@ -62,17 +71,6 @@ properties:
     additionalProperties: true
 
 $defs:
-  ExternalDep:
-    type: object
-    additionalProperties: false
-    required: [name, version]
-    properties:
-      name:    { type: string, minLength: 1 }
-      version: { type: string, minLength: 1 }
-      features:
-        type: array
-        items: { type: string }
-
   Port:
     type: object
     additionalProperties: false
