@@ -36,6 +36,15 @@ pub struct ProjectSection {
     pub name: String,
     pub profile: String,
     pub language: String,
+    /// Rust edition (Phase 6.7+). Optional; defaults to "2021" at gen time.
+    #[serde(default)]
+    pub edition: Option<String>,
+    /// SPDX license identifier (Phase 6.7+). Optional; libraries use it.
+    #[serde(default)]
+    pub license: Option<String>,
+    /// Project description (Phase 6.7+). Optional; libraries use it.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

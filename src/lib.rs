@@ -82,6 +82,7 @@ pub mod aggregator;
 pub mod audit;
 pub mod bootstrap;
 pub mod canonical;
+pub mod cargo_toml;
 pub mod config;
 pub mod diagnostics;
 pub mod domain;
