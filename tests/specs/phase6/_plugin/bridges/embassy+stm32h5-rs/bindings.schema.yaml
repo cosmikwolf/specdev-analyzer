@@ -1,0 +1,72 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/bridges/embassy+stm32h5-rs.v1"
+title: "embassy+stm32h5-rs bridge (v1)"
+description: |
+  Schema fragment contributed by the `embassy+stm32h5-rs` bridge. Adds
+  shape under `bindings."embassy+stm32h5-rs"` on `Module`, declaring how
+  embassy tasks and stm32h5-rs peripherals owned by the same module are
+  wired together.
+
+  The bridge does NOT introduce new entity kinds — it contributes a
+  relation (`peripheral_owned_by`, extends `depends_on`) materialized
+  from each `peripheral_tasks[]` entry. See `reduction.yaml`.
+
+  v1 supports two handoff patterns: `owned` (peripheral handle moves
+  into the spawned task at init time — typical) and `shared`
+  (peripheral lives in a `Mutex<RawMutex, T>` static; the task borrows).
+  Future variants (`interrupt_driven` via embassy-stm32) are deferred —
+  they require a different HAL crate and complicate the bridge's
+  Cargo.toml emission. Promote to v1.x when a real project needs it.
+type: object
+properties:
+  bindings:
+    type: object
+    properties:
+      "embassy+stm32h5-rs":
+        type: object
+        additionalProperties: false
+        properties:
+          peripheral_tasks:
+            description: |
+              Bindings between embassy tasks and stm32h5-rs peripherals
+              owned by the same module. Each entry says "this task uses
+              this peripheral." Drives codegen of the spawn-time
+              handoff. Empty (or omitted) means no embassy↔stm32h5
+              wiring on this module — the blocks coexist independently.
+            type: array
+            items: { $ref: "#/$defs/PeripheralTask" }
+
+$defs:
+  PeripheralTask:
+    type: object
+    additionalProperties: false
+    required: [task, peripheral]
+    properties:
+      task:
+        description: |
+          References an `embassy.tasks[].name` declared on this same
+          module. Cross-module wiring is not supported in v1 — embassy
+          tasks and stm32h5 peripherals must be co-resident on the
+          module that owns this binding.
+        type: string
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+      peripheral:
+        description: |
+          References a `stm32h5.peripherals[].name` declared on this
+          same module.
+        type: string
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+      handoff:
+        description: |
+          How the peripheral is passed to the task.
+            `owned`  — peripheral handle moves into the task at spawn
+                       time. The task's signature takes it by value.
+                       Typical pattern; preferred when one task owns
+                       the peripheral exclusively.
+            `shared` — peripheral lives in a static
+                       `embassy_sync::mutex::Mutex<RawMutex, T>`. The
+                       task borrows via `mutex.lock().await`. Use when
+                       multiple tasks must share the same peripheral.
+        type: string
+        enum: [owned, shared]
+        default: owned
