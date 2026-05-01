@@ -98,6 +98,7 @@ pub mod lineage;
 pub mod merge;
 pub mod path;
 pub mod plugin_root;
+pub mod prompt;
 pub mod reduction;
 pub mod upstream;
 pub mod reductions;
