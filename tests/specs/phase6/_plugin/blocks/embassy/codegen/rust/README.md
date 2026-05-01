@@ -11,7 +11,8 @@ async functions, not methods. This is intentional and discussed in §6.
 
 ## Crate dependencies
 
-Add to `Cargo.toml`:
+This block contributes three crates: `embassy-executor`, `embassy-sync`,
+`embassy-time`.
 
 ```toml
 embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
@@ -23,7 +24,34 @@ The exact features depend on the target. Single-core Cortex-M projects
 use `arch-cortex-m` + `executor-thread`; multi-core or async-from-interrupt
 contexts add features per the embassy book. **Do NOT** add `embassy-stm32`
 or other peripheral-HAL crates from this block — that pairing is owned by
-the relevant bridge (e.g. `embassy+stm32f4-rs`).
+the relevant bridge (e.g. `embassy+stm32h5-rs`).
+
+### Project-level integration (Phase 6.7+)
+
+embassy is a runtime layer; it sits on top of `[platform]` (Cortex-M
+core/runtime crates) and `[runtime]` (panic handler, optional
+critical-section impl) declared in `architecture.toml`. This block
+does **not** declare those — read them from architecture and integrate
+as follows:
+
+- **Panic handler.** `[runtime].panic_handler` is the user's pick
+  (panic-probe, panic-halt, panic-rtt-target, etc.). The module's init
+  side does nothing; the panic handler crate registers itself via
+  `use <crate> as _;` at crate root, emitted by the firmware-layered
+  profile's main.rs scaffolding.
+- **Critical section.** embassy uses `critical-section` for ISR-safe
+  primitives. By default, `cortex-m` provides the implementation
+  (cortex-m's `critical-section-single-core` feature). If
+  `[runtime].critical_section_impl` is set, the project picked an
+  override — emit `cortex_m::interrupt::free` ↔ user-impl wiring per
+  the override crate's docs.
+- **Allocator (optional).** If `[runtime].allocator` is set, embassy
+  tasks may use `alloc::*` types. Without it, channels and statics are
+  the only persistent surface.
+
+Do **not** name specific panic-handler or critical-section crates in
+this block's emissions — those are project-level decisions, not
+embassy decisions.
 
 ## Task emission
 

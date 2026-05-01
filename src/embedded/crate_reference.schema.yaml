@@ -1,0 +1,53 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml"
+title: "CrateReference (v1)"
+description: |
+  Reusable crate-dependency reference shared across profile-level
+  architecture schemas and module-level external_deps. Captures every
+  field that maps to a Cargo.toml `[dependencies]` entry. Embedded in
+  the analyzer crate so `$ref` to this `$id` resolves universally,
+  regardless of project content.
+
+  Phase 6.7 commitment: every Cargo dep is captured in the spec.
+  Cargo.toml is OUTPUT — Phase 8's gen consumes these references to
+  emit the full Cargo project.
+
+$defs:
+  CrateReference:
+    type: object
+    additionalProperties: false
+    required: [crate, version]
+    properties:
+      crate:
+        description: |
+          Crate name (lowercase letters, digits, underscore, hyphen;
+          must start with a letter). Cargo's published-name rules.
+        type: string
+        pattern: "^[a-z][a-z0-9_-]*$"
+      version:
+        description: |
+          Cargo-style version requirement. Accepts bare versions
+          ("0.3.2"), caret ("^0.3.2"), tilde ("~0.3.2"), wildcards
+          ("0.3.*"), comparisons (">=0.3, <0.4"), and "*". Passed
+          through to Cargo.toml unchanged; Cargo validates downstream.
+        type: string
+        minLength: 1
+      source:
+        description: |
+          Where Cargo fetches this crate. Defaults to crates.io.
+          Accepts `crates.io`, `git+<url>` form, or relative path.
+          Passed through to Cargo.toml; Cargo validates the form.
+        type: string
+        minLength: 1
+      features:
+        description: Cargo features to enable for this crate.
+        type: array
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
+      default_features:
+        description: |
+          Set to `false` to disable Cargo's default-features. Defaults
+          to Cargo's behavior (true) when absent.
+        type: boolean
