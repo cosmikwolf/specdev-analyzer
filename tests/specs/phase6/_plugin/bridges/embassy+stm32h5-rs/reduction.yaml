@@ -1,0 +1,29 @@
+metaschema_version: "v1"
+
+# embassy+stm32h5-rs bridge reduction. Each `peripheral_tasks[]` binding
+# materializes a `peripheral_owned_by` relation from the stm32h5-rs
+# Peripheral entity to the embassy Task entity that owns it.
+#
+# The relation extends `depends_on` (a canonical relation) so layer-
+# dependency / acyclic / reachability primitives can run against bridge-
+# contributed wiring with zero domain knowledge.
+#
+# Bridges declare relations only — the metaschema rejects bridge-
+# qualified entity kinds. The two endpoint kinds (stm32h5-rs.Peripheral
+# and embassy.Task) live in their respective blocks; this bridge just
+# wires them.
+
+entities: []
+
+relations:
+  - kind: peripheral_owned_by
+    extends: depends_on
+    from_kind: stm32h5-rs.Peripheral
+    to_kind: embassy.Task
+    from_spec: "specs/modules/*.toml"
+    for_each: 'bindings."embassy+stm32h5-rs".peripheral_tasks[]'
+    endpoints:
+      from: "${parent.name}.${.peripheral}"
+      to: "${parent.name}.${.task}"
+    attrs:
+      handoff: ".handoff"
