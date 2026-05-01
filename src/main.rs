@@ -10,7 +10,7 @@ use specdev_analyzer::{
     layout::LayoutContext,
     merge,
     plugin_root::{self, PluginRootInputs},
-    reduction, resolve, validate,
+    prompt, reduction, resolve, validate,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -135,6 +135,18 @@ enum Command {
         #[arg(long)]
         plugin: PathBuf,
     },
+    /// Assemble the codegen prompt for one module. Reads the inlined
+    /// blocks/bridges' codegen prose plus architecture + module specs
+    /// and concatenates them deterministically. Plugin's `spec-gen`
+    /// skill pipes this to Claude. Output is byte-stable across runs.
+    Prompt {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<Module>.toml`).
+        #[arg(long)]
+        module: String,
+    },
     /// Observational drift report — classify each inlined file as
     /// clean / plugin-moved / locally-edited / both. Pure reporter.
     Drift {
@@ -195,7 +207,32 @@ fn main() -> ExitCode {
             merge,
         } => run_inline_bridge(project, spec_path.as_deref(), plugin_flag, bridge, merge),
         Command::PluginLint { plugin } => run_plugin_lint(plugin),
+        Command::Prompt { project, module } => run_prompt(project, spec_path.as_deref(), module),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+    }
+}
+
+fn run_prompt(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match prompt::assemble_module_prompt(&layout, &module) {
+        Ok(s) => {
+            print!("{s}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
     }
 }
 
