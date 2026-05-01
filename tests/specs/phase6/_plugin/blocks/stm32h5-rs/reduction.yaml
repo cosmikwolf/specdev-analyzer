@@ -1,16 +1,16 @@
 metaschema_version: "v1"
 
-# stm32f4-rs block reduction. Peripherals and pins each materialize as
-# entities under the `stm32f4-rs` namespace. Entity kind paths resolve
-# to `stm32f4-rs.Peripheral` and `stm32f4-rs.Pin`.
+# stm32h5-rs block reduction. Peripherals and pins each materialize as
+# entities under the `stm32h5-rs` namespace. Entity kind paths resolve
+# to `stm32h5-rs.Peripheral` and `stm32h5-rs.Pin`.
 #
 # Both extend Module — they're sub-units of a module's hardware
 # composition. Qualified entity names combine parent module name with
 # the local name so multiple modules' peripherals/pins coexist without
 # collision.
 #
-# v1 declares no relations. Cross-peripheral wiring (e.g. "this DMA
-# stream serves this UART") could become a relation in v2 if a project
+# v1 declares no relations. Cross-peripheral wiring (e.g. "this GPDMA
+# channel serves this UART") could become a relation in v2 if a project
 # needs graph-check coverage; for now, that wiring is implicit in the
 # codegen prose.
 
@@ -18,7 +18,7 @@ entities:
   - kind: Peripheral
     extends: Module
     from: "specs/modules/*.toml"
-    for_each: "stm32f4.peripherals[]"
+    for_each: "stm32h5.peripherals[]"
     name: "${parent.name}.${.name}"
     attrs:
       kind: ".kind"
@@ -27,7 +27,7 @@ entities:
   - kind: Pin
     extends: Module
     from: "specs/modules/*.toml"
-    for_each: "stm32f4.pins[]"
+    for_each: "stm32h5.pins[]"
     name: "${parent.name}.${.name}"
     attrs:
       port: ".port"

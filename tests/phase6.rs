@@ -1,4 +1,4 @@
-//! Phase-6 integration tests: first concrete blocks (embassy + stm32f4-rs).
+//! Phase-6 integration tests: first concrete blocks (embassy + stm32h5-rs).
 //!
 //! Exit criteria from `specdev-next/05-implementation-plan.md` Phase 6:
 //!
@@ -101,25 +101,25 @@ fn inline_embassy_populates_files_and_lineage() {
 }
 
 // ---------------------------------------------------------------------------
-// 2 — inline stm32f4-rs populates files + lineage
+// 2 — inline stm32h5-rs populates files + lineage
 // ---------------------------------------------------------------------------
 #[test]
-fn inline_stm32f4_rs_populates_files_and_lineage() {
-    let (target, layout) = fresh_firmware_project("inline-stm32f4");
-    run_inline_block(&layout, &phase6_plugin(), "stm32f4-rs").unwrap();
+fn inline_stm32h5_rs_populates_files_and_lineage() {
+    let (target, layout) = fresh_firmware_project("inline-stm32h5");
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
 
     assert!(target
-        .join("specs/specdev/schemas/inlined/blocks/stm32f4-rs.schema.yaml")
+        .join("specs/specdev/schemas/inlined/blocks/stm32h5-rs.schema.yaml")
         .is_file());
     assert!(target
-        .join("specs/specdev/reductions/blocks/stm32f4-rs.yaml")
+        .join("specs/specdev/reductions/blocks/stm32h5-rs.yaml")
         .is_file());
     assert!(target
-        .join("specs/specdev/codegen/rust/blocks/stm32f4-rs/README.md")
+        .join("specs/specdev/codegen/rust/blocks/stm32h5-rs/README.md")
         .is_file());
 
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
-    assert!(lineage.blocks.contains_key("stm32f4-rs"));
+    assert!(lineage.blocks.contains_key("stm32h5-rs"));
 }
 
 // ---------------------------------------------------------------------------
@@ -160,28 +160,28 @@ kind = "bounded"
 }
 
 // ---------------------------------------------------------------------------
-// 4 — module using stm32f4-rs validates first try
+// 4 — module using stm32h5-rs validates first try
 // ---------------------------------------------------------------------------
 #[test]
-fn module_using_stm32f4_rs_validates() {
+fn module_using_stm32h5_rs_validates() {
     let (target, layout) = fresh_firmware_project("mod-stm32");
-    run_inline_block(&layout, &phase6_plugin(), "stm32f4-rs").unwrap();
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     std::fs::write(
         target.join("specs/modules/Uart.toml"),
         r#"name = "Uart"
 layer = "driver"
 
-[[stm32f4.peripherals]]
+[[stm32h5.peripherals]]
 name = "uart_dev"
 kind = "USART"
 instance = 1
 
-[[stm32f4.peripherals]]
+[[stm32h5.peripherals]]
 name = "gpio_a"
 kind = "GPIO"
 instance = 1
 
-[[stm32f4.pins]]
+[[stm32h5.pins]]
 name = "tx"
 port = "A"
 pin = 9
@@ -205,18 +205,18 @@ mode = "alternate"
 fn module_using_both_blocks_validates() {
     let (target, layout) = fresh_firmware_project("mod-both");
     run_inline_block(&layout, &phase6_plugin(), "embassy").unwrap();
-    run_inline_block(&layout, &phase6_plugin(), "stm32f4-rs").unwrap();
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     std::fs::write(
         target.join("specs/modules/Sensor.toml"),
         r#"name = "Sensor"
 layer = "driver"
 
-[[stm32f4.peripherals]]
+[[stm32h5.peripherals]]
 name = "spi_dev"
 kind = "SPI"
 instance = 1
 
-[[stm32f4.pins]]
+[[stm32h5.pins]]
 name = "sck"
 port = "B"
 pin = 3
@@ -271,18 +271,18 @@ unknown_field = "should reject"
 }
 
 // ---------------------------------------------------------------------------
-// 7 — stm32f4-rs schema rejects invalid kind enum value
+// 7 — stm32h5-rs schema rejects invalid kind enum value
 // ---------------------------------------------------------------------------
 #[test]
-fn stm32f4_schema_rejects_invalid_kind() {
+fn stm32h5_schema_rejects_invalid_kind() {
     let (target, layout) = fresh_firmware_project("stm32-bad-kind");
-    run_inline_block(&layout, &phase6_plugin(), "stm32f4-rs").unwrap();
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     std::fs::write(
         target.join("specs/modules/Bad.toml"),
         r#"name = "Bad"
 layer = "driver"
 
-[[stm32f4.peripherals]]
+[[stm32h5.peripherals]]
 name = "x"
 kind = "INVALID_KIND"
 instance = 1
@@ -368,25 +368,25 @@ depth = 4
 }
 
 // ---------------------------------------------------------------------------
-// 10 — stm32f4-rs.Peripheral entities materialize with qualified names
+// 10 — stm32h5-rs.Peripheral entities materialize with qualified names
 // ---------------------------------------------------------------------------
 #[test]
-fn stm32f4_peripheral_materializes_qualified() {
+fn stm32h5_peripheral_materializes_qualified() {
     use specdev_analyzer::reduction;
 
     let (target, layout) = fresh_firmware_project("stm32-extract");
-    run_inline_block(&layout, &phase6_plugin(), "stm32f4-rs").unwrap();
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     std::fs::write(
         target.join("specs/modules/Uart.toml"),
         r#"name = "Uart"
 layer = "driver"
 
-[[stm32f4.peripherals]]
+[[stm32h5.peripherals]]
 name = "uart_dev"
 kind = "USART"
 instance = 1
 
-[[stm32f4.pins]]
+[[stm32h5.pins]]
 name = "tx"
 port = "A"
 pin = 9
@@ -398,14 +398,14 @@ mode = "alternate"
     let periph_names: Vec<&str> = graph
         .entities
         .iter()
-        .filter(|e| e.kind == "stm32f4-rs.Peripheral")
+        .filter(|e| e.kind == "stm32h5-rs.Peripheral")
         .map(|e| e.name.as_str())
         .collect();
     assert_eq!(periph_names, vec!["Uart.uart_dev"]);
     let pin_names: Vec<&str> = graph
         .entities
         .iter()
-        .filter(|e| e.kind == "stm32f4-rs.Pin")
+        .filter(|e| e.kind == "stm32h5-rs.Pin")
         .map(|e| e.name.as_str())
         .collect();
     assert_eq!(pin_names, vec!["Uart.tx"]);
