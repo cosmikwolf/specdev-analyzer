@@ -198,3 +198,63 @@ uses shared state).
 
 Do **not** emit a global `Project` struct or context object. Each
 module is independent; cross-module wiring is per-block.
+
+## Project-wide infrastructure (Phase 6.7+)
+
+The spec is the source of truth for every Cargo dependency. Phase 8's
+`gen` reads `architecture.toml`'s `[platform]`, `[runtime]`, `[logger]`,
+and `[[external_deps]]` sections (plus `spec.toml`'s `[project]`) and
+emits the complete Cargo project, not just module bodies. **Do not add
+deps to Cargo.toml that aren't declared in the spec; do not omit deps
+that are declared.**
+
+### `[platform]` drives target + ARM core scaffolding
+
+- `[platform].target_triple` → Cargo build target (`.cargo/config.toml`
+  `build.target` and `[target.<triple>.rustflags]` for `-C link-arg=-Tlink.x`).
+- `[platform].mcu_part` → MCU block consumes this to pick its HAL
+  feature flag (e.g. stm32h5-rs reads `mcu_part` to select
+  `stm32h5xx-hal`'s `stm32h563` feature). If `mcu_part` is set but no
+  MCU block is inlined, emit a warning comment in `main.rs`:
+  `// SPEC WARNING: [platform].mcu_part = "<value>" but no MCU block found`.
+- `[platform].mcu_core` → `[dependencies]` (typically `cortex-m`).
+- `[platform].mcu_runtime` → `[dependencies]` (typically `cortex-m-rt`).
+  `main.rs` gets `#[cortex_m_rt::entry]` on the entry point.
+
+### `[runtime]` drives panic + allocator + critical-section setup
+
+- `[runtime].panic_handler` → `[dependencies]` AND `main.rs` gets
+  `use <crate-as-snake_case> as _;` to register the handler. For
+  `panic-probe`, emit `use panic_probe as _;`.
+- `[runtime].allocator` (optional) → `[dependencies]` AND a
+  `#[global_allocator]` static at crate root. Add `extern crate alloc;`
+  at crate root regardless of any module's `MemoryModel.allocation`
+  setting. If absent, do **not** emit `extern crate alloc;` from this
+  rule (modules with `heap_alloc` still trigger it per the section
+  above).
+- `[runtime].critical_section_impl` (optional) → `[dependencies]`. Do
+  not name a specific crate; the embassy or stm32 block's prose covers
+  the integration pattern when relevant.
+
+### `[logger]` drives logging integration
+
+- `[logger].provider` → `[dependencies]` (typically `defmt`).
+- `[logger].backend` → `[dependencies]` AND `main.rs` gets
+  `use <backend-as-snake_case> as _;` (for defmt-rtt: `use defmt_rtt as _;`).
+- `[logger].default_level` → emit a `defmt::set_log_level!` call (or
+  equivalent) at the start of the entry point, when the provider supports
+  runtime level setting; otherwise document in a comment.
+
+### `[[external_deps]]` is appended verbatim
+
+Every entry lands in Cargo.toml `[dependencies]` with its `crate`,
+`version`, optional `features`, optional `default-features`, optional
+`source` (path/git/registry). No code is emitted from these — the
+project author already knows how to use the crate; the spec just
+records what it is so the build is reproducible.
+
+### Determinism
+
+Cargo.toml entries emit in lex-order by crate name. Within `[features]`
+emit features in lex-order. The same spec must produce byte-identical
+Cargo.toml across runs.

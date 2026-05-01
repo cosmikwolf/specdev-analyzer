@@ -10,6 +10,14 @@ description: >
 type: object
 additionalProperties: false
 properties:
+  msrv:
+    description: |
+      Minimum Supported Rust Version. Cargo-style version requirement
+      (e.g., "1.75", "^1.75"). Phase 8's `gen` emits this as
+      Cargo.toml's `rust-version` field. Optional — omit to leave
+      `rust-version` unset.
+    type: string
+    minLength: 1
   features:
     type: array
     items: { $ref: "#/$defs/Feature" }

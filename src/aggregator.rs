@@ -426,6 +426,14 @@ impl Retrieve for MapRetriever {
 fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
     let mut docs: HashMap<String, Value> = HashMap::new();
 
+    // Embedded, project-independent schemas (Phase 6.7+). Registered
+    // under both `$id` and filename so `$ref` to either form resolves.
+    for (keys, value) in crate::embedded_schemas::embedded_schema_entries() {
+        for k in keys {
+            docs.insert(k.clone(), value.clone());
+        }
+    }
+
     // Top-level sibling schemas under `specs/specdev/schemas/` —
     // architecture.schema.yaml, requirements.schema.yaml,
     // enums.schema.yaml, metadata.schema.yaml, etc. Module's $ref to

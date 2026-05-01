@@ -1,3 +1,17 @@
+# Architecture-level decisions for a library-api project.
+#
+# Phase 6.7+: this file declares MSRV (optional) + the cargo features
+# the library exposes. Module-level external_deps live in each
+# specs/modules/*.toml; the union determines the library's full dep
+# set, which Phase 8's `gen` emits to Cargo.toml.
+
+# ---------------------------------------------------------------------------
+# Minimum Supported Rust Version (optional). Cargo-style version
+# requirement; emitted as Cargo.toml's `rust-version` field.
+# ---------------------------------------------------------------------------
+# msrv = "1.75"
+
+# ---------------------------------------------------------------------------
 # Cargo features exposed by the library.
 #
 # Each [[features]] entry declares one feature. Modules reference these

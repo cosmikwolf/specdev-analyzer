@@ -86,6 +86,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod domain;
 pub mod drift;
+pub mod embedded_schemas;
 pub mod extract;
 pub mod graph;
 pub mod hash;

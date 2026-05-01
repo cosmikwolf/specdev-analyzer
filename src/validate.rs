@@ -216,6 +216,15 @@ impl Retrieve for AuxRetriever {
 
 fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, JsonValue>> {
     let mut docs: HashMap<String, JsonValue> = HashMap::new();
+
+    // Embedded, project-independent schemas (Phase 6.7+). Registered
+    // under both `$id` and filename so `$ref` to either form resolves.
+    for (keys, value) in crate::embedded_schemas::embedded_schema_entries() {
+        for k in keys {
+            docs.insert(k.clone(), value.clone());
+        }
+    }
+
     let dir = &layout.schemas_dir;
     if !dir.is_dir() {
         return Ok(docs);

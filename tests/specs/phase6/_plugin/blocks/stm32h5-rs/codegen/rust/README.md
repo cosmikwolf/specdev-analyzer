@@ -15,21 +15,33 @@ differ.
 
 ## Crate dependencies
 
-Add to `Cargo.toml`:
+This block contributes two crates: `stm32h5xx-hal` and `stm32h5xx-pac`.
 
 ```toml
-stm32h5xx-hal = { version = "0.3", features = ["stm32h563"] }   # or your specific MCU
+stm32h5xx-hal = { version = "0.3", features = ["<mcu_part>"] }
 stm32h5xx-pac = "0.16"
-cortex-m = "0.7"
-cortex-m-rt = "0.7"
-panic-halt = "0.2"
 ```
 
-The `stm32h5xx-hal` feature flag selects the specific MCU family member.
-For Nucleo-H563ZI, use `stm32h563`. The HAL is currently maturing —
-document at the project level which peripherals you actually use, and
-expect to drop to PAC-level access for less-supported features (see
-"PAC vs HAL" below).
+The `stm32h5xx-hal` feature flag selects the specific MCU family
+member. **Phase 6.7 spec coupling:** read `[platform].mcu_part` from
+`architecture.toml` and use it as the HAL feature flag (lowercase, no
+punctuation: `stm32h563`, `stm32h573`, `stm32h503`, etc.). The
+`mcu_part` field is the single source of truth for which H5 variant
+the project targets.
+
+**Codegen-time soft check:** if the project sets `[platform].mcu_part`
+but no `stm32h5-rs` block is inlined, this block can't run — but the
+profile codegen prose emits a warning comment in `main.rs`:
+`// SPEC WARNING: [platform].mcu_part = "<value>" but no MCU block found`.
+Conversely, if this block is inlined but `mcu_part` is unset, emit
+`// SPEC WARNING: stm32h5-rs block inlined but [platform].mcu_part is unset`
+and fall back to a sensible default (typically `stm32h563`). Both
+warnings surface as in-source comments — not analyzer findings — per
+the doc 15 §3.1 sharp-test discipline (manual review, not enforcement).
+
+`cortex-m`, `cortex-m-rt`, panic handlers, and logger crates do **not**
+come from this block — they're declared at the project level via
+`[platform]` / `[runtime]` / `[logger]` in `architecture.toml`.
 
 **Do NOT** add `embassy-stm32`, `embassy-executor`, or any other
 embassy-* crate from this block. Cross-runtime peripheral wiring is the

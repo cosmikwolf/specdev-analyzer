@@ -32,6 +32,28 @@ properties:
         type: string
         description: Target language for codegen. Widens in Phase 9 when C lands.
         enum: [rust, c]
+      edition:
+        type: string
+        description: |
+          Rust edition. Optional; defaults to "2021" if absent. Phase 8's
+          `gen` emits this as Cargo.toml's `[package].edition` for Rust
+          projects. Ignored for non-Rust languages.
+        enum: ["2018", "2021", "2024"]
+        default: "2021"
+      license:
+        type: string
+        description: |
+          SPDX license identifier (or "OR"-joined identifiers). Optional;
+          libraries should set this. Phase 8's `gen` emits as
+          Cargo.toml's `[package].license`.
+        minLength: 1
+      description:
+        type: string
+        description: |
+          Short project description. Optional; libraries should set this
+          (it appears on crates.io). Phase 8's `gen` emits as
+          Cargo.toml's `[package].description`.
+        maxLength: 200
   paths:
     type: object
     additionalProperties: false
