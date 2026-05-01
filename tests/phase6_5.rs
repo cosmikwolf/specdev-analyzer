@@ -198,11 +198,11 @@ fn multiple_blocks_multiple_defects() {
     let plugin = cloned_with("multi-defect", |root| {
         // embassy: lose its README (BLOCK-LINT-004).
         std::fs::remove_file(root.join("blocks/embassy/README.md")).unwrap();
-        // stm32f4-rs: corrupt its $id (BLOCK-LINT-006).
-        let path = root.join("blocks/stm32f4-rs/schema.yaml");
+        // stm32h5-rs: corrupt its $id (BLOCK-LINT-006).
+        let path = root.join("blocks/stm32h5-rs/schema.yaml");
         let text = std::fs::read_to_string(&path).unwrap();
         let mutated = text.replace(
-            r#"https://specdev.dev/blocks/stm32f4-rs.v1"#,
+            r#"https://specdev.dev/blocks/stm32h5-rs.v1"#,
             r#"https://specdev.dev/blocks/wrong-name.v1"#,
         );
         std::fs::write(&path, mutated).unwrap();
@@ -217,8 +217,8 @@ fn multiple_blocks_multiple_defects() {
     assert!(
         offenders
             .iter()
-            .any(|o| o.contains("BLOCK-LINT-006") && o.starts_with("stm32f4-rs:")),
-        "expected stm32f4-rs BLOCK-LINT-006; got: {offenders:?}"
+            .any(|o| o.contains("BLOCK-LINT-006") && o.starts_with("stm32h5-rs:")),
+        "expected stm32h5-rs BLOCK-LINT-006; got: {offenders:?}"
     );
 }
 
@@ -237,7 +237,7 @@ fn bridge_lint_still_works() {
         bridge_offenders.iter().any(|o| o.contains("BRIDGE-LEX-001")),
         "expected BRIDGE-LEX-001; got: {bridge_offenders:?}"
     );
-    // Block lint independent — embassy + stm32f4-rs unchanged, should pass.
+    // Block lint independent — embassy + stm32h5-rs unchanged, should pass.
     let block_offenders = lint_plugin_blocks(&plugin).unwrap();
     assert!(
         block_offenders.is_empty(),

@@ -1,0 +1,117 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/stm32h5-rs.v1"
+title: "stm32h5-rs block (v1)"
+description: >
+  Schema fragment contributed by the `stm32h5-rs` block. Adds a
+  namespaced `[stm32h5]` table to `Module` carrying STM32H5 MCU concerns:
+  peripherals (USART/SPI/I2C/GPIO/TIM/ADC/DMA/USB/OCTOSPI/RCC by HAL
+  kind + instance) and pins (GPIO port + pin + alternate-function
+  mapping).
+
+  v1 covers peripherals + pins. Clock-tree configuration (HSE/HSI/PLL),
+  GPDMA stream wiring, ICACHE/DCACHE setup, and TrustZone configuration
+  are deferred — either to a future `stm32h5-clocks` block,
+  project-level architecture (specs/architecture.toml), or the
+  embassy+stm32h5-rs bridge.
+
+  This block targets `stm32h5xx-hal` / `stm32h5xx-pac`. The
+  embassy-flavored `embassy-stm32` is OUT OF SCOPE (would violate
+  doc 15 §3.1 leg 3); embassy integration goes through the
+  `embassy+stm32h5-rs` bridge (Phase 7).
+
+  Default verification target: STM32H563 (mainline; USB-OTG-FS, full
+  peripheral set). Other H5 variants (H503 lighter; H573 with full
+  security) follow the same shape with peripheral-count differences.
+type: object
+properties:
+  stm32h5:
+    type: object
+    additionalProperties: false
+    properties:
+      peripherals:
+        description: >
+          Peripheral instances the module owns. Each becomes a typed
+          handle from stm32h5xx-hal at codegen time.
+        type: array
+        items: { $ref: "#/$defs/Peripheral" }
+      pins:
+        description: >
+          GPIO pin bindings the module owns. Each becomes a typed pin
+          handle (e.g. `gpiob.pb0.into_push_pull_output()`) at codegen
+          time.
+        type: array
+        items: { $ref: "#/$defs/Pin" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Peripheral:
+    type: object
+    additionalProperties: false
+    required: [name, kind, instance]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      kind:
+        description: >
+          Peripheral category. Closed enum — STM32H5 has a finite set of
+          peripheral families. Restrict to known ones so typos surface
+          as schema errors. v1 covers the most commonly-used kinds; v1.x
+          can widen as projects need (LPUART, ETH, RNG, CRC, HASH, AES,
+          LPTIM, etc.).
+        type: string
+        enum:
+          - USART      # USART1-3, USART6, USART10, USART11
+          - UART       # UART4, UART5, UART7-9, UART12
+          - SPI        # SPI1-6
+          - I2C        # I2C1-4 (H563 has 4)
+          - GPIO       # GPIOA-H bank handles (instance is bank index: 1=A, 2=B, ..., 8=H)
+          - TIM        # general-purpose + advanced-control timers
+          - ADC        # ADC1, ADC2
+          - DMA        # GPDMA1, GPDMA2 (different from F4's DMA streams)
+          - RCC        # singleton; instance must be 1
+          - USB        # USB-OTG-FS (H563 single OTG-FS instance; instance must be 1)
+          - OCTOSPI    # external flash interface (OCTOSPI1, OCTOSPI2)
+      instance:
+        description: >
+          Numeric instance (e.g. `instance = 1` for USART1, `instance =
+          3` for I2C3, `instance = 2` for GPIOB). Some peripherals exist
+          in multiple copies on a single MCU; this field disambiguates.
+        type: integer
+        minimum: 1
+
+  Pin:
+    type: object
+    additionalProperties: false
+    required: [name, port, pin]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      port:
+        description: GPIO port. STM32H563 ports are A through H.
+        type: string
+        enum: [A, B, C, D, E, F, G, H]
+      pin:
+        description: Pin number within the port (0..15).
+        type: integer
+        minimum: 0
+        maximum: 15
+      alt_fn:
+        description: >
+          Alternate-function number when `mode = "alternate"`. Each
+          pin's alternate functions are MCU-specific; consult the
+          STM32H563 datasheet's alternate-function mapping table.
+        type: integer
+        minimum: 0
+        maximum: 15
+      mode:
+        description: >
+          Pin operating mode. `alternate` for peripheral routing
+          (USART_TX, SPI_SCK, etc.); `input`/`output` for general-
+          purpose digital I/O; `analog` for ADC inputs.
+        type: string
+        enum: [input, output, alternate, analog]
+        default: alternate
