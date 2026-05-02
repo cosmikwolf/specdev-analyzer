@@ -34,11 +34,49 @@ $defs:
         minLength: 1
       source:
         description: |
-          Where Cargo fetches this crate. Defaults to crates.io.
-          Accepts `crates.io`, `git+<url>` form, or relative path.
-          Passed through to Cargo.toml; Cargo validates the form.
-        type: string
-        minLength: 1
+          Where Cargo fetches this crate. Closed-set tagged union;
+          unrecognized shapes are rejected at validate time (no silent
+          drops). Omit for crates.io (the default).
+
+          Accepted forms:
+            * { path = "../sibling-crate" }            — local path-dep
+            * { git = "https://...", rev = "..." }     — git-dep with rev/tag/branch
+            * "workspace"                              — `<dep>.workspace = true` inheritance
+            * "crates-io"                              — explicit default registry (same as omitting `source`)
+        oneOf:
+          - type: object
+            additionalProperties: false
+            required: [path]
+            properties:
+              path:
+                description: Relative or absolute filesystem path to the dep crate root.
+                type: string
+                minLength: 1
+          - type: object
+            additionalProperties: false
+            required: [git]
+            properties:
+              git:
+                description: Git URL (https or ssh).
+                type: string
+                minLength: 1
+              rev:
+                description: |
+                  Git revision (commit SHA). Cargo allows at most one of
+                  `rev`/`tag`/`branch`; v1 schema does not enforce mutual
+                  exclusion — Cargo rejects multi-pin downstream.
+                type: string
+                minLength: 1
+              tag:
+                description: Git tag.
+                type: string
+                minLength: 1
+              branch:
+                description: Git branch.
+                type: string
+                minLength: 1
+          - type: string
+            enum: ["workspace", "crates-io"]
       features:
         description: Cargo features to enable for this crate.
         type: array
