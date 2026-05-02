@@ -52,9 +52,7 @@ pub fn resolve_for_bootstrap(inputs: &PluginRootInputs) -> Result<PathBuf> {
             format!("[PLUGIN-001] resolving plugin root from CLAUDE_PLUGIN_ROOT={env}")
         });
     }
-    Err(anyhow!(
-        "[PLUGIN-001] plugin root not resolvable. Pass --plugin-root <path> or set SPECDEV_PLUGIN_ROOT (CLAUDE_PLUGIN_ROOT is set automatically inside Claude Code)."
-    ))
+    Err(anyhow!(plugin_root_unresolvable_message(false)))
 }
 
 /// Resolve the plugin root using the documented precedence chain.
@@ -107,9 +105,33 @@ pub fn resolve(
         });
     }
 
-    Err(anyhow!(
-        "[PLUGIN-001] plugin root not resolvable. Pass --plugin-root <path>, set [paths].plugin_root in spec.toml, or set SPECDEV_PLUGIN_ROOT (CLAUDE_PLUGIN_ROOT is set automatically inside Claude Code)."
-    ))
+    Err(anyhow!(plugin_root_unresolvable_message(true)))
+}
+
+/// Build the [PLUGIN-001] error message. `with_spec_field = true` adds
+/// the `[paths].plugin_root` line for callers that have a `spec.toml`
+/// (i.e. `resolve`, not `resolve_for_bootstrap`).
+///
+/// Wording sharpened in the F-003 quick-wins cluster: the original
+/// message implied `CLAUDE_PLUGIN_ROOT` is auto-set everywhere inside
+/// Claude Code, but it is only injected into plugin/skill execution
+/// contexts — Bash subshells (the analyzer's typical invocation surface)
+/// do NOT inherit it. Saying "export SPECDEV_PLUGIN_ROOT once" is the
+/// concrete fix; the parenthetical now names the inheritance gap.
+fn plugin_root_unresolvable_message(with_spec_field: bool) -> String {
+    let mut msg = String::from(
+        "[PLUGIN-001] plugin root not resolvable. Pass --plugin-root <path>",
+    );
+    if with_spec_field {
+        msg.push_str(", set [paths].plugin_root in spec.toml,");
+    }
+    msg.push_str(
+        " or export SPECDEV_PLUGIN_ROOT=<path-to-specdev-plugin>. \
+         CLAUDE_PLUGIN_ROOT is auto-set inside plugin/skill execution \
+         contexts but is NOT inherited by Bash subshells the analyzer \
+         is typically run from — capture it once at session start.",
+    );
+    msg
 }
 
 fn nonempty_env(name: &str) -> Option<String> {

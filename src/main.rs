@@ -299,7 +299,16 @@ fn run_validate(
     strict: bool,
     no_color: bool,
 ) -> ExitCode {
-    let report = match validate::run_project(&project, spec_path) {
+    // Discover layout once so we can both run the pipeline and produce
+    // the positive-confirmation summary against the same project state.
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match validate::run(&layout) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
@@ -313,6 +322,12 @@ fn run_validate(
         report.render_colored()
     };
     print!("{rendered}");
+    // Positive-confirmation tail (F-005): surface per-category counts so
+    // the user can sanity-check that newly authored files were picked
+    // up, even when `validate` finds nothing wrong. Printed before the
+    // findings count so the eye lands on it next to the summary block.
+    let summary = validate::summarize(&layout);
+    eprintln!("{}", summary.render());
     eprintln!("{errors} error(s), {warnings} warning(s), {infos} info(s)");
     let strict_warns = strict && warnings > 0;
     if errors > 0 || strict_warns {
