@@ -95,6 +95,9 @@ $defs:
   RequirementId:
     description: >
       Identifier of a requirement defined under specs/requirements.toml.
-      Format: REQ-AREA-NUMBER (e.g. REQ-AUDIO-001).
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-AUDIO-001, ZFM-001, RFC-7-12).
+      The leading prefix is open: projects can adopt their published
+      requirement scheme (REQ-, ZFM-, RFC-, STORY-, …) without rename
+      ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
     type: string
-    pattern: "^REQ-[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

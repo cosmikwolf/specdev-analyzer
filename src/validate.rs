@@ -18,7 +18,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use jsonschema::{Retrieve, Uri};
 use serde_json::Value as JsonValue;
-use tracing::{event, instrument, Level};
+use tracing::{info, instrument};
 
 use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
@@ -419,11 +419,9 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
 
     // Step 3: validate each module TOML.
     for module_path in &inv.modules {
-        event!(
-            Level::DEBUG,
-            module = %module_path.display(),
-            "validating_module"
-        );
+        let rel = module_path
+            .strip_prefix(&layout.project_root)
+            .unwrap_or(module_path);
         let text = match std::fs::read_to_string(module_path) {
             Ok(t) => t,
             Err(e) => {
@@ -466,6 +464,16 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                 continue;
             }
         };
+        let module_name = parsed
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("<unnamed>");
+        info!(
+            target: "specdev_analyzer::validate",
+            "[MODULE-001] loaded {} — kind=Module name={}",
+            rel.display(),
+            module_name,
+        );
         if let Some(v) = &validator {
             for err in v.iter_errors(&json) {
                 report.push(
@@ -904,5 +912,83 @@ fn resolve_graph_check_kinds(
                 );
             }
         }
+    }
+}
+
+/// Positive-confirmation summary of what `validate` actually loaded.
+///
+/// Surfaces the per-category counts the user can sanity-check ("did my
+/// new module file actually get picked up?") without grepping through
+/// findings or running `reduce`. Computed independently of the Report
+/// so identical signals are emitted whether or not findings were
+/// produced.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub modules: usize,
+    pub requirements: usize,
+    pub sources: usize,
+    pub graph_checks: usize,
+}
+
+impl Summary {
+    /// One-line rendering for the CLI tail.
+    pub fn render(&self) -> String {
+        format!(
+            "loaded {} modules / {} requirements / {} sources / {} graph checks",
+            self.modules, self.requirements, self.sources, self.graph_checks,
+        )
+    }
+}
+
+/// Compute the validate summary for a layout. Reads requirements.toml
+/// and domain.toml directly (no reduction execution). Treats missing or
+/// unparseable files as zero counts — the file's structural validity
+/// is the responsibility of the main validate pipeline; summarize is a
+/// best-effort positive-confirmation surface.
+pub fn summarize(layout: &LayoutContext) -> Summary {
+    let inv = layout.enumerate();
+    let modules = inv.modules.len();
+
+    let (requirements, sources) = count_requirements_and_sources(layout);
+    let graph_checks = count_graph_checks(layout);
+
+    Summary {
+        modules,
+        requirements,
+        sources,
+        graph_checks,
+    }
+}
+
+fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize) {
+    if !layout.requirements_toml_path.is_file() {
+        return (0, 0);
+    }
+    let Ok(text) = std::fs::read_to_string(&layout.requirements_toml_path) else {
+        return (0, 0);
+    };
+    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
+        return (0, 0);
+    };
+    let reqs = parsed
+        .get("requirement")
+        .and_then(toml::Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let srcs = parsed
+        .get("source")
+        .and_then(toml::Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    (reqs, srcs)
+}
+
+fn count_graph_checks(layout: &LayoutContext) -> usize {
+    if !layout.domain_toml_path.is_file() {
+        return 0;
+    }
+    match DomainConfig::load(&layout.domain_toml_path) {
+        Ok(dom) => dom.module.graph_checks.len() + dom.project.graph_checks.len(),
+        Err(_) => 0,
     }
 }
