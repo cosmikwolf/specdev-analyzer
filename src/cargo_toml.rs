@@ -30,11 +30,44 @@ struct CrateRef {
     crate_name: String,
     version: String,
     #[serde(default)]
-    source: Option<String>,
+    source: Option<CrateSource>,
     #[serde(default)]
     features: Option<Vec<String>>,
     #[serde(default)]
     default_features: Option<bool>,
+}
+
+/// Closed-set tagged union for `CrateReference.source`. Mirrors the
+/// embedded schema (`src/embedded/crate_reference.schema.yaml`):
+///   * `{ path = "..." }`            → path-dep
+///   * `{ git = "...", rev/tag/branch = "..." }` → git-dep
+///   * `"workspace"`                 → `<dep>.workspace = true`
+///   * `"crates-io"`                 → explicit default registry
+///
+/// Anything else is rejected at schema-validate time. The renderer
+/// dispatches on the variant — no silent drops (F-004).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum CrateSource {
+    Tagged(CrateSourceTag),
+    Path { path: String },
+    Git {
+        git: String,
+        #[serde(default)]
+        rev: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+        #[serde(default)]
+        branch: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+enum CrateSourceTag {
+    #[serde(rename = "workspace")]
+    Workspace,
+    #[serde(rename = "crates-io")]
+    CratesIo,
 }
 
 /// Result of a Cargo.toml render: the rendered text plus any
@@ -348,8 +381,42 @@ fn write_dependencies_section(text: &mut String, deps: &BTreeMap<String, CrateRe
 /// table form (`{ version = "x", features = [...], ... }`) otherwise.
 /// Matches Cargo's idiomatic style and minimizes diff churn when
 /// extras are added/removed.
+///
+/// Source dispatch (F-004):
+///   * `CrateSourceTag::Workspace` → emits `{ workspace = true }`
+///     and OMITS version/features/default-features (Cargo's workspace
+///     inheritance forbids those at the member-dep site).
+///   * `CrateSourceTag::CratesIo`  → omitted entirely (default registry).
+///   * `CrateSource::Path { path }` → adds `path = "..."`.
+///   * `CrateSource::Git { git, rev/tag/branch }` → adds `git = "..."`
+///     plus whichever of rev/tag/branch is set.
 fn render_dep_value(c: &CrateRef) -> String {
-    let has_extras = c.source.is_some()
+    if let Some(CrateSource::Tagged(CrateSourceTag::Workspace)) = c.source {
+        return "{ workspace = true }".into();
+    }
+
+    let source_parts = match &c.source {
+        None | Some(CrateSource::Tagged(CrateSourceTag::CratesIo)) => Vec::new(),
+        Some(CrateSource::Path { path }) => {
+            vec![format!("path = {}", quote_str(path))]
+        }
+        Some(CrateSource::Git { git, rev, tag, branch }) => {
+            let mut parts = vec![format!("git = {}", quote_str(git))];
+            if let Some(r) = rev {
+                parts.push(format!("rev = {}", quote_str(r)));
+            }
+            if let Some(t) = tag {
+                parts.push(format!("tag = {}", quote_str(t)));
+            }
+            if let Some(b) = branch {
+                parts.push(format!("branch = {}", quote_str(b)));
+            }
+            parts
+        }
+        Some(CrateSource::Tagged(CrateSourceTag::Workspace)) => unreachable!(),
+    };
+
+    let has_extras = !source_parts.is_empty()
         || c.features.as_ref().map(|f| !f.is_empty()).unwrap_or(false)
         || c.default_features.is_some();
     if !has_extras {
@@ -373,12 +440,7 @@ fn render_dep_value(c: &CrateRef) -> String {
     if let Some(df) = c.default_features {
         parts.push(format!("default-features = {}", df));
     }
-    if let Some(source) = &c.source {
-        // Cargo's source field maps to git/path/registry. v1 passes
-        // through verbatim under a `source = "..."` key for spec
-        // round-trip; downstream tooling can rewrite to git/path/etc.
-        parts.push(format!("source = {}", quote_str(source)));
-    }
+    parts.extend(source_parts);
     format!("{{ {} }}", parts.join(", "))
 }
 
