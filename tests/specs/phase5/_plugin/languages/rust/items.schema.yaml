@@ -1,0 +1,147 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/languages/rust/items.v1"
+title: "Rust items schema (v1)"
+description: >
+  Per-language schema fragment defining the `Item` shape for Rust source.
+  Each `Item` is a top-level Rust language construct that carries spec
+  significance (typically because it `satisfies` a requirement or is a
+  contractual public re-export). The kind enum tracks tree-sitter Rust's
+  grammar 1:1 except where a kind is more naturally a module-level
+  concern (e.g. `mod_item` is excluded — modules are spec entities, not
+  items).
+
+  v1 covers the 12 kinds named in `000-items-design-conversation-2026-05-01.md`
+  §9. Sparseness rule: every `Item` carries `satisfies` (≥1 entry) except
+  `kind = "re_export"`, where the inherently-contractual nature of a `pub
+  use` makes `satisfies` optional.
+
+  This schema is meant to be `$ref`'d from each profile's
+  `module.schema.yaml` `items[]` field via the `{{language}}` placeholder
+  (Phase 14 work item — pre-Phase-14, the schema ships standalone for use
+  by the analyzer's `extract-items` subcommand).
+
+type: object
+required: [name, kind, description]
+properties:
+  name:
+    description: >
+      The Rust identifier (or, for `kind = "impl"`, a synthesized name of
+      the form `<TraitRef> for <TargetType>` for trait impls or
+      `<TargetType>` for inherent impls). Must be unique within the
+      module's items[] array.
+    type: string
+    minLength: 1
+  kind:
+    description: >
+      Tree-sitter Rust grammar node mapping. See §9 of the items
+      conversation doc for the 1:1 grammar correspondence.
+    type: string
+    enum:
+      - fn
+      - struct
+      - enum
+      - union
+      - trait
+      - impl
+      - type
+      - const
+      - static
+      - re_export
+      - macro
+      - extern_block
+  description:
+    description: >
+      One-or-two-sentence prose summary of the item's contractual
+      semantics. Prose-first per the items model commitment — describe
+      what the item does, not its signature (signatures live in the
+      source; the optional `signature_hint` is the escape hatch).
+    type: string
+    minLength: 1
+  satisfies:
+    description: >
+      Requirement ids this item satisfies. Required (with `minItems: 1`)
+      for every kind except `re_export`. Allowed-but-optional for
+      `re_export` since `pub use` is inherently contractual.
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    uniqueItems: true
+  signature_hint:
+    description: >
+      Optional signature shape, used as an escape hatch for cases where
+      prose alone is insufficient: trait impls with non-obvious
+      generics, FFI declarations, macro contracts. Default is to omit;
+      the items model is prose-first and signature_hint is reserved for
+      cases where a downstream codegen or audit step needs structural
+      detail.
+    type: string
+
+# Kind-discriminated extras via oneOf. Each branch enforces the kind tag
+# and adds kind-specific required/optional fields. The `re_export` branch
+# relaxes the satisfies requirement; all other branches require
+# `satisfies` with minItems: 1.
+oneOf:
+  - title: re_export
+    properties:
+      kind: { const: re_export }
+      target:
+        description: >
+          The path being re-exported. Form: `<sibling_module>::<Item>`
+          for in-crate re-exports, `<package>::<Module>::<Item>` for
+          cross-package. Resolves against the project's module + item
+          surface.
+        type: string
+        minLength: 1
+      visibility:
+        description: >
+          Re-export visibility — `pub` makes the item part of the
+          crate's public API, `crate` keeps it internal-only.
+        type: string
+        enum: [pub, crate]
+      alias:
+        description: >
+          Optional rename. Emitted as `pub use <target> as <alias>;`.
+        type: string
+    required: [target, visibility]
+
+  - title: impl
+    properties:
+      kind: { const: impl }
+      target_type:
+        description: >
+          The type the impl block is for (e.g. `Operator`,
+          `MyState<u32>`).
+        type: string
+        minLength: 1
+      trait_ref:
+        description: >
+          Trait being implemented (e.g. `core::fmt::Display`,
+          `serde::Serialize`). Omit for inherent impls.
+        type: string
+    required: [target_type, satisfies]
+
+  - title: function-like-or-data
+    properties:
+      kind:
+        enum: [fn, struct, enum, union, trait, type, const, static, macro, extern_block]
+    required: [satisfies]
+    not:
+      anyOf:
+        - required: [target]
+        - required: [target_type]
+        - required: [trait_ref]
+        - required: [visibility]
+        - required: [alias]
+
+# When satisfies is required (every branch except re_export), it must
+# have at least one entry.
+allOf:
+  - if:
+      properties:
+        kind: { const: re_export }
+    then: true
+    else:
+      properties:
+        satisfies:
+          minItems: 1

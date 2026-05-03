@@ -1,0 +1,10 @@
+# Workspace-level requirements (rare).
+#
+# Most requirements live on member crates — they're the load-bearing
+# units. A workspace might carry one or two cross-cutting requirements
+# (e.g., "all members must compile with MSRV X", "all members must
+# expose a defmt feature"); use this file for those.
+#
+# Format mirrors the per-member requirements.toml: `[[source]]` +
+# `[[requirement]]` arrays. See `library-api/requirements.toml.template`
+# for the full shape.

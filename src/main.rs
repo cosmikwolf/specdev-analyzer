@@ -3,7 +3,6 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use specdev_analyzer::{
-    audit::{self, AuditOptions},
     bootstrap::{self, BootstrapInputs},
     diagnostics::report_error,
     cargo_toml as cargo_toml_mod, drift, extract, inline,
@@ -57,20 +56,34 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Compare extracted specs against source code for drift.
-    Audit {
+    /// Extract structured items (top-level Rust constructs) from each module's
+    /// source file. Output is the substrate Phase 14's items[] sync diffs
+    /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
+    /// skill (Phase 11b).
+    ExtractItems {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Only audit one module (exact name match).
+        /// Only extract one module (exact name match). Without this flag,
+        /// every module under `specs/modules/` is processed.
         #[arg(long)]
-        filter: Option<String>,
-        /// Report functions/types in code that are not in the spec.
+        module: Option<String>,
+    },
+    /// Pre-flight surface for the Claude-mediated `/spec-reverse` skill (11b).
+    /// Reports the blocks currently inlined in the project, validates the
+    /// `--into` arg if provided, and emits coarse ambiguity warnings when
+    /// multiple blocks are inlined without scoping. Phase 10 surface only —
+    /// actual TOML emission is Claude's job in the skill.
+    Reverse {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Comma-separated list of block names to scope reverse output to.
+        /// e.g. `--into embassy,stm32h5-rs`. If absent and 2+ blocks are
+        /// inlined, the pre-flight emits an ambiguity warning suggesting
+        /// the user pass `--into`.
         #[arg(long)]
-        show_uncovered: bool,
-        /// Expand macros (cargo expand / cc -E) before parsing.
-        #[arg(long)]
-        expand: bool,
+        into: Option<String>,
     },
     /// Execute the reduction and emit a universal entity/relation graph.
     Reduce {
@@ -189,18 +202,12 @@ fn main() -> ExitCode {
             no_color,
         } => run_validate(project, spec_path.as_deref(), strict, no_color),
         Command::Extract { project, output } => run_extract(project, spec_path.as_deref(), output),
-        Command::Audit {
-            project,
-            filter,
-            show_uncovered,
-            expand,
-        } => run_audit(
-            project,
-            spec_path.as_deref(),
-            filter,
-            show_uncovered,
-            expand,
-        ),
+        Command::ExtractItems { project, module } => {
+            run_extract_items(project, spec_path.as_deref(), module.as_deref())
+        }
+        Command::Reverse { project, into } => {
+            run_reverse(project, spec_path.as_deref(), into.as_deref())
+        }
         Command::Reduce { project, output } => run_reduce(project, spec_path.as_deref(), output),
         Command::Resolve { project } => run_resolve(project, spec_path.as_deref()),
         Command::Bootstrap {
@@ -357,12 +364,98 @@ fn run_extract(project: PathBuf, spec_path: Option<&std::path::Path>, output: Pa
     }
 }
 
-fn run_audit(
+fn run_extract_items(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
-    filter: Option<String>,
-    show_uncovered: bool,
-    expand: bool,
+    module_filter: Option<&str>,
+) -> ExitCode {
+    use specdev_analyzer::items::{extract, source_map, ExtractionReport, ModuleItems};
+    use specdev_analyzer::lang;
+
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    let language = &layout.spec.project.language;
+    let adapter = match lang::adapter_for(language) {
+        Some(a) => a,
+        None => {
+            eprintln!(
+                "[ITEMS-001] no language adapter for `{language}`; supported: rust. \
+                 Phase 10 ships Rust only — Phase 9 adds C, Phase 14-C ships C items."
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let source_root = layout.spec.paths.source.as_str();
+
+    let mut modules_out: Vec<ModuleItems> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    let inventory = layout.enumerate();
+    for module_path in &inventory.modules {
+        // Module filename stem is the spec module name (per Phase 1's
+        // inventory convention: `specs/modules/<Name>.toml`).
+        let name: String = match module_path.file_stem().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if let Some(f) = module_filter {
+            if name != f {
+                continue;
+            }
+        }
+
+        let source_file =
+            source_map::resolve_source_path(&name, adapter.as_ref(), &project, source_root);
+        let items = match &source_file {
+            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref()) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{name}: {e}"));
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
+
+        modules_out.push(ModuleItems {
+            module_name: name,
+            source_file,
+            items,
+        });
+    }
+
+    let report = ExtractionReport {
+        modules: modules_out,
+    };
+
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[ITEMS-002] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("[ITEMS-003] {e}");
+        }
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_reverse(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    into: Option<&str>,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -371,31 +464,116 @@ fn run_audit(
             return ExitCode::from(2);
         }
     };
-    let options = AuditOptions {
-        show_uncovered,
-        expand,
-        module_filter: filter.as_deref(),
-        type_map: None,
-    };
-    match audit::run_project(&layout, options) {
-        Ok(report) => {
-            print!("{}", audit::format_text(&report));
-            let summary = report.summary();
-            eprintln!(
-                "{} match, {} missing, {} mismatch, {} uncovered",
-                summary.matches, summary.missing, summary.mismatches, summary.uncovered
-            );
-            if summary.missing > 0 || summary.mismatches > 0 {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
+
+    // Enumerate inlined block names: each immediate subdirectory of
+    // <specs_dir>/schemas/inlined/blocks/ whose name maps to a block.
+    let mut inlined_blocks: Vec<String> = Vec::new();
+    if layout.inlined_blocks_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&layout.inlined_blocks_dir) {
+            for e in entries.flatten() {
+                if let Ok(ft) = e.file_type() {
+                    if ft.is_dir() {
+                        if let Some(name) = e.file_name().to_str() {
+                            inlined_blocks.push(name.to_string());
+                        }
+                    }
+                }
             }
         }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
+    }
+    inlined_blocks.sort();
+
+    // Parse --into.
+    let into_blocks: Vec<String> = into
+        .map(|s| {
+            s.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate --into entries against inlined blocks.
+    let mut errors: Vec<String> = Vec::new();
+    for b in &into_blocks {
+        if !inlined_blocks.contains(b) {
+            errors.push(format!(
+                "[REVERSE-001] --into block `{b}` is not inlined; \
+                 inlined blocks: {:?}. Run `specdev-analyzer inline {b}` \
+                 first, or remove the entry.",
+                inlined_blocks
+            ));
         }
     }
+
+    // Pre-flight gating:
+    // - 0 inlined blocks AND no --into → fatal: caller can't reverse.
+    // - 0 inlined blocks AND --into present → also fatal (--into validation already errored).
+    // - 1 inlined block, no --into → fine; coarse warning skipped.
+    // - 2+ inlined blocks, no --into → coarse ambiguity warning.
+    let mut warnings: Vec<String> = Vec::new();
+    if inlined_blocks.is_empty() && into_blocks.is_empty() {
+        errors.push(
+            "[REVERSE-002] no blocks inlined and no --into specified; \
+             reverse engineering requires a chosen vocabulary. Either run \
+             `specdev-analyzer inline <block>` first, or pass --into \
+             <block,...> naming the blocks whose vocabulary should govern \
+             the output."
+                .to_string(),
+        );
+    } else if inlined_blocks.len() >= 2 && into_blocks.is_empty() {
+        warnings.push(format!(
+            "[REVERSE-003] {} blocks inlined ({:?}) and --into not \
+             specified; source constructs may map ambiguously across \
+             blocks. Pass --into <block,...> to scope, or accept that the \
+             /spec-reverse skill will use READMEs from all inlined blocks \
+             as prompt context.",
+            inlined_blocks.len(),
+            inlined_blocks
+        ));
+    }
+
+    // Effective vocabulary: --into if specified, else all inlined.
+    let vocab: Vec<String> = if !into_blocks.is_empty() {
+        into_blocks
+    } else {
+        inlined_blocks.clone()
+    };
+
+    #[derive(serde::Serialize)]
+    struct ReverseReport<'a> {
+        inlined_blocks: &'a [String],
+        vocabulary: &'a [String],
+        warnings: &'a [String],
+        errors: &'a [String],
+    }
+    let report = ReverseReport {
+        inlined_blocks: &inlined_blocks,
+        vocabulary: &vocab,
+        warnings: &warnings,
+        errors: &errors,
+    };
+
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[REVERSE-099] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("{e}");
+        }
+        return ExitCode::from(1);
+    }
+    if !warnings.is_empty() {
+        for w in &warnings {
+            eprintln!("{w}");
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_reduce(

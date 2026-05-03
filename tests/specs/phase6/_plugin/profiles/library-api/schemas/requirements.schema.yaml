@@ -62,6 +62,20 @@ $defs:
       text:
         type: string
         minLength: 1
+      nature:
+        description: >
+          What kind of artifact satisfies this requirement (Phase 8.6/F-006).
+          `module` (default) — a Rust module is expected to carry the
+          implementation; the `requirements_have_satisfiers` graph check
+          warns if no module declares this requirement in its
+          `satisfies` array. `architecture` — captured by feature flags
+          / re-exports / public API shape, not a module body.
+          `build` — captured by Cargo configuration (features, MSRV).
+          `test` — captured by a test suite. The check only fires for
+          `nature = "module"` requirements.
+        type: string
+        enum: [module, architecture, build, test]
+        default: module
       satisfies:
         description: Parent requirement ids; forms a requirement tree.
         type: array

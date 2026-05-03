@@ -69,6 +69,21 @@ properties:
       Open in v1 to avoid blocking authoring before bridges land.
     type: object
     additionalProperties: true
+  items:
+    description: >
+      Top-level Rust constructs that carry spec significance — items[]
+      entry per `pub` function, struct, enum, trait, impl, type, const,
+      static, re-export, or macro contributing to the module's
+      contractual surface. Sparseness rule (enforced by the language
+      schema): every item except `kind = "re_export"` must carry
+      `satisfies` (≥1 requirement id). Phase 14 introduces this field;
+      consumed by Phase 13's skeleton mode emitter and by Phase 14's
+      three-stage agentic sync (`items diff` / `items propose` /
+      `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
 
 $defs:
   Port:

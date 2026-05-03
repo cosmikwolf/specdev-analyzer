@@ -54,6 +54,15 @@ properties:
           (it appears on crates.io). Phase 8's `gen` emits as
           Cargo.toml's `[package].description`.
         maxLength: 200
+      repository:
+        type: string
+        description: |
+          Repository URL (Phase 8.6+). Optional; libraries that publish
+          to crates.io should set this. For workspace members this
+          field is normally omitted — the workspace owns the canonical
+          value via `[workspace_package].repository` and members emit
+          `repository.workspace = true`.
+        minLength: 1
   paths:
     type: object
     additionalProperties: false
@@ -76,3 +85,39 @@ properties:
           field. Per doc 15 §9.2, multi-package workspaces may legitimately set this per-package;
           conflicting values across packages are accepted at CLI time.
         minLength: 1
+  workspace:
+    description: |
+      Workspace marker (Phase 8.6+). Presence signals "this spec.toml
+      describes a Cargo workspace root"; member crates' Cargo.toml
+      emission walks up to find this marker and renders `*.workspace =
+      true` for inherited package fields. Optional — only `rust-workspace`
+      profile projects set this table. The `[[members]]` array enumerates
+      member crates; member `name` and `path` are validated against
+      member spec.toml `[project].name` at validate time.
+    type: object
+    additionalProperties: false
+    required: [members]
+    properties:
+      resolver:
+        description: |
+          Cargo resolver version. Emitted as `[workspace] resolver =
+          "..."`. Defaults to "2" if absent (Cargo's recommended).
+        type: string
+        enum: ["1", "2", "3"]
+      members:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, path]
+          properties:
+            name:
+              description: Member crate name. Must match the member's `[project].name`.
+              type: string
+              pattern: "^[a-z][a-z0-9_-]*$"
+              maxLength: 64
+            path:
+              description: Path to the member crate, relative to this spec.toml.
+              type: string
+              minLength: 1

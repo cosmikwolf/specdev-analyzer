@@ -97,8 +97,13 @@ fn substitute(text: &str, inputs: &BootstrapInputs, source_label: &str) -> Resul
             out.push_str(replacement);
             i = token_end;
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            // UTF-8-safe pass-through: find the next placeholder (or end of
+            // string) and copy the slice verbatim. Pre-Phase-14 templates
+            // were ASCII-only, masking the bug; YAML schemas with em-dashes
+            // and other multi-byte chars surface it.
+            let next_open = text[i..].find("{{").map(|r| i + r).unwrap_or(bytes.len());
+            out.push_str(&text[i..next_open]);
+            i = next_open;
         }
     }
     Ok(out)
@@ -117,11 +122,12 @@ struct ProfileFile {
 }
 
 /// Build the per-language file plan for a profile. The required entries
-/// (manifest, domain, project reduction, language codegen conventions)
-/// are hard-coded; everything under `schemas/` is dynamically enumerated
-/// so a profile can ship arbitrary supporting schemas (e.g.
-/// firmware-layered's `metadata.schema.yaml`, library-api's smaller
-/// `enums.schema.yaml`) without touching this code.
+/// (manifest, domain, project reduction) are hard-coded; everything
+/// under `schemas/` and `codegen/<lang>/` is dynamically enumerated so a
+/// profile can ship arbitrary supporting schemas (e.g. firmware-layered's
+/// `metadata.schema.yaml`) and arbitrary codegen-prose files (e.g.
+/// rust-workspace's `workspace.conventions.md` instead of
+/// `module.conventions.md`) without touching this code.
 fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> {
     let mut plan: Vec<ProfileFile> = vec![
         ProfileFile {
@@ -149,14 +155,40 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             dst_rel: PathBuf::from("specs/specdev/reductions/project.yaml"),
             substitute: false,
         },
-        ProfileFile {
-            src_rel: PathBuf::from(format!("codegen/{language}/module.conventions.md")),
-            dst_rel: PathBuf::from(format!(
-                "specs/specdev/codegen/{language}/module.conventions.md"
-            )),
-            substitute: false,
-        },
     ];
+
+    // Dynamically enumerate `codegen/<lang>/*.md`. Lex-sorted; copied
+    // verbatim. Profiles ship whatever convention files they need:
+    //   - firmware-layered, library-api: `module.conventions.md`
+    //   - rust-workspace: `workspace.conventions.md`
+    //   - future profiles: any `*.conventions.md` (or other `*.md`)
+    let codegen_lang_dir = profile_dir.join("codegen").join(language);
+    if codegen_lang_dir.is_dir() {
+        let mut codegen_entries: Vec<PathBuf> = std::fs::read_dir(&codegen_lang_dir)
+            .with_context(|| format!("reading {}", codegen_lang_dir.display()))?
+            .filter_map(|r| r.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.ends_with(".md"))
+            })
+            .collect();
+        codegen_entries.sort();
+        for entry in codegen_entries {
+            let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            plan.push(ProfileFile {
+                src_rel: PathBuf::from(format!("codegen/{language}/{file_name}")),
+                dst_rel: PathBuf::from(format!(
+                    "specs/specdev/codegen/{language}/{file_name}"
+                )),
+                substitute: false,
+            });
+        }
+    }
 
     // Dynamically enumerate the profile's schemas/ directory. Every
     // `*.schema.yaml` file at the top level is copied verbatim. Profiles
@@ -181,10 +213,17 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
+            // Phase 14: `module.schema.yaml` carries the `{{language}}`
+            // placeholder in its items[] $ref, so it must be substituted at
+            // bootstrap. All other profile schemas are still copied byte-
+            // faithfully (D33). Closed-set placeholder grammar ensures
+            // unrelated `{{...}}` patterns in any schema would surface as
+            // BOOTSTRAP-002, not silent corruption.
+            let substitute = file_name == "module.schema.yaml";
             plan.push(ProfileFile {
                 src_rel: PathBuf::from(format!("schemas/{file_name}")),
                 dst_rel: PathBuf::from(format!("specs/specdev/schemas/{file_name}")),
-                substitute: false,
+                substitute,
             });
         }
     }
@@ -198,6 +237,7 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
 const EMPTY_DIRS: &[&str] = &[
     "specs/specdev/schemas/inlined/blocks",
     "specs/specdev/schemas/inlined/bridges",
+    "specs/specdev/schemas/inlined/languages",
     "specs/specdev/reductions/blocks",
     "specs/specdev/reductions/bridges",
     "specs/specdev/reductions/bridges/local",
@@ -228,19 +268,30 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     }
 
     // Validate language is supported by the profile by checking that
-    // codegen/<language>/module.conventions.md exists. Errors here name
-    // the language and the path so users see the missing-codegen issue
-    // before any bytes are written.
-    let codegen_check = profile_dir
-        .join("codegen")
-        .join(&inputs.language)
-        .join("module.conventions.md");
-    if !codegen_check.is_file() {
+    // `codegen/<language>/` exists with at least one `*.conventions.md`
+    // file. Errors here name the language so users see the missing-
+    // codegen issue before any bytes are written. (Phase 8.6: was
+    // previously hardcoded to `module.conventions.md`; rust-workspace
+    // ships `workspace.conventions.md` instead.)
+    let codegen_lang_dir = profile_dir.join("codegen").join(&inputs.language);
+    let has_conventions = codegen_lang_dir.is_dir()
+        && std::fs::read_dir(&codegen_lang_dir)
+            .map(|it| {
+                it.filter_map(|r| r.ok()).any(|e| {
+                    e.path()
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.ends_with(".conventions.md"))
+                })
+            })
+            .unwrap_or(false);
+    if !has_conventions {
         return Err(anyhow!(
-            "[BOOTSTRAP-001] profile {:?} has no codegen for language {:?} (expected {})",
+            "[BOOTSTRAP-001] profile {:?} has no codegen for language {:?} \
+             (expected at least one *.conventions.md under {})",
             inputs.profile,
             inputs.language,
-            codegen_check.display(),
+            codegen_lang_dir.display(),
         ));
     }
 
@@ -271,6 +322,50 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
             let bytes =
                 std::fs::read(&src).with_context(|| format!("reading {}", src.display()))?;
             std::fs::write(&dst, bytes).with_context(|| format!("writing {}", dst.display()))?;
+        }
+    }
+
+    // Phase 14: inline the language tier. `${PLUGIN_ROOT}/languages/<lang>/`
+    // holds per-language item-kind vocabulary (items.schema.yaml in v1, plus
+    // items.scm tree-sitter queries). Every `*.schema.yaml` under the
+    // language dir is copied verbatim into
+    // `<target>/specs/specdev/schemas/inlined/languages/<lang>/`, where the
+    // aggregator MapRetriever picks them up under the `inlined/languages/<lang>/`
+    // prefix. The languages tier is silently skipped when the language has
+    // no entry under `${PLUGIN_ROOT}/languages/` — pre-Phase-14 languages
+    // (and languages whose item vocabulary hasn't been authored) bootstrap
+    // without an `items[]` substrate, which is fine for v1.
+    let lang_src_dir = plugin_root.join("languages").join(&inputs.language);
+    if lang_src_dir.is_dir() {
+        let mut lang_entries: Vec<PathBuf> = std::fs::read_dir(&lang_src_dir)
+            .with_context(|| format!("reading {}", lang_src_dir.display()))?
+            .filter_map(|r| r.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.ends_with(".schema.yaml"))
+            })
+            .collect();
+        lang_entries.sort();
+        let lang_dst_dir = inputs
+            .target_dir
+            .join("specs/specdev/schemas/inlined/languages")
+            .join(&inputs.language);
+        if !lang_entries.is_empty() {
+            std::fs::create_dir_all(&lang_dst_dir)
+                .with_context(|| format!("creating {}", lang_dst_dir.display()))?;
+        }
+        for entry in lang_entries {
+            let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let dst = lang_dst_dir.join(file_name);
+            let bytes = std::fs::read(&entry)
+                .with_context(|| format!("reading {}", entry.display()))?;
+            std::fs::write(&dst, bytes)
+                .with_context(|| format!("writing {}", dst.display()))?;
         }
     }
 

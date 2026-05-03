@@ -40,6 +40,10 @@ pub struct LayoutContext {
     pub inlined_blocks_dir: PathBuf,
     /// `<schemas_dir>/inlined/bridges/`
     pub inlined_bridges_dir: PathBuf,
+    /// `<schemas_dir>/inlined/languages/` — Phase 14 fourth top-level
+    /// plugin tier. Holds per-language item-kind vocabulary
+    /// (`languages/<lang>/items.schema.yaml`) inlined at bootstrap.
+    pub inlined_languages_dir: PathBuf,
     /// `<specdev_root>/reductions/`
     pub reductions_dir: PathBuf,
     /// `<reductions_dir>/project.yaml`
@@ -101,6 +105,7 @@ impl LayoutContext {
         let module_schema_path = schemas_dir.join("module.schema.yaml");
         let inlined_blocks_dir = schemas_dir.join("inlined").join("blocks");
         let inlined_bridges_dir = schemas_dir.join("inlined").join("bridges");
+        let inlined_languages_dir = schemas_dir.join("inlined").join("languages");
         let reductions_dir = specdev_root.join("reductions");
         let project_reduction_path = reductions_dir.join("project.yaml");
         let reductions_blocks_dir = reductions_dir.join("blocks");
@@ -125,6 +130,7 @@ impl LayoutContext {
             module_schema_path,
             inlined_blocks_dir,
             inlined_bridges_dir,
+            inlined_languages_dir,
             reductions_dir,
             project_reduction_path,
             reductions_blocks_dir,
@@ -155,6 +161,12 @@ impl LayoutContext {
                 "specs/specdev/schemas/inlined/bridges/",
                 &self.inlined_bridges_dir,
             ),
+            // `inlined/languages/` is intentionally NOT in the standard
+            // inventory: it is bootstrap-created for projects whose language
+            // ships an items[] vocabulary, but pre-Phase-14 projects (and
+            // languages without item vocabulary) bootstrap without it. The
+            // aggregator MapRetriever guards on `is_dir()` itself, so a
+            // missing dir is a no-op rather than a layout warning.
             ("specs/specdev/reductions/", &self.reductions_dir),
             (
                 "specs/specdev/reductions/blocks/",
@@ -300,6 +312,7 @@ mod tests {
     fn write_minimal_skeleton(root: &Path) {
         std::fs::create_dir_all(root.join("specs/specdev/schemas/inlined/blocks")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/schemas/inlined/bridges")).unwrap();
+        std::fs::create_dir_all(root.join("specs/specdev/schemas/inlined/languages")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/blocks")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/bridges/local")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/codegen/rust")).unwrap();

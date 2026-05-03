@@ -20,6 +20,7 @@ module_feature_gates_resolve     = "error"
 requirement_ids_unique           = "error"
 requirement_satisfies_resolves   = "warning"
 module_satisfies_resolves        = "warning"
+requirements_have_satisfiers     = "warning"
 
 # Module names must be unique across the library.
 [[project.graph_checks]]
@@ -89,3 +90,13 @@ rule = "module_satisfies_resolves"
 scope = "module_satisfies"
 source_field = "relations[].to"
 target_field = "entities[].name"
+
+# Every Requirement with `nature = "module"` (the default) must be
+# satisfied by at least one module — orphan requirements warn (F-006).
+# Set `nature = "architecture" | "build" | "test"` on a requirement to
+# exempt it from this check.
+[[project.graph_checks]]
+kind = "requirements_have_satisfiers"
+rule = "requirements_have_satisfiers"
+entity_scope = "Requirement"
+relation_scope = "module_satisfies"

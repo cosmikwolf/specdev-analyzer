@@ -1,4 +1,4 @@
-//! Small string helpers used by audit.
+//! Small string helpers used by item extraction.
 
 /// Convert `CamelCase` / `PascalCase` to `snake_case`.
 pub fn snake_case(s: &str) -> String {

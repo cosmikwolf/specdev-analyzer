@@ -29,6 +29,12 @@ pub struct SpecConfig {
     pub spec_version: String,
     pub project: ProjectSection,
     pub paths: PathsSection,
+    /// Workspace marker (Phase 8.6+). Set on a `rust-workspace` project's
+    /// root `spec.toml`; absent on member crates and on standalone
+    /// (non-workspace) projects. Member-mode `cargo-toml` walks up to
+    /// find the first ancestor `spec.toml` carrying this table.
+    #[serde(default)]
+    pub workspace: Option<WorkspaceSection>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,6 +51,30 @@ pub struct ProjectSection {
     /// Project description (Phase 6.7+). Optional; libraries use it.
     #[serde(default)]
     pub description: Option<String>,
+    /// Repository URL (Phase 8.6+). Optional; libraries use it. For
+    /// workspace members this is normally omitted in favor of the
+    /// workspace's canonical value.
+    #[serde(default)]
+    pub repository: Option<String>,
+}
+
+/// `[workspace]` table on a workspace-root `spec.toml`. Presence signals
+/// the spec.toml describes a Cargo workspace; member crates inherit
+/// `[workspace.package]` fields via `*.workspace = true` in their emitted
+/// Cargo.toml.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceSection {
+    /// Cargo resolver version (`"1"` / `"2"` / `"3"`). Defaults to `"2"`
+    /// at emit time when absent.
+    #[serde(default)]
+    pub resolver: Option<String>,
+    pub members: Vec<WorkspaceMember>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceMember {
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

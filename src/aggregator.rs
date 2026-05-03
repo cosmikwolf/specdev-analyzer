@@ -410,8 +410,15 @@ impl Retrieve for MapRetriever {
             }
         }
         // Try `inlined/blocks/<name>` and `inlined/bridges/<name>` style
-        // paths used by the aggregator's `$ref` strings.
-        for prefix in ["inlined/blocks/", "inlined/bridges/"] {
+        // paths used by the aggregator's `$ref` strings. The languages
+        // tier (Phase 14) uses a one-level-deeper path
+        // `inlined/languages/<lang>/<name>`; substring-match the prefix
+        // and let `self.docs` carry the full key.
+        for prefix in [
+            "inlined/blocks/",
+            "inlined/bridges/",
+            "inlined/languages/",
+        ] {
             if let Some(idx) = s.find(prefix) {
                 let suffix = &s[idx..];
                 if let Some(v) = self.docs.get(suffix) {
@@ -423,7 +430,10 @@ impl Retrieve for MapRetriever {
     }
 }
 
-fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
+/// Build the MapRetriever's document table. Public for integration tests
+/// that want to verify language/block/bridge $ref keys without spinning up
+/// the full validator.
+pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
     let mut docs: HashMap<String, Value> = HashMap::new();
 
     // Embedded, project-independent schemas (Phase 6.7+). Registered
@@ -503,6 +513,59 @@ fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>
             }
             docs.insert(fname.clone(), value.clone());
             docs.insert(format!("{prefix}{fname}"), value);
+        }
+    }
+
+    // Phase 14: language tier. `inlined/languages/<lang>/*.schema.yaml`
+    // — one level deeper than blocks/bridges because language identifiers
+    // are part of the path (the project's [project].language). Register
+    // each schema under its $id, basename, and the full
+    // `inlined/languages/<lang>/<basename>` path used by profile schemas'
+    // $ref strings.
+    if layout.inlined_languages_dir.is_dir() {
+        for lang_entry in std::fs::read_dir(&layout.inlined_languages_dir)
+            .with_context(|| format!("reading {}", layout.inlined_languages_dir.display()))?
+            .flatten()
+        {
+            let lang_dir = lang_entry.path();
+            if !lang_dir.is_dir() {
+                continue;
+            }
+            let lang_name = lang_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if lang_name.is_empty() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&lang_dir)
+                .with_context(|| format!("reading {}", lang_dir.display()))?
+                .flatten()
+            {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                if !ext.eq_ignore_ascii_case("yaml") && !ext.eq_ignore_ascii_case("yml") {
+                    continue;
+                }
+                let fname = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                let value: Value = serde_yaml::from_str(&text)
+                    .map_err(|e| anyhow::Error::new(LocatedError::from_yaml_error(&path, &e)))?;
+                if let Some(id) = value.get("$id").and_then(Value::as_str) {
+                    docs.insert(id.to_string(), value.clone());
+                }
+                docs.insert(fname.clone(), value.clone());
+                docs.insert(format!("inlined/languages/{lang_name}/{fname}"), value);
+            }
         }
     }
     Ok(docs)

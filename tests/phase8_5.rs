@@ -191,8 +191,13 @@ source = { git = "https://github.com/example/upstream", tag = "v0.5.0" }
 }
 
 // ---------------------------------------------------------------------------
-// 4 — `source = "workspace"` validates and renders `{ workspace = true }`,
-//     dropping version/features/default-features per Cargo's rules.
+// 4 — `source = "workspace"` validates and renders `{ workspace = true }`.
+//     Cargo's workspace inheritance forbids `version` / `default-features`
+//     at the member-dep site (those come from the workspace table), but
+//     Phase 8.6 corrects an over-strict reading of the F-004 commit:
+//     `features` and `optional` ARE permitted as additive overlays per
+//     Cargo's spec. This test covers the bare case (no overlay); the
+//     overlay-permitted cases live in `tests/phase8_6.rs`.
 // ---------------------------------------------------------------------------
 #[test]
 fn workspace_dep_renders_workspace_true_only() {
@@ -205,7 +210,6 @@ visibility = "pub"
 [[external_deps]]
 crate = "shared-helper"
 version = "0.1.0"
-features = ["serde"]
 default_features = false
 source = "workspace"
 "#,
@@ -222,18 +226,17 @@ source = "workspace"
     let r = render(&layout).unwrap();
     assert!(
         r.text.contains("shared-helper = { workspace = true }"),
-        "expected `workspace = true` shape; got:\n{}",
+        "expected bare `workspace = true` shape; got:\n{}",
         r.text
     );
-    // Cargo's workspace inheritance forbids version/features/default-features
-    // at the member-dep site — those come from the workspace table.
+    // Cargo's workspace inheritance forbids version/default-features at
+    // the member-dep site — those come from the workspace table.
     let line = r
         .text
         .lines()
         .find(|l| l.starts_with("shared-helper ="))
         .expect("shared-helper line present");
     assert!(!line.contains("version"), "workspace dep must omit version: {line}");
-    assert!(!line.contains("features = ["), "workspace dep must omit features: {line}");
     assert!(
         !line.contains("default-features"),
         "workspace dep must omit default-features: {line}"
