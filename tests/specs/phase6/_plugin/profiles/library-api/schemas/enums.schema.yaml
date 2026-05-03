@@ -16,15 +16,6 @@ $defs:
     type: string
     enum: [pub, crate, private]
 
-  ReExportVisibility:
-    description: >
-      Visibility of a re-export. `pub` makes the re-exported item part
-      of the crate's public API; `crate` re-exports for internal use.
-      A `private` re-export is meaningless (the item is already in the
-      file); excluded from the enum.
-    type: string
-    enum: [pub, crate]
-
   Identifier:
     description: snake_case or PascalCase identifier usable in Rust source.
     type: string

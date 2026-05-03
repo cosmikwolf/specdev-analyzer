@@ -26,6 +26,7 @@
 
 pub mod extract;
 pub mod source_map;
+pub mod sync;
 pub mod util;
 
 use serde::{Deserialize, Serialize};

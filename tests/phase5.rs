@@ -7,7 +7,7 @@
 //! 3. Firmware: one minimal module validates.
 //! 4. Library: one minimal module validates.
 //! 5. Firmware: HAL → application dependency triggers `layer_dependency`.
-//! 6. Library: re_exports.target = nonexistent triggers `re_exports_resolve`.
+//! 6. Library: legacy `[[re_exports]]` table is rejected by the schema (Phase 14-C).
 //! 7. Firmware: full e2e with architecture + requirements cross-schema.
 //! 8. Library: full e2e with feature graph + requirements cross-schema.
 //! 9. Firmware: unknown port endpoint triggers `connection_endpoints_resolve`.
@@ -200,10 +200,13 @@ depends_on = ["AppMod"]
 }
 
 // ---------------------------------------------------------------------------
-// 6 — Library: re_exports.target = nonexistent triggers re_exports_resolve.
+// 6 — Library: legacy `[[re_exports]]` table is rejected by the schema
+//     (Phase 14-C retirement). Re-exports now live under `[[items]]`
+//     with `kind = "re_export"`. The schema's `unevaluatedProperties:
+//     false` makes the unknown top-level key fatal.
 // ---------------------------------------------------------------------------
 #[test]
-fn library_re_exports_violation() {
+fn library_legacy_re_exports_field_rejected() {
     let target = fresh_bootstrap("library-api", "lib-reexp");
     std::fs::write(
         target.join("specs/modules/Foo.toml"),
@@ -217,15 +220,10 @@ visibility = "pub"
     )
     .unwrap();
     let report = validate::run_project(&target, None).unwrap();
-    // The reduction's `re_exports` relation is typed `to_kind: Module`,
-    // so the executor's REDUCE_UNRESOLVED fires at materialization time
-    // before the graph-check rule would. Either signal is sufficient
-    // evidence of the violation.
     let codes = rule_codes(&report);
     assert!(
-        codes.contains(&"re_exports_resolve".to_string())
-            || codes.contains(&"REDUCE_UNRESOLVED".to_string()),
-        "expected re_exports_resolve or REDUCE_UNRESOLVED finding; got: {:?}\n{}",
+        codes.iter().any(|c| c.starts_with("SCHEMA")),
+        "expected SCHEMA finding for unknown top-level `re_exports`; got: {:?}\n{}",
         codes,
         report.render_plain()
     );

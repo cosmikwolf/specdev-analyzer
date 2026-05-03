@@ -26,7 +26,7 @@ abstraction nor library-API surface.
 
 | File                                       | Role                                                          |
 |--------------------------------------------|---------------------------------------------------------------|
-| `schemas/module.schema.yaml`               | per-module spec shape (visibility, re_exports, feature_gates) |
+| `schemas/module.schema.yaml`               | per-module spec shape (visibility, items[], feature_gates)    |
 | `schemas/architecture.schema.yaml`         | `specs/architecture.toml` shape (cargo features list)         |
 | `schemas/requirements.schema.yaml`         | `specs/requirements.toml` shape (sources + reqs)              |
 | `schemas/enums.schema.yaml`                | shared closed vocabularies (`Visibility`, `FeatureName`)      |
@@ -49,10 +49,12 @@ depends_on = ["Buffer", "Style"]
 satisfies = ["REQ-API-001"]
 feature_gates = ["alloc"]
 
-[[re_exports]]
-target = "Inner"
+[[items]]
+name = "DisplayInner"
+kind = "re_export"
+description = "Convenience alias for Inner."
+target = "inner::Inner"
 visibility = "pub"
-alias = "DisplayInner"
 ```
 
 This produces `src/display.rs` (declared from `src/lib.rs` as `pub mod
@@ -63,7 +65,6 @@ as DisplayInner;` at the top.
 
 - `unique_module_names` — every Module has a unique name
 - `modules_acyclic` — module dependency graph has no cycles
-- `re_exports_resolve` — every re-export target references an existing module
 - `feature_unique_names` — every cargo feature has a unique name
 - `feature_dependencies_resolve` — feature `depends_on` references resolve
 - `module_feature_gates_resolve` — every `feature_gates` entry names a declared feature

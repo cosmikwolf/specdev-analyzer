@@ -85,6 +85,14 @@ enum Command {
         #[arg(long)]
         into: Option<String>,
     },
+    /// Phase 14 three-stage agentic sync. `items diff <module>` is
+    /// stage 1: deterministic detection of drift between spec items[]
+    /// and tree-sitter-extracted source items. `items propose` (14-F)
+    /// and `items apply` (14-G) layer on top.
+    Items {
+        #[command(subcommand)]
+        action: ItemsAction,
+    },
     /// Execute the reduction and emit a universal entity/relation graph.
     Reduce {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
@@ -182,6 +190,23 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum ItemsAction {
+    /// Stage 1 — deterministic detection. Walks `specs/modules/<module>.toml`
+    /// items[] and the resolved source file, joins on `(kind, name)`,
+    /// and emits a structured drift report (in_spec_only / in_source_only /
+    /// both with optional signature_drift). No AI involvement. YAML to
+    /// stdout. Exit 0 when clean, 1 on drift, 2 on hard error.
+    Diff {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+    },
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
@@ -232,6 +257,11 @@ fn main() -> ExitCode {
             run_cargo_toml(project, spec_path.as_deref(), output)
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+        Command::Items { action } => match action {
+            ItemsAction::Diff { project, module } => {
+                run_items_diff(project, spec_path.as_deref(), module)
+            }
+        },
     }
 }
 
@@ -574,6 +604,45 @@ fn run_reverse(
         }
     }
     ExitCode::SUCCESS
+}
+
+fn run_items_diff(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+) -> ExitCode {
+    use specdev_analyzer::items::sync;
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match sync::diff_module(&layout, &module) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let clean = report.is_clean();
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[ITEM-103] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+    if clean {
+        ExitCode::SUCCESS
+    } else {
+        // Drift is informational, not an error — exit 1 so the caller
+        // (skill or shell pipeline) can branch on it without parsing
+        // YAML, but keep stderr empty so the structured output remains
+        // the load-bearing signal.
+        ExitCode::from(1)
+    }
 }
 
 fn run_reduce(

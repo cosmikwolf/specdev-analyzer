@@ -55,22 +55,6 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Module-to-module re-export edges (drives re_exports_resolve). The
-  # `to` is the re-export target's module name; alias and visibility
-  # are carried on the relation's attrs.
-  - kind: re_exports
-    extends: depends_on
-    from_kind: Module
-    to_kind: Module
-    from_spec: "specs/modules/*.toml"
-    for_each: "re_exports[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.target}"
-    attrs:
-      visibility: ".visibility"
-      alias: ".alias"
-
   # Module-to-feature edges via feature_gates (drives
   # module_feature_gates_resolve).
   - kind: module_feature_gate

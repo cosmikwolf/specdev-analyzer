@@ -64,6 +64,89 @@ Do **not** derive `Default` unless `metadata.MemoryModel.allocation` is
 emit `derive(Serialize, Deserialize)` — it bloats no_std builds and is a
 project-level decision.
 
+## Const tables and `build.rs`
+
+When a module's body computes a non-trivial lookup table — anything where
+the entries are derived from a formula (exponentials, log curves, ratio
+tables, detune/PN sequences) rather than a handful of named constants —
+prefer **`build.rs` table generation** over `const fn` evaluation:
+
+```rust
+// build.rs
+use std::{env, fs, path::Path};
+
+fn main() {
+    let out = Path::new(&env::var("OUT_DIR").unwrap()).join("eg_increment.rs");
+    let mut entries = Vec::with_capacity(256);
+    for i in 0..256u32 {
+        let v = compute_eg_increment(i);
+        entries.push(format!("    {v},"));
+    }
+    let body = format!(
+        "pub static EG_INCREMENT: [u32; 256] = [\n{}\n];\n",
+        entries.join("\n")
+    );
+    fs::write(out, body).unwrap();
+    println!("cargo:rerun-if-changed=build.rs");
+}
+```
+
+```rust
+// src/eg_increment.rs (or wherever the table is consumed)
+include!(concat!(env!("OUT_DIR"), "/eg_increment.rs"));
+```
+
+Why over `const fn`:
+- `Ord` / floating-point ops on associated `const`s are still unstable
+  in stable Rust; computing the table at build time avoids the trait
+  surface entirely.
+- Intermediate overflow on `u32` / `i32` arithmetic is easier to reason
+  about in a regular `fn` than under `const`-context constraints.
+- Compile-time evaluation of large `const fn` table builders blows up
+  build times on cold caches; `build.rs` runs once per build directory.
+
+Do **not** put the table values in the module spec — the spec records
+the *shape* (array length, element type, that the table is computed
+from a formula) and points the implementer at `build.rs`. Anchor-point
+fidelity (matching documented values at e.g. index 0, 64, 128, 255)
+should be verified by a `#[test]` in the module, not by hand-checking
+the spec.
+
+For trivial constants (single named values, small enums-as-numbers),
+keep them inline as `pub const NAME: T = ...;` — `build.rs` is for
+*tables*, not all constants.
+
+## Item emission (Phase 14)
+
+`module.items[]` is an OPTIONAL surface in firmware-layered (firmware
+modules' contractual surface lives mostly in `actions[]`, `ports[]`,
+`state_machines[]`, and `errors[]` rather than in items[]'s public-API
+shape). When present, items[] entries carry top-level Rust constructs
+worth tracing to requirements — most often `pub` const tables (driver
+calibration data), `pub` static peripheral handles, or trait impls
+that fulfill a `verified_by` contract.
+
+The shape is **prose-first**: each item's `description` summarizes what
+the construct contractually provides, NOT how it's typed. The optional
+`signature_hint` field exists as an escape hatch for FFI declarations,
+macro contracts, and other cases where prose alone is insufficient;
+avoid it for ordinary firmware functions.
+
+Sparseness rule: every item except `kind = "re_export"` must carry
+`satisfies` (≥1 requirement id). The schema enforces this. For
+firmware-layered, items[] is most useful for:
+
+- `kind = "const"` calibration tables that satisfy a measured-behavior
+  requirement (`["DRV-CALIB-003"]`).
+- `kind = "fn"` ISR handlers whose timing budget is a requirement.
+- `kind = "impl"` trait impls that satisfy a contractual interface
+  required by upper-layer code.
+
+When firmware module specs are content-rich in actions/ports/state
+machines, items[] often stays empty — that's correct. items[] is a
+**supplemental** traceability surface for firmware-layered, not a
+replacement for the structural fields.
+
 ## Action emission
 
 Each `actions[]` entry becomes a method on the module struct. The
@@ -198,3 +281,63 @@ uses shared state).
 
 Do **not** emit a global `Project` struct or context object. Each
 module is independent; cross-module wiring is per-block.
+
+## Project-wide infrastructure (Phase 6.7+)
+
+The spec is the source of truth for every Cargo dependency. Phase 8's
+`gen` reads `architecture.toml`'s `[platform]`, `[runtime]`, `[logger]`,
+and `[[external_deps]]` sections (plus `spec.toml`'s `[project]`) and
+emits the complete Cargo project, not just module bodies. **Do not add
+deps to Cargo.toml that aren't declared in the spec; do not omit deps
+that are declared.**
+
+### `[platform]` drives target + ARM core scaffolding
+
+- `[platform].target_triple` → Cargo build target (`.cargo/config.toml`
+  `build.target` and `[target.<triple>.rustflags]` for `-C link-arg=-Tlink.x`).
+- `[platform].mcu_part` → MCU block consumes this to pick its HAL
+  feature flag (e.g. stm32h5-rs reads `mcu_part` to select
+  `stm32h5xx-hal`'s `stm32h563` feature). If `mcu_part` is set but no
+  MCU block is inlined, emit a warning comment in `main.rs`:
+  `// SPEC WARNING: [platform].mcu_part = "<value>" but no MCU block found`.
+- `[platform].mcu_core` → `[dependencies]` (typically `cortex-m`).
+- `[platform].mcu_runtime` → `[dependencies]` (typically `cortex-m-rt`).
+  `main.rs` gets `#[cortex_m_rt::entry]` on the entry point.
+
+### `[runtime]` drives panic + allocator + critical-section setup
+
+- `[runtime].panic_handler` → `[dependencies]` AND `main.rs` gets
+  `use <crate-as-snake_case> as _;` to register the handler. For
+  `panic-probe`, emit `use panic_probe as _;`.
+- `[runtime].allocator` (optional) → `[dependencies]` AND a
+  `#[global_allocator]` static at crate root. Add `extern crate alloc;`
+  at crate root regardless of any module's `MemoryModel.allocation`
+  setting. If absent, do **not** emit `extern crate alloc;` from this
+  rule (modules with `heap_alloc` still trigger it per the section
+  above).
+- `[runtime].critical_section_impl` (optional) → `[dependencies]`. Do
+  not name a specific crate; the embassy or stm32 block's prose covers
+  the integration pattern when relevant.
+
+### `[logger]` drives logging integration
+
+- `[logger].provider` → `[dependencies]` (typically `defmt`).
+- `[logger].backend` → `[dependencies]` AND `main.rs` gets
+  `use <backend-as-snake_case> as _;` (for defmt-rtt: `use defmt_rtt as _;`).
+- `[logger].default_level` → emit a `defmt::set_log_level!` call (or
+  equivalent) at the start of the entry point, when the provider supports
+  runtime level setting; otherwise document in a comment.
+
+### `[[external_deps]]` is appended verbatim
+
+Every entry lands in Cargo.toml `[dependencies]` with its `crate`,
+`version`, optional `features`, optional `default-features`, optional
+`source` (path/git/registry). No code is emitted from these — the
+project author already knows how to use the crate; the spec just
+records what it is so the build is reproducible.
+
+### Determinism
+
+Cargo.toml entries emit in lex-order by crate name. Within `[features]`
+emit features in lex-order. The same spec must produce byte-identical
+Cargo.toml across runs.

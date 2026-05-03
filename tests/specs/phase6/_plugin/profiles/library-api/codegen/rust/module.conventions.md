@@ -40,13 +40,58 @@ are `pub`; helpers are bare. Do **not** emit `pub(crate)` on items
 inside a `crate`-visible module — the module's own visibility already
 constrains reach.
 
-## Re-exports
+## Item emission (Phase 14)
 
-`module.re_exports[]` becomes `pub use` (or `pub(crate) use`) statements
-at the top of the module file:
+`module.items[]` carries the module's contractual surface entries — one
+per top-level Rust construct that has spec significance (typically
+because it satisfies a requirement or is a contractual public re-export).
+The shape is **prose-first**: each item carries a `description` of what
+it does, NOT a signature mirror of how it's typed. The optional
+`signature_hint` field exists as an escape hatch for cases where prose
+alone is insufficient (FFI declarations, macro contracts, generics-heavy
+trait impls); avoid it for ordinary functions and types.
+
+Sparseness rule: every item except `kind = "re_export"` must carry
+`satisfies` (≥1 requirement id). The schema enforces this — items
+without traceability fail validation. `re_export` items are exempt
+because `pub use` is inherently contractual.
+
+Example:
+
+```toml
+[[items]]
+name = "render"
+kind = "fn"
+description = "Composites a frame from the layout tree onto the back buffer."
+satisfies = ["REQ-API-001"]
+
+[[items]]
+name = "Style"
+kind = "struct"
+description = "Append-only collection of style overrides keyed by node id."
+satisfies = ["REQ-API-014"]
+```
+
+Notice neither item names its parameters, return type, or struct fields
+— that's source-level concern, captured in code. The spec describes the
+*contract*; the source describes the *implementation*. When a `pub fn`
+or `pub struct` lacks an items[] entry, codegen emits it but does NOT
+trace it to a requirement; an in-source-only public item is permitted
+(non-spec-significant API surface) but uncommon.
+
+## Re-exports (via items[])
+
+Re-exports are authored as `[[items]]` entries with `kind = "re_export"`.
+Each becomes a `pub use` (or `pub(crate) use`) statement at the top of
+the module file:
 
 ```rust
-// re_exports = [{ target: Inner, visibility: pub, alias: PublicName }]
+# [[items]]
+# name = "PublicName"
+# kind = "re_export"
+# description = "Convenience alias for Inner."
+# target = "inner::Inner"
+# visibility = "pub"
 pub use inner::Inner as PublicName;
 ```
 
@@ -55,17 +100,15 @@ Re-export rules:
 - `visibility = "pub"` → `pub use`. Re-exported item is part of the
   crate's public API.
 - `visibility = "crate"` → `pub(crate) use`. Internal use only.
-- `alias` present → `as <alias>`. Otherwise the original name is
-  preserved.
-- `target` is a sibling module name; emit `target_name::TargetName` as
-  the path. (When `target` is package-qualified `<package>::<Module>`,
-  emit `package::module::Item`.)
+- `name` differing from the trailing `target` segment → `as <name>`.
+  Otherwise the original name is preserved.
+- `target` is a path string. In-crate forms: `<sibling_module>::<Item>`.
+  Cross-package forms: `<package>::<module>::<Item>` for multi-package
+  projects.
 
-The `re_exports_resolve` graph check verifies each `target` is a real
-module before codegen runs.
-
-Do **not** emit `pub use` for a `private` re-export — the schema
-already forbids that combination.
+`re_export` items are exempt from the items[] sparseness rule — the
+inherently-contractual nature of a `pub use` makes `satisfies` optional
+(but still permitted when an explicit traceability link is wanted).
 
 ## Feature gates
 
@@ -122,6 +165,57 @@ Public-API discipline:
   decision, not a derive-by-default.
 - Avoid `pub` on internal helpers, even if they're "obviously useful"
   to crate consumers; promote later if a real consumer asks.
+
+## Const tables and `build.rs`
+
+When a module's body computes a non-trivial lookup table — entries
+derived from a formula (exponentials, log curves, ratio tables, packed
+sample sets) rather than a handful of named constants — prefer
+**`build.rs` table generation** over `const fn` evaluation:
+
+```rust
+// build.rs
+use std::{env, fs, path::Path};
+
+fn main() {
+    let out = Path::new(&env::var("OUT_DIR").unwrap()).join("ratio_curve.rs");
+    let mut entries = Vec::with_capacity(128);
+    for i in 0..128u32 {
+        let v = compute_ratio(i);
+        entries.push(format!("    {v},"));
+    }
+    let body = format!(
+        "pub static RATIO_CURVE: [u32; 128] = [\n{}\n];\n",
+        entries.join("\n")
+    );
+    fs::write(out, body).unwrap();
+    println!("cargo:rerun-if-changed=build.rs");
+}
+```
+
+```rust
+// src/ratio_curve.rs
+include!(concat!(env!("OUT_DIR"), "/ratio_curve.rs"));
+```
+
+Why over `const fn`:
+- `Ord` and floating-point operations on associated `const`s are still
+  unstable on stable Rust; `build.rs` sidesteps the entire trait-stability
+  surface.
+- Intermediate overflow on `u32` / `i32` arithmetic is easier to reason
+  about in a regular `fn` than under `const`-context restrictions.
+- Compile-time evaluation of large `const fn` table builders blows up
+  build times on cold caches; `build.rs` runs once per build directory
+  and re-runs only when its source changes.
+
+Do **not** put the table values in the module spec — the spec records
+the *shape* (length, element type, "computed from a formula") and points
+the implementer at `build.rs`. Anchor-point fidelity (matching
+documented values at e.g. index 0, 64, 127) belongs in a `#[test]` in
+the module, not in the spec.
+
+For trivial constants (single named values, small enums-as-numbers),
+keep them inline as `pub const NAME: T = ...;`.
 
 ## no_std and alloc
 
