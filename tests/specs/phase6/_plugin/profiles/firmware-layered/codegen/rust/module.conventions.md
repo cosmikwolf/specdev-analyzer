@@ -64,6 +64,89 @@ Do **not** derive `Default` unless `metadata.MemoryModel.allocation` is
 emit `derive(Serialize, Deserialize)` — it bloats no_std builds and is a
 project-level decision.
 
+## Const tables and `build.rs`
+
+When a module's body computes a non-trivial lookup table — anything where
+the entries are derived from a formula (exponentials, log curves, ratio
+tables, detune/PN sequences) rather than a handful of named constants —
+prefer **`build.rs` table generation** over `const fn` evaluation:
+
+```rust
+// build.rs
+use std::{env, fs, path::Path};
+
+fn main() {
+    let out = Path::new(&env::var("OUT_DIR").unwrap()).join("eg_increment.rs");
+    let mut entries = Vec::with_capacity(256);
+    for i in 0..256u32 {
+        let v = compute_eg_increment(i);
+        entries.push(format!("    {v},"));
+    }
+    let body = format!(
+        "pub static EG_INCREMENT: [u32; 256] = [\n{}\n];\n",
+        entries.join("\n")
+    );
+    fs::write(out, body).unwrap();
+    println!("cargo:rerun-if-changed=build.rs");
+}
+```
+
+```rust
+// src/eg_increment.rs (or wherever the table is consumed)
+include!(concat!(env!("OUT_DIR"), "/eg_increment.rs"));
+```
+
+Why over `const fn`:
+- `Ord` / floating-point ops on associated `const`s are still unstable
+  in stable Rust; computing the table at build time avoids the trait
+  surface entirely.
+- Intermediate overflow on `u32` / `i32` arithmetic is easier to reason
+  about in a regular `fn` than under `const`-context constraints.
+- Compile-time evaluation of large `const fn` table builders blows up
+  build times on cold caches; `build.rs` runs once per build directory.
+
+Do **not** put the table values in the module spec — the spec records
+the *shape* (array length, element type, that the table is computed
+from a formula) and points the implementer at `build.rs`. Anchor-point
+fidelity (matching documented values at e.g. index 0, 64, 128, 255)
+should be verified by a `#[test]` in the module, not by hand-checking
+the spec.
+
+For trivial constants (single named values, small enums-as-numbers),
+keep them inline as `pub const NAME: T = ...;` — `build.rs` is for
+*tables*, not all constants.
+
+## Item emission (Phase 14)
+
+`module.items[]` is an OPTIONAL surface in firmware-layered (firmware
+modules' contractual surface lives mostly in `actions[]`, `ports[]`,
+`state_machines[]`, and `errors[]` rather than in items[]'s public-API
+shape). When present, items[] entries carry top-level Rust constructs
+worth tracing to requirements — most often `pub` const tables (driver
+calibration data), `pub` static peripheral handles, or trait impls
+that fulfill a `verified_by` contract.
+
+The shape is **prose-first**: each item's `description` summarizes what
+the construct contractually provides, NOT how it's typed. The optional
+`signature_hint` field exists as an escape hatch for FFI declarations,
+macro contracts, and other cases where prose alone is insufficient;
+avoid it for ordinary firmware functions.
+
+Sparseness rule: every item except `kind = "re_export"` must carry
+`satisfies` (≥1 requirement id). The schema enforces this. For
+firmware-layered, items[] is most useful for:
+
+- `kind = "const"` calibration tables that satisfy a measured-behavior
+  requirement (`["DRV-CALIB-003"]`).
+- `kind = "fn"` ISR handlers whose timing budget is a requirement.
+- `kind = "impl"` trait impls that satisfy a contractual interface
+  required by upper-layer code.
+
+When firmware module specs are content-rich in actions/ports/state
+machines, items[] often stays empty — that's correct. items[] is a
+**supplemental** traceability surface for firmware-layered, not a
+replacement for the structural fields.
+
 ## Action emission
 
 Each `actions[]` entry becomes a method on the module struct. The

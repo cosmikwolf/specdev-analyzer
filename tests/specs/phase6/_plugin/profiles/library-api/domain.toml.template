@@ -13,7 +13,6 @@ name = "{{project_name}}"
 [validation.rules]
 unique_module_names              = "error"
 modules_acyclic                  = "error"
-re_exports_resolve               = "error"
 feature_unique_names             = "error"
 feature_dependencies_resolve     = "error"
 module_feature_gates_resolve     = "error"
@@ -36,14 +35,6 @@ rule = "modules_acyclic"
 scope = "depends_on"
 edges_from = "relations[].from"
 edges_to = "relations[].to"
-
-# Every re_exports.target must reference an existing module.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "re_exports_resolve"
-scope = "re_exports"
-source_field = "relations[].to"
-target_field = "entities[].name"
 
 # Cargo feature names must be unique.
 [[project.graph_checks]]

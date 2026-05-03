@@ -37,12 +37,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-  re_exports:
-    description: >
-      Re-exports of other modules. The `re_exports_resolve` graph check
-      verifies every `target` references a module in the library.
-    type: array
-    items: { $ref: "#/$defs/ReExport" }
   external_deps:
     description: |
       External crate dependencies this module needs (Phase 6.7+). Each
@@ -85,19 +79,3 @@ properties:
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
-
-$defs:
-  ReExport:
-    type: object
-    additionalProperties: false
-    required: [target, visibility]
-    properties:
-      target:
-        $ref: "enums.schema.yaml#/$defs/ModuleRef"
-      visibility:
-        $ref: "enums.schema.yaml#/$defs/ReExportVisibility"
-      alias:
-        description: >
-          Optional rename on re-export (`pub use module::Item as Alias`).
-          When omitted, the original identifier is preserved.
-        $ref: "enums.schema.yaml#/$defs/Identifier"
