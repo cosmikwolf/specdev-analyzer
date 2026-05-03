@@ -56,7 +56,7 @@ pub trait LanguageAdapter: Send + Sync {
 }
 
 /// Resolve a language name to a boxed adapter. Returns `None` for unknown
-/// languages; callers surface this as [`crate::audit::AuditError::UnsupportedLanguage`].
+/// languages; callers surface this with their own error context.
 pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
     match language {
         "rust" => Some(Box::new(rust::RustAdapter)),

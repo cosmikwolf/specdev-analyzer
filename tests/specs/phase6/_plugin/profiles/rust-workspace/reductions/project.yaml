@@ -1,0 +1,29 @@
+metaschema_version: "v1"
+
+# Workspace reduction is intentionally minimal — a workspace's only
+# load-bearing graph entities are its members and the hoisted
+# dependencies. Member-internal entities (Module, Feature, Requirement,
+# etc.) live inside each member's own reduction.
+
+entities:
+  # Workspace members from spec.toml `[[workspace.members]]`. Drives
+  # `unique_member_names` and `member_paths_unique` graph checks.
+  - kind: Member
+    extends: structural
+    from: "spec.toml"
+    for_each: "workspace.members[]"
+    name: "${.name}"
+    attrs:
+      path: ".path"
+
+  # Hoisted workspace dependencies from architecture.toml's
+  # `[[workspace_dependencies]]`. Drives `workspace_dependencies_unique`.
+  - kind: WorkspaceDependency
+    extends: structural
+    from: "specs/architecture.toml"
+    for_each: "workspace_dependencies[]"
+    name: "${.crate}"
+    attrs:
+      version: ".version"
+
+relations: []

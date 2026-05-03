@@ -41,6 +41,7 @@ entities:
     name: "${.id}"
     attrs:
       text: ".text"
+      nature: ".nature"
 
 relations:
   # Module-to-module dependency edges (drives modules_acyclic).

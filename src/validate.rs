@@ -526,6 +526,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                     &kindset,
                     &graph,
                     &dom,
+                    layout,
                     report,
                 );
                 // Module-scoped checks are reserved for per-module
@@ -577,6 +578,7 @@ fn execute_graph_checks(
     kindset: &EffectiveKindSet,
     graph: &Graph,
     domain: &DomainConfig,
+    layout: &LayoutContext,
     report: &mut Report,
 ) {
     let graph_json = match serde_json::to_value(graph) {
@@ -628,13 +630,40 @@ fn execute_graph_checks(
                 rule,
                 severity,
             ),
+            // F-006: jointly filter by entity_scope + relation_scope and
+            // run the orphan-requirements check. Reuses the same joint-
+            // filter infrastructure as `layer_dependency`.
+            "requirements_have_satisfiers" => {
+                match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
+                    (Some(es), Some(rs)) => {
+                        let view =
+                            filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                        graph_checks::requirements_have_satisfiers(&view, rule, severity)
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            // D37 / Phase 10: source-aware check. Each
+            // `requirement.verified_by[]` entry resolves against tree-sitter-
+            // extracted top-level items + #[test] items per module. Unlike
+            // the other primitives, this one reads filesystem source via
+            // the items extraction surface (Phase 10 ships the surface;
+            // Phase 14 promotes the warning to error when items[] is the
+            // authoritative substrate).
+            "verified_by_resolves" => verified_by_resolves_dispatch(
+                &graph_json,
+                layout,
+                rule,
+                severity,
+            ),
             other => vec![Finding::new(
                 "DOMAIN-003",
                 Severity::Warning,
                 format!(
                     "domain.toml [{section}] graph_check (rule `{rule}`): \
                      unknown primitive `{other}` — supported: \
-                     unique, reference_exists, reachability, acyclic, layer_dependency"
+                     unique, reference_exists, reachability, acyclic, \
+                     layer_dependency, requirements_have_satisfiers, verified_by_resolves"
                 ),
             )],
         };
@@ -704,6 +733,162 @@ fn layer_dependency_dispatch(
     }
 
     Vec::new()
+}
+
+/// D37 / Phase 10 — `verified_by_resolves` dispatch.
+///
+/// For each `Requirement` entity carrying a `verified_by[]` attr, parse
+/// each entry and attempt resolution against the per-module item
+/// extraction surface (`items::extract`). Two entry shapes:
+///
+/// - `<Module>::<name>` — resolves against the named module's source.
+///   The matching item must be a `fn` with `#[test]` attribute (a test
+///   function), or any top-level item with a matching name (forgiving:
+///   non-test items match too, since the items[] design treats
+///   `verified_by` as resolution against item names rather than a
+///   `#[test]` filter).
+/// - bare `<name>` — resolves against any module's `#[test]`-attributed
+///   `fn` items.
+///
+/// Pre-implementation modules (no source file resolved) are silent: the
+/// per-module item set is empty, but if every named module has no
+/// source, the requirement entry is treated as "no candidates" and no
+/// finding fires (avoids a wall of warnings for greenfield specs).
+///
+/// Severity: warning in v1.0; promotes to error in v1.1 alongside Phase
+/// 14 items[] (per D37). Error code: `VERIFIED-BY-RESOLVES-001`.
+fn verified_by_resolves_dispatch(
+    graph_json: &JsonValue,
+    layout: &LayoutContext,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    use crate::items::{extract as items_extract, source_map, ExtractedItem, ItemKind};
+    use crate::lang;
+
+    let language = &layout.spec.project.language;
+    let Some(adapter) = lang::adapter_for(language) else {
+        // Unsupported language — silently skip (matches the dispatch's
+        // permissive behaviour for unknown shapes).
+        return Vec::new();
+    };
+    let source_root = layout.spec.paths.source.as_str();
+    let project_root = &layout.project_root;
+
+    // Cache of module name → extracted items. Avoid re-parsing.
+    let mut items_by_module: HashMap<String, Vec<ExtractedItem>> = HashMap::new();
+
+    // Helper to lazily fetch items for a module.
+    let mut get_items = |module_name: &str| -> Vec<ExtractedItem> {
+        if let Some(cached) = items_by_module.get(module_name) {
+            return cached.clone();
+        }
+        let items = match source_map::resolve_source_path(
+            module_name,
+            adapter.as_ref(),
+            project_root,
+            source_root,
+        ) {
+            Some(p) => items_extract::extract_items_from_path(&p, adapter.as_ref())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        items_by_module.insert(module_name.to_string(), items.clone());
+        items
+    };
+
+    let entities = match graph_json.get("entities").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+
+    // Collect all module names referenced by Requirement entities so we
+    // can pre-populate the items cache and detect bare-name resolution
+    // candidates across modules.
+    let mut all_module_names: Vec<String> = Vec::new();
+    for ent in entities {
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        if !kind.ends_with("Module") && kind != "Module" {
+            continue;
+        }
+        if let Some(n) = ent.get("name").and_then(|n| n.as_str()) {
+            all_module_names.push(n.to_string());
+        }
+    }
+
+    let mut findings = Vec::new();
+
+    for ent in entities {
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        if !kind.ends_with("Requirement") && kind != "Requirement" {
+            continue;
+        }
+        let Some(req_id) = ent.get("name").and_then(|n| n.as_str()) else { continue };
+        let Some(verified_by) = ent
+            .get("attrs")
+            .and_then(|a| a.get("verified_by"))
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+
+        for entry in verified_by {
+            let Some(s) = entry.as_str() else { continue };
+            let s = s.trim();
+            if s.is_empty() {
+                continue;
+            }
+            // Module::name vs bare name.
+            let resolved = if let Some((module, name)) = s.split_once("::") {
+                let module = module.trim();
+                let name = name.trim();
+                let items = get_items(module);
+                if items.is_empty() {
+                    // Pre-implementation module: skip (silent), per D37.
+                    continue;
+                }
+                items.iter().any(|i| i.name == name)
+            } else {
+                // Bare name: search for a #[test]-attributed fn across all
+                // modules. If no module has source yet, skip (silent).
+                let mut any_source = false;
+                let mut found = false;
+                for m in &all_module_names {
+                    let items = get_items(m);
+                    if !items.is_empty() {
+                        any_source = true;
+                    }
+                    if items.iter().any(|i| {
+                        i.kind == ItemKind::Fn
+                            && i.name == s
+                            && i.attributes.iter().any(|a| a.contains("test"))
+                    }) {
+                        found = true;
+                        break;
+                    }
+                }
+                if !any_source {
+                    continue;
+                }
+                found
+            };
+
+            if !resolved {
+                findings.push(Finding::new(
+                    rule,
+                    severity,
+                    format!(
+                        "[VERIFIED-BY-RESOLVES-001] requirement `{req_id}` \
+                         verified_by entry `{s}` does not resolve to any \
+                         extracted top-level item; check spelling, the named \
+                         module's source, or remove the entry"
+                    ),
+                ));
+            }
+        }
+    }
+
+    findings
 }
 
 /// Filter the graph view jointly by `entity_scope` (applies to

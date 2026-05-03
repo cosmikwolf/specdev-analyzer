@@ -1,0 +1,33 @@
+spec_version = "1.0"
+
+[project]
+name = "{{project_name}}"
+profile = "{{profile}}"
+language = "{{language}}"
+
+[paths]
+specs = "specs"
+source = "."
+
+# Workspace marker: presence signals "this spec.toml describes a Cargo
+# workspace root." Members are independent crates with their own
+# `specs/specdev/` trees, bootstrapped per-crate (typically with
+# `--profile library-api`). Add entries here as members are added.
+[workspace]
+resolver = "2"
+
+# Example member entries — replace with real members. Each entry's
+# `name` must match the member's [project].name; `path` is relative
+# to this spec.toml.
+#
+# [[workspace.members]]
+# name = "my-core"
+# path = "crates/my-core"
+#
+# [[workspace.members]]
+# name = "my-utils"
+# path = "crates/my-utils"
+
+[[workspace.members]]
+name = "placeholder-member"
+path = "crates/placeholder-member"

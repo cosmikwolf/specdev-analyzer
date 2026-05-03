@@ -89,3 +89,12 @@ $defs:
           Set to `false` to disable Cargo's default-features. Defaults
           to Cargo's behavior (true) when absent.
         type: boolean
+      optional:
+        description: |
+          Set to `true` to mark the dep as optional (Cargo enables it
+          via a feature flag — typically `dep:<crate>` in a feature's
+          deps list). Defaults to `false` when absent. Phase 8.6+:
+          permitted alongside `source = "workspace"` because Cargo
+          allows `optional` at the member-dep site even when version /
+          source / default-features are workspace-inherited.
+        type: boolean

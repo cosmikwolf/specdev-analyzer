@@ -16,7 +16,6 @@
 //! | Resolve the open-vocabulary kinds | [`reductions::resolve`]                | `(EffectiveKindSet, Vec<Finding>)` |
 //! | Reduce to a universal graph       | [`reduction::run_project`]             | [`reduction::Graph`] + [`Report`]   |
 //! | Extract canonical YAML            | [`extract::run_project`]               | [`extract::ExtractionResult`] |
-//! | Audit extract vs. source tree     | [`audit::run_project`]                 | [`audit::AuditReport`]        |
 //!
 //! ## Phase-2 cut line
 //!
@@ -79,7 +78,6 @@
 //!   `from_spec`/`endpoints`, etc).
 
 pub mod aggregator;
-pub mod audit;
 pub mod bootstrap;
 pub mod canonical;
 pub mod cargo_toml;
@@ -92,6 +90,7 @@ pub mod extract;
 pub mod graph;
 pub mod hash;
 pub mod inline;
+pub mod items;
 pub mod kinds;
 pub mod lang;
 pub mod layout;
@@ -109,7 +108,6 @@ pub mod resolved;
 pub mod schema;
 pub mod validate;
 
-pub use audit::{AuditItem, AuditOptions, AuditReport, AuditSummary, ModuleAudit};
 pub use domain::{DomainConfig, Severity};
 pub use extract::ExtractionResult;
 pub use layout::{LayoutContext, LayoutEntry, LayoutInventory, LayoutKind};

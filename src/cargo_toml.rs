@@ -25,7 +25,7 @@ use crate::layout::LayoutContext;
 
 /// One Cargo.toml `[dependencies]` entry, normalized.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct CrateRef {
+pub(crate) struct CrateRef {
     #[serde(rename = "crate")]
     crate_name: String,
     version: String,
@@ -35,6 +35,11 @@ struct CrateRef {
     features: Option<Vec<String>>,
     #[serde(default)]
     default_features: Option<bool>,
+    /// Cargo's `optional = true` flag. Permitted alongside any source
+    /// variant including `"workspace"` — Cargo accepts `optional` at
+    /// the member-dep site even when the rest is workspace-inherited.
+    #[serde(default)]
+    optional: Option<bool>,
 }
 
 /// Closed-set tagged union for `CrateReference.source`. Mirrors the
@@ -78,17 +83,166 @@ pub struct RenderedCargoToml {
     pub warnings: Vec<String>,
 }
 
-/// Render Cargo.toml for the project at `layout`, choosing the
-/// firmware-layered or library-api shape based on `[project].profile`.
+/// Render Cargo.toml for the project at `layout`. Dispatches across
+/// four cases:
+///
+/// * **Workspace root** (`[workspace]` table set in spec.toml) →
+///   [`render_workspace_root`]: emits `[workspace]` + `[workspace.package]`
+///   + `[workspace.dependencies]`.
+/// * **Workspace member** (no `[workspace]` table, but an ancestor
+///   spec.toml carries one whose `members[].path` references this
+///   directory) → renders the per-profile shape with workspace-aware
+///   field inheritance: package fields owned by `[workspace_package]`
+///   become `<field>.workspace = true`; deps with
+///   `source = "workspace"` render as `{ workspace = true, ... }`.
+/// * **Standalone library-api / firmware-layered project** → existing
+///   render path, unchanged.
+/// * **Anything else** → error.
 pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
+    if layout.spec.workspace.is_some() {
+        return render_workspace_root(layout);
+    }
+    let workspace_ctx = WorkspaceContext::find_for(layout)?;
     let profile = layout.spec.project.profile.as_str();
     match profile {
-        "firmware-layered" => render_firmware(layout),
-        "library-api" => render_library(layout),
+        "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()),
+        "library-api" => render_library(layout, workspace_ctx.as_ref()),
+        "rust-workspace" => Err(anyhow!(
+            "spec.toml at {} declares profile `rust-workspace` but has no \
+             [workspace] table; add `[workspace]` with `[[workspace.members]]` \
+             entries or change the profile",
+            layout.spec_toml_path.display(),
+        )),
         other => Err(anyhow!(
             "cargo-toml emission for profile `{other}` is not implemented; \
-             supported: firmware-layered, library-api",
+             supported: firmware-layered, library-api, rust-workspace",
         )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace ancestor detection
+// ---------------------------------------------------------------------------
+
+/// Workspace context carried alongside a member-mode render. Holds the
+/// workspace's parsed `[workspace_package]` (which member fields can
+/// inherit) and its hoisted `[[workspace_dependencies]]` (which member
+/// deps can reference via `source = "workspace"`).
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceContext {
+    /// Set of `[workspace_package]` field names present (e.g.
+    /// `"version"`, `"edition"`, `"rust-version"`, `"license"`,
+    /// `"repository"`). Members emit `<field>.workspace = true` for any
+    /// field in this set; absent fields stay member-literal.
+    pub package_fields: BTreeSet<String>,
+    /// Map from hoisted dep name → CrateRef. Members may reference
+    /// these via `source = "workspace"`; the v1 emitter trusts the
+    /// member's spec (no equivalence check against this map). The map
+    /// is reserved for the future reconciliation pass.
+    #[allow(dead_code)]
+    pub workspace_deps: BTreeMap<String, CrateRef>,
+}
+
+impl WorkspaceContext {
+    /// Walk up from the member's spec.toml to find an ancestor spec.toml
+    /// carrying `[workspace]` whose `members[].path` references the
+    /// member's directory (relative to the workspace root). Returns
+    /// `Ok(None)` if no workspace ancestor is found (standalone project).
+    fn find_for(layout: &LayoutContext) -> Result<Option<Self>> {
+        let member_dir = layout.project_root.as_path();
+        // Start one directory above the member: a workspace's spec.toml
+        // is by definition outside the member's tree.
+        let mut cursor = match member_dir.parent() {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        loop {
+            let candidate = cursor.join("spec.toml");
+            if candidate.is_file() {
+                if let Some(ctx) = Self::try_load(&candidate, member_dir)? {
+                    return Ok(Some(ctx));
+                }
+            }
+            match cursor.parent() {
+                Some(p) => cursor = p,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    fn try_load(
+        candidate_spec: &Path,
+        member_dir: &Path,
+    ) -> Result<Option<Self>> {
+        // Parse the candidate; if it's not a workspace spec or doesn't
+        // include this member, return None and let the caller keep
+        // walking. Parse errors short-circuit to None — a malformed
+        // ancestor spec.toml is the analyzer's job to flag during its
+        // own validate run, not cargo-toml's.
+        let text = std::fs::read_to_string(candidate_spec)
+            .with_context(|| format!("reading {}", candidate_spec.display()))?;
+        let parsed: serde_json::Value = match toml::from_str::<serde_json::Value>(&text) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let workspace = match parsed.get("workspace") {
+            Some(w) if w.is_object() => w,
+            _ => return Ok(None),
+        };
+        let candidate_root = candidate_spec.parent().unwrap_or(candidate_spec);
+        let rel_member = match member_dir.strip_prefix(candidate_root) {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        // Normalize to forward slashes for comparison against the
+        // members[].path field, which is always written in spec-toml
+        // forward-slash form.
+        let rel_member_str = rel_member.to_string_lossy().replace('\\', "/");
+        let members = workspace
+            .get("members")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.as_slice())
+            .unwrap_or(&[]);
+        let included = members.iter().any(|m| {
+            m.get("path")
+                .and_then(|p| p.as_str())
+                .map(|p| {
+                    // Trim trailing slash on stored paths for tolerance.
+                    p.trim_end_matches('/') == rel_member_str
+                })
+                .unwrap_or(false)
+        });
+        if !included {
+            return Ok(None);
+        }
+
+        // Found the workspace ancestor. Load architecture.toml from the
+        // workspace's `<paths.specs>/architecture.toml`. Default to
+        // "specs/architecture.toml" if [paths] is unparseable.
+        let specs_dir = parsed
+            .get("paths")
+            .and_then(|p| p.get("specs"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("specs");
+        let arch_path = candidate_root.join(specs_dir).join("architecture.toml");
+        let arch = read_architecture(&arch_path)?;
+
+        let mut package_fields: BTreeSet<String> = BTreeSet::new();
+        if let Some(wp) = arch.get("workspace_package").and_then(toml::Value::as_table) {
+            for (k, _) in wp.iter() {
+                package_fields.insert(k.clone());
+            }
+        }
+
+        let mut workspace_deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+        for c in extract_crate_ref_array(arch.get("workspace_dependencies"))? {
+            workspace_deps.insert(c.crate_name.clone(), c);
+        }
+
+        Ok(Some(WorkspaceContext {
+            package_fields,
+            workspace_deps,
+        }))
     }
 }
 
@@ -96,7 +250,10 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 // firmware-layered
 // ---------------------------------------------------------------------------
 
-fn render_firmware(layout: &LayoutContext) -> Result<RenderedCargoToml> {
+fn render_firmware(
+    layout: &LayoutContext,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
 
@@ -137,7 +294,7 @@ fn render_firmware(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     }
 
     let mut text = String::new();
-    write_package_section(&mut text, project, /* rust_version */ None);
+    write_package_section(&mut text, project, /* rust_version */ None, workspace);
     text.push('\n');
 
     // [[bin]] for firmware-layered (binary projects).
@@ -155,7 +312,10 @@ fn render_firmware(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 // library-api
 // ---------------------------------------------------------------------------
 
-fn render_library(layout: &LayoutContext) -> Result<RenderedCargoToml> {
+fn render_library(
+    layout: &LayoutContext,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
 
@@ -164,7 +324,7 @@ fn render_library(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         .and_then(toml::Value::as_str)
         .map(String::from);
 
-    let features = parse_library_features(arch.get("features"))?;
+    let parsed_features = parse_library_features(arch.get("features"))?;
 
     let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -180,14 +340,41 @@ fn render_library(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     }
 
     let mut text = String::new();
-    write_package_section(&mut text, project, msrv.as_deref());
+    // Member-mode skips literal rust-version when [workspace_package]
+    // owns it (will be emitted as `rust-version.workspace = true` by
+    // write_package_section below); otherwise pass through architecture
+    // msrv as today.
+    let rust_version = match workspace {
+        Some(w) if w.package_fields.contains("rust-version") => None,
+        _ => msrv.as_deref(),
+    };
+    write_package_section(&mut text, project, rust_version, workspace);
     text.push('\n');
 
     text.push_str("[lib]\n\n");
 
-    if !features.is_empty() {
+    if !parsed_features.features.is_empty() {
         text.push_str("[features]\n");
-        for (name, deps) in &features {
+        // Synthetic `default = [list]` line — emitted always when there's
+        // a [features] section, so member crates that have features but
+        // no defaults still render `default = []` (matches Cargo
+        // convention and the zfm dogfood baseline).
+        let default_arr = parsed_features
+            .defaults
+            .iter()
+            .map(|d| quote_str(d))
+            .collect::<Vec<_>>()
+            .join(", ");
+        text.push_str(&format!("default = [{}]\n", default_arr));
+        for (name, deps) in &parsed_features.features {
+            if name == "default" {
+                // User-authored `default` feature would collide with the
+                // synthetic line; skip and emit the literal at synthesis
+                // time instead. (Real projects don't author `default`
+                // explicitly; if they do, the synthesis above already
+                // covers it via the `default = true` flag.)
+                continue;
+            }
             let arr = deps
                 .iter()
                 .map(|d| quote_str(d))
@@ -199,6 +386,78 @@ fn render_library(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     }
 
     write_dependencies_section(&mut text, &deps);
+
+    Ok(RenderedCargoToml { text, warnings })
+}
+
+// ---------------------------------------------------------------------------
+// rust-workspace
+// ---------------------------------------------------------------------------
+
+/// Render the workspace-root `Cargo.toml` for a `rust-workspace` project.
+/// Emits `[workspace]` (resolver + members), `[workspace.package]`
+/// (canonical fields members inherit), and `[workspace.dependencies]`
+/// (hoisted candidates members reference via `source = "workspace"`).
+///
+/// Members are written in `[[workspace.members]]` declaration order;
+/// dependencies are lex-sorted (matching the per-member
+/// `[dependencies]` convention). No timestamps, no machine paths —
+/// byte-stable across runs.
+fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
+    let workspace_section = layout
+        .spec
+        .workspace
+        .as_ref()
+        .expect("render_workspace_root only called when [workspace] is set");
+
+    let arch = read_architecture(&layout.architecture_toml_path)?;
+    let warnings: Vec<String> = Vec::new();
+
+    let mut text = String::new();
+
+    // [workspace] block: resolver + members list.
+    text.push_str("[workspace]\n");
+    let resolver = workspace_section
+        .resolver
+        .as_deref()
+        .unwrap_or("2");
+    text.push_str(&format!("resolver = {}\n", quote_str(resolver)));
+    text.push_str("members = [\n");
+    for member in &workspace_section.members {
+        text.push_str(&format!("    {},\n", quote_str(&member.path)));
+    }
+    text.push_str("]\n");
+
+    // [workspace.package] — only the fields actually present in
+    // architecture.toml's [workspace_package]. Emit in Cargo's
+    // idiomatic order (matches zfm dogfood baseline): identity →
+    // license → repository → toolchain version.
+    if let Some(wp) = arch.get("workspace_package").and_then(toml::Value::as_table) {
+        if !wp.is_empty() {
+            text.push('\n');
+            text.push_str("[workspace.package]\n");
+            for key in ["version", "edition", "license", "repository", "rust-version"] {
+                if let Some(v) = wp.get(key).and_then(toml::Value::as_str) {
+                    text.push_str(&format!("{} = {}\n", key, quote_str(v)));
+                }
+            }
+        }
+    }
+
+    // [workspace.dependencies] — declare-then-emit (lex-sorted by
+    // crate name). Each entry uses the same render path as
+    // per-member [dependencies].
+    let mut workspace_deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+    for c in extract_crate_ref_array(arch.get("workspace_dependencies"))? {
+        workspace_deps.insert(c.crate_name.clone(), c);
+    }
+    if !workspace_deps.is_empty() {
+        text.push('\n');
+        text.push_str("[workspace.dependencies]\n");
+        for (name, c) in &workspace_deps {
+            text.push_str(&format!("{} = {}\n", name, render_dep_value(c)));
+        }
+    }
 
     Ok(RenderedCargoToml { text, warnings })
 }
@@ -322,8 +581,22 @@ fn merge_dep(deps: &mut BTreeMap<String, CrateRef>, c: CrateRef, warnings: &mut 
     }
 }
 
-fn parse_library_features(value: Option<&toml::Value>) -> Result<BTreeMap<String, Vec<String>>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+/// Parsed library-api `[features]` table. Each entry carries the feature's
+/// merged-and-sorted dep list (`depends_on` ∪ `cargo_deps`) plus the
+/// `default` flag used to synthesize the synthetic `default = [...]`
+/// line at emit time.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ParsedFeatures {
+    /// Per-feature dep list, lex-sorted within each entry. Keyed by
+    /// feature name; outer ordering is BTreeMap-stable for emission.
+    pub features: BTreeMap<String, Vec<String>>,
+    /// Names of features marked `default = true`. Lex-sorted; emitted
+    /// as the synthetic `default = [...]` line.
+    pub defaults: Vec<String>,
+}
+
+fn parse_library_features(value: Option<&toml::Value>) -> Result<ParsedFeatures> {
+    let mut out = ParsedFeatures::default();
     let Some(arr) = value.and_then(toml::Value::as_array) else {
         return Ok(out);
     };
@@ -332,7 +605,7 @@ fn parse_library_features(value: Option<&toml::Value>) -> Result<BTreeMap<String
         let Some(name) = t.get("name").and_then(toml::Value::as_str) else {
             continue;
         };
-        let mut deps: Vec<String> = t
+        let depends_on: Vec<String> = t
             .get("depends_on")
             .and_then(toml::Value::as_array)
             .map(|a| {
@@ -341,28 +614,93 @@ fn parse_library_features(value: Option<&toml::Value>) -> Result<BTreeMap<String
                     .collect()
             })
             .unwrap_or_default();
+        let cargo_deps: Vec<String> = t
+            .get("cargo_deps")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut deps: Vec<String> =
+            depends_on.into_iter().chain(cargo_deps.into_iter()).collect();
         deps.sort();
         deps.dedup();
-        out.insert(name.to_string(), deps);
+        out.features.insert(name.to_string(), deps);
+
+        if t.get("default").and_then(toml::Value::as_bool).unwrap_or(false) {
+            out.defaults.push(name.to_string());
+        }
     }
+    out.defaults.sort();
+    out.defaults.dedup();
     Ok(out)
 }
 
+/// Write the `[package]` section. When `workspace` is `Some`, fields
+/// owned by the workspace's `[workspace_package]` table are emitted as
+/// `<field>.workspace = true` instead of literal copies; the five
+/// inheritable fields per G-005 are: `version`, `edition`,
+/// `rust-version`, `license`, `repository`. `name` and `description`
+/// are always per-crate (never workspace-inherited).
+///
+/// Field emission order matches Cargo's idiomatic [package] ordering
+/// and the zfm dogfood baseline byte-for-byte: name → version → edition
+/// → license → repository → rust-version → description.
 fn write_package_section(
     text: &mut String,
     project: &crate::config::ProjectSection,
     rust_version: Option<&str>,
+    workspace: Option<&WorkspaceContext>,
 ) {
     text.push_str("[package]\n");
     text.push_str(&format!("name = {}\n", quote_str(&project.name)));
-    let edition = project.edition.as_deref().unwrap_or("2021");
-    text.push_str(&format!("edition = {}\n", quote_str(edition)));
-    if let Some(rv) = rust_version {
-        text.push_str(&format!("rust-version = {}\n", quote_str(rv)));
+
+    let inherits = |field: &str| -> bool {
+        workspace
+            .map(|w| w.package_fields.contains(field))
+            .unwrap_or(false)
+    };
+
+    // version — workspace-inheritable; not on standalone ProjectSection
+    // today (could become a per-crate override field in a future phase).
+    if inherits("version") {
+        text.push_str("version.workspace = true\n");
     }
-    if let Some(license) = &project.license {
+
+    // edition — defaults to "2021" when unset; workspace-inheritable.
+    if inherits("edition") {
+        text.push_str("edition.workspace = true\n");
+    } else {
+        let edition = project.edition.as_deref().unwrap_or("2021");
+        text.push_str(&format!("edition = {}\n", quote_str(edition)));
+    }
+
+    // license — workspace-inheritable.
+    if inherits("license") {
+        text.push_str("license.workspace = true\n");
+    } else if let Some(license) = &project.license {
         text.push_str(&format!("license = {}\n", quote_str(license)));
     }
+
+    // repository — workspace-inheritable; member's own
+    // [project].repository overrides if explicitly set.
+    if let Some(repo) = &project.repository {
+        text.push_str(&format!("repository = {}\n", quote_str(repo)));
+    } else if inherits("repository") {
+        text.push_str("repository.workspace = true\n");
+    }
+
+    // rust-version — workspace-inheritable; otherwise pass-through
+    // from caller (firmware: always None; library: from architecture msrv).
+    if inherits("rust-version") {
+        text.push_str("rust-version.workspace = true\n");
+    } else if let Some(rv) = rust_version {
+        text.push_str(&format!("rust-version = {}\n", quote_str(rv)));
+    }
+
+    // description — always per-crate.
     if let Some(desc) = &project.description {
         text.push_str(&format!("description = {}\n", quote_str(desc)));
     }
@@ -391,8 +729,29 @@ fn write_dependencies_section(text: &mut String, deps: &BTreeMap<String, CrateRe
 ///   * `CrateSource::Git { git, rev/tag/branch }` → adds `git = "..."`
 ///     plus whichever of rev/tag/branch is set.
 fn render_dep_value(c: &CrateRef) -> String {
+    // Workspace-inherited dep: `{ workspace = true [, features = ...]
+    // [, optional = true] }`. Cargo forbids version / default-features /
+    // path / git at the member site when source is workspace, but allows
+    // additive `features` and per-member `optional`.
     if let Some(CrateSource::Tagged(CrateSourceTag::Workspace)) = c.source {
-        return "{ workspace = true }".into();
+        let mut parts: Vec<String> = vec!["workspace = true".to_string()];
+        if let Some(features) = &c.features {
+            if !features.is_empty() {
+                let mut sorted = features.clone();
+                sorted.sort();
+                sorted.dedup();
+                let arr = sorted
+                    .iter()
+                    .map(|f| quote_str(f))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                parts.push(format!("features = [{}]", arr));
+            }
+        }
+        if c.optional == Some(true) {
+            parts.push("optional = true".to_string());
+        }
+        return format!("{{ {} }}", parts.join(", "));
     }
 
     let source_parts = match &c.source {
@@ -418,7 +777,8 @@ fn render_dep_value(c: &CrateRef) -> String {
 
     let has_extras = !source_parts.is_empty()
         || c.features.as_ref().map(|f| !f.is_empty()).unwrap_or(false)
-        || c.default_features.is_some();
+        || c.default_features.is_some()
+        || c.optional == Some(true);
     if !has_extras {
         return quote_str(&c.version);
     }
@@ -439,6 +799,9 @@ fn render_dep_value(c: &CrateRef) -> String {
     }
     if let Some(df) = c.default_features {
         parts.push(format!("default-features = {}", df));
+    }
+    if c.optional == Some(true) {
+        parts.push("optional = true".to_string());
     }
     parts.extend(source_parts);
     format!("{{ {} }}", parts.join(", "))

@@ -274,6 +274,65 @@ fn reach_impl(
     out
 }
 
+/// REQUIREMENTS_HAVE_SATISFIERS (F-006): each entity in scope (typically
+/// Requirement) with `attrs.nature` ∈ {`"module"`, missing} must have at
+/// least one incoming relation in the relation scope (typically
+/// `module_satisfies`). Entities with `nature` set to `"architecture"`,
+/// `"build"`, or `"test"` are exempt — they intentionally don't have a
+/// module satisfier.
+///
+/// The caller is expected to pre-filter the JSON view via
+/// `filter_for_layer_dependency`-style joint filtering so that
+/// `entities[]` contains only the entity scope and `relations[]` only
+/// the relation scope. The primitive itself does no kind filtering.
+///
+/// Emits one finding per orphan entity, naming the requirement id and
+/// the recognised nature values for the user's reference.
+pub fn requirements_have_satisfiers(
+    root: &Value,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let entities = root.get("entities").and_then(|v| v.as_array());
+    let relations = root.get("relations").and_then(|v| v.as_array());
+    let Some(entities) = entities else { return Vec::new() };
+    let satisfied: BTreeSet<String> = relations
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| r.get("to").and_then(|t| t.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let nature = ent
+            .get("attrs")
+            .and_then(|a| a.get("nature"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("module");
+        if nature != "module" {
+            continue;
+        }
+        if satisfied.contains(name) {
+            continue;
+        }
+        out.push(Finding::new(
+            rule,
+            severity,
+            format!(
+                "requirement `{name}` (nature = \"module\") has no module satisfier; \
+                 add it to a module's `satisfies = [...]` array, or set `nature = \
+                 \"architecture\" | \"build\" | \"test\"` to exempt"
+            ),
+        ));
+    }
+    out
+}
+
 /// ACYCLIC: the directed graph defined by (edges_from, edges_to) has no cycles.
 pub fn acyclic(
     root: &Value,
