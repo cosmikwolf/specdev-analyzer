@@ -17,9 +17,31 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
+use tracing::warn;
 
 use crate::layout::LayoutContext;
 use crate::lineage::Lineage;
+
+/// Default token-budget approximation used by the soft-warning path.
+/// 200k tokens × ~4 chars/token ≈ 800k chars; 80% threshold = 640k chars.
+/// Override via `SPECDEV_TOKEN_BUDGET` (in tokens, not chars).
+const DEFAULT_TOKEN_BUDGET: usize = 200_000;
+const APPROX_CHARS_PER_TOKEN: usize = 4;
+const BUDGET_WARNING_FRACTION: f64 = 0.80;
+
+/// Read `module.context_files` from a parsed module TOML in declared
+/// order. Returns an empty list when the field is absent or empty.
+pub fn parse_context_files(module_toml: &toml::Value) -> Vec<String> {
+    module_toml
+        .get("context_files")
+        .and_then(toml::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Result of relevance detection: the inlined blocks and bridges this
 /// module references. Both lists are lex-sorted; bridges by full
@@ -125,6 +147,9 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
     let module_text = std::fs::read_to_string(&module_path)
         .with_context(|| format!("reading {}", module_path.display()))?;
+    let module_toml: toml::Value = toml::from_str(&module_text)
+        .with_context(|| format!("parsing {}", module_path.display()))?;
+    let context_files = parse_context_files(&module_toml);
 
     let codegen_dir: PathBuf = layout.codegen_dir.clone();
     let profile_md = codegen_dir.join("module.conventions.md");
@@ -173,6 +198,28 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         out.push_str("(no architecture.toml)\n\n");
     }
 
+    if !context_files.is_empty() {
+        section_header(&mut out, "Project context");
+        for rel in &context_files {
+            let abs = layout.project_root.join(rel);
+            out.push_str(&format!("```{rel}\n"));
+            match std::fs::read_to_string(&abs) {
+                Ok(s) => {
+                    out.push_str(&s);
+                    if !s.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+                Err(e) => {
+                    out.push_str(&format!(
+                        "(failed to read context file `{rel}`: {e})\n",
+                    ));
+                }
+            }
+            out.push_str("```\n\n");
+        }
+    }
+
     section_header(
         &mut out,
         &format!("Module spec (`specs/modules/{module_name}.toml`)"),
@@ -184,7 +231,32 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     }
     out.push_str("```\n");
 
+    warn_if_over_budget(module_name, out.len());
+
     Ok(out)
+}
+
+/// Emit a `tracing::warn!` when the assembled prompt exceeds 80% of the
+/// configured token budget (approximated as `chars / 4`). Override the
+/// budget via the `SPECDEV_TOKEN_BUDGET` env var, in tokens.
+fn warn_if_over_budget(module_name: &str, char_count: usize) {
+    let budget_tokens = std::env::var("SPECDEV_TOKEN_BUDGET")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_TOKEN_BUDGET);
+    let budget_chars = budget_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
+    let threshold =
+        ((budget_chars as f64) * BUDGET_WARNING_FRACTION) as usize;
+    if char_count >= threshold {
+        let approx_tokens = char_count / APPROX_CHARS_PER_TOKEN;
+        warn!(
+            target: "specdev_analyzer::prompt",
+            "[CONTEXT-003] codegen prompt for module `{module_name}` is \
+             approximately {approx_tokens} tokens ({char_count} chars), \
+             at or above 80% of the {budget_tokens}-token budget — \
+             consider trimming `module.context_files` or splitting per-topic"
+        );
+    }
 }
 
 fn section_header(out: &mut String, title: &str) {

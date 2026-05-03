@@ -188,6 +188,28 @@ enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Spec→codegen handoff (Phase 13, doc 16). Mode resolution: explicit
+    /// `--strict` / `--skeleton` flag (mutually exclusive) > `[project].handoff_mode`
+    /// hint in `spec.toml` > default `implementation`. Strict mode is
+    /// orchestrated by the `/spec-gen` skill (Claude reads `prompt --module`
+    /// then emits source); the analyzer routes the user there. Skeleton
+    /// mode is deterministic — emits a navigable, compilable Rust source
+    /// tree per `[[items]]` entry, runs `cargo check`, and rolls back on
+    /// failure. v1: library-api profile only.
+    Gen {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Force strict mode (Claude-orchestrated full implementation).
+        /// Mutually exclusive with `--skeleton`. Without either flag, the
+        /// project's `[project].handoff_mode` hint resolves the mode.
+        #[arg(long, conflicts_with = "skeleton")]
+        strict: bool,
+        /// Force skeleton mode (analyzer-emitted `unimplemented!()` tree
+        /// + `cargo check`). Mutually exclusive with `--strict`.
+        #[arg(long)]
+        skeleton: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -204,6 +226,51 @@ enum ItemsAction {
         /// Module name (matches `specs/modules/<module>.toml`).
         #[arg(long)]
         module: String,
+    },
+    /// Stage 2 scaffold — wraps `items diff` in a structured proposal
+    /// document persisted under `specs/specdev/upstream/items-sync/`.
+    /// The analyzer writes the deterministic skeleton (drift entries +
+    /// source snippets + spec mappings); rationale + action fields are
+    /// filled by the `/spec-sync-items` skill (or a human) and then
+    /// signed off via `approved: true` for `items apply` to consume.
+    /// No AI involvement at this stage either — the analyzer never
+    /// shells to a model.
+    Propose {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+        /// Override the output path. Defaults to
+        /// `<specdev_root>/upstream/items-sync/<module>.proposal.yaml`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Overwrite an existing proposal file. Without this flag,
+        /// `items propose` refuses to clobber rationales the user (or
+        /// Claude) has already written.
+        #[arg(long)]
+        clobber: bool,
+    },
+    /// Stage 3 — apply an approved proposal to `specs/modules/<module>.toml`.
+    /// Validates the approval gate (top-level `approved: true` plus
+    /// `approver` + `approved_at`); refuses any entry still on
+    /// `pending`. Mutates the spec via `toml_edit` so comments and
+    /// formatting outside `[[items]]` round-trip. On success, the
+    /// proposal file is renamed to `<module>.applied.yaml` (with
+    /// `status: applied`) and remains under
+    /// `specs/specdev/upstream/items-sync/` as the audit trail.
+    Apply {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+        /// Override the proposal path. Defaults to
+        /// `<specdev_root>/upstream/items-sync/<module>.proposal.yaml`.
+        #[arg(long)]
+        proposal: Option<PathBuf>,
     },
 }
 
@@ -257,10 +324,26 @@ fn main() -> ExitCode {
             run_cargo_toml(project, spec_path.as_deref(), output)
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+        Command::Gen {
+            project,
+            strict,
+            skeleton,
+        } => run_gen(project, spec_path.as_deref(), strict, skeleton),
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
                 run_items_diff(project, spec_path.as_deref(), module)
             }
+            ItemsAction::Propose {
+                project,
+                module,
+                output,
+                clobber,
+            } => run_items_propose(project, spec_path.as_deref(), module, output, clobber),
+            ItemsAction::Apply {
+                project,
+                module,
+                proposal,
+            } => run_items_apply(project, spec_path.as_deref(), module, proposal),
         },
     }
 }
@@ -645,6 +728,91 @@ fn run_items_diff(
     }
 }
 
+fn run_items_propose(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    output: Option<PathBuf>,
+    clobber: bool,
+) -> ExitCode {
+    use specdev_analyzer::items::propose;
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let doc = match propose::build_proposal(&layout, &module) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let path = output.unwrap_or_else(|| propose::proposal_path(&layout, &module));
+    if let Err(e) = propose::write_proposal(&doc, &path, clobber) {
+        eprintln!("{e:#}");
+        return ExitCode::from(1);
+    }
+    let needs = doc
+        .entries
+        .iter()
+        .filter(|e| e.recommendation.action == "pending")
+        .count();
+    eprintln!(
+        "wrote proposal to {} (status={}, {} entr{} pending rationale)",
+        path.display(),
+        doc.status,
+        needs,
+        if needs == 1 { "y" } else { "ies" }
+    );
+    if doc.entries.is_empty() {
+        // No drift → exit 0; the file still exists so the skill has a
+        // stable artifact to read for "yes I checked, nothing to do."
+        ExitCode::SUCCESS
+    } else {
+        // Drift present → exit 1 so the skill can branch without
+        // re-parsing the YAML.
+        ExitCode::from(1)
+    }
+}
+
+fn run_items_apply(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    proposal: Option<PathBuf>,
+) -> ExitCode {
+    use specdev_analyzer::items::{apply, propose};
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let proposal_path = proposal.unwrap_or_else(|| propose::proposal_path(&layout, &module));
+    if !proposal_path.exists() {
+        eprintln!(
+            "[ITEM-310] proposal not found at {}; run `specdev-analyzer items propose --module {}` first",
+            proposal_path.display(),
+            module
+        );
+        return ExitCode::from(2);
+    }
+    match apply::apply_proposal(&layout, &module, &proposal_path) {
+        Ok(rep) => {
+            print!("{}", rep.render());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn run_reduce(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
@@ -884,6 +1052,83 @@ fn run_drift(
         Err(e) => {
             report_error(&e);
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Resolve the spec→codegen handoff mode (Phase 13, doc 16 §4) from
+/// the explicit `--strict` / `--skeleton` flags and the project's
+/// `[project].handoff_mode` hint, then dispatch.
+fn run_gen(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    strict: bool,
+    skeleton: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let resolved = if strict {
+        specdev_analyzer::config::HandoffMode::Implementation
+    } else if skeleton {
+        specdev_analyzer::config::HandoffMode::Skeleton
+    } else {
+        layout
+            .spec
+            .project
+            .handoff_mode
+            .unwrap_or(specdev_analyzer::config::HandoffMode::Implementation)
+    };
+    match resolved {
+        specdev_analyzer::config::HandoffMode::Implementation => {
+            eprintln!(
+                "strict (implementation) mode is orchestrated by the `/spec-gen` skill —\n\
+                 the analyzer assembles the codegen prompt deterministically; Claude emits\n\
+                 source. Run `specdev-analyzer prompt --module <Name>` and pipe the output\n\
+                 to /spec-gen, or invoke /spec-gen directly. To override and run skeleton\n\
+                 mode instead, pass `--skeleton` (or set `[project].handoff_mode = \"skeleton\"`\n\
+                 in spec.toml).",
+            );
+            ExitCode::from(2)
+        }
+        specdev_analyzer::config::HandoffMode::Skeleton => {
+            match specdev_analyzer::skeleton::run_skeleton(&layout) {
+                Ok(report) => {
+                    eprintln!(
+                        "skeleton emission OK — {} module(s), {} stub(s), {} re-export(s); \
+                         `cargo check` passed.",
+                        report.modules.len(),
+                        report
+                            .modules
+                            .iter()
+                            .map(|m| m.stub_count)
+                            .sum::<usize>(),
+                        report
+                            .modules
+                            .iter()
+                            .map(|m| m.re_export_count)
+                            .sum::<usize>(),
+                    );
+                    for m in &report.modules {
+                        eprintln!(
+                            "  - {} ({}): {} stubs, {} re-exports",
+                            m.name,
+                            m.path.display(),
+                            m.stub_count,
+                            m.re_export_count
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    report_error(&e);
+                    ExitCode::from(1)
+                }
+            }
         }
     }
 }

@@ -493,6 +493,8 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                 ),
             ));
         }
+
+        validate_context_files(layout, &parsed, module_path, report);
     }
 
     // Step 4: domain.toml graph-check resolution + execution.
@@ -553,6 +555,52 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
     }
 
     Ok(())
+}
+
+/// Validate `module.context_files` (Phase 13, doc 16 §3): each declared
+/// path is spec-root-relative, must exist, must be readable, and must be
+/// valid UTF-8. Schema validation upstream guarantees the field shape
+/// (string array, lex-unique). This function adds the per-file
+/// filesystem checks: `CONTEXT-001` for missing files, `CONTEXT-002`
+/// for I/O or UTF-8 failures.
+fn validate_context_files(
+    layout: &LayoutContext,
+    parsed: &toml::Value,
+    module_path: &Path,
+    report: &mut Report,
+) {
+    let context_files = crate::prompt::parse_context_files(parsed);
+    for rel in &context_files {
+        let abs = layout.project_root.join(rel);
+        if !abs.is_file() {
+            report.push(
+                Finding::new(
+                    "CONTEXT-001",
+                    Severity::Error,
+                    format!(
+                        "module.context_files entry `{rel}` does not exist at \
+                         {} (paths are spec-root-relative)",
+                        abs.display()
+                    ),
+                )
+                .with_file(module_path.display().to_string()),
+            );
+            continue;
+        }
+        if let Err(e) = std::fs::read_to_string(&abs) {
+            report.push(
+                Finding::new(
+                    "CONTEXT-002",
+                    Severity::Error,
+                    format!(
+                        "module.context_files entry `{rel}` could not be read \
+                         as UTF-8: {e}"
+                    ),
+                )
+                .with_file(module_path.display().to_string()),
+            );
+        }
+    }
 }
 
 /// Run domain.toml graph_checks against the executor's project graph.

@@ -104,7 +104,7 @@ fn parse_kind(s: &str) -> Option<ItemKind> {
 
 /// Walk a module spec's `items` array and produce typed `SpecItem`
 /// entries. Unknown kinds become a parse error (`ITEM-102`).
-fn parse_spec_items(value: &toml::Value, module_label: &str) -> Result<Vec<SpecItem>> {
+pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Result<Vec<SpecItem>> {
     let items = match value.get("items") {
         Some(toml::Value::Array(arr)) => arr,
         Some(other) => {
