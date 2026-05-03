@@ -24,7 +24,9 @@
 //! `specdev/languages/rust/items.schema.yaml` and
 //! `specdev/languages/rust/items.scm` for authoritative definitions.
 
+pub mod apply;
 pub mod extract;
+pub mod propose;
 pub mod source_map;
 pub mod sync;
 pub mod util;
