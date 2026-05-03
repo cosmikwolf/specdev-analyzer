@@ -84,6 +84,21 @@ properties:
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt (Phase 13, doc 16). Paths are spec-root-relative
+      (directory containing `spec.toml`). Validate-time checks ensure
+      each file exists, is readable, and is valid UTF-8 (`CONTEXT-001`
+      / `CONTEXT-002` / `CONTEXT-003`). Order is preserved at
+      prompt-assembly time; files inline in declared order between
+      architecture.toml and the module spec. Globs and section
+      anchors are bounded deferrals (doc 16 §5).
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
 
 $defs:
   Port:
