@@ -82,6 +82,7 @@ pub mod bootstrap;
 pub mod canonical;
 pub mod cargo_toml;
 pub mod config;
+pub mod context;
 pub mod diagnostics;
 pub mod domain;
 pub mod drift;
