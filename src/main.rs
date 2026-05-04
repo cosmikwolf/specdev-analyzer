@@ -4,6 +4,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
+    context as context_mod,
     diagnostics::report_error,
     cargo_toml as cargo_toml_mod, drift, extract, inline,
     layout::LayoutContext,
@@ -181,6 +182,27 @@ enum Command {
         #[arg(long)]
         module: String,
     },
+    /// Phase 11.5 — focused dependency cone for one module. Emits the
+    /// schema files, plugin-tree READMEs, target module path, and the
+    /// one-hop set of related sibling modules. Skill consumers
+    /// (`/spec-design`, `/spec-edit`, `/spec-reverse`) read only the
+    /// listed files instead of every module under `specs/modules/`.
+    /// Read-only graph projection over the existing reduction; no new
+    /// schema or graph primitives. See `19-analyzer-context-subcommand.md`.
+    Context {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<Name>.toml`). When the
+        /// name doesn't resolve (cold-start `/spec-design`), the
+        /// subcommand still emits schema + READMEs; sibling-module
+        /// cone is empty and `status: module-not-found` is set.
+        #[arg(long)]
+        module: String,
+        /// Write the YAML report here. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Observational drift report — classify each inlined file as
     /// clean / plugin-moved / locally-edited / both. Pure reporter.
     Drift {
@@ -323,6 +345,11 @@ fn main() -> ExitCode {
         Command::CargoToml { project, output } => {
             run_cargo_toml(project, spec_path.as_deref(), output)
         }
+        Command::Context {
+            project,
+            module,
+            output,
+        } => run_context(project, spec_path.as_deref(), module, output),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gen {
             project,
@@ -1013,6 +1040,33 @@ fn run_inline_bridge(
             }
         }
     }
+}
+
+fn run_context(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match context_mod::run_context(&layout, &module) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(e) = context_mod::emit(&report, output.as_ref()) {
+        report_error(&e);
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_drift(
