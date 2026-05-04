@@ -1,0 +1,179 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/egui.v1"
+title: "egui block (v1)"
+description: >
+  Schema fragment contributed by the `egui` block. Adds a namespaced
+  `[egui]` table to `Module` carrying editor topology — panels and
+  regions — for plugin shells that ship a custom UI via
+  [egui](https://github.com/emilk/egui).
+
+  v1 models **topology only** (D47): the block describes WHERE
+  controls live (panel layout, region positions, region purpose) but
+  NOT WHICH widgets render WHICH parameters. Parameter→widget bindings
+  live in the `egui+nih-plug` bridge (Phase 15-E). Custom drawing
+  (oscilloscopes, modulation visualizers, spectrum analyzers) is
+  declared structurally via `purpose = "free_form"` regions and
+  hand-authored Rust inside the codegen scaffold.
+
+  This separation lets the egui block stay small (5 panel kinds, 5
+  region purposes, a few layout attributes) and lets new widget kinds
+  extend the bridge without touching this block.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  egui:
+    type: object
+    additionalProperties: false
+    properties:
+      default_size:
+        description: >
+          Optional default editor window size. nih_plug_egui uses this
+          when constructing the editor; the host may resize at
+          runtime if `resizable = true`.
+        type: object
+        additionalProperties: false
+        required: [width, height]
+        properties:
+          width:  { type: integer, minimum: 1 }
+          height: { type: integer, minimum: 1 }
+      resizable:
+        description: >
+          When true, the host may resize the editor window. Defaults
+          to false (fixed-size editors are the common case for plugins).
+        type: boolean
+        default: false
+      panels:
+        description: >
+          Editor panels — each becomes one of egui's panel types
+          (CentralPanel, SidePanel, TopBottomPanel) at codegen time.
+          Order is significant: side / top / bottom panels are
+          declared before the central panel in nih_plug_egui's frame
+          builder. Codegen emits in the order panels are listed.
+        type: array
+        items: { $ref: "#/$defs/Panel" }
+        minItems: 1
+      regions:
+        description: >
+          Regions inside panels. Each carries a `purpose` that drives
+          the codegen scaffolding pattern (see Phase 15-D codegen
+          prose). Cross-cutting binding (parameter→widget) lives in
+          the `egui+nih-plug` bridge, not here.
+        type: array
+        items: { $ref: "#/$defs/Region" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Panel:
+    description: >
+      One editor panel. egui supports CentralPanel (one per editor),
+      SidePanel (left or right), and TopBottomPanel (top or bottom).
+      The panel `kind` drives the egui type; `id` is the panel's
+      stable name for cross-region references.
+    type: object
+    additionalProperties: false
+    required: [id, kind]
+    properties:
+      id:
+        $ref: "#/$defs/Identifier"
+      kind:
+        description: >
+          Panel position. `central` is the main panel (one per
+          editor; egui requires it last in the frame builder).
+          `side_left` / `side_right` are vertical strips on the
+          edges. `top` / `bottom` are horizontal strips. Codegen
+          emits `egui::CentralPanel`, `egui::SidePanel::left/right`,
+          or `egui::TopBottomPanel::top/bottom` accordingly.
+        type: string
+        enum: [central, side_left, side_right, top, bottom]
+      width:
+        description: >
+          Optional initial width (px) for `side_left` / `side_right`
+          panels. Hosts may resize when `[egui].resizable = true`;
+          codegen uses this as the SidePanel's `default_width`. Has
+          no effect on `central` / `top` / `bottom` panels (their
+          widths are determined by the editor frame).
+        type: integer
+        minimum: 1
+      height:
+        description: >
+          Optional initial height (px) for `top` / `bottom` panels.
+          Codegen uses this as the TopBottomPanel's `default_height`.
+          Has no effect on `central` / `side_left` / `side_right`
+          panels.
+        type: integer
+        minimum: 1
+
+  Region:
+    description: >
+      A region inside a panel. Regions group widgets by purpose; the
+      `purpose` enum drives the codegen scaffold pattern (see Phase
+      15-D codegen prose).
+    type: object
+    additionalProperties: false
+    required: [id, panel, purpose]
+    properties:
+      id:
+        $ref: "#/$defs/Identifier"
+      panel:
+        description: >
+          Id of the panel this region lives inside. Must reference a
+          declared `[[egui.panels]]` id; the
+          `region_in_panel` reduction relation surfaces unresolved
+          references at validate time.
+        $ref: "#/$defs/Identifier"
+      purpose:
+        description: |
+          Region role. Drives codegen scaffold per the table:
+
+            parameter_controls — region holds widgets bound to plugin
+                                 parameters via the `egui+nih-plug`
+                                 bridge's `parameter_widgets[]`.
+                                 Codegen emits a placeholder loop the
+                                 bridge fills in.
+            metering           — region reads from `Atomic*` cells
+                                 published by the audio thread.
+                                 Codegen emits the read-side
+                                 boilerplate; user fills in the
+                                 visualization (level meter, LED, etc.).
+            preset_selector    — region renders a preset picker
+                                 (combo box + prev/next buttons +
+                                 save/load). Codegen emits the
+                                 standard pattern.
+            free_form          — region body is hand-authored.
+                                 Codegen emits a TODO marker and
+                                 leaves the body open.
+            label_block        — region renders static text (section
+                                 headers, instructions). Codegen
+                                 emits `ui.label(...)` calls.
+        type: string
+        enum:
+          - parameter_controls
+          - metering
+          - preset_selector
+          - free_form
+          - label_block
+      layout:
+        description: >
+          Optional layout direction inside the region. `grid` arranges
+          children in a grid (requires `columns`); `vertical` stacks
+          children top-to-bottom; `horizontal` arranges
+          left-to-right. Defaults to `vertical`. Codegen wraps the
+          region body in `egui::Grid::new(id).num_columns(N)` for
+          `grid`, `ui.vertical(|ui| {...})` for vertical, and
+          `ui.horizontal(|ui| {...})` for horizontal.
+        type: string
+        enum: [grid, vertical, horizontal]
+      columns:
+        description: >
+          Column count when `layout = "grid"`. Required for grid
+          layouts; ignored otherwise (codegen emits a warning if set
+          on non-grid layouts).
+        type: integer
+        minimum: 1

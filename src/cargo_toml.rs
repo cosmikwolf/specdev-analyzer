@@ -107,6 +107,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     match profile {
         "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()),
         "library-api" => render_library(layout, workspace_ctx.as_ref()),
+        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref()),
         "rust-workspace" => Err(anyhow!(
             "spec.toml at {} declares profile `rust-workspace` but has no \
              [workspace] table; add `[workspace]` with `[[workspace.members]]` \
@@ -115,7 +116,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         )),
         other => Err(anyhow!(
             "cargo-toml emission for profile `{other}` is not implemented; \
-             supported: firmware-layered, library-api, rust-workspace",
+             supported: firmware-layered, library-api, audio-plugin, rust-workspace",
         )),
     }
 }
@@ -376,6 +377,115 @@ fn render_library(
                 continue;
             }
             let arr = deps
+                .iter()
+                .map(|d| quote_str(d))
+                .collect::<Vec<_>>()
+                .join(", ");
+            text.push_str(&format!("{} = [{}]\n", name, arr));
+        }
+        text.push('\n');
+    }
+
+    write_dependencies_section(&mut text, &deps);
+
+    Ok(RenderedCargoToml { text, warnings })
+}
+
+// ---------------------------------------------------------------------------
+// audio-plugin
+// ---------------------------------------------------------------------------
+
+/// Render Cargo.toml for an `audio-plugin` profile project.
+///
+/// Per Phase 15-A spike (D45): the plugin crate is always a `cdylib`
+/// (the C-ABI surface VST3 and CLAP both require). When
+/// `[plugin].formats` contains `"standalone"`, also emit a `[[bin]]`
+/// target `name = "<project-name>-standalone"`, `path =
+/// "src/bin/standalone.rs"` — the bin links the same lib so the
+/// `Plugin` impl is reused.
+///
+/// Architecture-level deps come from `[runtime].panic_handler`-style
+/// concrete crates is out of scope for v1 (the panic_handler is a
+/// closed-enum strategy, not a CrateReference). Plugin-side cargo
+/// deps live entirely in `[[external_deps]]` (architecture-wide) +
+/// per-module `external_deps[]`.
+///
+/// `[[features]]` parity with library-api is honored: when the
+/// architecture declares features, emit a `[features]` section with
+/// the synthetic `default = [...]` line.
+fn render_audio_plugin(
+    layout: &LayoutContext,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<RenderedCargoToml> {
+    let project = &layout.spec.project;
+    let arch = read_architecture(&layout.architecture_toml_path)?;
+
+    let parsed_features = parse_library_features(arch.get("features"))?;
+
+    // `[plugin].formats` drives the bin emission decision.
+    let plugin_table = arch.get("plugin").and_then(toml::Value::as_table);
+    let formats: Vec<String> = plugin_table
+        .and_then(|p| p.get("formats"))
+        .and_then(toml::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let emit_standalone_bin = formats.iter().any(|f| f == "standalone");
+
+    let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Architecture-level [[external_deps]] (unstructured open list).
+    for c in extract_crate_ref_array(arch.get("external_deps"))? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+    // Per-module external_deps[].
+    for c in collect_module_external_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+
+    let mut text = String::new();
+    write_package_section(&mut text, project, /* rust_version */ None, workspace);
+    text.push('\n');
+
+    // [lib] always cdylib for audio-plugin (D45). Plugin shells live in
+    // src/lib.rs and run nih_export_*! macros that target the C ABI.
+    text.push_str("[lib]\n");
+    text.push_str("crate-type = [\"cdylib\"]\n");
+    text.push('\n');
+
+    // [[bin]] for the standalone format. Name is derived from
+    // project.name (the crate name) — display-name from
+    // [plugin].name may contain spaces / punctuation cargo rejects.
+    if emit_standalone_bin {
+        text.push_str("[[bin]]\n");
+        text.push_str(&format!(
+            "name = {}\n",
+            quote_str(&format!("{}-standalone", project.name))
+        ));
+        text.push_str("path = \"src/bin/standalone.rs\"\n");
+        text.push('\n');
+    }
+
+    // [features] — same synthesis as library-api (always-emit `default
+    // = [...]` line when [features] is present).
+    if !parsed_features.features.is_empty() {
+        text.push_str("[features]\n");
+        let default_arr = parsed_features
+            .defaults
+            .iter()
+            .map(|d| quote_str(d))
+            .collect::<Vec<_>>()
+            .join(", ");
+        text.push_str(&format!("default = [{}]\n", default_arr));
+        for (name, feature_deps) in &parsed_features.features {
+            if name == "default" {
+                continue;
+            }
+            let arr = feature_deps
                 .iter()
                 .map(|d| quote_str(d))
                 .collect::<Vec<_>>()

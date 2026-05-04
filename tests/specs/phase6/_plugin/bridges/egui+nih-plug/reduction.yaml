@@ -1,0 +1,47 @@
+metaschema_version: "v1"
+
+# egui+nih-plug bridge reduction. Each `parameter_widgets[]` binding
+# materializes a `widget_binds_parameter` relation from the egui Region
+# entity to the nih-plug Parameter entity it renders.
+#
+# The relation extends `depends_on` (a canonical relation) so layer-
+# dependency / acyclic / reachability primitives can run against bridge-
+# contributed wiring with zero domain knowledge.
+#
+# REDUCE_UNRESOLVED handles the load-bearing referential checks at
+# validate time:
+#   * NIH-EGUI-001 equivalent: parameter must resolve to a Parameter
+#     entity on the same module. The reducer surfaces missing references
+#     as `unresolved Parameter endpoint <id>`.
+#   * NIH-EGUI-002 equivalent: region must resolve to a Region entity
+#     on the same module. Surfaces as `unresolved Region endpoint <id>`.
+#
+# NIH-EGUI-003..009 (region-purpose constraint + per-kind parameter-type
+# constraints) are documented in the bridge's codegen prose as discipline
+# rules. Promotion to graph-check primitives is a bounded follow-up per
+# D50: trigger is the first dogfood that lands a misbinding the codegen
+# prose discipline doesn't catch. Until then, the bridge's emission code
+# rejects mismatched `widget_kind` ↔ `parameter.kind` pairs at codegen
+# time with a clear error.
+#
+# Bridges declare relations only — the metaschema rejects bridge-
+# qualified entity kinds. Both endpoint kinds (egui.Region and nih-plug.
+# Parameter) live in their respective blocks; this bridge just wires
+# them.
+
+entities: []
+
+relations:
+  - kind: widget_binds_parameter
+    extends: depends_on
+    from_kind: egui.Region
+    to_kind: nih-plug.Parameter
+    from_spec: "specs/modules/*.toml"
+    for_each: 'bindings."egui+nih-plug".parameter_widgets[]'
+    endpoints:
+      from: "${parent.name}.${.region}"
+      to:   "${parent.name}.${.parameter}"
+    attrs:
+      widget_kind: ".widget_kind"
+      range_hint:  ".range_hint"
+      label:       ".label"

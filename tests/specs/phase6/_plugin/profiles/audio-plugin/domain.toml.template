@@ -1,0 +1,107 @@
+# audio-plugin project graph checks.
+#
+# Each [[project.graph_checks]] runs after validate parses module +
+# architecture + requirements TOMLs and the reduction materializes the
+# universal (entities, relations) graph. Severity per rule is configured
+# in [validation.rules].
+
+[domain]
+name = "{{project_name}}"
+
+[validation]
+[validation.rules]
+unique_module_names              = "error"
+modules_acyclic                  = "error"
+layer_dependency                 = "error"
+feature_unique_names             = "error"
+feature_dependencies_resolve     = "error"
+module_feature_gates_resolve     = "error"
+requirement_ids_unique           = "error"
+requirement_satisfies_resolves   = "warning"
+module_satisfies_resolves        = "warning"
+requirements_have_satisfiers     = "warning"
+
+# Module names must be unique across the plugin.
+[[project.graph_checks]]
+kind = "unique"
+rule = "unique_module_names"
+scope = "Module"
+field = "entities[].name"
+
+# Module dependency graph must be acyclic.
+[[project.graph_checks]]
+kind = "acyclic"
+rule = "modules_acyclic"
+scope = "depends_on"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+
+# Layered architecture: host_interface → plugin_shell → engine →
+# dsp_node. Same-layer dependencies allowed; upward forbidden. The
+# `host_interface` value is reserved for nih-plug-provided types; user
+# specs typically don't author modules at that layer (see profile
+# README). The layer ordering still includes it as the top edge so the
+# check has a complete vocabulary.
+[[project.graph_checks]]
+kind = "layer_dependency"
+rule = "layer_dependency"
+entity_scope = "Module"
+relation_scope = "depends_on"
+layer_field = "attrs.layer"
+layer_ordering = ["host_interface", "plugin_shell", "engine", "dsp_node"]
+
+# Cargo feature names must be unique.
+[[project.graph_checks]]
+kind = "unique"
+rule = "feature_unique_names"
+scope = "Feature"
+field = "entities[].name"
+
+# Each feature's depends_on must reference declared features.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "feature_dependencies_resolve"
+scope = "feature_depends_on"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Every Module.feature_gates entry must name a declared feature.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "module_feature_gates_resolve"
+scope = "module_feature_gate"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Requirement ids must be unique.
+[[project.graph_checks]]
+kind = "unique"
+rule = "requirement_ids_unique"
+scope = "Requirement"
+field = "entities[].name"
+
+# Requirement.satisfies entries must reference existing requirement ids.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "requirement_satisfies_resolves"
+scope = "satisfies"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Module.satisfies entries must reference existing requirement ids.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "module_satisfies_resolves"
+scope = "module_satisfies"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Every Requirement with `nature = "module"` (the default) must be
+# satisfied by at least one module — orphan requirements warn (F-006).
+# Set `nature = "architecture" | "build" | "test"` on a requirement to
+# exempt it from this check.
+[[project.graph_checks]]
+kind = "requirements_have_satisfiers"
+rule = "requirements_have_satisfiers"
+entity_scope = "Requirement"
+relation_scope = "module_satisfies"

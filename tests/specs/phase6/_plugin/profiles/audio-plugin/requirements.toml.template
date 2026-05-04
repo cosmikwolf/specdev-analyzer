@@ -1,0 +1,56 @@
+# Project requirements.
+#
+# Two top-level arrays:
+#   [[source]]      — external documents the requirements derive from
+#                     (VST3/CLAP specs, user stories, design docs).
+#                     Sources are referenced by their `id` from each
+#                     [[requirement]] entry.
+#   [[requirement]] — the requirements themselves.
+#
+# Modules reference requirements via their top-level `satisfies = [...]`
+# array using requirement ids. The analyzer's `module_satisfies_resolves`
+# and `requirement_satisfies_resolves` graph checks verify references
+# resolve. `requirements_have_satisfiers` warns on any
+# `nature = "module"` requirement (the default) with no satisfying
+# module.
+#
+# Requirement ids follow the pattern `PREFIX-(AREA-)*NUMBER` (e.g.
+# REQ-AUDIO-001, REQ-UI-014). Use uppercase letters/digits and hyphens.
+#
+# `nature` enum (default `module`):
+#   module        — a module is expected to satisfy this requirement.
+#   architecture  — captured by an architecture-level decision (e.g.
+#                   `[plugin].formats`, `[audio].default_channel_layout`).
+#   build         — captured by build configuration (Cargo features,
+#                   target).
+#   test          — captured by a test suite.
+#
+# Source kinds:
+#   protocol   — external technical spec (VST3, CLAP, MIDI 2.0)
+#   user       — stakeholder/user requirements
+#   regulatory — compliance or certification
+#   derived    — internal decisions with no external document
+#
+# Delete the EXAMPLE entries below once your project has real
+# requirements.
+
+# EXAMPLE: external source document.
+# [[source]]
+# id = "clap-spec"
+# kind = "protocol"
+# title = "CLAP — CLever Audio Plug-in API"
+# version = "1.2.2"
+# url = "https://github.com/free-audio/clap"
+
+# EXAMPLE: a module-level requirement.
+# [[requirement]]
+# id = "REQ-AUDIO-001"
+# text = "The plugin shall not allocate on the audio thread."
+# verified_by = ["MyPlugin.process"]
+
+# EXAMPLE: an architecture-level requirement (exempt from
+# requirements_have_satisfiers).
+# [[requirement]]
+# id = "REQ-FORMAT-001"
+# text = "The plugin shall ship as VST3 and CLAP."
+# nature = "architecture"
