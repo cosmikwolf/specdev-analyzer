@@ -58,12 +58,38 @@ fn parse(selector: &str) -> Vec<Step> {
     let selector = selector.strip_prefix('$').unwrap_or(selector);
     let selector = selector.strip_prefix('.').unwrap_or(selector);
 
+    // Split on `.` but respect double-quoted segments (used for keys with
+    // non-identifier characters, e.g. bridge names like
+    // `bindings."egui+nih-plug".parameter_widgets[]`). Quoted-string keys
+    // are stripped of their surrounding quotes before being used as JSON
+    // object keys; the quotes never reach the JSON-key match.
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in selector.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            '.' if !in_quotes => {
+                if !current.is_empty() {
+                    segments.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
     let mut steps = Vec::new();
-    for segment in selector.split('.') {
+    for segment in segments {
         if segment.is_empty() {
             continue;
         }
-        parse_segment(segment, &mut steps);
+        parse_segment(&segment, &mut steps);
     }
     steps
 }
@@ -71,13 +97,20 @@ fn parse(selector: &str) -> Vec<Step> {
 fn parse_segment(segment: &str, out: &mut Vec<Step>) {
     let bytes = segment.as_bytes();
 
-    // Leading identifier.
+    // Leading identifier (or quoted-key — strip surrounding `"` before
+    // emitting the Key step so the JSON-key match sees the raw string).
     let mut head_end = 0;
     while head_end < bytes.len() && bytes[head_end] != b'[' {
         head_end += 1;
     }
     if head_end > 0 {
-        out.push(Step::Key(segment[..head_end].to_string()));
+        let head = &segment[..head_end];
+        let key = if head.len() >= 2 && head.starts_with('"') && head.ends_with('"') {
+            head[1..head.len() - 1].to_string()
+        } else {
+            head.to_string()
+        };
+        out.push(Step::Key(key));
     }
     let mut i = head_end;
 

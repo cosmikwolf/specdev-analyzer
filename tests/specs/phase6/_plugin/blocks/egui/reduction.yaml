@@ -1,0 +1,51 @@
+metaschema_version: "v1"
+
+# egui block reduction. Two entity kinds — Panel and Region — both
+# extending Module. One intra-block relation: `region_in_panel`
+# (Region → Panel) materialized from each region's `panel` field.
+# This is the FIRST block in this arc to declare an intra-block
+# relation (embassy / stm32h5-rs / nih-plug declared none); the
+# precedent is captured in 18-authoring-recipes.md's block decision-
+# point checklist.
+#
+# The relation enables the existing `reference_exists` /
+# REDUCE_UNRESOLVED pre-graph-check machinery to flag a region that
+# names a non-existent panel. No new graph-check primitive is needed —
+# the unresolved-endpoint detector handles it.
+#
+# Cross-block relations (e.g. Region → nih-plug.Parameter for
+# parameter→widget bindings) live in the `egui+nih-plug` bridge per
+# leg-3 cleanliness, NOT here.
+
+entities:
+  - kind: Panel
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "egui.panels[]"
+    name: "${parent.name}.${.id}"
+    attrs:
+      kind:   ".kind"
+      width:  ".width"
+      height: ".height"
+
+  - kind: Region
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "egui.regions[]"
+    name: "${parent.name}.${.id}"
+    attrs:
+      panel:   ".panel"
+      purpose: ".purpose"
+      layout:  ".layout"
+      columns: ".columns"
+
+relations:
+  - kind: region_in_panel
+    extends: depends_on
+    from_kind: Region
+    to_kind: Panel
+    from_spec: "specs/modules/*.toml"
+    for_each: "egui.regions[]"
+    endpoints:
+      from: "${parent.name}.${.id}"
+      to:   "${parent.name}.${.panel}"

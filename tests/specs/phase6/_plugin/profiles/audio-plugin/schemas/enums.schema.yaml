@@ -1,0 +1,126 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/audio-plugin/enums.schema.yaml"
+title: "audio-plugin enums (v1)"
+description: >
+  Shared closed vocabularies used across the audio-plugin profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+  Per Phase 15-A spike (D44–D49): the layer enum carries four tiers,
+  with `host_interface` reserved for nih-plug-provided types (no user
+  modules at this layer in v1). PluginFormat / PluginCategory are the
+  closed enums driving codegen-time per-format constant emission (D46).
+
+$defs:
+  LayerKind:
+    description: >
+      Architectural layer a module belongs to. Dependencies flow downward
+      per domain.toml's layer_dependency rule:
+      host_interface → plugin_shell → engine → dsp_node.
+      `host_interface` is reserved for the host-API surface (nih-plug
+      provided types like `ProcessContext`, `Buffer`). User specs do not
+      author host_interface modules in v1; the enum value exists so the
+      layer ordering has a top edge.
+    type: string
+    enum:
+      - host_interface
+      - plugin_shell
+      - engine
+      - dsp_node
+
+  PluginFormat:
+    description: >
+      Plugin distribution format. Drives which `nih_export_*!` macro
+      emits and which target-type the plugin crate's Cargo.toml
+      declares (D45). At least one format must be selected. AU is out
+      of scope for v1 (separate API surface in nih-plug).
+    type: string
+    enum:
+      - vst3
+      - clap
+      - standalone
+
+  PluginCategory:
+    description: >
+      Plugin category. Maps to per-format constants via codegen prose
+      (D46): VST3_CATEGORIES (a `&str`) and CLAP_FEATURES (a slice of
+      `ClapFeature`). Standalone is uncategorized.
+    type: string
+    enum:
+      - instrument
+      - fx
+      - midi-fx
+      - analyzer
+
+  ChannelLayout:
+    description: >
+      Default channel layout for the plugin's main audio bus. Sidechains
+      and aux buses use `[[audio.aux_inputs]]` / `[[audio.aux_outputs]]`
+      with their own channel_count.
+    type: string
+    enum:
+      - mono
+      - stereo
+      - quad
+      - five-one
+      - seven-one
+
+  PanicHandlerKind:
+    description: >
+      Panic strategy for the plugin cdylib. VST3 requires `abort` (the
+      host catches the abort and unloads the plugin); `unwind` is
+      permitted for standalone-only builds where the binary owns its
+      own panic recovery.
+    type: string
+    enum:
+      - abort
+      - unwind
+
+  Identifier:
+    description: snake_case or PascalCase identifier usable in Rust source.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier, or a
+      package-qualified `<package>::<Module>` form for multi-package
+      projects.
+    type: string
+    pattern: "^([a-z][a-z0-9_]*::)?[A-Za-z_][A-Za-z0-9_]*$"
+
+  FeatureName:
+    description: >
+      Cargo feature name. Lowercase, digits, hyphens, underscores. Must
+      start with a letter or digit. Matches cargo's accepted feature-
+      name grammar.
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_-]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-AUDIO-001, ZFM-001,
+      RFC-7-12). The leading prefix is open: projects can adopt their
+      published requirement scheme without rename ceremony. Prefix and
+      AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+
+  PluginVersion:
+    description: >
+      Plugin display version. Strict three-part numeric SemVer
+      (major.minor.patch). No pre-release / build-metadata suffixes in
+      v1 — VST3 and CLAP both expect a clean numeric triple. Plugin
+      version is independent of the crate's Cargo.toml version (the
+      latter is `[project].version`).
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  EmailAddress:
+    description: >
+      Loose email pattern — RFC 5322 is wider than the schema
+      enforces. Sufficient for the plugin-vendor support address that
+      hosts display in the plugin info panel.
+    type: string
+    pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"

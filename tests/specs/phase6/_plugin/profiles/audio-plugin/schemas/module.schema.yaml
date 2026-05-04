@@ -1,0 +1,109 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/audio-plugin/module.schema.yaml"
+title: "audio-plugin module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml` for an
+  audio-plugin project. One module per file; filename should match the
+  `name` field. Each module declares its `layer` (per the four-tier
+  audio-plugin LayerKind: host_interface → plugin_shell → engine →
+  dsp_node); the `layer_dependency` graph check enforces downward-only
+  dependencies.
+
+  Per Phase 15-A spike (§1.4): module schema is fresh-designed (not
+  extended from library-api). The plugin shell is a cdylib whose
+  contract is the host's C ABI (exposed via `nih_export_*!` macros) —
+  Rust-level re-exports don't reach the host, so no `re_exports[]`
+  field. `feature_gates[]` is included because Cargo features are
+  build-time toggles relevant to plugin authoring (e.g., conditional
+  MIDI handling, SIMD-vs-scalar DSP backends).
+
+  `bindings` is open in v1; Phase 15-E lands the `egui+nih-plug`
+  canonical bridge, which contributes
+  `bindings."egui+nih-plug".parameter_widgets[]`. Other bridges may
+  add further `bindings.<a>+<b>` entries.
+
+  `[nih_plug]` and `[egui]` block tables are contributed via inlined
+  block schemas (Phase 15-C / 15-D); the `unevaluatedProperties: false`
+  setting allows those keys through the aggregator's `allOf` slot.
+type: object
+unevaluatedProperties: false
+required: [name, layer]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  layer:
+    $ref: "enums.schema.yaml#/$defs/LayerKind"
+  description:
+    type: string
+  depends_on:
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  external_deps:
+    description: |
+      External crate dependencies this module needs (Phase 6.7+
+      CrateReference shape). Each entry becomes a Cargo.toml
+      `[dependencies]` line at gen time; the union with
+      architecture-level `[[external_deps]]` determines the project's
+      full dep set. Use this for module-scoped crates that aren't
+      project-wide infrastructure (e.g., a DSP module pulling in
+      `biquad` for filter primitives).
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
+  feature_gates:
+    description: >
+      Cargo features that conditionally include this module. The module
+      compiles only when at least one of the listed features is active
+      (treated as `#[cfg(any(feature = "f1", feature = "f2"))]`). An
+      empty list (or omitted field) means the module is unconditional.
+      `module_feature_gates_resolve` verifies every name is declared in
+      `architecture.toml`'s `[[features]]` table. Typical audio-plugin
+      use: optional MIDI handling, SIMD vs scalar DSP backends,
+      debug-only RTT logging.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
+    uniqueItems: true
+  satisfies:
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Phase 15-E's
+      `egui+nih-plug` bridge adds
+      `bindings."egui+nih-plug".parameter_widgets[]`. Open in v1.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Top-level Rust constructs that carry spec significance — items[]
+      entry per `pub` function, struct, enum, trait, impl, type, const,
+      static, re-export, or macro contributing to the module's
+      contractual surface. Sparseness rule (enforced by the language
+      schema): every item except `kind = "re_export"` must carry
+      `satisfies` (≥1 requirement id). Phase 14 introduces this field;
+      consumed by Phase 13's skeleton mode emitter (note: skeleton mode
+      is library-api-only per D49 — audio-plugin modules do not get
+      `unimplemented!()` stubs because panicking on the audio thread
+      would abort-crash the host) and by Phase 14's three-stage
+      agentic sync (`items diff` / `items propose` / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt (Phase 13, doc 16). Paths are spec-root-relative
+      (directory containing `spec.toml`). Validate-time checks ensure
+      each file exists, is readable, and is valid UTF-8 (`CONTEXT-001`
+      / `CONTEXT-002` / `CONTEXT-003`). Order is preserved at
+      prompt-assembly time; files inline in declared order between
+      architecture.toml and the module spec. Globs and section
+      anchors are bounded deferrals (doc 16 §5).
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true

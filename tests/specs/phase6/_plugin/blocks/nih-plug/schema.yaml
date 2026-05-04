@@ -1,0 +1,282 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/nih-plug.v1"
+title: "nih-plug block (v1)"
+description: >
+  Schema fragment contributed by the `nih-plug` block. Adds a namespaced
+  `[nih_plug]` table to `Module` carrying the audio-plugin shell's
+  declarative surface: parameters, audio ports, MIDI configuration, and
+  process-callback metadata.
+
+  v1 covers the shapes a typical VST3 / CLAP / standalone plugin needs.
+  Bounded follow-ups (per Phase 15-A spike §7): wider `widget_kind`
+  coverage moves into the `egui+nih-plug` bridge as needed; per-platform
+  realtime audit (no-alloc on hot path) is deferred until 15-G dogfood
+  evidence demands it; sysex / background-task wiring is deferred until
+  a real plugin needs it.
+
+  This block targets the [nih-plug](https://github.com/robbert-vdh/nih-plug)
+  framework. The `[nih_plug]` table is expected only on `plugin_shell`-
+  layer modules; a single plugin crate carries one such module in v1
+  (multi-shell deferred). The block is silent on UI — pair with the
+  `egui` block + `egui+nih-plug` bridge for parameter→widget rendering.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  nih_plug:
+    type: object
+    additionalProperties: false
+    properties:
+      parameters:
+        description: >
+          Plugin parameters surfaced to the host. Each becomes a
+          `#[id = "<id>"] pub <name>: FloatParam | IntParam | BoolParam |
+          EnumParam<E>` entry on the `#[derive(Params)]` struct.
+        type: array
+        items: { $ref: "#/$defs/Parameter" }
+      audio_ports:
+        description: >
+          Audio-bus declarations. Drives the plugin's `AUDIO_IO_LAYOUTS`
+          constant. v1 expects one main input + one main output for
+          most plugins; aux ports cover sidechains / multi-out.
+        type: array
+        items: { $ref: "#/$defs/AudioPort" }
+      midi:
+        description: >
+          MIDI configuration singleton. Drives the plugin's
+          `MIDI_INPUT` / `MIDI_OUTPUT` constants and the
+          `[NoteEvent]` event-stream availability inside `process()`.
+          Omit when the plugin doesn't handle MIDI.
+        $ref: "#/$defs/MidiConfig"
+      process:
+        description: >
+          Process-callback metadata singleton. Captures realtime mode
+          and optional block-size bounds. Omit to inherit nih-plug's
+          defaults (realtime mode, host-decided block sizes).
+        $ref: "#/$defs/ProcessConfig"
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ParameterId:
+    description: >
+      Stable parameter id surfaced to the host. snake_case; becomes the
+      `#[id = "<id>"]` attribute on the parameter field. Hosts persist
+      this id in projects, so renaming is a breaking change.
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+
+  Smoother:
+    description: >
+      Parameter smoothing curve. nih-plug applies the smoother to
+      automation and host-set values; `linear` is a simple ramp,
+      `logarithmic` / `exponential` use the `FloatRange::Skewed`
+      family for perceptually-uniform parameter movement.
+    type: string
+    enum:
+      - none
+      - linear
+      - logarithmic
+      - exponential
+
+  Parameter:
+    description: >
+      One plugin parameter. Discriminated union on `kind`:
+      `float` / `int` / `bool` / `enum`. Each variant fixes the type of
+      `min` / `max` / `default` and the set of allowed extras.
+    oneOf:
+      - $ref: "#/$defs/FloatParameter"
+      - $ref: "#/$defs/IntParameter"
+      - $ref: "#/$defs/BoolParameter"
+      - $ref: "#/$defs/EnumParameter"
+
+  FloatParameter:
+    type: object
+    additionalProperties: false
+    required: [id, name, kind, min, max, default]
+    properties:
+      id:    { $ref: "#/$defs/ParameterId" }
+      name:  { type: string, minLength: 1 }
+      kind:  { const: "float" }
+      min:     { type: number }
+      max:     { type: number }
+      default: { type: number }
+      unit:
+        description: >
+          Free-string display unit (e.g. "dB", "Hz", "%"). Optional;
+          nih-plug surfaces it in the host's parameter list.
+        type: string
+      smoother:
+        description: >
+          Smoother curve. Defaults to `linear`. `logarithmic` /
+          `exponential` map to `FloatRange::Skewed` with appropriate
+          factors at codegen time.
+        $ref: "#/$defs/Smoother"
+        default: linear
+      smoother_ms:
+        description: >
+          Smoother time constant in milliseconds. Defaults to 50.
+          Codegen attaches via `.with_smoother(SmoothingStyle::*<ms>)`.
+        type: integer
+        minimum: 0
+        default: 50
+      poly_modulation_id:
+        description: >
+          Optional polyphonic-modulation id (CLAP). When set, the
+          parameter participates in CLAP's per-voice modulation; ids
+          must be unique across the parameter set.
+        type: integer
+        minimum: 0
+
+  IntParameter:
+    type: object
+    additionalProperties: false
+    required: [id, name, kind, min, max, default]
+    properties:
+      id:      { $ref: "#/$defs/ParameterId" }
+      name:    { type: string, minLength: 1 }
+      kind:    { const: "int" }
+      min:     { type: integer }
+      max:     { type: integer }
+      default: { type: integer }
+      unit:    { type: string }
+
+  BoolParameter:
+    type: object
+    additionalProperties: false
+    required: [id, name, kind, default]
+    properties:
+      id:      { $ref: "#/$defs/ParameterId" }
+      name:    { type: string, minLength: 1 }
+      kind:    { const: "bool" }
+      default: { type: boolean }
+
+  EnumParameter:
+    description: >
+      Enum parameter. `variants[]` lists the closed set of values
+      surfaced to the host; each maps to a Rust enum variant at codegen
+      time. `default` must be one of the listed variants — codegen-time
+      check (not enforced by the schema's literal pattern, since
+      variants are author-provided).
+    type: object
+    additionalProperties: false
+    required: [id, name, kind, variants, default]
+    properties:
+      id:   { $ref: "#/$defs/ParameterId" }
+      name: { type: string, minLength: 1 }
+      kind: { const: "enum" }
+      variants:
+        type: array
+        items: { type: string, minLength: 1 }
+        minItems: 2
+        uniqueItems: true
+      default:
+        type: string
+        minLength: 1
+
+  AudioPort:
+    description: >
+      One audio bus on the plugin. Drives `AudioIOLayout` field
+      population at codegen time.
+    type: object
+    additionalProperties: false
+    required: [name, direction, channel_count]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      direction:
+        description: >
+          Bus direction. nih-plug models input / output buses
+          separately; sidechains are typically `kind = "sidechain"`
+          + `direction = "input"`.
+        type: string
+        enum: [input, output]
+      channel_count:
+        description: >
+          Channel count for this bus. Common values: 1 (mono),
+          2 (stereo), 4 (quad), 6 (5.1), 8 (7.1).
+        type: integer
+        minimum: 1
+        maximum: 32
+      kind:
+        description: >
+          Bus role. `main` = the plugin's primary I/O (one in + one
+          out for a typical effect, one out for an instrument). `aux`
+          = an additional bus for multi-out designs. `sidechain` = a
+          key/control input that the host routes separately.
+        type: string
+        enum: [main, aux, sidechain]
+        default: main
+
+  MidiConfig:
+    description: >
+      MIDI handling singleton. nih-plug's `MIDI_INPUT` /
+      `MIDI_OUTPUT` constants come from `input` / `output`; the
+      event-shape constants (note + CC stream availability) come
+      from `note_events` / `cc_events`.
+    type: object
+    additionalProperties: false
+    properties:
+      input:
+        description: >
+          When true, the plugin declares MIDI_INPUT = MidiConfig::Basic
+          (or MidiAndMpe / MidiSysEx as the plugin extends; basic in v1).
+        type: boolean
+        default: false
+      output:
+        description: >
+          When true, the plugin declares MIDI_OUTPUT = MidiConfig::Basic.
+        type: boolean
+        default: false
+      note_events:
+        description: >
+          When true, the plugin emits / consumes note-on / note-off /
+          velocity events in the `process()` event stream.
+        type: boolean
+        default: false
+      cc_events:
+        description: >
+          When true, the plugin emits / consumes CC events in the
+          process event stream.
+        type: boolean
+        default: false
+
+  ProcessConfig:
+    description: >
+      Process-callback configuration singleton. Captures realtime
+      contract + optional block-size bounds. Block-size bounds are
+      hints; hosts may still hand the plugin smaller buffers (e.g.
+      cross-tempo-event chunks).
+    type: object
+    additionalProperties: false
+    properties:
+      mode:
+        description: >
+          `realtime` = the plugin's `process()` runs on the host's
+          audio thread under realtime constraints (no alloc, no lock,
+          no log per the codegen prose). `offline_capable` = the
+          plugin also supports nih-plug's offline-rendering mode
+          (the same `process()` runs without the realtime contract).
+        type: string
+        enum: [realtime, offline_capable]
+        default: realtime
+      block_size_min:
+        description: >
+          Optional minimum block size hint. Hosts may pass smaller
+          blocks during transport-event boundaries; codegen does NOT
+          assume this floor on the hot path.
+        type: integer
+        minimum: 1
+      block_size_max:
+        description: >
+          Optional maximum block size hint. Drives any preallocated
+          working buffers (e.g. FFT windows, oversampling buffers).
+          When set, codegen guidance recommends preallocating for
+          this size at `initialize()` time.
+        type: integer
+        minimum: 1

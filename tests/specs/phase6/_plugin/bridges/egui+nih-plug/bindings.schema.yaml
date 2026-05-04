@@ -1,0 +1,150 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/bridges/egui+nih-plug.v1"
+title: "egui+nih-plug bridge (v1)"
+description: |
+  Schema fragment contributed by the `egui+nih-plug` bridge. Adds shape
+  under `bindings."egui+nih-plug"` on `Module`, declaring how nih-plug
+  parameters are rendered as egui widgets inside topology regions
+  declared by the `egui` block.
+
+  This bridge is the architectural validation moment for the bridge
+  primitive (per spike §3.2): unlike `embassy+stm32h5-rs` which is
+  closer to a wiring stub, this bridge carries a **load-bearing
+  semantic role** — parameter↔widget bindings are the bridge's
+  responsibility, not either source block's.
+
+  v1 ships eight `widget_kind` values per D50 covering ~95% of typical
+  synth/effect plugin UIs (1:1 parameter ↔ widget bindings). Multi-
+  parameter widgets (xy_pad, envelope_editor) and audio-thread-state
+  widgets (led, meter, graph_display) stay deferred — they don't fit
+  the 1:1 binding shape; today's escape hatch is `purpose = "metering"`
+  or `purpose = "free_form"` regions in the egui block with hand-
+  authored egui code.
+
+  Co-residency requirement (v1): bindings live on a single module that
+  has both `[nih_plug]` and `[egui]` tables. Cross-module bindings
+  (engine module's parameter rendered in shell module's editor) are
+  bounded-deferred. Same-module co-residency keeps the validate-time
+  reference checks unambiguous.
+
+  This schema is self-contained: identifier patterns are inlined.
+type: object
+properties:
+  bindings:
+    type: object
+    properties:
+      "egui+nih-plug":
+        type: object
+        additionalProperties: false
+        properties:
+          parameter_widgets:
+            description: |
+              Parameter ↔ widget bindings. Each entry says "render this
+              parameter as this widget kind inside this region." Drives
+              codegen of the per-frame widget calls inside
+              `purpose = "parameter_controls"` regions (the egui
+              block's prose leaves a placeholder; this bridge's prose
+              composes the per-binding widget calls).
+
+              Empty (or omitted) means no parameter→widget bindings on
+              this module — the blocks coexist independently. Useful
+              for an `[egui]`-only module with all `purpose =
+              "free_form"` regions where rendering is hand-authored.
+            type: array
+            items: { $ref: "#/$defs/ParameterWidget" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ParameterId:
+    description: snake_case parameter id (matches nih-plug's ParameterId pattern).
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+
+  WidgetKind:
+    description: |
+      Closed enum of single-parameter widget kinds (D50). All eight
+      bind 1:1 with a parameter and render inside a
+      `purpose = "parameter_controls"` region.
+
+      Per-kind type constraints (validate-time when promoted to
+      graph-check primitives; v1 documents them as discipline rules
+      in codegen prose):
+
+        knob          — kind = float | int (rotary control)
+        slider        — kind = float | int (linear slider)
+        toggle        — kind = bool        (sticky on/off)
+        button        — kind = bool        (momentary trigger)
+        dropdown      — kind = enum        (collapsed enum picker)
+        radio_group   — kind = enum        (expanded enum picker)
+        numeric_field — kind = float | int (typed-text entry)
+        value_display — kind = any         (read-only formatted readout)
+    type: string
+    enum:
+      - knob
+      - slider
+      - toggle
+      - button
+      - dropdown
+      - radio_group
+      - numeric_field
+      - value_display
+
+  RangeHint:
+    description: |
+      Optional hint for value display formatting on continuous-valued
+      widgets. Defaults to the parameter's smoother curve (if set) or
+      `linear`.
+    type: string
+    enum: [linear, logarithmic, exponential]
+
+  LabelPosition:
+    description: |
+      Where to place the parameter's display label relative to the
+      widget. `none` suppresses the label entirely (useful when a
+      surrounding label_block region carries it).
+    type: string
+    enum: [above, below, left, right, none]
+
+  ParameterWidget:
+    type: object
+    additionalProperties: false
+    required: [parameter, region, widget_kind]
+    properties:
+      parameter:
+        description: |
+          References a `nih_plug.parameters[].id` declared on this same
+          module. v1 requires co-residency — cross-module bindings are
+          bounded-deferred.
+        $ref: "#/$defs/ParameterId"
+      region:
+        description: |
+          References an `egui.regions[].id` declared on this same
+          module. The region's `purpose` SHOULD be
+          `parameter_controls` (codegen prose enforces this as a
+          discipline rule; v1.x may promote to a graph-check primitive
+          per D50's bounded follow-up table).
+        $ref: "#/$defs/Identifier"
+      widget_kind:
+        description: |
+          Widget kind (D50). See `WidgetKind` for the per-kind type
+          constraint table. Codegen prose contains the egui call
+          mapping (e.g. `knob` → `egui_extras` knob; `slider` →
+          `widgets::ParamSlider::for_param`; `button` → `ui.button`
+          with momentary `setter.set_parameter` semantics).
+        $ref: "#/$defs/WidgetKind"
+      range_hint:
+        description: |
+          Optional value-display formatting hint. Defaults from the
+          parameter's `smoother` (if `logarithmic` / `exponential`,
+          inherits) or `linear` otherwise.
+        $ref: "#/$defs/RangeHint"
+      label:
+        description: |
+          Optional label position. Defaults to `above` for vertical
+          layouts and `left` for grid / horizontal layouts. Codegen
+          emits the corresponding `ui.label` placement.
+        $ref: "#/$defs/LabelPosition"

@@ -1,0 +1,109 @@
+metaschema_version: "v1"
+
+# audio-plugin project-level entity declarations. The kinds that exist
+# at the profile root, before any block (nih-plug, egui) or bridge
+# (egui+nih-plug) contributes its own. Blocks inlined later (Phase 15-C
+# / 15-D) declare additional kinds via reductions/blocks/.
+
+entities:
+  # Modules — the core unit. Each `specs/modules/*.toml` produces one
+  # Module. Carries `layer` for the layer_dependency graph check.
+  - kind: Module
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+    attrs:
+      layer: ".layer"
+
+  # Cargo features from `specs/architecture.toml` (parity with
+  # library-api). Names are unique within the project.
+  - kind: Feature
+    extends: structural
+    from: "specs/architecture.toml"
+    for_each: "features[]"
+    name: "${.name}"
+    attrs:
+      default: ".default"
+
+  # Source documents from `specs/requirements.toml`.
+  - kind: Source
+    extends: structural
+    from: "specs/requirements.toml"
+    for_each: "source[]"
+    name: "${.id}"
+    attrs:
+      kind: ".kind"
+      title: ".title"
+
+  # Individual requirements.
+  - kind: Requirement
+    extends: structural
+    from: "specs/requirements.toml"
+    for_each: "requirement[]"
+    name: "${.id}"
+    attrs:
+      text: ".text"
+      nature: ".nature"
+
+relations:
+  # Module-to-module dependency edges (drives modules_acyclic +
+  # layer_dependency).
+  - kind: depends_on
+    extends: depends_on
+    from_kind: Module
+    to_kind: Module
+    from_spec: "specs/modules/*.toml"
+    for_each: "depends_on[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Module-to-feature edges via feature_gates (drives
+  # module_feature_gates_resolve).
+  - kind: module_feature_gate
+    extends: depends_on
+    from_kind: Module
+    to_kind: Feature
+    from_spec: "specs/modules/*.toml"
+    for_each: "feature_gates[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Feature-to-feature dependency edges (drives
+  # feature_dependencies_resolve).
+  - kind: feature_depends_on
+    extends: depends_on
+    from_kind: Feature
+    to_kind: Feature
+    from_spec: "specs/architecture.toml"
+    for_each: "features[].depends_on[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Requirement-to-parent traceability (drives
+  # requirement_satisfies_resolves).
+  - kind: satisfies
+    extends: depends_on
+    from_kind: Requirement
+    to_kind: Requirement
+    from_spec: "specs/requirements.toml"
+    for_each: "requirement[].satisfies[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Module-to-requirement (drives module_satisfies_resolves +
+  # requirements_have_satisfiers). Distinct kind from the
+  # requirement-tree `satisfies` so graph checks can target each
+  # independently.
+  - kind: module_satisfies
+    extends: depends_on
+    from_kind: Module
+    to_kind: Requirement
+    from_spec: "specs/modules/*.toml"
+    for_each: "satisfies[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
