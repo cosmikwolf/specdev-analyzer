@@ -47,6 +47,16 @@ enum Command {
         /// Suppress ANSI colors.
         #[arg(long)]
         no_color: bool,
+        /// Suppress info-severity lines from the rendered output (F-006).
+        /// Errors, warnings, and the summary/counts tail still print.
+        #[arg(long, short = 'q')]
+        quiet: bool,
+        /// Phase 16 Batch B: scope checks to the consumer named here.
+        /// Accepts `schema`, `skeleton`, `strict-gen`, or `cargo-toml`.
+        /// Schema-tagged checks always run regardless. Without the flag,
+        /// every check fires (legacy behavior).
+        #[arg(long = "for")]
+        scope_for: Option<String>,
     },
     /// Emit canonical YAML extraction for codegen.
     Extract {
@@ -231,6 +241,12 @@ enum Command {
         /// + `cargo check`). Mutually exclusive with `--strict`.
         #[arg(long)]
         skeleton: bool,
+        /// F-018: in strict mode, write the assembled codegen prompt for
+        /// the named module to stdout (equivalent to `prompt --module
+        /// <Name>`). Lets `/spec-gen` invoke a single subcommand instead
+        /// of routing through a hint message.
+        #[arg(long)]
+        module: Option<String>,
     },
 }
 
@@ -314,7 +330,16 @@ fn main() -> ExitCode {
             project,
             strict,
             no_color,
-        } => run_validate(project, spec_path.as_deref(), strict, no_color),
+            quiet,
+            scope_for,
+        } => run_validate(
+            project,
+            spec_path.as_deref(),
+            strict,
+            no_color,
+            quiet,
+            scope_for,
+        ),
         Command::Extract { project, output } => run_extract(project, spec_path.as_deref(), output),
         Command::ExtractItems { project, module } => {
             run_extract_items(project, spec_path.as_deref(), module.as_deref())
@@ -355,7 +380,8 @@ fn main() -> ExitCode {
             project,
             strict,
             skeleton,
-        } => run_gen(project, spec_path.as_deref(), strict, skeleton),
+            module,
+        } => run_gen(project, spec_path.as_deref(), strict, skeleton, module),
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
                 run_items_diff(project, spec_path.as_deref(), module)
@@ -396,6 +422,30 @@ fn run_cargo_toml(
                 Some(path) => match std::fs::write(&path, &rendered.text) {
                     Ok(()) => {
                         eprintln!("wrote Cargo.toml to {}", path.display());
+                        // F-016: pair `[[bin]]` rows with their stub source
+                        // files. Skip writes when the path already exists —
+                        // hand-edited bins are never overwritten.
+                        let project_root = layout.project_root.as_path();
+                        for (rel, body) in &rendered.extra_files {
+                            let dst = project_root.join(rel);
+                            if dst.exists() {
+                                continue;
+                            }
+                            if let Some(parent) = dst.parent() {
+                                if let Err(e) = std::fs::create_dir_all(parent) {
+                                    eprintln!(
+                                        "failed to create {}: {e}",
+                                        parent.display()
+                                    );
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            if let Err(e) = std::fs::write(&dst, body) {
+                                eprintln!("failed to write {}: {e}", dst.display());
+                                return ExitCode::from(2);
+                            }
+                            eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
+                        }
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
@@ -445,6 +495,8 @@ fn run_validate(
     spec_path: Option<&std::path::Path>,
     strict: bool,
     no_color: bool,
+    quiet: bool,
+    scope_for: Option<String>,
 ) -> ExitCode {
     // Discover layout once so we can both run the pipeline and produce
     // the positive-confirmation summary against the same project state.
@@ -455,7 +507,17 @@ fn run_validate(
             return ExitCode::from(2);
         }
     };
-    let report = match validate::run(&layout) {
+    let filter = match scope_for {
+        None => None,
+        Some(s) => match s.parse::<validate::Capability>() {
+            Ok(cap) => Some(cap),
+            Err(e) => {
+                eprintln!("error: --for: {e}");
+                return ExitCode::from(2);
+            }
+        },
+    };
+    let report = match validate::run_for(&layout, filter) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
@@ -464,9 +526,9 @@ fn run_validate(
     };
     let (errors, warnings, infos) = report.counts();
     let rendered = if no_color {
-        report.render_plain()
+        report.render_plain_filtered(quiet)
     } else {
-        report.render_colored()
+        report.render_colored_filtered(quiet)
     };
     print!("{rendered}");
     // Positive-confirmation tail (F-005): surface per-category counts so
@@ -1118,6 +1180,7 @@ fn run_gen(
     spec_path: Option<&std::path::Path>,
     strict: bool,
     skeleton: bool,
+    module: Option<String>,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1139,13 +1202,30 @@ fn run_gen(
     };
     match resolved {
         specdev_analyzer::config::HandoffMode::Implementation => {
+            // F-018: when `--module` is given, do the work that the
+            // routing hint used to point at — write the assembled
+            // prompt for that module to stdout. Lets `/spec-gen` invoke
+            // a single subcommand instead of parsing a hint message and
+            // shelling out to `prompt`.
+            if let Some(name) = module {
+                return match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
+                    Ok(s) => {
+                        print!("{s}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        report_error(&e);
+                        ExitCode::from(1)
+                    }
+                };
+            }
             eprintln!(
                 "strict (implementation) mode is orchestrated by the `/spec-gen` skill —\n\
                  the analyzer assembles the codegen prompt deterministically; Claude emits\n\
-                 source. Run `specdev-analyzer prompt --module <Name>` and pipe the output\n\
-                 to /spec-gen, or invoke /spec-gen directly. To override and run skeleton\n\
-                 mode instead, pass `--skeleton` (or set `[project].handoff_mode = \"skeleton\"`\n\
-                 in spec.toml).",
+                 source. Pass `--module <Name>` to write the assembled prompt for one\n\
+                 module to stdout, or run `specdev-analyzer prompt --module <Name>` directly\n\
+                 and pipe the output to /spec-gen. To override and run skeleton mode instead,\n\
+                 pass `--skeleton` (or set `[project].handoff_mode = \"skeleton\"` in spec.toml).",
             );
             ExitCode::from(2)
         }

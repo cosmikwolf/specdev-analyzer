@@ -270,6 +270,17 @@ source = "src"
 "#,
     )
     .unwrap();
+    // Per Phase 16 step 3a / D51: when `specs/specdev/profile.yaml` is
+    // present, manifest-driven dispatch wins and `[project].profile` is
+    // not load-bearing for cargo-toml routing. To exercise the
+    // backward-compat fallback (the only path that still knows profile
+    // names), remove the inlined profile.yaml. The fallback path is
+    // what surfaces the friendly "unsupported profile" error for
+    // pre-D52 projects bootstrapped against an unknown profile name.
+    let manifest_path = target.join("specs/specdev/profile.yaml");
+    if manifest_path.exists() {
+        std::fs::remove_file(&manifest_path).unwrap();
+    }
     // `discover` schema-validates `[project].profile` as a generic string,
     // so this passes (no enum constraint at the schema). The renderer
     // is what rejects the unknown profile.

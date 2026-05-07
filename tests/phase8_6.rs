@@ -447,9 +447,13 @@ source = "."
 
     let err = render(&layout).unwrap_err();
     let msg = format!("{err:#}");
+    // Per D51 / doc 21 §3.4 (Phase 16 step 3a), the error is now
+    // shape-driven and profile-name-agnostic: it names the misaligned
+    // shape (`workspace`) and the missing layout signal (`[workspace]`),
+    // not the specific profile name.
     assert!(
-        msg.contains("rust-workspace") && msg.contains("[workspace]"),
-        "error names the profile and the missing table:\n{msg}"
+        msg.contains("shape: workspace") && msg.contains("[workspace]"),
+        "error names the shape and the missing table:\n{msg}"
     );
 }
 

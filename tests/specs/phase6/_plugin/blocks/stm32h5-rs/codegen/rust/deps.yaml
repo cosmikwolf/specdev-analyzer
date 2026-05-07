@@ -1,0 +1,20 @@
+# Phase 16 manifest — Cargo deps the stm32h5-rs block contributes.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §4.2.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# `embassy-stm32` ships per-MCU features; the project author selects the
+# specific MCU feature via architecture.toml ([platform.mcu_part] etc.).
+# This manifest pins the unstable-pac feature which the block's codegen
+# prose universally relies on.
+
+crates:
+  - name: embassy-stm32
+    version: "0.1"
+    features: ["unstable-pac"]
+    source: crates-io
+
+recommended_external_deps:
+  - crate: cortex-m
+    purpose: "ARM Cortex-M startup primitives"
+  - crate: cortex-m-rt
+    purpose: "linker glue + reset handler"

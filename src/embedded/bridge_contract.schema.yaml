@@ -1,0 +1,42 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/bridge_contract.schema.yaml"
+title: "bridge contract manifest (Phase 16, D52 / doc 21 §5)"
+description: |
+  Validates `bridges/<a>+<b>/contract.yaml`. The endpoint pair is NOT
+  restated in the manifest body — the directory name `<a>+<b>` is
+  canonical per doc 15 invariants 2 + 4 (structural ownership +
+  lex-ordered owner names). Inlined alongside the bridge's reduction
+  file; participates in the bridge's per-unit content_hash.
+
+type: object
+additionalProperties: false
+required: [binding_locality, diagnostic_template]
+properties:
+  binding_locality:
+    description: |
+      BindingLocality (closed enum, 2 values shipping in v1):
+        endpoint_module     — bindings table lives on the module owning
+                              either endpoint block's table; intra-module
+                              wiring (Phase 7 v1 restriction).
+        plugin_shell_unique — co-residency on the project's unique
+                              plugin_shell-layer module. Auto-resolution
+                              when there's exactly one such module.
+      Speculative `co_resident` and `dedicated_module` were dropped
+      2026-05-05 (no shipping consumer).
+    type: string
+    enum: [endpoint_module, plugin_shell_unique]
+
+  diagnostic_template:
+    description: |
+      Template for the `hint:` line appended to REDUCE_UNRESOLVED findings
+      on this bridge's relations. Supports `{bridge_name}`, `{parameter}`,
+      `{decl_module}`, `{binding_module}` substitution at REDUCE_UNRESOLVED
+      emit time.
+
+      When a token is unresolvable (typically `{decl_module}` or
+      `{binding_module}` if both endpoints are unresolvable), the analyzer
+      renders the literal `<unknown>` for that token AND emits a separate
+      REDUCE_UNRESOLVED-PROVENANCE info finding naming which token failed
+      to resolve.
+    type: string
+    minLength: 1

@@ -34,10 +34,13 @@ properties:
         description: |
           Display name shown by the host. Need not match the crate
           name. UTF-8 free string; max length unset in v1 (some hosts
-          truncate at ~32 chars — author at your own risk).
+          truncate at ~32 chars — author at your own risk). The
+          `^[^{}]+$` pattern rejects literal `{{...}}` placeholders
+          that leak through bootstrap (F-001 guard).
         type: string
         minLength: 1
         maxLength: 200
+        pattern: "^[^{}]+$"
       vendor:
         description: |
           Vendor / company display name shown by the host.

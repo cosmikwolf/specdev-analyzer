@@ -35,6 +35,63 @@ use crate::resolved::{EffectiveKindSet, ResolvedExtends};
 /// recognizable while we land the rewrite.
 pub type Inputs = LayoutContext;
 
+/// Capability tag carried on each registered check (Phase 16 Batch B).
+/// Used by `validate --for=<capability>` to scope the checks that fire to
+/// the slice the caller cares about; absent the flag every check runs.
+///
+/// The set is closed: each capability names a downstream consumer of the
+/// validated spec. Adding a new capability is a one-line edit here +
+/// adding the tag to whichever checks gate that consumer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capability {
+    /// Schema / structural integrity — every check here gates "this spec
+    /// is well-formed". Default-on for every other capability since every
+    /// downstream consumer needs schema-clean inputs.
+    Schema,
+    /// `gen --skeleton` consumes this — the deterministic skeleton-tree
+    /// emitter requires that modules declare `items[]` so the tree has
+    /// something to emit per module.
+    Skeleton,
+    /// `gen --strict` (Claude-orchestrated codegen) consumes this. Strict
+    /// mode is high-context: a module that omits `context_files` in
+    /// strict mode gets no out-of-band prose, which is usually a friction
+    /// (F-015 from the zfm dogfood).
+    StrictGen,
+    /// `cargo-toml` emission consumes this. Reserved; no checks tagged
+    /// `CargoToml` ship in Batch B (the cargo-toml emitter today reads
+    /// architecture.toml directly; Phase 16 will introduce
+    /// `block_deps_resolve` here).
+    #[allow(dead_code)]
+    CargoToml,
+}
+
+impl std::str::FromStr for Capability {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "schema" => Ok(Capability::Schema),
+            "skeleton" => Ok(Capability::Skeleton),
+            "strict-gen" => Ok(Capability::StrictGen),
+            "cargo-toml" => Ok(Capability::CargoToml),
+            other => Err(format!(
+                "unknown capability `{other}`; supported: schema, skeleton, strict-gen, cargo-toml"
+            )),
+        }
+    }
+}
+
+/// Returns true when `tags` should run under the active `filter`. Absent
+/// filter (None) → run all. Capability::Schema tags always run regardless
+/// of filter — well-formedness is a load-bearing precondition for every
+/// downstream consumer, so suppressing it would lie about the spec's state.
+fn capability_matches(tags: &[Capability], filter: Option<Capability>) -> bool {
+    let Some(want) = filter else { return true };
+    if tags.contains(&Capability::Schema) {
+        return true;
+    }
+    tags.contains(&want)
+}
+
 /// Library-friendly entry point. Discover `spec.toml` from `start` (or from
 /// `explicit_spec_path` if set) and run validation end-to-end.
 pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Report> {
@@ -42,13 +99,34 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Re
     run(&layout)
 }
 
+/// Phase 16 Batch B variant: filters which checks fire by `Capability`.
+/// `None` runs every check (= legacy `run_project` behavior). `Some(cap)`
+/// runs only checks tagged with that capability or with `Schema`
+/// (well-formedness is universal).
+pub fn run_project_for(
+    start: &Path,
+    explicit_spec_path: Option<&Path>,
+    filter: Option<Capability>,
+) -> Result<Report> {
+    let layout = LayoutContext::discover(start, explicit_spec_path)?;
+    run_for(&layout, filter)
+}
+
 #[instrument(level = "info", skip(layout), fields(project = %layout.project_root.display()))]
 pub fn run(layout: &LayoutContext) -> Result<Report> {
+    run_for(layout, None)
+}
+
+/// Phase 16 Batch B variant: see [`run_project_for`].
+pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Report> {
     let mut report = Report::default();
     validate_layout(layout, &mut report)?;
-    validate_modules(layout, &mut report)?;
+    validate_modules_for(layout, filter, &mut report)?;
     validate_architecture(layout, &mut report)?;
     validate_requirements(layout, &mut report)?;
+    validate_items_present(layout, filter, &mut report);
+    validate_context_files_when_strict(layout, filter, &mut report);
+    validate_profile_layout_match(layout, &mut report);
     Ok(report)
 }
 
@@ -280,6 +358,15 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             ));
         }
     }
+    // F-009: workspace-shape projects (per D36 — bidirectional
+    // minimality, signaled by spec.toml's `[workspace]` table) have no
+    // per-module / per-requirement surface, so missing `module.schema.yaml`
+    // and `requirements.schema.yaml` are intentional, not noise.
+    // Profile-agnostic structural signal — does not hardcode the
+    // `rust-workspace` profile name (D51). Phase 16's `profile.yaml`
+    // `surface.has_modules` field will subsume this gate.
+    let no_module_surface = layout.spec.workspace.is_some();
+
     for entry in &inv.files {
         if entry.exists {
             report.push(Finding::new(
@@ -293,6 +380,13 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             // codegen yet.
             if entry.kind == LayoutKind::Directory
                 && entry.label.starts_with("specs/specdev/codegen/")
+            {
+                continue;
+            }
+            // F-009: see no_module_surface comment above.
+            if no_module_surface
+                && (entry.label == "specs/specdev/schemas/module.schema.yaml"
+                    || entry.label == "specs/specdev/schemas/requirements.schema.yaml")
             {
                 continue;
             }
@@ -407,6 +501,16 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
 ///    canonical (or qualified) kind.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+    validate_modules_for(layout, None, report)
+}
+
+/// Phase 16 Batch B: filter-aware variant. See [`Capability`] and
+/// [`run_for`].
+pub fn validate_modules_for(
+    layout: &LayoutContext,
+    filter: Option<Capability>,
+    report: &mut Report,
+) -> Result<()> {
     let inv = layout.enumerate();
 
     // Step 1: build effective kind set.
@@ -519,7 +623,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                 // Step 5: run executor + project graph_checks.
                 let mut exec_report = Report::default();
                 let graph =
-                    reduction::execute_kindset(&kindset, &layout.project_root, &mut exec_report)?;
+                    reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
                 report.extend(exec_report.findings().to_vec());
 
                 execute_graph_checks(
@@ -529,6 +633,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                     &graph,
                     &dom,
                     layout,
+                    filter,
                     report,
                 );
                 // Module-scoped checks are reserved for per-module
@@ -620,6 +725,7 @@ fn validate_context_files(
 ///    `layer_dependency`); the check's selector fields drive the call.
 ///    Unknown primitives surface as `DOMAIN-003` warnings so authoring
 ///    typos surface visibly.
+#[allow(clippy::too_many_arguments)]
 fn execute_graph_checks(
     checks: &[GraphCheck],
     section: &str,
@@ -627,6 +733,7 @@ fn execute_graph_checks(
     graph: &Graph,
     domain: &DomainConfig,
     layout: &LayoutContext,
+    filter: Option<Capability>,
     report: &mut Report,
 ) {
     let graph_json = match serde_json::to_value(graph) {
@@ -638,6 +745,13 @@ fn execute_graph_checks(
         let rule = check.rule.as_deref().unwrap_or("?");
         let severity = domain.severity_of(rule);
         let primitive = check.kind.as_str();
+
+        // Phase 16 Batch B: skip primitives whose tags don't match the
+        // active --for filter. `Schema`-tagged checks always run (they
+        // gate every downstream consumer).
+        if !capability_matches(primitive_tags(primitive), filter) {
+            continue;
+        }
 
         let view = filter_graph_for_check(&graph_json, check, kindset);
 
@@ -681,12 +795,36 @@ fn execute_graph_checks(
             // F-006: jointly filter by entity_scope + relation_scope and
             // run the orphan-requirements check. Reuses the same joint-
             // filter infrastructure as `layer_dependency`.
+            //
+            // F-003 (zfm dogfood): when a project has zero modules
+            // (typical of a docs-first port mid-conversion), every
+            // `nature = "module"` requirement is guaranteed orphan and
+            // emitting one warning per requirement produces a wall of
+            // noise. Collapse into a single summary line in that case;
+            // populated trees keep per-requirement diagnostics.
             "requirements_have_satisfiers" => {
                 match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
                     (Some(es), Some(rs)) => {
                         let view =
                             filter_for_layer_dependency(&graph_json, es, rs, kindset);
-                        graph_checks::requirements_have_satisfiers(&view, rule, severity)
+                        let mut findings = graph_checks::requirements_have_satisfiers(
+                            &view, rule, severity,
+                        );
+                        if findings.len() > 1 && count_modules(&graph_json) == 0 {
+                            let count = findings.len();
+                            findings = vec![Finding::new(
+                                rule,
+                                severity,
+                                format!(
+                                    "{count} requirements (nature = \"module\") have no module \
+                                     satisfier — project has zero modules. Add modules under \
+                                     `specs/modules/` and reference them via `satisfies = [...]`, \
+                                     or set `nature = \"architecture\" | \"build\" | \"test\"` to \
+                                     exempt requirements that don't map to a module."
+                                ),
+                            )];
+                        }
+                        findings
                     }
                     _ => Vec::new(),
                 }
@@ -1193,6 +1331,186 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
     }
 }
 
+/// Capability tags carried by each registered graph-check primitive
+/// (Phase 16 Batch B). Driven by `validate --for=<capability>`. Tags
+/// are intentionally redundant — every primitive tags `Schema` because
+/// well-formedness gates every downstream consumer; some additionally
+/// tag domain-specific consumers (`Skeleton`, `StrictGen`, etc.).
+///
+/// Adding a new primitive: append a match arm AND a stable test that
+/// verifies its tag set. Adding a new capability: extend the
+/// [`Capability`] enum and tag the primitives that gate it.
+fn primitive_tags(name: &str) -> &'static [Capability] {
+    use Capability::*;
+    match name {
+        "unique" | "reference_exists" | "reachability" | "acyclic" => &[Schema],
+        "layer_dependency" => &[Schema],
+        // Orphan-requirements is a structural check on the spec graph;
+        // strict-gen + skeleton both consume the spec, so failures here
+        // matter for both consumers (a requirement with no satisfier
+        // means an orphan story regardless of how codegen runs).
+        "requirements_have_satisfiers" => &[Schema, Skeleton, StrictGen],
+        // verified_by_resolves reads source files to validate that
+        // requirement.verified_by[] entries name extant items / tests.
+        // It's a strict-gen + skeleton concern (codegen will surface a
+        // verification gap).
+        "verified_by_resolves" => &[Schema, Skeleton, StrictGen],
+        // Unknown primitives still surface their DOMAIN-003 warning;
+        // tag them as Schema so the typo isn't silenced by --for.
+        _ => &[Schema],
+    }
+}
+
+/// Phase 16 Batch B / F-013 (zfm dogfood): warns when a module has zero
+/// `items[]` entries. Skeleton mode emits an empty source file in that
+/// case, which the dogfood reported as a silent failure mode (modules
+/// look authored but produce no symbols). Strict mode is also affected
+/// because Claude has no items[] to anchor codegen to. Info-level: not
+/// every module needs items (a project mid-port may have empty
+/// modules), but every empty module deserves visibility.
+///
+/// Tags: [`Capability::Skeleton`], [`Capability::StrictGen`]. Skipped
+/// when `--for=cargo-toml` is active (cargo-toml emission doesn't
+/// consume items).
+pub fn validate_items_present(
+    layout: &LayoutContext,
+    filter: Option<Capability>,
+    report: &mut Report,
+) {
+    let tags: &[Capability] = &[Capability::Skeleton, Capability::StrictGen];
+    if !capability_matches(tags, filter) {
+        return;
+    }
+    let inv = layout.enumerate();
+    for module_path in &inv.modules {
+        let Ok(text) = std::fs::read_to_string(module_path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
+            continue;
+        };
+        let name = parsed
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| {
+                module_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("<unnamed>")
+            });
+        let items_count = parsed
+            .get("items")
+            .and_then(toml::Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        if items_count == 0 {
+            report.push(
+                Finding::new(
+                    "ITEMS-001",
+                    Severity::Info,
+                    format!(
+                        "module `{name}` has 0 items[] entries — `gen --skeleton` will \
+                         emit an empty file and `gen --strict` has nothing to anchor \
+                         codegen to. Add items[] before running codegen, or set \
+                         `[project].handoff_mode = \"none\"` if this module is \
+                         intentionally architectural-only."
+                    ),
+                )
+                .with_file(module_path.display().to_string()),
+            );
+        }
+    }
+}
+
+/// Phase 16 Batch B / F-015 (zfm dogfood): warns when a module has no
+/// `context_files` entries and the project's `[project].handoff_mode`
+/// resolves to a strict-leaning mode (`implementation` or unset). The
+/// dogfood reported `module.context_files` as undiscoverable from the
+/// `/spec-design` interview; surfacing the gap at validate time gives
+/// the user a structural prompt to add prose context (or to explicitly
+/// declare the module shallow enough to need none).
+///
+/// Tag: [`Capability::StrictGen`]. Skipped when `--for=skeleton` or
+/// `--for=cargo-toml` is active. Warning-level — not every module
+/// needs context files (mechanical glue modules legitimately don't),
+/// but the absence is worth surfacing for shipped strict-gen runs.
+pub fn validate_context_files_when_strict(
+    layout: &LayoutContext,
+    filter: Option<Capability>,
+    report: &mut Report,
+) {
+    let tags: &[Capability] = &[Capability::StrictGen];
+    if !capability_matches(tags, filter) {
+        return;
+    }
+    // Only fire when the project is on a strict-leaning handoff mode.
+    // `None` defaults to `Implementation` per Phase 13 (doc 16 §4) —
+    // i.e., strict.
+    use crate::config::HandoffMode;
+    let mode = layout
+        .spec
+        .project
+        .handoff_mode
+        .unwrap_or(HandoffMode::Implementation);
+    if !matches!(mode, HandoffMode::Implementation) {
+        return;
+    }
+    let inv = layout.enumerate();
+    for module_path in &inv.modules {
+        let Ok(text) = std::fs::read_to_string(module_path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
+            continue;
+        };
+        let name = parsed
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| {
+                module_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("<unnamed>")
+            });
+        let has_context = parsed
+            .get("context_files")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|a| !a.is_empty());
+        if !has_context {
+            report.push(
+                Finding::new(
+                    "CONTEXT-100",
+                    Severity::Warning,
+                    format!(
+                        "module `{name}` has no `context_files` and the project's \
+                         handoff_mode is `implementation` (strict-leaning). Strict \
+                         codegen has no out-of-band prose to anchor on; consider \
+                         adding `context_files = [\"docs/<...>.md\"]` or set \
+                         `[project].handoff_mode = \"skeleton\"` if this module is \
+                         mechanical enough to skip prose context."
+                    ),
+                )
+                .with_file(module_path.display().to_string()),
+            );
+        }
+    }
+}
+
+/// Count entities of kind `Module` in the unfiltered graph JSON.
+/// F-003: used to decide whether to collapse `requirements_have_satisfiers`
+/// findings into a single summary line on a zero-module project.
+fn count_modules(graph_json: &JsonValue) -> usize {
+    graph_json
+        .get("entities")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|e| e.get("kind").and_then(|k| k.as_str()) == Some("Module"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize) {
     if !layout.requirements_toml_path.is_file() {
         return (0, 0);
@@ -1223,5 +1541,76 @@ fn count_graph_checks(layout: &LayoutContext) -> usize {
     match DomainConfig::load(&layout.domain_toml_path) {
         Ok(dom) => dom.module.graph_checks.len() + dom.project.graph_checks.len(),
         Err(_) => 0,
+    }
+}
+
+/// Phase 16 §8.1 step 3e — validate-time consistency check between
+/// the inlined `profile.yaml` (`cargo_toml.shape`) and the project's
+/// spec.toml `[workspace]` table presence (per doc 21 §3.5).
+///
+/// `shape: workspace` is descriptive metadata: a profile claims its
+/// projects are workspace-shaped, but actual workspace dispatch is
+/// layout-driven (the `[workspace]` table in spec.toml is canonical
+/// per D36). When the two disagree, the project is in an unrenderable
+/// state — `cargo-toml render` will eventually error, but surfacing
+/// the mismatch at validate time gives the user a structural prompt
+/// before they hit the render path.
+///
+/// No-op when `profile.yaml` is absent (pre-D52 backward compat) or
+/// has no `cargo_toml` section. Manifest load errors surface as
+/// `MANIFEST-001` findings; cargo-toml render will produce a
+/// matching diagnostic, so consumers see the same root cause from
+/// either path.
+pub fn validate_profile_layout_match(layout: &LayoutContext, report: &mut Report) {
+    use crate::manifest::{Profile, ShapeKind};
+    let manifest_path = layout.specdev_root.join("profile.yaml");
+    if !manifest_path.is_file() {
+        return;
+    }
+    let manifest = match Profile::load(&manifest_path) {
+        Ok(p) => p,
+        Err(e) => {
+            report.push(
+                Finding::new("MANIFEST-001", Severity::Error, format!("{e:#}"))
+                    .with_file(manifest_path.display().to_string()),
+            );
+            return;
+        }
+    };
+    let Some(cargo) = manifest.cargo_toml.as_ref() else {
+        return;
+    };
+    let has_workspace_table = layout.spec.workspace.is_some();
+    let is_workspace_shape = matches!(cargo.shape, ShapeKind::Workspace);
+    match (is_workspace_shape, has_workspace_table) {
+        (true, false) => report.push(
+            Finding::new(
+                "PROFILE-LAYOUT-MISMATCH",
+                Severity::Error,
+                format!(
+                    "profile.yaml declares `cargo_toml.shape: workspace` but \
+                     spec.toml at {} has no [workspace] table; add \
+                     [workspace] with [[workspace.members]] entries or \
+                     change the profile",
+                    layout.spec_toml_path.display(),
+                ),
+            )
+            .with_file(manifest_path.display().to_string()),
+        ),
+        (false, true) => report.push(
+            Finding::new(
+                "PROFILE-LAYOUT-MISMATCH",
+                Severity::Error,
+                format!(
+                    "spec.toml at {} declares a [workspace] table but \
+                     profile.yaml `cargo_toml.shape` is non-workspace; \
+                     workspace projects must use a profile with \
+                     `cargo_toml.shape: workspace`",
+                    layout.spec_toml_path.display(),
+                ),
+            )
+            .with_file(manifest_path.display().to_string()),
+        ),
+        _ => {}
     }
 }

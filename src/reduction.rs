@@ -23,6 +23,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::domain::Severity;
+use crate::layout::LayoutContext;
+use crate::manifest::BridgeContract;
 use crate::path::{eval_template, select, Scope};
 use crate::report::{Finding, Provenance, Report};
 use crate::resolved::{EffectiveKindSet, ResolvedEntityDecl, ResolvedRelationDecl};
@@ -81,20 +83,27 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<(G
     let (kindset, kindset_findings) = crate::reductions::resolve(&inv);
     let mut report = Report::default();
     report.extend(kindset_findings);
-    let graph = execute_kindset(&kindset, &layout.project_root, &mut report)?;
+    let graph = execute_kindset(&kindset, &layout, &mut report)?;
     Ok((graph, report))
 }
 
 /// Materialize the project graph from a resolved [`EffectiveKindSet`] and
-/// the project root. Open-vocabulary entry point — entity and relation
-/// records are keyed by qualified kind paths (e.g. `embassy.Task`,
+/// the project [`LayoutContext`]. Open-vocabulary entry point — entity and
+/// relation records are keyed by qualified kind paths (e.g. `embassy.Task`,
 /// `embassy+lvgl.renders`), with `extends` carrying the canonical anchor
 /// the qualified kind classifies under.
+///
+/// The layout (rather than just the project root) is threaded through so
+/// the bridge-aware `REDUCE_UNRESOLVED` hint can locate inlined bridge
+/// `contract.yaml` manifests under `<reductions_dir>/bridges/`. Pre-D52
+/// projects without inlined manifests fall back to the legacy generic
+/// hint string.
 pub fn execute_kindset(
     kindset: &EffectiveKindSet,
-    project_root: &Path,
+    layout: &LayoutContext,
     report: &mut Report,
 ) -> Result<Graph> {
+    let project_root = layout.project_root.as_path();
     let mut graph = Graph::default();
 
     // ---- Pass 1: entities ----
@@ -116,14 +125,21 @@ pub fn execute_kindset(
     }
 
     // ---- Pass 2: relations ----
+    // Per-execution cache of bridge contract loads keyed by qualified-path
+    // head (e.g. `egui+nih-plug`). Two known bridges in v1; the cache
+    // saves redundant YAML reads when many relations under the same
+    // bridge fail in the same project.
+    let mut bridge_contract_cache: std::collections::HashMap<String, Option<BridgeContract>> =
+        std::collections::HashMap::new();
     for (qualified_path, decl) in &kindset.relations {
         materialize_relation(
             qualified_path,
             decl,
-            project_root,
+            layout,
             &index,
             &mut graph,
             report,
+            &mut bridge_contract_cache,
         )?;
     }
 
@@ -216,11 +232,13 @@ fn materialize_entity(
 fn materialize_relation(
     qualified_path: &str,
     decl: &ResolvedRelationDecl,
-    project_root: &Path,
+    layout: &LayoutContext,
     index: &std::collections::HashMap<(String, String), usize>,
     graph: &mut Graph,
     report: &mut Report,
+    bridge_contract_cache: &mut std::collections::HashMap<String, Option<BridgeContract>>,
 ) -> Result<()> {
+    let project_root = layout.project_root.as_path();
     let body = decl_body(&decl.raw);
     let from_spec = body
         .get("from_spec")
@@ -277,28 +295,50 @@ fn materialize_relation(
             let provenance = Provenance::new(rel_file.clone(), iter.pointer.clone());
             let mut unresolved = false;
             if !index.contains_key(&(from_kind_str.clone(), from_name.clone())) {
+                let mut msg = format!(
+                    "unresolved {from_kind_str} endpoint `{from_name}` (relation `{qualified_path}`)"
+                );
+                let hint = render_bridge_hint(
+                    qualified_path,
+                    &from_name,
+                    &to_kind_str,
+                    &to_name,
+                    parent_name.as_deref(),
+                    layout,
+                    &graph.entities,
+                    project_root,
+                    &provenance,
+                    bridge_contract_cache,
+                    report,
+                );
+                msg.push_str(&hint);
                 report.push(
-                    Finding::new(
-                        "REDUCE_UNRESOLVED",
-                        Severity::Error,
-                        format!(
-                            "unresolved {from_kind_str} endpoint `{from_name}` (relation `{qualified_path}`)"
-                        ),
-                    )
-                    .with_provenance(provenance.clone()),
+                    Finding::new("REDUCE_UNRESOLVED", Severity::Error, msg)
+                        .with_provenance(provenance.clone()),
                 );
                 unresolved = true;
             }
             if !index.contains_key(&(to_kind_str.clone(), to_name.clone())) {
+                let mut msg = format!(
+                    "unresolved {to_kind_str} endpoint `{to_name}` (relation `{qualified_path}`)"
+                );
+                let hint = render_bridge_hint(
+                    qualified_path,
+                    &to_name,
+                    &from_kind_str,
+                    &from_name,
+                    parent_name.as_deref(),
+                    layout,
+                    &graph.entities,
+                    project_root,
+                    &provenance,
+                    bridge_contract_cache,
+                    report,
+                );
+                msg.push_str(&hint);
                 report.push(
-                    Finding::new(
-                        "REDUCE_UNRESOLVED",
-                        Severity::Error,
-                        format!(
-                            "unresolved {to_kind_str} endpoint `{to_name}` (relation `{qualified_path}`)"
-                        ),
-                    )
-                    .with_provenance(provenance.clone()),
+                    Finding::new("REDUCE_UNRESOLVED", Severity::Error, msg)
+                        .with_provenance(provenance.clone()),
                 );
                 unresolved = true;
             }
@@ -329,6 +369,204 @@ fn materialize_relation(
         }
     }
     Ok(())
+}
+
+/// Phase 16 §8.1 step 7 — render the bridge-aware hint line appended
+/// to a `REDUCE_UNRESOLVED` finding when the relation is bridge-qualified
+/// (`<a>+<b>.<rel>`). Per doc 21 §5.4, the message body comes from the
+/// bridge's inlined `contract.yaml` `diagnostic_template`, with closed-set
+/// `{bridge_name}` / `{parameter}` / `{decl_module}` / `{binding_module}`
+/// placeholders substituted from the unresolved-relation context.
+///
+/// **Pre-D52 backward-compat:** when the contract.yaml is absent (older
+/// inlined trees, hand-authored project-local bridges), fall back to the
+/// generic Batch A hint string verbatim. Mirrors §6.5.
+///
+/// **Token-unresolvable fallback:** unresolvable tokens render as
+/// `<unknown>` in the substituted output AND emit a separate
+/// `REDUCE_UNRESOLVED-PROVENANCE` info finding naming which token failed
+/// and why. The error finding stays the primary surface; the info finding
+/// adds context without drowning the underlying error.
+///
+/// Returns `String::new()` for non-bridge relations (existing behavior
+/// preserved — non-bridge `REDUCE_UNRESOLVED` findings stay unadorned).
+///
+/// F-002 (zfm audio-plugin dogfood, 2026-05-04): when a bridge binding
+/// references a parameter or region on a different module than the
+/// bindings table, the user sees a `REDUCE_UNRESOLVED` for the symptom
+/// without the actionable advice (move the binding, or move the
+/// declaration). This helper appends that advice from the bridge's
+/// authored manifest — generic over every bridge, no per-bridge name in
+/// the analyzer (D51).
+#[allow(clippy::too_many_arguments)]
+fn render_bridge_hint(
+    qualified_path: &str,
+    unresolved_name: &str,
+    opposite_kind: &str,
+    opposite_name: &str,
+    binding_module: Option<&str>,
+    layout: &LayoutContext,
+    entities: &[Entity],
+    project_root: &Path,
+    parent_provenance: &Provenance,
+    cache: &mut std::collections::HashMap<String, Option<BridgeContract>>,
+    report: &mut Report,
+) -> String {
+    let head = match qualified_path.split('.').next() {
+        Some(h) => h,
+        None => return String::new(),
+    };
+    if !head.contains('+') {
+        return String::new();
+    }
+
+    // Cached load of `<reductions_dir>/bridges/<head>.contract.yaml`.
+    // First-load surfaces malformed contracts as `MANIFEST-001` (Error)
+    // to the report; subsequent cache hits skip the re-emit.
+    let contract = if let Some(cached) = cache.get(head) {
+        cached.clone()
+    } else {
+        let loaded = match load_bridge_contract(layout, head) {
+            Ok(c) => c,
+            Err(err) => {
+                let path = layout
+                    .reductions_dir
+                    .join("bridges")
+                    .join(format!("{head}.contract.yaml"));
+                report.push(
+                    Finding::new(
+                        "MANIFEST-001",
+                        Severity::Error,
+                        format!("loading bridge contract.yaml failed: {err:#}"),
+                    )
+                    .with_file(path.display().to_string()),
+                );
+                None
+            }
+        };
+        cache.insert(head.to_string(), loaded.clone());
+        loaded
+    };
+
+    let Some(contract) = contract else {
+        // Pre-D52 backward-compat: legacy generic hint string verbatim.
+        return legacy_bridge_hint(head);
+    };
+
+    // Resolve placeholder values per §5.4 (§6.4 token table).
+    //
+    // - `{bridge_name}` is always available (qualified-path head).
+    // - `{parameter}` is always available (the unresolved endpoint name
+    //   on this side of the iteration).
+    // - `{binding_module}` is the module owning the bindings table —
+    //   the file the relation iteration is reading; mirrors the
+    //   `parent_name` (file_root_name(&root_value)) computed earlier.
+    // - `{decl_module}` is the OTHER endpoint's owning module. We look
+    //   it up by searching the materialized graph for a matching
+    //   `(opposite_kind, opposite_name)` entity and reading its
+    //   provenance source file's `name` field. Fails when the opposite
+    //   endpoint is also unresolved.
+    let bridge_name = head.to_string();
+    let parameter = unresolved_name.to_string();
+
+    let mut unresolvable_tokens: Vec<(&'static str, String)> = Vec::new();
+
+    let binding_module_resolved: String = match binding_module {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            unresolvable_tokens.push((
+                "binding_module",
+                "could not derive module name from the bindings file (file root has no `name` field)"
+                    .to_string(),
+            ));
+            "<unknown>".to_string()
+        }
+    };
+
+    let decl_module_resolved: String =
+        match resolve_opposite_module(entities, opposite_kind, opposite_name, project_root) {
+            Some(m) => m,
+            None => {
+                unresolvable_tokens.push((
+                    "decl_module",
+                    format!(
+                        "opposite endpoint `{opposite_name}` ({opposite_kind}) does not resolve \
+                         to a materialized entity — cannot read its owning module"
+                    ),
+                ));
+                "<unknown>".to_string()
+            }
+        };
+
+    let body = contract
+        .diagnostic_template
+        .trim_end_matches('\n')
+        .replace("{bridge_name}", &bridge_name)
+        .replace("{parameter}", &parameter)
+        .replace("{decl_module}", &decl_module_resolved)
+        .replace("{binding_module}", &binding_module_resolved);
+
+    // Per §5.4: emit one info finding per unresolvable token, carrying
+    // the same provenance as the parent error.
+    for (token, reason) in &unresolvable_tokens {
+        report.push(
+            Finding::new(
+                "REDUCE_UNRESOLVED-PROVENANCE",
+                Severity::Info,
+                format!("<{bridge_name}>: could not resolve {{{token}}} — {reason}"),
+            )
+            .with_provenance(parent_provenance.clone()),
+        );
+    }
+
+    format!("\n  hint: {body}")
+}
+
+/// Pre-D52 backward-compat: the legacy Batch A hint text. Used verbatim
+/// when a bridge has no inlined `contract.yaml`.
+fn legacy_bridge_hint(head: &str) -> String {
+    format!(
+        "\n  hint: relation belongs to the `{head}` bridge — endpoint blocks must \
+         co-reside on the SAME module that owns the bindings table; see \
+         `bridges/{head}/README.md` for the v1 co-residency rule"
+    )
+}
+
+/// Look up `<reductions_dir>/bridges/<head>.contract.yaml` and load it
+/// via the strongly-typed loader. Three return shapes:
+///   - `Ok(Some(contract))` — file present and valid.
+///   - `Ok(None)` — file absent (pre-D52 backward-compat per §6.5).
+///   - `Err(_)` — file present but malformed; caller surfaces the
+///     load error as `MANIFEST-001`.
+fn load_bridge_contract(layout: &LayoutContext, head: &str) -> Result<Option<BridgeContract>> {
+    let path = layout
+        .reductions_dir
+        .join("bridges")
+        .join(format!("{head}.contract.yaml"));
+    if !path.is_file() {
+        return Ok(None);
+    }
+    BridgeContract::load(&path).map(Some)
+}
+
+/// Resolve the opposite endpoint's owning module by searching the
+/// materialized graph for `(kind, name)` and reading its provenance
+/// source file's `name` field. Returns `None` when:
+///   - the opposite endpoint is also unresolved (no entity matches), or
+///   - the source file cannot be read / parsed, or
+///   - the file root has no `name` field.
+fn resolve_opposite_module(
+    entities: &[Entity],
+    opposite_kind: &str,
+    opposite_name: &str,
+    project_root: &Path,
+) -> Option<String> {
+    let entity = entities
+        .iter()
+        .find(|e| e.kind == opposite_kind && e.name == opposite_name)?;
+    let full = project_root.join(&entity.provenance.source_file);
+    let root_value = load_toml_as_json(&full).ok()?;
+    file_root_name(&root_value)
 }
 
 /// Translate the YAML body retained on a [`ResolvedEntityDecl`] /

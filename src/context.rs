@@ -140,7 +140,7 @@ pub fn build_report(
         .saturating_sub(related_count)
         .saturating_sub(1);
 
-    let profile_specific = compute_profile_specific(layout, module, graph);
+    let profile_specific = compute_profile_specific(layout, module, graph)?;
 
     Ok(ContextReport {
         module: module.to_string(),
@@ -447,23 +447,48 @@ fn module_from_provenance(source_file: &str) -> Option<String> {
     Some(stem.to_string())
 }
 
+/// Phase 16 §8.1 step 5: dispatch off the inlined `profile.yaml`'s
+/// `context.context_subcommand_extras`. Each extra declares either a
+/// `from_attr` lookup (read named attr off the Module entity, emit as a
+/// string field) or a `kind: collect_local_entities_by_kind` walk
+/// (group locally-owned entities by kind suffix; emit as a nested map).
+///
+/// Backward-compat fallback: when no `profile.yaml` is present
+/// (pre-D52 projects), the legacy match-on-profile-name path fires.
+/// Removed in v1.1 alongside the cargo_toml / skeleton fallbacks
+/// (doc 21 §6.5).
 fn compute_profile_specific(
     layout: &LayoutContext,
     module: &str,
     graph: &Graph,
-) -> BTreeMap<String, serde_yaml::Value> {
+) -> Result<BTreeMap<String, serde_yaml::Value>> {
     let mut out: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
 
-    // Look up the Module entity for M and surface attrs that the
-    // skills' impact-analysis steps consult.
     let ent = graph
         .entities
         .iter()
         .find(|e| e.kind == "Module" && e.name == module);
     let Some(ent) = ent else {
-        return out;
+        return Ok(out);
     };
 
+    let manifest = load_inlined_profile(layout)?;
+    let extras = manifest
+        .as_ref()
+        .and_then(|p| p.context.as_ref())
+        .map(|c| c.context_subcommand_extras.as_slice())
+        .unwrap_or(&[]);
+
+    if manifest.is_some() {
+        for extra in extras {
+            apply_context_extra(extra, ent, module, graph, &mut out)?;
+        }
+        return Ok(out);
+    }
+
+    // Pre-D52 backward-compat (legacy hardcoded match). Behavior preserved
+    // byte-for-byte for projects without an inlined manifest. Deleted in
+    // v1.1 per §6.5.
     match layout.spec.project.profile.as_str() {
         "firmware-layered" => {
             if let Some(layer) = ent.attrs.get("layer").and_then(|v| v.as_str()) {
@@ -472,50 +497,10 @@ fn compute_profile_specific(
                     serde_yaml::Value::String(layer.to_string()),
                 );
             }
-            // Hardware resource list — peripheral + pin names owned by M.
-            let mut peripherals: Vec<String> = Vec::new();
-            let mut pins: Vec<String> = Vec::new();
-            for e in &graph.entities {
-                let Some(owner) = module_from_provenance(&e.provenance.source_file) else {
-                    continue;
-                };
-                if owner != module {
-                    continue;
-                }
-                let suffix = e.kind.rsplit_once('.').map(|(_, s)| s).unwrap_or("");
-                match suffix {
-                    "Peripheral" => peripherals.push(e.name.clone()),
-                    "Pin" => pins.push(e.name.clone()),
-                    _ => {}
-                }
-            }
-            peripherals.sort();
-            pins.sort();
-            if !peripherals.is_empty() || !pins.is_empty() {
-                let mut hw: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
-                hw.insert(
-                    "peripherals".to_string(),
-                    serde_yaml::Value::Sequence(
-                        peripherals
-                            .into_iter()
-                            .map(serde_yaml::Value::String)
-                            .collect(),
-                    ),
-                );
-                hw.insert(
-                    "pins".to_string(),
-                    serde_yaml::Value::Sequence(
-                        pins.into_iter().map(serde_yaml::Value::String).collect(),
-                    ),
-                );
-                let mut hw_yaml = serde_yaml::Mapping::new();
-                for (k, v) in hw {
-                    hw_yaml.insert(serde_yaml::Value::String(k), v);
-                }
-                out.insert(
-                    "hardware_resources".to_string(),
-                    serde_yaml::Value::Mapping(hw_yaml),
-                );
+            let collected =
+                collect_local_entities_by_kind(graph, module, &["Peripheral", "Pin"]);
+            if let Some(map) = collected {
+                out.insert("hardware_resources".to_string(), map);
             }
         }
         "library-api" => {
@@ -529,7 +514,105 @@ fn compute_profile_specific(
         _ => {}
     }
 
-    out
+    Ok(out)
+}
+
+/// Manifest-driven dispatch for one `ContextExtra`. Closed-set today: a
+/// `from_attr` lookup is the implicit default (no `kind` field); the only
+/// explicit `kind` v1 supports is `collect_local_entities_by_kind`. An
+/// unknown `kind` errors `CONTEXT-002` so a future authoring mistake
+/// surfaces as a load-time-class diagnostic instead of silent emission.
+fn apply_context_extra(
+    extra: &crate::manifest::ContextExtra,
+    ent: &crate::reduction::Entity,
+    module: &str,
+    graph: &Graph,
+    out: &mut BTreeMap<String, serde_yaml::Value>,
+) -> Result<()> {
+    match extra.kind.as_deref() {
+        None => {
+            let attr_name = extra.from_attr.as_deref().unwrap_or(&extra.field);
+            if let Some(val) = ent.attrs.get(attr_name).and_then(|v| v.as_str()) {
+                out.insert(
+                    extra.field.clone(),
+                    serde_yaml::Value::String(val.to_string()),
+                );
+            }
+        }
+        Some("collect_local_entities_by_kind") => {
+            let kinds: Vec<&str> = extra.kinds.iter().map(String::as_str).collect();
+            if let Some(map) = collect_local_entities_by_kind(graph, module, &kinds) {
+                out.insert(extra.field.clone(), map);
+            }
+        }
+        Some(other) => {
+            return Err(anyhow::anyhow!(
+                "[CONTEXT-002] unknown context_subcommand_extras kind `{other}` \
+                 in profile.yaml; supported v1 kinds: \
+                 collect_local_entities_by_kind, or omit `kind` for a \
+                 from_attr lookup"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Walk graph entities whose provenance points back to `module` AND whose
+/// kind suffix (the part after the last `.`) matches one of `kinds[]`.
+/// Group hits by suffix into a sorted YAML mapping; emit each suffix as
+/// `<lowercased>s` to match the pre-step-5 convention (`Peripheral` →
+/// `peripherals`, `Pin` → `pins`). Returns `None` when zero entities are
+/// collected — caller omits the field to keep the output tight.
+fn collect_local_entities_by_kind(
+    graph: &Graph,
+    module: &str,
+    kinds: &[&str],
+) -> Option<serde_yaml::Value> {
+    let mut groups: BTreeMap<&str, Vec<String>> =
+        kinds.iter().map(|k| (*k, Vec::new())).collect();
+    for e in &graph.entities {
+        let Some(owner) = module_from_provenance(&e.provenance.source_file) else {
+            continue;
+        };
+        if owner != module {
+            continue;
+        }
+        let suffix = e.kind.rsplit_once('.').map(|(_, s)| s).unwrap_or("");
+        if let Some(bucket) = groups.get_mut(suffix) {
+            bucket.push(e.name.clone());
+        }
+    }
+    let any = groups.values().any(|v| !v.is_empty());
+    if !any {
+        return None;
+    }
+    let mut yaml = serde_yaml::Mapping::new();
+    for k in kinds {
+        let mut names = groups.remove(*k).unwrap_or_default();
+        names.sort();
+        let key = format!("{}s", k.to_ascii_lowercase());
+        yaml.insert(
+            serde_yaml::Value::String(key),
+            serde_yaml::Value::Sequence(
+                names.into_iter().map(serde_yaml::Value::String).collect(),
+            ),
+        );
+    }
+    Some(serde_yaml::Value::Mapping(yaml))
+}
+
+/// Load `<specdev_root>/profile.yaml` if present (Phase 16 §8.1 step 5).
+/// Mirror of the helpers in `cargo_toml.rs` and `skeleton.rs` — kept
+/// module-private here too; a shared `manifest::loader_for(layout)` is a
+/// v1.x cleanup item.
+fn load_inlined_profile(
+    layout: &LayoutContext,
+) -> Result<Option<crate::manifest::Profile>> {
+    let path = layout.specdev_root.join("profile.yaml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    crate::manifest::Profile::load(&path).map(Some)
 }
 
 fn rel(full: &Path, root: &Path) -> String {

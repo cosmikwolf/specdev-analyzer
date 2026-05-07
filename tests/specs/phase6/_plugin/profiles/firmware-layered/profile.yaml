@@ -1,0 +1,54 @@
+# Phase 16 manifest — drives analyzer dispatch for firmware-layered projects.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §3.3.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+name: firmware-layered
+language: rust
+
+cargo_toml:
+  shape: binary
+  default_edition: "2021"
+  bin:
+    name_template: "{project_name}"
+    path_template: "src/main.rs"
+  features:
+    synthesize_default: false     # firmware-layered doesn't ship [[features]] by default
+    drain_from: []
+  architecture_deps:
+    typed_slots:
+      - table: "platform"
+        keys: ["mcu_core", "mcu_runtime"]
+      - table: "runtime"
+        keys: ["panic_handler", "allocator", "critical_section_impl"]
+      - table: "logger"
+        keys: ["provider", "backend"]
+    open_arrays: ["external_deps"]
+
+bootstrap:
+  steps: []                       # standalone binary; no workspace machinery
+
+skeleton:
+  supported: false                # SKEL-001 — firmware skeleton mode is not v1
+  entry_file: src/main.rs
+  entry_template: main_unimplemented
+  extra_files:
+    - { path: memory.x, source: from_architecture_template }
+    - { path: build.rs, source: linker_script_include }
+  module_layout: nested
+  steps: [emit_cargo_toml, walk_modules]
+
+context:
+  module_fields_for_prompt:
+    [items, satisfies, depends_on, context_files, external_deps, layer]
+  context_subcommand_extras:
+    - field: layer
+      from_attr: layer
+    - field: hardware_resources
+      kind: collect_local_entities_by_kind
+      kinds: ["Peripheral", "Pin"]
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

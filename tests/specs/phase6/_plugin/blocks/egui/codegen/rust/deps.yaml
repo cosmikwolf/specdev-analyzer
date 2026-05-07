@@ -1,0 +1,17 @@
+# Phase 16 manifest — Cargo deps the egui block contributes.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §4.2.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+
+crates:
+  - name: nih_plug_egui
+    version: "0.0"                # nih-plug subcrate; git-only, same repo as nih_plug
+    features: []
+    source:
+      git: "https://github.com/robbert-vdh/nih-plug.git"
+  - name: egui
+    version: "0.27"
+    source: crates-io
+
+recommended_external_deps:
+  - crate: egui_extras
+    purpose: "Knob widget when widget_kind = knob"

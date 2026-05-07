@@ -1,0 +1,277 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/profile.schema.yaml"
+title: "profile manifest (Phase 16, D52 / doc 21 §3)"
+description: |
+  Validates `profiles/<name>/profile.yaml`. Authored on the plugin side;
+  byte-copied into a project at `specs/specdev/profile.yaml` during
+  bootstrap. Drives cargo-toml render dispatch, skeleton policy,
+  context-subcommand extras, and validate-pass surface flags. Does NOT
+  participate in lineage (project-owned post-bootstrap, doc 15 §3.3).
+
+type: object
+additionalProperties: false
+required: [name, language]
+properties:
+  name:
+    description: |
+      Profile name. MUST match the plugin-tree directory name.
+      Lowercase kebab-case identifier.
+    type: string
+    pattern: "^[a-z][a-z0-9-]*$"
+
+  language:
+    description: |
+      Target language. References the `languages/<lang>/` tier.
+    type: string
+    enum: [rust, c, cpp, python]
+
+  cargo_toml:
+    description: |
+      Cargo.toml render dispatch. Required for `language: rust`. May be
+      omitted for non-Rust profiles (their codegen contract is
+      profile-defined elsewhere).
+    type: object
+    additionalProperties: false
+    required: [shape]
+    properties:
+      shape:
+        description: |
+          ShapeKind (closed enum): which Cargo.toml shape this profile
+          renders. `workspace` is descriptive metadata only; the
+          `[workspace]` table presence in spec.toml is the actual
+          dispatch signal (doc 21 §3.5).
+        type: string
+        enum: [library, binary, workspace, plugin]
+      default_edition:
+        description: |
+          Rust edition rendered as `edition = "..."` when the project's
+          `[project].edition` is unset. e.g. "2021".
+        type: string
+      lib:
+        description: |
+          [lib] section emit policy. Present when shape ∈ {library, plugin}.
+        type: object
+        additionalProperties: false
+        properties:
+          crate_type:
+            description: |
+              CrateType[] (closed enum) — `[lib] crate-type = [...]`.
+              Empty/absent = default `[lib]` (rlib).
+            type: array
+            items:
+              type: string
+              enum: [lib, rlib, cdylib, staticlib, dylib, proc-macro]
+          cdylib_only:
+            description: |
+              When true, the lib emits only the cdylib crate-type (no rlib).
+              Convenience flag for plugins that ship as cdylib + standalone bin.
+            type: boolean
+      bin:
+        description: |
+          [[bin]] section emit policy. Present when shape ∈ {binary, plugin}.
+          For plugin shape, requires `gate` to fire conditionally.
+        type: object
+        additionalProperties: false
+        required: [name_template, path_template]
+        properties:
+          name_template:
+            description: |
+              `[[bin]] name` template. Supports {project_name}.
+              Resolves at cargo-toml render time.
+            type: string
+          path_template:
+            description: |
+              `[[bin]] path` template. Tokens reserved (no current
+              shipped profile uses any token here).
+            type: string
+          gate:
+            description: |
+              Optional condition gating the [[bin]] row. Bin only emits
+              when the gate is satisfied. v1 supports one kind:
+              `architecture_array_contains` checks whether
+              architecture.toml's `<table>.<field>` array contains `<value>`.
+            type: object
+            additionalProperties: false
+            required: [kind, table, field, value]
+            properties:
+              kind:
+                type: string
+                enum: [architecture_array_contains]
+              table:
+                type: string
+              field:
+                type: string
+              value:
+                type: string
+          paired_stub:
+            description: |
+              F-016: paired source-tree stub written alongside the [[bin]]
+              row when the gate fires. The body is read from `template_file`
+              (path relative to the profile's plugin-tree dir).
+            type: object
+            additionalProperties: false
+            required: [template_file]
+            properties:
+              template_file:
+                description: |
+                  Path under `profiles/<name>/`. e.g.
+                  `templates/standalone-stub.rs.template`. Bytes are the
+                  stub body; supports {project_name} substitution at
+                  cargo-toml render time.
+                type: string
+                minLength: 1
+      features:
+        description: |
+          [features] synthesis policy mirroring library-api / audio-plugin
+          today.
+        type: object
+        additionalProperties: false
+        properties:
+          synthesize_default:
+            description: |
+              When true, always emit `default = [...]` line in [features]
+              section (matches the existing library-api / audio-plugin
+              behavior).
+            type: boolean
+          drain_from:
+            description: |
+              architecture.toml table paths supplying [[features]] entries.
+              e.g. ["features"] reads architecture.toml's [[features]] array.
+            type: array
+            items:
+              type: string
+      architecture_deps:
+        description: |
+          Crate-ref drains from architecture.toml. `typed_slots` covers
+          firmware-layered's [platform.mcu_core] etc.; `open_arrays` covers
+          [[external_deps]]-style open lists.
+        type: object
+        additionalProperties: false
+        properties:
+          typed_slots:
+            type: array
+            items:
+              type: object
+              additionalProperties: false
+              required: [table, keys]
+              properties:
+                table:
+                  type: string
+                keys:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+          open_arrays:
+            type: array
+            items:
+              type: string
+
+  bootstrap:
+    description: |
+      Bootstrap-time pipeline. Today, only `rust-workspace` populates
+      `bootstrap.steps`; standalone profiles use empty list.
+    type: object
+    additionalProperties: false
+    properties:
+      steps:
+        description: |
+          BootstrapStep[] (closed enum). Ordered list; analyzer follows
+          verbatim.
+        type: array
+        items:
+          type: string
+          enum: [emit_workspace_root, emit_member_stubs, walk_members]
+
+  skeleton:
+    description: |
+      gen --skeleton dispatch (per-profile policy).
+    type: object
+    additionalProperties: false
+    required: [supported]
+    properties:
+      supported:
+        description: |
+          When false, `gen --skeleton` raises SKEL-001 for this profile.
+        type: boolean
+      entry_file:
+        description: |
+          Crate entry-point file (e.g. "src/lib.rs", "src/main.rs"). May
+          be empty when `supported: false`.
+        type: string
+      entry_template:
+        description: |
+          EntryTemplate (closed enum): which scaffolded body the analyzer
+          writes to entry_file when emitting a fresh skeleton.
+        type: string
+        enum: [empty, lib_re_exports, main_unimplemented]
+      extra_files:
+        description: |
+          Additional source-tree files emitted alongside the entry. Sub-shape
+          intentionally open in step 1; tightened as the firmware-layered
+          skeleton work lands (Phase 16 §8.1 step 4).
+        type: array
+        items:
+          type: object
+      module_layout:
+        description: |
+          ModuleLayout (closed enum): how skeleton-emitted modules are laid
+          out in source — flat (one .rs per module under src/) or nested
+          (mod-rs trees).
+        type: string
+        enum: [flat, nested]
+      steps:
+        description: |
+          SkeletonStep[] (closed enum). Ordered list; analyzer follows
+          verbatim.
+        type: array
+        items:
+          type: string
+          enum: [emit_cargo_toml, walk_modules, emit_handoff_md]
+
+  context:
+    description: |
+      `prompt --module` and `context --module` dispatch.
+    type: object
+    additionalProperties: false
+    properties:
+      module_fields_for_prompt:
+        description: |
+          Top-level module-spec field names that contribute to the
+          assembled codegen prompt.
+        type: array
+        items:
+          type: string
+      context_subcommand_extras:
+        description: |
+          Profile-specific buckets surfaced by `context --module`. Each
+          entry is one bucket; sub-shape is open in step 1 (the two
+          shipped shapes are `{field, from_attr}` and
+          `{field, kind: collect_local_entities_by_kind, kinds[]}`).
+        type: array
+        items:
+          type: object
+
+  surface:
+    description: |
+      validate-pass routing. Replaces `layout.spec.workspace.is_some()`
+      heuristics in Batch A with declarative profile-driven flags.
+    type: object
+    additionalProperties: false
+    properties:
+      has_modules:
+        description: |
+          When false, validate-pass suppresses LAYOUT-003 on
+          module.schema.yaml absence (and any other no-module-surface
+          heuristics — see doc 21 §8 step 8 audit).
+        type: boolean
+      has_requirements:
+        description: |
+          When false, validate-pass suppresses LAYOUT-003 on
+          requirements.schema.yaml absence.
+        type: boolean
+      has_architecture:
+        description: |
+          When false, validate-pass suppresses LAYOUT-005-style
+          absent-warnings on architecture.toml.
+        type: boolean

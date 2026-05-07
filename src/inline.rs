@@ -177,6 +177,19 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
             rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
             bytes: read_file(&codegen_src)?,
         });
+
+        // Phase 16 step 2.5: per-language `deps.yaml` manifest joins the
+        // block's per-unit file set when present (D52 / doc 21 §4). Bytes
+        // participate in `content_hash` automatically via the rolled-up
+        // hash; pre-D52 blocks without deps.yaml keep their existing hash.
+        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
+        if deps_src.is_file() {
+            files.push(UnitFile {
+                rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/deps.yaml")),
+                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
+                bytes: read_file(&deps_src)?,
+            });
+        }
     }
 
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
@@ -230,6 +243,21 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
             rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/README.md")),
             rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
             bytes: read_file(&codegen_src)?,
+        });
+    }
+
+    // Phase 16 step 2.5: language-neutral `contract.yaml` manifest joins
+    // the bridge's per-unit file set when present (D52 / doc 21 §5). It
+    // lives at the bridge dir top level (not under codegen/<lang>/) and
+    // inlines next to the bridge's reduction file. Bytes participate in
+    // `content_hash` automatically via the rolled-up hash; pre-D52 bridges
+    // without contract.yaml keep their existing hash.
+    let contract_src = unit_dir.join("contract.yaml");
+    if contract_src.is_file() {
+        files.push(UnitFile {
+            rel_dst: PathBuf::from(format!("reductions/bridges/{name}.contract.yaml")),
+            rel_src_in_unit: PathBuf::from("contract.yaml"),
+            bytes: read_file(&contract_src)?,
         });
     }
 

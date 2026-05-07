@@ -1,0 +1,16 @@
+# Phase 16 manifest — egui+nih-plug bridge dispatch contract.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §5.3.
+# Schema: specdev-analyzer/src/embedded/bridge_contract.schema.yaml.
+#
+# The endpoint pair (egui, nih-plug) is encoded in the directory name
+# per doc 15 invariants 2 + 4; not restated in the manifest body.
+# Inlined alongside reduction.yaml during `specdev inline-bridge`;
+# participates in the bridge's per-unit content_hash.
+
+binding_locality: plugin_shell_unique
+
+diagnostic_template: |
+  the {bridge_name} bridge requires co-residency on the plugin_shell module:
+  parameter `{parameter}` is declared on `{decl_module}` but its widget
+  binding is declared on `{binding_module}`. Move the widget binding to
+  `{decl_module}`, or move the parameter declaration to `{binding_module}`.
