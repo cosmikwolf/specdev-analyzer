@@ -25,8 +25,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use tracing::info;
 
 use crate::lineage::{Lineage, MetaSection};
+use crate::manifest::{BootstrapStep, Profile};
 
 /// CLI inputs for `bootstrap`.
 #[derive(Debug, Clone)]
@@ -143,12 +145,12 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
         ProfileFile {
             src_rel: PathBuf::from("architecture.toml.template"),
             dst_rel: PathBuf::from("specs/architecture.toml"),
-            substitute: false,
+            substitute: true,
         },
         ProfileFile {
             src_rel: PathBuf::from("requirements.toml.template"),
             dst_rel: PathBuf::from("specs/requirements.toml"),
-            substitute: false,
+            substitute: true,
         },
         ProfileFile {
             src_rel: PathBuf::from("reductions/project.yaml"),
@@ -156,6 +158,49 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             substitute: false,
         },
     ];
+
+    // Phase 16 step 2.5: when the profile ships a `profile.yaml` manifest
+    // (D52 / doc 21), copy it byte-faithfully alongside `domain.toml`. The
+    // file is static YAML; no template substitution applies. Profiles
+    // authored before Phase 16 (and the phase3 fixture) have no
+    // profile.yaml — bootstrap silently skips, and the analyzer falls back
+    // to the pre-D51 default per doc 21 §6.5.
+    if profile_dir.join("profile.yaml").is_file() {
+        plan.push(ProfileFile {
+            src_rel: PathBuf::from("profile.yaml"),
+            dst_rel: PathBuf::from("specs/specdev/profile.yaml"),
+            substitute: false,
+        });
+    }
+
+    // Phase 16 step 3c: when the profile ships a `templates/` directory
+    // (referenced from profile.yaml's `paired_stub.template_file` and any
+    // future template_file fields), copy each file byte-faithfully to
+    // `<target>/specs/specdev/templates/`. Tokens in the file body are
+    // resolved at render time (per doc 21 §6.4 — closed `{key}` grammar);
+    // bootstrap-time copy is byte-faithful. Subdirectories are not
+    // walked in v1 (no shipped template needs them); a flat layout
+    // matches doc 15's "specs/specdev/ is structurally addressable."
+    let templates_dir = profile_dir.join("templates");
+    if templates_dir.is_dir() {
+        let mut template_entries: Vec<PathBuf> = std::fs::read_dir(&templates_dir)
+            .with_context(|| format!("reading {}", templates_dir.display()))?
+            .filter_map(|r| r.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect();
+        template_entries.sort();
+        for entry in template_entries {
+            let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            plan.push(ProfileFile {
+                src_rel: PathBuf::from(format!("templates/{file_name}")),
+                dst_rel: PathBuf::from(format!("specs/specdev/templates/{file_name}")),
+                substitute: false,
+            });
+        }
+    }
 
     // Dynamically enumerate `codegen/<lang>/*.md`. Lex-sorted; copied
     // verbatim. Profiles ship whatever convention files they need:
@@ -376,6 +421,21 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
             .with_context(|| format!("creating {}", abs.display()))?;
     }
 
+    // Phase 16 §8.1 step 6: walk the manifest's `bootstrap.steps` and
+    // dispatch each step to its handler. v1 handlers cover the closed
+    // enum (`emit_workspace_root` / `emit_member_stubs` / `walk_members`);
+    // only the rust-workspace shape currently authors a non-empty step
+    // set. EmitWorkspaceRoot adds a defensive validation against the
+    // bootstrapped spec.toml; the other two are no-op v1 placeholders
+    // so the dispatch shell exists without committing to per-member
+    // scaffolding semantics until dogfood evidence informs them.
+    if let Some(steps) = manifest_bootstrap_steps(&specdev_root)? {
+        let target_spec_toml = inputs.target_dir.join("spec.toml");
+        for step in steps {
+            dispatch_bootstrap_step(step, &target_spec_toml)?;
+        }
+    }
+
     // Write the lineage [meta] stamp. Profiles get no entry of their own
     // (doc 15 §3.3); only `[meta]` records "this project was bootstrapped
     // from plugin X at version Y with profile Z."
@@ -386,6 +446,83 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
         profile: inputs.profile.clone(),
     });
     lineage.save(&specdev_root)?;
+    Ok(())
+}
+
+/// Phase 16 §8.1 step 6: load the just-copied `profile.yaml` from the
+/// bootstrapped tree and return its `bootstrap.steps`. `Ok(None)` when the
+/// manifest is absent (pre-D52 profiles like the phase3 fixture) or when
+/// `bootstrap.steps` is empty (the closed-set non-workspace profiles —
+/// library-api, firmware-layered, audio-plugin all author `steps: []`).
+/// `Err` only on a malformed manifest; surfaces as `MANIFEST-001`.
+fn manifest_bootstrap_steps(specdev_root: &Path) -> Result<Option<Vec<BootstrapStep>>> {
+    let manifest_path = specdev_root.join("profile.yaml");
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let profile = Profile::load(&manifest_path)?;
+    let steps = profile
+        .bootstrap
+        .map(|b| b.steps)
+        .unwrap_or_default();
+    if steps.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(steps))
+    }
+}
+
+/// Phase 16 §8.1 step 6: dispatch one `BootstrapStep` against the
+/// bootstrapped target. The closed enum has three variants in v1:
+///
+/// * `EmitWorkspaceRoot` — defensive validation: the bootstrapped
+///   `spec.toml` MUST contain a `[workspace]` table. Errors `BOOTSTRAP-002`
+///   if not (catches a future profile authoring mistake where
+///   `bootstrap.steps` references this step but the template doesn't ship
+///   the table). Today the rust-workspace `spec.toml.template` writes the
+///   table directly, so this step is a no-op pass for that profile.
+/// * `EmitMemberStubs` — no-op v1. The dispatch shell exists; per-member
+///   stub directory creation lands in a follow-up phase gated on real
+///   workspace-bootstrap dogfood.
+/// * `WalkMembers` — no-op v1. Recursive per-member bootstrap deferred.
+///
+/// All three steps log via `tracing::info!` so the dispatch path is
+/// observable in `--verbose` runs.
+fn dispatch_bootstrap_step(step: BootstrapStep, target_spec_toml: &Path) -> Result<()> {
+    match step {
+        BootstrapStep::EmitWorkspaceRoot => {
+            let text = std::fs::read_to_string(target_spec_toml)
+                .with_context(|| format!("reading {}", target_spec_toml.display()))?;
+            let parsed: toml::Value = toml::from_str(&text)
+                .with_context(|| format!("parsing {}", target_spec_toml.display()))?;
+            if parsed.get("workspace").is_none() {
+                return Err(anyhow!(
+                    "[BOOTSTRAP-002] profile manifest's `bootstrap.steps` \
+                     includes `emit_workspace_root` but the bootstrapped \
+                     `spec.toml` at {} has no `[workspace]` table; the \
+                     profile's `spec.toml.template` must include the \
+                     `[workspace]` declaration.",
+                    target_spec_toml.display(),
+                ));
+            }
+            info!(
+                target: "specdev_analyzer::bootstrap",
+                "bootstrap step `emit_workspace_root`: validated [workspace] table present"
+            );
+        }
+        BootstrapStep::EmitMemberStubs => {
+            info!(
+                target: "specdev_analyzer::bootstrap",
+                "bootstrap step `emit_member_stubs`: v1 no-op (per-member stub creation deferred)"
+            );
+        }
+        BootstrapStep::WalkMembers => {
+            info!(
+                target: "specdev_analyzer::bootstrap",
+                "bootstrap step `walk_members`: v1 no-op (recursive per-member bootstrap deferred)"
+            );
+        }
+    }
     Ok(())
 }
 

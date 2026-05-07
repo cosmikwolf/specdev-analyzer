@@ -117,21 +117,21 @@ visibility = "pub"
     std::fs::write(
         target.join("specs/requirements.toml"),
         r#"
-[[sources]]
+[[source]]
 id = "src1"
 title = "ad-hoc"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-LIB-1"
 text = "Frame type exists."
 source = "src1"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-LIB-2"
 text = "Mode enum exists."
 source = "src1"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-LIB-3"
 text = "compute fn exists."
 source = "src1"
@@ -307,16 +307,16 @@ satisfies = ["REQ-001", "REQ-002"]
     std::fs::write(
         target.join("specs/requirements.toml"),
         r#"
-[[sources]]
+[[source]]
 id = "s1"
 title = "spec"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-001"
 text = "first"
 source = "s1"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-002"
 text = "second"
 source = "s1"

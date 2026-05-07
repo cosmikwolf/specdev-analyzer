@@ -1,0 +1,103 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/block_deps.schema.yaml"
+title: "block deps manifest (Phase 16, D52 / doc 21 §4)"
+description: |
+  Validates `blocks/<block-name>/codegen/<language>/deps.yaml`. Optional
+  per (block, language) pair; when present, the analyzer drains crate
+  refs from `crates[]` into the project's Cargo.toml at render time.
+  `recommended_external_deps[]` is a non-injecting suggestion list
+  surfaced by /spec-design (preserves spec-is-source-of-truth, D35).
+  Inlined alongside the block's README; participates in the block's
+  per-unit content_hash (doc 15 §5.5).
+
+type: object
+additionalProperties: false
+properties:
+  crates:
+    description: |
+      Crate dependencies the block contributes to Cargo.toml when inlined.
+    type: array
+    items:
+      $ref: "#/$defs/CrateEntry"
+
+  recommended_external_deps:
+    description: |
+      Non-injecting suggestions surfaced by /spec-design. NOT auto-merged
+      into the project's Cargo.toml — the user explicitly authors crates
+      they accept under `[external_deps]`.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [crate, purpose]
+      properties:
+        crate:
+          description: Crate name (matches a crates.io / git crate name).
+          type: string
+          minLength: 1
+        purpose:
+          description: |
+            Required when an entry is listed. Short prose (≤80 chars)
+            explaining why /spec-design should suggest this crate. Empty
+            string is rejected at load time — purpose-less suggestions
+            don't help authors decide whether to accept them.
+          type: string
+          minLength: 1
+          maxLength: 80
+
+$defs:
+  CrateEntry:
+    description: |
+      One Cargo dep entry. Mirrors the existing CrateReference shape
+      (src/embedded/crate_reference.schema.yaml) so the deps.yaml shape
+      and module-level external_deps[] share vocabulary.
+    type: object
+    additionalProperties: false
+    required: [name, version]
+    properties:
+      name:
+        type: string
+        minLength: 1
+      version:
+        description: |
+          cargo-style version requirement (e.g. "^0.4", "~1.2", "0.0").
+        type: string
+        minLength: 1
+      features:
+        type: array
+        items:
+          type: string
+      default_features:
+        type: boolean
+      optional:
+        type: boolean
+      source:
+        description: |
+          Closed-set tagged union mirroring CrateReference:
+            { path: "..." }                       — path-dep
+            { git: "...", rev/tag/branch: "..." } — git-dep
+            "workspace"                           — workspace inheritance
+            "crates-io"                           — explicit default registry
+        oneOf:
+          - type: object
+            additionalProperties: false
+            required: [path]
+            properties:
+              path:
+                type: string
+                minLength: 1
+          - type: object
+            additionalProperties: false
+            required: [git]
+            properties:
+              git:
+                type: string
+                minLength: 1
+              rev:
+                type: string
+              tag:
+                type: string
+              branch:
+                type: string
+          - type: string
+            enum: [workspace, crates-io]

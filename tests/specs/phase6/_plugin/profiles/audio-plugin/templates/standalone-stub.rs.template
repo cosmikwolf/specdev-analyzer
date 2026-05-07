@@ -1,0 +1,17 @@
+//! Standalone host for `{project_name}` — paired with the `[[bin]]` row
+//! emitted by `cargo-toml` when `[plugin].formats` includes `"standalone"`
+//! (F-016, doc 21 §3.1 audio-plugin manifest `paired_stub.template_file`).
+//!
+//! The analyzer writes this file once when the `[[bin]]` row first
+//! emits; subsequent re-emits never overwrite. Replace `MyPlugin` below
+//! with the concrete plugin type your `lib.rs` exports, then delete the
+//! `compile_error!` line.
+
+compile_error!(
+    "replace `MyPlugin` in src/bin/standalone.rs with the plugin type \
+     your lib.rs declares, then delete this compile_error! line"
+);
+
+// fn main() {
+//     nih_plug::prelude::nih_export_standalone::<MyPlugin>();
+// }

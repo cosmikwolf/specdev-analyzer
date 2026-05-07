@@ -1,0 +1,14 @@
+# Phase 16 manifest — Cargo deps the embassy block contributes.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §4.2.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+
+crates:
+  - name: embassy-executor
+    version: "0.6"
+    features: ["arch-cortex-m", "executor-thread"]
+    source: crates-io
+  - name: embassy-time
+    version: "0.3"
+    source: crates-io
+
+recommended_external_deps: []

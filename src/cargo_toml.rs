@@ -16,12 +16,14 @@
 //! emit Cargo.toml; Claude emits the .rs source files.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
 use crate::layout::LayoutContext;
+use crate::manifest::block_deps as bd_module;
+use crate::manifest::{BinGate, BinSection, BlockDeps, PairedStub, Profile, ShapeKind};
 
 /// One Cargo.toml `[dependencies]` entry, normalized.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -77,10 +79,19 @@ enum CrateSourceTag {
 
 /// Result of a Cargo.toml render: the rendered text plus any
 /// non-fatal warnings (e.g., version conflicts across modules).
+///
+/// `extra_files` carries paired source-tree side effects the analyzer
+/// must produce alongside the Cargo.toml (F-016): the audio-plugin
+/// `[[bin]]` row references `src/bin/standalone.rs`, so a write of the
+/// rendered Cargo.toml without a paired stub at that path leaves cargo
+/// in a broken state. Each entry is (project-relative path, body); the
+/// caller writes the file only if the path doesn't already exist —
+/// hand-edited bins are never overwritten.
 #[derive(Debug, Clone)]
 pub struct RenderedCargoToml {
     pub text: String,
     pub warnings: Vec<String>,
+    pub extra_files: Vec<(PathBuf, String)>,
 }
 
 /// Render Cargo.toml for the project at `layout`. Dispatches across
@@ -88,26 +99,44 @@ pub struct RenderedCargoToml {
 ///
 /// * **Workspace root** (`[workspace]` table set in spec.toml) →
 ///   [`render_workspace_root`]: emits `[workspace]` + `[workspace.package]`
-///   + `[workspace.dependencies]`.
+///   + `[workspace.dependencies]`. Layout-driven; doc 21 §3.5.
 /// * **Workspace member** (no `[workspace]` table, but an ancestor
 ///   spec.toml carries one whose `members[].path` references this
-///   directory) → renders the per-profile shape with workspace-aware
+///   directory) → renders the per-shape body with workspace-aware
 ///   field inheritance: package fields owned by `[workspace_package]`
 ///   become `<field>.workspace = true`; deps with
 ///   `source = "workspace"` render as `{ workspace = true, ... }`.
-/// * **Standalone library-api / firmware-layered project** → existing
-///   render path, unchanged.
-/// * **Anything else** → error.
+/// * **Manifest-driven (D52 / doc 21 §3.4):** when the project's
+///   inlined `specs/specdev/profile.yaml` exists, dispatch off
+///   `cargo_toml.shape` (`library` / `binary` / `plugin` / `workspace`).
+///   This is the post-Phase-16 path — analyzer holds zero compile-time
+///   knowledge of profile names.
+/// * **Backward-compat fallback:** for projects bootstrapped pre-D52,
+///   fall back to the legacy profile-name match. The fallback is a
+///   transition aid; doc 21 §6.5 schedules its removal in v1.1 once
+///   `specdev migrate` ships and one engagement cycle has elapsed.
 pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     if layout.spec.workspace.is_some() {
         return render_workspace_root(layout);
     }
     let workspace_ctx = WorkspaceContext::find_for(layout)?;
+
+    // D52 / doc 21 §3.4: when `specs/specdev/profile.yaml` is present,
+    // dispatch off `cargo_toml.shape`. The manifest body is loaded and
+    // validated by `Profile::load`; failures (missing fields, unknown
+    // shape, etc.) surface as MANIFEST-001 with line-precise context.
+    if let Some(manifest) = load_inlined_profile(layout)? {
+        return render_by_shape(layout, &manifest, workspace_ctx.as_ref());
+    }
+
+    // Backward-compat fallback for pre-D52 projects (no profile.yaml in
+    // the inlined tree). Routes by `[project].profile` name to the same
+    // per-shape render functions. Removed in v1.1 per doc 21 §6.5.
     let profile = layout.spec.project.profile.as_str();
     match profile {
         "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()),
         "library-api" => render_library(layout, workspace_ctx.as_ref()),
-        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref()),
+        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None),
         "rust-workspace" => Err(anyhow!(
             "spec.toml at {} declares profile `rust-workspace` but has no \
              [workspace] table; add `[workspace]` with `[[workspace.members]]` \
@@ -118,6 +147,172 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
             "cargo-toml emission for profile `{other}` is not implemented; \
              supported: firmware-layered, library-api, audio-plugin, rust-workspace",
         )),
+    }
+}
+
+/// Load `<specdev_root>/profile.yaml` if it exists. Returns `Ok(None)`
+/// when the manifest is absent (pre-D52 projects); `Err` only on a
+/// malformed/invalid manifest. Step 2.5 ensures every freshly-bootstrapped
+/// project has this file when its profile ships one.
+fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<Profile>> {
+    let path = layout.specdev_root.join("profile.yaml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    Profile::load(&path).map(Some)
+}
+
+/// Manifest-driven dispatch (D52). Each `ShapeKind` routes to the
+/// existing per-shape render function — step 3a is pure routing, no
+/// behavior change inside the renderers. Step 3b threads the manifest's
+/// `cargo_toml.bin` section to `render_audio_plugin` so its `[[bin]]`
+/// gate can be evaluated against the manifest spec instead of the
+/// hardcoded `[plugin].formats` contains `"standalone"` literal.
+fn render_by_shape(
+    layout: &LayoutContext,
+    manifest: &Profile,
+    workspace_ctx: Option<&WorkspaceContext>,
+) -> Result<RenderedCargoToml> {
+    let cargo = manifest.cargo_toml.as_ref().ok_or_else(|| {
+        anyhow!(
+            "profile.yaml at {} has no `cargo_toml` section; cannot dispatch cargo-toml render",
+            layout.specdev_root.join("profile.yaml").display(),
+        )
+    })?;
+    match cargo.shape {
+        ShapeKind::Library => render_library(layout, workspace_ctx),
+        ShapeKind::Binary => render_firmware(layout, workspace_ctx),
+        ShapeKind::Plugin => render_audio_plugin(layout, workspace_ctx, cargo.bin.as_ref()),
+        ShapeKind::Workspace => Err(anyhow!(
+            "spec.toml at {} declares a profile with `cargo_toml.shape: workspace` \
+             but has no [workspace] table; add `[workspace]` with \
+             `[[workspace.members]]` entries or change the profile",
+            layout.spec_toml_path.display(),
+        )),
+    }
+}
+
+/// Step 3d: enumerate inlined blocks and collect each block's per-language
+/// `deps.yaml` contribution as a flat `Vec<CrateRef>`. Closes F-012 + F-017
+/// (blocks now contribute Cargo deps; users no longer mirror those crates
+/// in `[[external_deps]]` by hand).
+///
+/// Discovery: scan `<inlined_blocks_dir>/*.schema.yaml` for block names
+/// (one per file basename), then read
+/// `<codegen_dir>/blocks/<block>/deps.yaml` via `BlockDeps::load`. The
+/// load is `Ok(BlockDeps::default())` when the file is absent, so blocks
+/// inlined pre-D52 (or blocks that simply ship no Rust deps) silently
+/// contribute zero crates.
+///
+/// `recommended_external_deps[]` is intentionally NOT injected here —
+/// per doc 21 §4.3 it's surfaced by `/spec-design` Step 2 as authoring
+/// suggestions; auto-injection would erode D35 (spec is source of truth).
+///
+/// Order discipline: callers merge **after** architecture-level and
+/// module-level deps so user-authored versions win on conflict (the
+/// `merge_dep` semantics keep the first inserted entry; later
+/// duplicates emit the conflict warning). Block contributions adding
+/// new crates succeed; conflicts surface as warnings the spec author
+/// resolves.
+fn collect_inlined_block_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> {
+    let mut out: Vec<CrateRef> = Vec::new();
+    if !layout.inlined_blocks_dir.is_dir() {
+        return Ok(out);
+    }
+    let mut block_names: Vec<String> = std::fs::read_dir(&layout.inlined_blocks_dir)
+        .with_context(|| format!("reading {}", layout.inlined_blocks_dir.display()))?
+        .filter_map(|r| r.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name().and_then(|s| s.to_str())?;
+            // Strip the `.schema.yaml` suffix to get the block name.
+            // Skip non-block entries (defensive — directory shouldn't
+            // hold anything else, but the inventory is unspecified).
+            name.strip_suffix(".schema.yaml").map(String::from)
+        })
+        .collect();
+    block_names.sort();
+    for block in block_names {
+        let deps_path = layout
+            .codegen_dir
+            .join("blocks")
+            .join(&block)
+            .join("deps.yaml");
+        let deps = BlockDeps::load(&deps_path).with_context(|| {
+            format!(
+                "loading block deps.yaml for `{block}` at {}",
+                deps_path.display()
+            )
+        })?;
+        for entry in &deps.crates {
+            out.push(block_crate_entry_to_crate_ref(entry));
+        }
+    }
+    Ok(out)
+}
+
+/// Bridge `BlockDeps::CrateEntry` (manifest shape) to `cargo_toml::CrateRef`
+/// (renderer shape). The two structs carry the same fields under
+/// different names; this fn is a transparent translation. The two
+/// `CrateSource` enums are structurally identical — the duplication
+/// exists because the manifest loader (validated against
+/// `block_deps.schema.yaml`) and the renderer's parser (validated
+/// against `crate_reference.schema.yaml`) ship as separate types. A
+/// future v1.x cleanup could unify them; out of scope for step 3d.
+fn block_crate_entry_to_crate_ref(entry: &bd_module::CrateEntry) -> CrateRef {
+    CrateRef {
+        crate_name: entry.name.clone(),
+        version: entry.version.clone(),
+        source: entry.source.as_ref().map(translate_block_source),
+        features: if entry.features.is_empty() {
+            None
+        } else {
+            Some(entry.features.clone())
+        },
+        default_features: entry.default_features,
+        optional: entry.optional,
+    }
+}
+
+fn translate_block_source(s: &bd_module::CrateSource) -> CrateSource {
+    match s {
+        bd_module::CrateSource::Tagged(bd_module::CrateSourceTag::Workspace) => {
+            CrateSource::Tagged(CrateSourceTag::Workspace)
+        }
+        bd_module::CrateSource::Tagged(bd_module::CrateSourceTag::CratesIo) => {
+            CrateSource::Tagged(CrateSourceTag::CratesIo)
+        }
+        bd_module::CrateSource::Path { path } => CrateSource::Path {
+            path: path.clone(),
+        },
+        bd_module::CrateSource::Git {
+            git,
+            rev,
+            tag,
+            branch,
+        } => CrateSource::Git {
+            git: git.clone(),
+            rev: rev.clone(),
+            tag: tag.clone(),
+            branch: branch.clone(),
+        },
+    }
+}
+
+/// Evaluate a closed-enum `BinGate` against architecture.toml. Returns
+/// `true` when the gate condition is met (i.e. the bin should emit).
+/// Unknown gate variants are deliberately a compile error — the closed
+/// enum forces a doc-21 amendment + analyzer-side dispatch addition for
+/// any new gate, mirroring the discipline applied to ShapeKind.
+fn evaluate_bin_gate(gate: &BinGate, arch: &toml::value::Table) -> bool {
+    match gate {
+        BinGate::ArchitectureArrayContains { table, field, value } => arch
+            .get(table.as_str())
+            .and_then(toml::Value::as_table)
+            .and_then(|t| t.get(field.as_str()))
+            .and_then(toml::Value::as_array)
+            .map(|arr| arr.iter().any(|v| v.as_str() == Some(value.as_str())))
+            .unwrap_or(false),
     }
 }
 
@@ -293,6 +488,11 @@ fn render_firmware(
     for c in collect_module_external_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
+    // Step 3d: block-contributed deps via `<codegen>/blocks/<block>/deps.yaml`.
+    // Merged AFTER user-authored deps so user spec wins on conflict.
+    for c in collect_inlined_block_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
 
     let mut text = String::new();
     write_package_section(&mut text, project, /* rust_version */ None, workspace);
@@ -306,7 +506,7 @@ fn render_firmware(
 
     write_dependencies_section(&mut text, &deps);
 
-    Ok(RenderedCargoToml { text, warnings })
+    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +537,11 @@ fn render_library(
         merge_dep(&mut deps, c, &mut warnings);
     }
     for c in collect_module_external_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+    // Step 3d: block-contributed deps. Merged AFTER user-authored deps
+    // so user spec wins on conflict.
+    for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
 
@@ -388,7 +593,7 @@ fn render_library(
 
     write_dependencies_section(&mut text, &deps);
 
-    Ok(RenderedCargoToml { text, warnings })
+    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
 }
 
 // ---------------------------------------------------------------------------
@@ -416,24 +621,35 @@ fn render_library(
 fn render_audio_plugin(
     layout: &LayoutContext,
     workspace: Option<&WorkspaceContext>,
+    manifest_bin: Option<&BinSection>,
 ) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
 
     let parsed_features = parse_library_features(arch.get("features"))?;
 
-    // `[plugin].formats` drives the bin emission decision.
-    let plugin_table = arch.get("plugin").and_then(toml::Value::as_table);
-    let formats: Vec<String> = plugin_table
-        .and_then(|p| p.get("formats"))
-        .and_then(toml::Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let emit_standalone_bin = formats.iter().any(|f| f == "standalone");
+    // Step 3b: bin emission gate. When the manifest carries a
+    // `cargo_toml.bin.gate`, evaluate it (closed-set `BinGate` enum).
+    // When the manifest is absent (pre-D52 fallback) or carries no
+    // gate, fall back to the legacy hardcoded `[plugin].formats`-
+    // contains-`"standalone"` check. Both paths produce the same boolean
+    // for any architecture.toml the audio-plugin profile authors today.
+    let emit_standalone_bin = match manifest_bin.and_then(|b| b.gate.as_ref()) {
+        Some(gate) => evaluate_bin_gate(gate, &arch),
+        None => {
+            let plugin_table = arch.get("plugin").and_then(toml::Value::as_table);
+            let formats: Vec<String> = plugin_table
+                .and_then(|p| p.get("formats"))
+                .and_then(toml::Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            formats.iter().any(|f| f == "standalone")
+        }
+    };
 
     let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -444,6 +660,11 @@ fn render_audio_plugin(
     }
     // Per-module external_deps[].
     for c in collect_module_external_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+    // Step 3d: block-contributed deps. Merged AFTER user-authored deps
+    // so user spec wins on conflict.
+    for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
 
@@ -497,7 +718,84 @@ fn render_audio_plugin(
 
     write_dependencies_section(&mut text, &deps);
 
-    Ok(RenderedCargoToml { text, warnings })
+    // F-016: pair the [[bin]] standalone row with a stub source file so
+    // the project compiles immediately after a fresh emit. The caller
+    // skips the write if the file already exists, so hand-edited bins
+    // are never overwritten.
+    //
+    // Step 3c: when the manifest path provides a `paired_stub.template_file`
+    // entry, read the file from `<specdev_root>/<template_file>` (copied
+    // there at bootstrap time per step 3c's bootstrap.rs extension) and
+    // substitute `{project_name}` with `[project].name`. When the manifest
+    // path is absent (pre-D52 backward-compat), fall back to the legacy
+    // `standalone_bin_stub()` literal — preserves byte-parity for projects
+    // that pre-date the manifest era.
+    let mut extra_files: Vec<(PathBuf, String)> = Vec::new();
+    if emit_standalone_bin {
+        let body = match manifest_bin.and_then(|b| b.paired_stub.as_ref()) {
+            Some(stub) => read_paired_stub_body(layout, stub, &project.name)?,
+            None => standalone_bin_stub(&project.name),
+        };
+        extra_files.push((PathBuf::from("src/bin/standalone.rs"), body));
+    }
+
+    Ok(RenderedCargoToml {
+        text,
+        warnings,
+        extra_files,
+    })
+}
+
+/// Step 3c: read the paired-stub template referenced by the audio-plugin
+/// manifest's `cargo_toml.bin.paired_stub.template_file` and substitute
+/// `{project_name}` with the project's crate name. The template path is
+/// stored in the manifest as relative to the profile dir (e.g.
+/// `templates/standalone-stub.rs.template`); after bootstrap copies the
+/// `templates/` tree to `<specdev_root>/templates/`, the same relative
+/// path resolves under the inlined tree. Per doc 21 §6.4, the only
+/// allowed token in this body is `{project_name}`; other `{...}` patterns
+/// pass through unchanged (closed-grammar enforcement of the body itself
+/// is a v1.x concern — the template is plugin-author content and a
+/// stray brace is the author's bug to find).
+fn read_paired_stub_body(
+    layout: &LayoutContext,
+    paired_stub: &PairedStub,
+    project_name: &str,
+) -> Result<String> {
+    let template_path = layout.specdev_root.join(&paired_stub.template_file);
+    let body = std::fs::read_to_string(&template_path).with_context(|| {
+        format!(
+            "reading paired_stub template at {} (referenced from profile.yaml)",
+            template_path.display()
+        )
+    })?;
+    Ok(body.replace("{project_name}", project_name))
+}
+
+/// F-016: minimal `src/bin/standalone.rs` stub paired with the
+/// `[[bin]]` row when `[plugin].formats` includes `"standalone"`. The
+/// body uses `nih_plug::prelude::nih_export_standalone::<MyPlugin>()`
+/// — author replaces `MyPlugin` with their concrete plugin type once
+/// it lands. Until then, the stub references a placeholder name behind
+/// a `compile_error!` so a fresh emit produces a friendly compile-time
+/// reminder instead of a confusing missing-file error.
+///
+/// Step 3c retains this literal as the **backward-compat fallback** for
+/// pre-D52 projects (no manifest, no `paired_stub.template_file`). The
+/// manifest path reads from the inlined template instead — see
+/// `read_paired_stub_body`.
+fn standalone_bin_stub(crate_name: &str) -> String {
+    format!(
+        "//! Standalone host for `{crate_name}` (F-016 stub).\n\
+         //!\n\
+         //! Generated by specdev-analyzer alongside the `[[bin]]` row in\n\
+         //! Cargo.toml. Replace `MyPlugin` below with the concrete plugin\n\
+         //! type your `lib.rs` exports, then delete this notice.\n\n\
+         compile_error!(\n    \"replace `MyPlugin` in src/bin/standalone.rs with the plugin type \\\n     your lib.rs declares, then delete this compile_error! line\"\n);\n\n\
+         // fn main() {{\n\
+         //     nih_plug::prelude::nih_export_standalone::<MyPlugin>();\n\
+         // }}\n",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +867,7 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         }
     }
 
-    Ok(RenderedCargoToml { text, warnings })
+    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,54 @@
+# Phase 16 manifest — drives analyzer dispatch for audio-plugin projects.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §3.3.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+name: audio-plugin
+language: rust
+
+cargo_toml:
+  shape: plugin
+  default_edition: "2021"
+  lib:
+    crate_type: ["cdylib"]
+    cdylib_only: true
+  bin:
+    name_template: "{project_name}-standalone"
+    path_template: "src/bin/standalone.rs"
+    gate:
+      kind: architecture_array_contains
+      table: "plugin"
+      field: "formats"
+      value: "standalone"
+    paired_stub:
+      template_file: templates/standalone-stub.rs.template
+  features:
+    synthesize_default: true
+    drain_from: ["features"]
+  architecture_deps:
+    typed_slots: []
+    open_arrays: ["external_deps"]
+
+bootstrap:
+  steps: []                       # standalone plugin; no workspace machinery
+
+skeleton:
+  supported: false                # D49 — audio-plugin skeleton deferred
+  entry_file: src/lib.rs
+  entry_template: empty
+  extra_files: []
+  module_layout: flat
+  steps: []
+
+context:
+  module_fields_for_prompt:
+    [items, satisfies, depends_on, context_files, external_deps, layer,
+     nih_plug, egui]
+  context_subcommand_extras:
+    - field: layer
+      from_attr: layer
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

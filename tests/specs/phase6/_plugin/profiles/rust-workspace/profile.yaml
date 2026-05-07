@@ -1,0 +1,42 @@
+# Phase 16 manifest — drives analyzer dispatch for rust-workspace shells.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §3.3.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+#
+# `shape: workspace` is descriptive metadata. The actual cargo-toml dispatch
+# fires off `[workspace]` table presence in spec.toml (D36 structural primitive,
+# doc 21 §3.5 layout-driven dispatch carve-out). The Phase 16
+# PROFILE-LAYOUT-MISMATCH validate check ensures the two signals agree.
+
+name: rust-workspace
+language: rust
+
+cargo_toml:
+  shape: workspace
+  default_edition: "2021"
+  features:
+    synthesize_default: false
+    drain_from: []
+  architecture_deps:
+    typed_slots: []
+    open_arrays: []
+
+bootstrap:
+  steps: [emit_workspace_root, emit_member_stubs, walk_members]
+
+skeleton:
+  supported: false                # workspace gen-skeleton has no per-module surface
+  entry_file: ""                  # n/a
+  entry_template: empty
+  extra_files: []
+  module_layout: flat
+  steps: []
+
+context:
+  module_fields_for_prompt: []   # workspace has no module surface
+  context_subcommand_extras: []
+
+surface:
+  has_modules: false              # F-009 hook
+  has_requirements: false
+  has_architecture: true

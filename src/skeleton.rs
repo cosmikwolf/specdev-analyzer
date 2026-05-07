@@ -9,12 +9,22 @@
 //! a failed `cargo check` is a "fix the spec, rerun" signal, not a valid
 //! handoff artifact (doc 16 §2 invariant).
 //!
-//! v1 scope: **library-api only**. `firmware-layered` skeleton emission
-//! is a bounded deferral pending firmware-shaped skeleton design (binary
-//! main entry, no_std panic handler, embassy executor, etc.).
+//! Phase 16 §8.1 step 4: dispatch off the inlined `profile.yaml`'s
+//! `skeleton.supported` flag and `skeleton.steps` ordering. Pre-D52
+//! projects (no `profile.yaml`) keep the legacy `profile != "library-api"`
+//! gate as a backward-compat fallback. Step 4 ships the *machinery* — the
+//! step-walker + supported gate. Profile content (firmware-layered,
+//! audio-plugin, rust-workspace skeletons) ships post-step-4 gated on
+//! dogfood evidence.
+//!
+//! v1 supported profiles: library-api only. `firmware-layered`,
+//! `audio-plugin`, and `rust-workspace` ship `skeleton.supported: false`
+//! in their manifests; running `gen --skeleton` against them errors
+//! `SKEL-001` (machinery in place; content authoring deferred).
 //!
 //! Error codes:
-//! - `SKEL-001` — non-library-api profile (skeleton mode is library-api only).
+//! - `SKEL-001` — profile's manifest declares `skeleton.supported: false`
+//!   (or, for pre-D52 projects, profile is not `library-api`).
 //! - `SKEL-002` — source dir non-empty (skeleton refuses to clobber).
 //! - `SKEL-003` — module spec missing `name` or items[] kind requires
 //!   `signature_hint` that the spec didn't provide.
@@ -30,6 +40,7 @@ use serde::Serialize;
 
 use crate::items::sync::{parse_spec_items, SpecItem};
 use crate::layout::LayoutContext;
+use crate::manifest::{Profile, SkeletonStep};
 
 /// Per-module spec view used by skeleton emission. Carries enough state
 /// to drive both the source-tree emission and the HANDOFF.md report.
@@ -58,18 +69,64 @@ pub struct EmittedModule {
     pub context_files: Vec<String>,
 }
 
+/// Default skeleton step ordering for pre-D52 projects (no `profile.yaml`)
+/// and for manifest-driven projects whose `skeleton.steps` is empty. Mirrors
+/// library-api's manifest ordering — the only currently-supported skeleton
+/// shape — so pre-D52 fallback and post-D52 manifest paths produce the same
+/// emission order.
+const DEFAULT_STEPS: [SkeletonStep; 3] = [
+    SkeletonStep::EmitCargoToml,
+    SkeletonStep::WalkModules,
+    SkeletonStep::EmitHandoffMd,
+];
+
+/// Load `<specdev_root>/profile.yaml` if present (Phase 16 §8.1 step 4).
+/// Returns `Ok(None)` for pre-D52 projects without an inlined manifest;
+/// `Err` only when the manifest exists but fails to validate or parse.
+/// `cargo_toml.rs` ships a parallel helper — kept module-private here to
+/// keep step 4's surface tight; a shared helper is a v1.x cleanup.
+fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<Profile>> {
+    let path = layout.specdev_root.join("profile.yaml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    Profile::load(&path).map(Some)
+}
+
 /// Emit a full-project skeleton tree under `<project>/<paths.source>/`.
 /// Refuses to run if the source dir is non-empty (use a fresh project or
 /// remove the existing tree first).
 pub fn run_skeleton(layout: &LayoutContext) -> Result<SkeletonReport> {
-    if layout.spec.project.profile != "library-api" {
-        return Err(anyhow!(
-            "[SKEL-001] skeleton mode is library-api only in v1; \
-             this project's profile is `{}`. firmware-layered skeleton \
-             support is a bounded deferral (doc 16 §7).",
-            layout.spec.project.profile
-        ));
-    }
+    let manifest = load_inlined_profile(layout)?;
+    let manifest_steps = match &manifest {
+        Some(p) => match p.skeleton.as_ref() {
+            Some(skel) if !skel.supported => {
+                return Err(anyhow!(
+                    "[SKEL-001] this profile's manifest declares \
+                     `skeleton.supported: false`; gen-skeleton is not \
+                     available for this project shape. Skeleton emission \
+                     for shapes other than the currently-supported one is \
+                     gated on follow-up authoring passes (doc 16 §7, \
+                     doc 21 §8.1 step 4)."
+                ));
+            }
+            Some(skel) => Some(skel.steps.clone()),
+            None => None,
+        },
+        None => {
+            // Pre-D52 backward-compat fallback (doc 21 §6.5). The legacy
+            // gate remains until `specdev migrate` ships in step 9.
+            if layout.spec.project.profile != "library-api" {
+                return Err(anyhow!(
+                    "[SKEL-001] skeleton mode is library-api only in v1; \
+                     this project's profile is `{}`. firmware-layered skeleton \
+                     support is a bounded deferral (doc 16 §7).",
+                    layout.spec.project.profile
+                ));
+            }
+            None
+        }
+    };
 
     let source_dir = layout.source_dir.clone();
     if source_dir.is_dir() {
@@ -150,54 +207,56 @@ pub fn run_skeleton(layout: &LayoutContext) -> Result<SkeletonReport> {
 
     let mut written: Vec<PathBuf> = Vec::new();
     let mut report_modules: Vec<EmittedModule> = Vec::new();
+    let mut cargo_path: Option<PathBuf> = None;
+    let mut handoff_md_path: Option<PathBuf> = None;
 
-    for spec in &modules {
-        let snake = to_snake_case(&spec.name);
-        let mod_path = source_dir.join(format!("{snake}.rs"));
-        let body = emit_module_body(&spec.name, &spec.items)?;
-        std::fs::write(&mod_path, body)
-            .with_context(|| format!("writing {}", mod_path.display()))?;
-        written.push(mod_path.clone());
+    let steps_owned: Vec<SkeletonStep> = manifest_steps
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(<[SkeletonStep]>::to_vec)
+        .unwrap_or_else(|| DEFAULT_STEPS.to_vec());
 
-        let stub_count = spec.items.iter().filter(|i| i.kind != "re_export").count();
-        let re_export_count = spec.items.iter().filter(|i| i.kind == "re_export").count();
-        let item_summary = spec
-            .items
-            .iter()
-            .map(|i| format!("{}:{}", i.kind, i.name))
-            .collect();
-        report_modules.push(EmittedModule {
-            name: spec.name.clone(),
-            path: mod_path,
-            stub_count,
-            re_export_count,
-            item_summary,
-            satisfies: spec.satisfies.clone(),
-            context_files: spec.context_files.clone(),
-        });
+    for step in &steps_owned {
+        match step {
+            SkeletonStep::EmitCargoToml => {
+                cargo_path = Some(step_emit_cargo_toml(layout, &mut written)?);
+            }
+            SkeletonStep::WalkModules => {
+                step_walk_modules(
+                    &source_dir,
+                    &modules,
+                    &mut report_modules,
+                    &mut written,
+                )?;
+            }
+            SkeletonStep::EmitHandoffMd => {
+                handoff_md_path = Some(step_emit_handoff_md(
+                    layout,
+                    &modules,
+                    &report_modules,
+                    &mut written,
+                )?);
+            }
+        }
     }
 
-    let lib_path = source_dir.join("lib.rs");
-    let lib_body = emit_lib_body(&modules);
-    std::fs::write(&lib_path, lib_body)
-        .with_context(|| format!("writing {}", lib_path.display()))?;
-    written.push(lib_path);
-
-    let handoff_md_path = layout.specs_dir.join("HANDOFF.md");
-    let handoff_body = render_handoff_md(layout, &modules, &report_modules)?;
-    std::fs::write(&handoff_md_path, handoff_body)
-        .with_context(|| format!("writing {}", handoff_md_path.display()))?;
-    written.push(handoff_md_path.clone());
-
-    let cargo = crate::cargo_toml::render(layout)
-        .context("rendering Cargo.toml for skeleton emission")?;
-    let cargo_path = layout.project_root.join("Cargo.toml");
-    let cargo_pre_existed = cargo_path.exists();
-    std::fs::write(&cargo_path, &cargo.text)
-        .with_context(|| format!("writing {}", cargo_path.display()))?;
-    if !cargo_pre_existed {
-        written.push(cargo_path.clone());
-    }
+    // The library-api skeleton steps universe today always emits all three
+    // artifacts. Future profiles with different step sets land their own
+    // SkeletonReport shape (or extend this one) when they're authored.
+    let cargo_path = cargo_path.ok_or_else(|| {
+        anyhow!(
+            "[SKEL-001] manifest's `skeleton.steps` for this profile does not \
+             include `emit_cargo_toml`; v1 skeleton mode requires Cargo.toml \
+             emission in the step set"
+        )
+    })?;
+    let handoff_md_path = handoff_md_path.ok_or_else(|| {
+        anyhow!(
+            "[SKEL-001] manifest's `skeleton.steps` for this profile does not \
+             include `emit_handoff_md`; v1 skeleton mode requires HANDOFF.md \
+             emission in the step set"
+        )
+    })?;
 
     let check = Command::new("cargo")
         .arg("check")
@@ -226,6 +285,101 @@ pub fn run_skeleton(layout: &LayoutContext) -> Result<SkeletonReport> {
             ))
         }
     }
+}
+
+/// Step handler — `emit_cargo_toml`. Renders `<project>/Cargo.toml` via
+/// `cargo_toml::render` and pairs each `extra_files` entry (e.g.
+/// `src/bin/standalone.rs`) onto disk. Returns the Cargo.toml path so the
+/// caller can carry it through to the final `SkeletonReport`. Pre-existing
+/// `extra_files` paths are preserved (F-016 hand-edited bin survival).
+fn step_emit_cargo_toml(
+    layout: &LayoutContext,
+    written: &mut Vec<PathBuf>,
+) -> Result<PathBuf> {
+    let cargo = crate::cargo_toml::render(layout)
+        .context("rendering Cargo.toml for skeleton emission")?;
+    let cargo_path = layout.project_root.join("Cargo.toml");
+    let cargo_pre_existed = cargo_path.exists();
+    std::fs::write(&cargo_path, &cargo.text)
+        .with_context(|| format!("writing {}", cargo_path.display()))?;
+    if !cargo_pre_existed {
+        written.push(cargo_path.clone());
+    }
+    for (rel, body) in &cargo.extra_files {
+        let dst = layout.project_root.join(rel);
+        if dst.exists() {
+            continue;
+        }
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dst, body)
+            .with_context(|| format!("writing {}", dst.display()))?;
+        written.push(dst);
+    }
+    Ok(cargo_path)
+}
+
+/// Step handler — `walk_modules`. Emits one `<module>.rs` per module spec
+/// plus a single `lib.rs` re-exporting them. Each call appends the
+/// emitted-module summary to `report_modules` so the subsequent
+/// `emit_handoff_md` step can reference it.
+fn step_walk_modules(
+    source_dir: &std::path::Path,
+    modules: &[ModuleSpec],
+    report_modules: &mut Vec<EmittedModule>,
+    written: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for spec in modules {
+        let snake = to_snake_case(&spec.name);
+        let mod_path = source_dir.join(format!("{snake}.rs"));
+        let body = emit_module_body(&spec.name, &spec.items)?;
+        std::fs::write(&mod_path, body)
+            .with_context(|| format!("writing {}", mod_path.display()))?;
+        written.push(mod_path.clone());
+
+        let stub_count = spec.items.iter().filter(|i| i.kind != "re_export").count();
+        let re_export_count = spec.items.iter().filter(|i| i.kind == "re_export").count();
+        let item_summary = spec
+            .items
+            .iter()
+            .map(|i| format!("{}:{}", i.kind, i.name))
+            .collect();
+        report_modules.push(EmittedModule {
+            name: spec.name.clone(),
+            path: mod_path,
+            stub_count,
+            re_export_count,
+            item_summary,
+            satisfies: spec.satisfies.clone(),
+            context_files: spec.context_files.clone(),
+        });
+    }
+    let lib_path = source_dir.join("lib.rs");
+    let lib_body = emit_lib_body(modules);
+    std::fs::write(&lib_path, lib_body)
+        .with_context(|| format!("writing {}", lib_path.display()))?;
+    written.push(lib_path);
+    Ok(())
+}
+
+/// Step handler — `emit_handoff_md`. Renders the per-project HANDOFF.md
+/// (coverage matrix + skeleton inventory + suggested next steps) into
+/// `<project>/specs/HANDOFF.md`. Returns the file path. Must run after
+/// `walk_modules` because it consumes `report_modules`.
+fn step_emit_handoff_md(
+    layout: &LayoutContext,
+    modules: &[ModuleSpec],
+    report_modules: &[EmittedModule],
+    written: &mut Vec<PathBuf>,
+) -> Result<PathBuf> {
+    let handoff_md_path = layout.specs_dir.join("HANDOFF.md");
+    let handoff_body = render_handoff_md(layout, modules, report_modules)?;
+    std::fs::write(&handoff_md_path, handoff_body)
+        .with_context(|| format!("writing {}", handoff_md_path.display()))?;
+    written.push(handoff_md_path.clone());
+    Ok(handoff_md_path)
 }
 
 fn rollback(files: &[PathBuf]) {
@@ -285,7 +439,7 @@ fn render_handoff_md(
     let requirements = load_requirement_ids(layout)?;
     if requirements.is_empty() {
         out.push_str(
-            "_No `requirements.toml` found, or it carries no `[[requirements]]` \
+            "_No `requirements.toml` found, or it carries no `[[requirement]]` \
              entries — coverage matrix omitted._\n\n",
         );
     } else {
@@ -407,10 +561,15 @@ fn render_handoff_md(
     Ok(out)
 }
 
-/// Read `[[requirements]] id` entries from `specs/requirements.toml`.
+/// Read `[[requirement]] id` entries from `specs/requirements.toml`.
 /// Returns an empty list (not an error) when the file is missing — the
 /// HANDOFF.md generator presents an empty coverage matrix in that case
 /// rather than refusing to run.
+///
+/// F-014 (zfm dogfood, 2026-05-04): the array key is `requirement`
+/// (singular) per the requirements.schema.yaml across all profiles, not
+/// `requirements`. Pre-fix the lookup was always empty, which is what
+/// produced the always-empty coverage matrix the dogfood reported.
 fn load_requirement_ids(layout: &LayoutContext) -> Result<Vec<String>> {
     if !layout.requirements_toml_path.is_file() {
         return Ok(Vec::new());
@@ -420,7 +579,7 @@ fn load_requirement_ids(layout: &LayoutContext) -> Result<Vec<String>> {
     let value: toml::Value = toml::from_str(&text)
         .with_context(|| format!("parsing {}", layout.requirements_toml_path.display()))?;
     let arr = value
-        .get("requirements")
+        .get("requirement")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();

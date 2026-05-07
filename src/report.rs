@@ -105,8 +105,17 @@ impl Report {
 
     /// Plain-text render (no ANSI). Used by snapshot tests.
     pub fn render_plain(&self) -> String {
+        self.render_plain_filtered(false)
+    }
+
+    /// Plain-text render with optional info-severity suppression
+    /// (`--quiet` / `-q`, F-006). Errors and warnings always print.
+    pub fn render_plain_filtered(&self, suppress_info: bool) -> String {
         let mut out = String::new();
         for f in &self.findings {
+            if suppress_info && f.severity == Severity::Info {
+                continue;
+            }
             let sev = match f.severity {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
@@ -125,8 +134,17 @@ impl Report {
 
     /// ANSI-colored render for terminal output.
     pub fn render_colored(&self) -> String {
+        self.render_colored_filtered(false)
+    }
+
+    /// ANSI-colored render with optional info-severity suppression
+    /// (`--quiet` / `-q`, F-006).
+    pub fn render_colored_filtered(&self, suppress_info: bool) -> String {
         let mut out = String::new();
         for f in &self.findings {
+            if suppress_info && f.severity == Severity::Info {
+                continue;
+            }
             let sev = match f.severity {
                 Severity::Error => "error".red().bold().to_string(),
                 Severity::Warning => "warning".yellow().bold().to_string(),

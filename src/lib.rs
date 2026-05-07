@@ -96,6 +96,7 @@ pub mod kinds;
 pub mod lang;
 pub mod layout;
 pub mod lineage;
+pub mod manifest;
 pub mod merge;
 pub mod path;
 pub mod plugin_root;

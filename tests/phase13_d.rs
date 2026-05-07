@@ -100,21 +100,21 @@ satisfies = ["REQ-B"]
     std::fs::write(
         target.join("specs/requirements.toml"),
         r#"
-[[sources]]
+[[source]]
 id = "s"
 title = "spec"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-A"
 text = "go"
 source = "s"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-B"
 text = "boot"
 source = "s"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-C"
 text = "orphan"
 source = "s"
@@ -223,11 +223,11 @@ satisfies = ["REQ-1"]
     std::fs::write(
         target.join("specs/requirements.toml"),
         r#"
-[[sources]]
+[[source]]
 id = "s"
 title = "t"
 
-[[requirements]]
+[[requirement]]
 id = "REQ-1"
 text = "things"
 source = "s"

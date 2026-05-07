@@ -65,7 +65,7 @@ pub fn run(layout: &LayoutContext) -> Result<ExtractionResult> {
     let inv = crate::reductions::load_all(layout)?;
     let (kindset, _findings) = crate::reductions::resolve(&inv);
     let mut exec_report = crate::report::Report::default();
-    let graph = reduction::execute_kindset(&kindset, &layout.project_root, &mut exec_report)?;
+    let graph = reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
 
     let architecture =
         serde_json::to_value(&graph).with_context(|| "serializing executor graph to JSON")?;

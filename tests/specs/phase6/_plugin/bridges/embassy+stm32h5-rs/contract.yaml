@@ -1,0 +1,10 @@
+# Phase 16 manifest — embassy+stm32h5-rs bridge dispatch contract.
+# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §5.3.
+# Schema: specdev-analyzer/src/embedded/bridge_contract.schema.yaml.
+
+binding_locality: endpoint_module
+
+diagnostic_template: |
+  the {bridge_name} bridge requires intra-module wiring (Phase 7 v1):
+  binding endpoints must reference declarations on the same module that
+  carries the bindings table. Move the binding or move the declaration.
