@@ -358,14 +358,31 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             ));
         }
     }
-    // F-009: workspace-shape projects (per D36 — bidirectional
-    // minimality, signaled by spec.toml's `[workspace]` table) have no
-    // per-module / per-requirement surface, so missing `module.schema.yaml`
-    // and `requirements.schema.yaml` are intentional, not noise.
-    // Profile-agnostic structural signal — does not hardcode the
-    // `rust-workspace` profile name (D51). Phase 16's `profile.yaml`
-    // `surface.has_modules` field will subsume this gate.
-    let no_module_surface = layout.spec.workspace.is_some();
+    // F-009 → Phase 16 §8.1 step 8 (D52): suppress missing-schema warnings
+    // for the per-module / per-requirement schemas when the project's
+    // profile declares no such surface. Per doc 21 §3.4 the load-bearing
+    // signal is `profile.yaml.surface.has_modules` /
+    // `surface.has_requirements`; the modules and requirements suppressions
+    // are independently controlled (the schema and authored manifests
+    // already give us per-schema granularity, so the dispatch is split now
+    // rather than back-patched later).
+    //
+    // Backward-compat fallback per doc 21 §6.5: when `profile.yaml` is
+    // absent (pre-D52 projects) OR `manifest.surface` is None, fall back
+    // to the legacy `layout.spec.workspace.is_some()` heuristic for both
+    // suppressions. The fallback preserves pre-step-8 behavior verbatim
+    // for existing projects and is deleted in v1.1 alongside the other
+    // §6.5 fallbacks once `specdev migrate` ships and one engagement
+    // cycle has elapsed.
+    //
+    // Malformed-manifest path: load failures surface a single
+    // `MANIFEST-001` finding; the suppression then degrades to the
+    // legacy heuristic so we don't double-fire a "missing schema"
+    // warning on top of "manifest unloadable" noise. Other validate
+    // passes continue (validate_profile_layout_match also surfaces
+    // MANIFEST-001 for the same file — duplicate-rule emission is
+    // tolerated; deduping is a v1.x cleanup).
+    let (suppress_module, suppress_requirements) = compute_surface_suppressions(layout, report);
 
     for entry in &inv.files {
         if entry.exists {
@@ -383,10 +400,15 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             {
                 continue;
             }
-            // F-009: see no_module_surface comment above.
-            if no_module_surface
-                && (entry.label == "specs/specdev/schemas/module.schema.yaml"
-                    || entry.label == "specs/specdev/schemas/requirements.schema.yaml")
+            // Surface-driven suppressions per doc 21 §3.4. Each schema is
+            // independently gated; the manifest authors per-schema control.
+            if suppress_module
+                && entry.label == "specs/specdev/schemas/module.schema.yaml"
+            {
+                continue;
+            }
+            if suppress_requirements
+                && entry.label == "specs/specdev/schemas/requirements.schema.yaml"
             {
                 continue;
             }
@@ -1541,6 +1563,54 @@ fn count_graph_checks(layout: &LayoutContext) -> usize {
     match DomainConfig::load(&layout.domain_toml_path) {
         Ok(dom) => dom.module.graph_checks.len() + dom.project.graph_checks.len(),
         Err(_) => 0,
+    }
+}
+
+/// Phase 16 §8.1 step 8 — manifest-driven dispatch for the `module.schema.yaml`
+/// / `requirements.schema.yaml` missing-warning suppressions. Returns
+/// `(suppress_module, suppress_requirements)`.
+///
+/// Manifest path (D52): when `<specdev_root>/profile.yaml` is present,
+/// inspect `manifest.surface.has_modules` and `manifest.surface.has_requirements`.
+/// Each schema is independently gated; today every shipped profile happens
+/// to have `has_requirements` mirror `has_modules`, but the schema admits
+/// asymmetric configurations (a profile could declare `has_modules: false`
+/// + `has_requirements: true`) and the dispatch wires the granularity now.
+///
+/// Backward-compat fallback per doc 21 §6.5: when `profile.yaml` is absent
+/// OR `manifest.surface` is None, fall back to the legacy
+/// `layout.spec.workspace.is_some()` heuristic for BOTH suppressions.
+/// Preserves pre-D52 fixture behavior verbatim. Deleted in v1.1 once
+/// `specdev migrate` ships per doc 21 §6.5.
+///
+/// Malformed-manifest path: `MANIFEST-001` finding pushed; fall back to
+/// the legacy heuristic so we don't surface a "missing schema" warning
+/// stacked on the manifest-load error. The suppression site emits no
+/// finding of its own (it's purely a control-flow decision), so D51
+/// vocabulary doesn't bite here.
+fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> (bool, bool) {
+    use crate::manifest::Profile;
+    let manifest_path = layout.specdev_root.join("profile.yaml");
+    if !manifest_path.is_file() {
+        let legacy = layout.spec.workspace.is_some();
+        return (legacy, legacy);
+    }
+    match Profile::load(&manifest_path) {
+        Ok(manifest) => match manifest.surface.as_ref() {
+            Some(surface) => (!surface.has_modules, !surface.has_requirements),
+            None => {
+                let legacy = layout.spec.workspace.is_some();
+                (legacy, legacy)
+            }
+        },
+        Err(e) => {
+            report.push(
+                Finding::new("MANIFEST-001", Severity::Error, format!("{e:#}"))
+                    .with_file(manifest_path.display().to_string()),
+            );
+            let legacy = layout.spec.workspace.is_some();
+            (legacy, legacy)
+        }
     }
 }
 
