@@ -8,7 +8,7 @@ use specdev_analyzer::{
     diagnostics::report_error,
     cargo_toml as cargo_toml_mod, drift, extract, inline,
     layout::LayoutContext,
-    merge,
+    merge, migrate,
     plugin_root::{self, PluginRootInputs},
     prompt, reduction, resolve, validate,
 };
@@ -213,6 +213,26 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Phase 16 §8.1 step 9 — populate Phase 16 manifests for projects
+    /// bootstrapped before D52 shipped. Walks the project's lineage,
+    /// resolves which profile / blocks / bridges it has, and byte-copies
+    /// the missing manifests (`profile.yaml`, `templates/*`, per-block
+    /// `deps.yaml`, per-bridge `contract.yaml`) from the plugin tree's
+    /// HEAD. Lineage `content_hash` is updated to the new rolled-up hash;
+    /// `origin` / `origin_version` / `inlined_at` stay frozen — they
+    /// record the original inline, not the migration. No-op when the
+    /// manifests are already present (true byte-stable idempotency).
+    /// Backward-compat aid; deletion gated on the v1.1 `default-fallback
+    /// removal` trigger per doc 21 §6.5.
+    Migrate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Print the per-unit migration plan + total file-write count
+        /// without touching disk.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Observational drift report — classify each inlined file as
     /// clean / plugin-moved / locally-edited / both. Pure reporter.
     Drift {
@@ -375,6 +395,9 @@ fn main() -> ExitCode {
             module,
             output,
         } => run_context(project, spec_path.as_deref(), module, output),
+        Command::Migrate { project, dry_run } => {
+            run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run)
+        }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gen {
             project,
@@ -1129,6 +1152,113 @@ fn run_context(
         return ExitCode::from(2);
     }
     ExitCode::SUCCESS
+}
+
+fn run_migrate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    dry_run: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let plugin = match resolve_plugin_for_project(&layout, plugin_flag) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match migrate::run_migrate(&layout, &plugin, dry_run) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let prefix = if dry_run { "would migrate" } else { "migrated" };
+    let skip_phrase = "already migrated (no-op)";
+
+    if !report.profile_files_written.is_empty() {
+        for rel in &report.profile_files_written {
+            eprintln!("profile shell: {prefix} {}", rel.display());
+        }
+    } else if report.profile_skipped {
+        eprintln!("profile shell: {skip_phrase}");
+    }
+
+    for m in &report.migrated {
+        let kind_label = match m.kind {
+            specdev_analyzer::upstream::UnitKind::Block => "block",
+            specdev_analyzer::upstream::UnitKind::Bridge => "bridge",
+        };
+        let mut detail = format!(
+            "{kind_label} {}: {prefix} (hash {}…→{}…; +{} file)",
+            m.name,
+            short_hash(&m.before_hash),
+            short_hash(&m.after_hash),
+            m.files_written.len(),
+        );
+        if m.files_written.len() != 1 {
+            detail = detail.replace("file)", "files)");
+        }
+        eprintln!("{detail}");
+        for f in &m.files_written {
+            eprintln!("  - {}", f.display());
+        }
+    }
+    for s in &report.skipped {
+        let kind_label = match s.kind {
+            specdev_analyzer::upstream::UnitKind::Block => "block",
+            specdev_analyzer::upstream::UnitKind::Bridge => "bridge",
+        };
+        eprintln!("{kind_label} {}: {skip_phrase}", s.name);
+    }
+
+    let total = report.total_files_written();
+    if !report.missing_in_plugin.is_empty() {
+        for line in &report.missing_in_plugin {
+            eprintln!("{line}");
+        }
+        let skipped = report.skipped.len();
+        eprintln!(
+            "migrate: {} file(s) {} ({} skipped, {} missing in plugin tree)",
+            total,
+            if dry_run { "planned" } else { "written" },
+            skipped,
+            report.missing_in_plugin.len(),
+        );
+        return ExitCode::from(1);
+    }
+
+    if total == 0 && report.migrated.is_empty() {
+        eprintln!("migrate: no-op (manifests already present)");
+    } else {
+        eprintln!(
+            "migrate: {} file(s) {}",
+            total,
+            if dry_run { "planned" } else { "written" }
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn short_hash(h: &str) -> String {
+    // Trim a `sha256:` prefix and clip to 8 hex chars when possible. Hash
+    // strings are operator-readable; `sha256:abcdef…` prefix is noise.
+    let stripped = h.strip_prefix("sha256:").unwrap_or(h);
+    let take = stripped.chars().take(8).collect::<String>();
+    if take.is_empty() {
+        "<empty>".to_string()
+    } else {
+        take
+    }
 }
 
 fn run_drift(

@@ -269,7 +269,7 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
 /// `<sha256-hex>  <rel-path>\n` in lex-sorted order, then SHA-256 of the
 /// concatenation. Mirrors the `sha256sum` output convention so per-file
 /// hashes stay debuggable.
-fn rollup_hash(files: &[UnitFile]) -> String {
+pub(crate) fn rollup_hash(files: &[UnitFile]) -> String {
     let mut summary = String::new();
     for f in files {
         let mut h = Sha256::new();
@@ -321,7 +321,7 @@ fn refuse_if_dst_exists(
 
 /// Write each unit file to its destination under `specdev_root`. Bytes are
 /// copied verbatim; no newline normalization, no YAML re-emission.
-fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Result<()> {
+pub(crate) fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Result<()> {
     for f in files {
         let dst = specdev_root.join(&f.rel_dst);
         if let Some(parent) = dst.parent() {
