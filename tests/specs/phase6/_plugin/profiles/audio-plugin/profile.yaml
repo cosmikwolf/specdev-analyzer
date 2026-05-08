@@ -1,5 +1,4 @@
-# Phase 16 manifest — drives analyzer dispatch for audio-plugin projects.
-# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §3.3.
+# Manifest — drives analyzer dispatch for audio-plugin projects.
 # Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
 # Inlined to project at specs/specdev/profile.yaml during bootstrap.
 
@@ -33,7 +32,7 @@ bootstrap:
   steps: []                       # standalone plugin; no workspace machinery
 
 skeleton:
-  supported: false                # D49 — audio-plugin skeleton deferred
+  supported: false                # audio-plugin skeleton mode is not in v1
   entry_file: src/lib.rs
   entry_template: empty
   extra_files: []

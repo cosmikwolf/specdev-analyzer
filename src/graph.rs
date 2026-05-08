@@ -29,28 +29,79 @@ fn group_by_ancestor(picks: Vec<Pick>, nth: usize) -> BTreeMap<String, Vec<Pick>
 }
 
 /// UNIQUE: every pick's scalar value must appear at most once.
+///
+/// When a pick's parent JSON object carries a sibling `kind` field
+/// (typical of `entities[]` and `relations[]` shapes in the project
+/// reduction), the error message names the colliding kinds. F-011
+/// (2026-05-08 zfm dogfood): a generic `duplicate value` message
+/// mis-frames cross-entity-kind collisions (e.g. an `egui.Region`
+/// and a `nih-plug.Parameter` sharing a qualified name); naming the
+/// kinds turns "what does this even mean" into a one-glance fix.
 pub fn unique(root: &Value, field: &str, rule: &str, severity: Severity) -> Vec<Finding> {
     let picks = select(root, field);
-    let mut seen: HashMap<String, String> = HashMap::new();
+    let mut seen: HashMap<String, SeenEntry> = HashMap::new();
     let mut out = Vec::new();
     for p in picks {
         let Some(s) = value_as_str(&p.value) else {
             continue;
         };
+        let kind = sibling_kind(root, &p.pointer);
         if let Some(first) = seen.get(s) {
             out.push(
                 Finding::new(
                     rule,
                     severity,
-                    format!("duplicate value `{s}` (first seen at {first})"),
+                    format_unique_message(s, kind.as_deref(), first),
                 )
                 .with_pointer(p.pointer.clone()),
             );
         } else {
-            seen.insert(s.to_string(), p.pointer);
+            seen.insert(
+                s.to_string(),
+                SeenEntry {
+                    pointer: p.pointer,
+                    kind,
+                },
+            );
         }
     }
     out
+}
+
+#[derive(Debug)]
+struct SeenEntry {
+    pointer: String,
+    kind: Option<String>,
+}
+
+fn format_unique_message(value: &str, this_kind: Option<&str>, first: &SeenEntry) -> String {
+    let first_ptr = &first.pointer;
+    match (this_kind, first.kind.as_deref()) {
+        (Some(a), Some(b)) if a != b => format!(
+            "duplicate value `{value}` — `{a}` collides with `{b}` \
+             (first seen at {first_ptr}). Hint: rename one of the entries \
+             or scope them under different parents."
+        ),
+        (Some(k), Some(_)) => format!(
+            "duplicate value `{value}` — two `{k}` entries collide \
+             (first seen at {first_ptr}). Hint: rename one of the entries."
+        ),
+        _ => format!("duplicate value `{value}` (first seen at {first_ptr})"),
+    }
+}
+
+/// Look up the `kind` field on the JSON object that contains the picked
+/// value. Given a pointer like `/entities/31/name`, the parent object is
+/// at `/entities/31`; we read its `kind` if present and stringify it.
+/// Returns `None` for pointers without a parent object segment, or when
+/// the parent has no string `kind` field.
+fn sibling_kind(root: &Value, pointer: &str) -> Option<String> {
+    let parent = pointer.rsplit_once('/').map(|(p, _)| p)?;
+    let parent_value = root.pointer(parent)?;
+    parent_value
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// REFERENCE_EXISTS: every source scalar must match some target scalar.
@@ -634,6 +685,54 @@ mod tests {
         let v = json!({ "xs": [{ "n": "a" }, { "n": "a" }] });
         let f = unique(&v, "xs[].n", "U1", Severity::Error);
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn unique_message_names_colliding_kinds_when_different() {
+        // F-011: two `entities[]` rows sharing a qualified name but
+        // declaring different `kind`s — the message must surface both
+        // kinds so a TOML author can find the offending blocks.
+        let v = json!({
+            "entities": [
+                { "kind": "nih-plug.Parameter", "name": "shell.algorithm" },
+                { "kind": "egui.Region",        "name": "shell.algorithm" },
+            ],
+        });
+        let f = unique(&v, "entities[].name", "unique_qualified_names", Severity::Error);
+        assert_eq!(f.len(), 1);
+        let msg = &f[0].message;
+        assert!(msg.contains("shell.algorithm"), "missing value: {msg}");
+        assert!(msg.contains("`nih-plug.Parameter`"), "missing kind A: {msg}");
+        assert!(msg.contains("`egui.Region`"), "missing kind B: {msg}");
+        assert!(msg.contains("collides"), "expected collision phrasing: {msg}");
+    }
+
+    #[test]
+    fn unique_message_names_kind_when_same_kind_collides() {
+        // Same-kind collision (legitimate "two of these" case) — the
+        // message names the kind once and asks for a rename.
+        let v = json!({
+            "entities": [
+                { "kind": "Module", "name": "audio" },
+                { "kind": "Module", "name": "audio" },
+            ],
+        });
+        let f = unique(&v, "entities[].name", "unique_qualified_names", Severity::Error);
+        assert_eq!(f.len(), 1);
+        let msg = &f[0].message;
+        assert!(msg.contains("`Module`"), "missing kind in message: {msg}");
+    }
+
+    #[test]
+    fn unique_message_falls_back_when_no_kind_sibling() {
+        // Generic UNIQUE use (not against `entities[]`) — picked nodes
+        // have no `kind` sibling; message degrades to the legacy form.
+        let v = json!({ "xs": [{ "n": "a" }, { "n": "a" }] });
+        let f = unique(&v, "xs[].n", "U1", Severity::Error);
+        assert_eq!(f.len(), 1);
+        let msg = &f[0].message;
+        assert!(msg.contains("duplicate value `a`"), "{msg}");
+        assert!(!msg.contains("collides"), "no kind info should yield no collide phrasing: {msg}");
     }
 
     #[test]
