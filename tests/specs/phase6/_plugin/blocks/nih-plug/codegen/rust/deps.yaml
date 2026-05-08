@@ -1,5 +1,4 @@
-# Phase 16 manifest — Cargo deps the nih-plug block contributes.
-# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §4.2.
+# Manifest — Cargo deps the nih-plug block contributes.
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
 #
 # Inlined alongside codegen/rust/README.md during `specdev inline nih-plug`;
