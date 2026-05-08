@@ -146,6 +146,14 @@ pub struct SkeletonSection {
     pub module_layout: Option<ModuleLayout>,
     #[serde(default)]
     pub steps: Vec<SkeletonStep>,
+    #[serde(default)]
+    pub audio_path_stub: Option<AudioPathStub>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioPathStub {
+    SilenceAndLog,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
