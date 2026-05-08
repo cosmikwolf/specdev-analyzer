@@ -56,37 +56,6 @@ pub struct ProjectSection {
     /// workspace's canonical value.
     #[serde(default)]
     pub repository: Option<String>,
-    /// Spec→codegen handoff mode hint (Phase 13, doc 16 §4). Optional;
-    /// `None` / `Implementation` means `/spec-gen` defaults to full
-    /// implementation. `Skeleton` makes `/spec-gen` default to
-    /// skeleton-handoff mode. Always overridable per-invocation by
-    /// `--strict` / `--skeleton` flags.
-    #[serde(default)]
-    pub handoff_mode: Option<HandoffMode>,
-}
-
-/// Spec→codegen handoff mode (Phase 13, doc 16 §4). Set on
-/// `[project].handoff_mode` in `spec.toml` to change `/spec-gen`'s
-/// default emission mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum HandoffMode {
-    /// Default. `/spec-gen` emits the full implementation; the
-    /// no-`todo!()` rule applies.
-    #[default]
-    Implementation,
-    /// `/spec-gen` emits a skeleton tree (`unimplemented!()` bodies
-    /// per items[] entry) and `cargo check` is the discipline.
-    Skeleton,
-}
-
-impl HandoffMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            HandoffMode::Implementation => "implementation",
-            HandoffMode::Skeleton => "skeleton",
-        }
-    }
 }
 
 /// `[workspace]` table on a workspace-root `spec.toml`. Presence signals

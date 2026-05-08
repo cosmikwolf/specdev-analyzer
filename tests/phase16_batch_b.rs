@@ -119,14 +119,13 @@ description = "no op"
 }
 
 // ===========================================================================
-// 2 — context_files_when_strict (CONTEXT-100) warning under
-//     handoff_mode = implementation (the strict-leaning default).
+// 2 — context_files_when_strict (CONTEXT-100) warning fires whenever a
+//     module has no `context_files` and the StrictGen capability is in scope.
 // ===========================================================================
 
 #[test]
 fn context_files_warning_fires_in_strict_mode() {
     let (target, _layout) = fresh_library("ctx-strict");
-    // No handoff_mode set → defaults to Implementation per Phase 13.
     std::fs::write(
         target.join("specs/modules/Mech.toml"),
         r#"name = "Mech"
@@ -180,39 +179,6 @@ description = "tick"
     );
 }
 
-#[test]
-fn context_files_warning_silent_under_skeleton_handoff_mode() {
-    let (target, _layout) = fresh_library("ctx-skeleton-mode");
-    // Override handoff_mode to skeleton — CONTEXT-100 only fires when
-    // strict-leaning.
-    let spec_path = target.join("spec.toml");
-    let body = std::fs::read_to_string(&spec_path).unwrap();
-    // Insert handoff_mode under [project], before [paths] runs.
-    let body = body.replace(
-        "[paths]",
-        "handoff_mode = \"skeleton\"\n\n[paths]",
-    );
-    std::fs::write(&spec_path, body).unwrap();
-    std::fs::write(
-        target.join("specs/modules/Mech.toml"),
-        r#"name = "Mech"
-visibility = "pub"
-
-[[items]]
-kind = "fn"
-name = "step"
-description = "loop"
-"#,
-    )
-    .unwrap();
-    let report = validate::run_project(&target, None).unwrap();
-    let hits = findings_with_rule(&report, "CONTEXT-100");
-    assert!(
-        hits.is_empty(),
-        "skeleton handoff_mode must suppress CONTEXT-100; got {hits:#?}"
-    );
-}
-
 // ===========================================================================
 // 3 — `--for` filter scopes which checks fire.
 // ===========================================================================
@@ -231,36 +197,11 @@ visibility = "pub"
         validate::run_project_for(&target, None, Some(Capability::CargoToml)).unwrap();
     assert!(
         findings_with_rule(&report, "ITEMS-001").is_empty(),
-        "ITEMS-001 (Skeleton+StrictGen-only) must not fire under --for=cargo-toml"
+        "ITEMS-001 (StrictGen-only) must not fire under --for=cargo-toml"
     );
     assert!(
         findings_with_rule(&report, "CONTEXT-100").is_empty(),
         "CONTEXT-100 (StrictGen-only) must not fire under --for=cargo-toml"
-    );
-}
-
-#[test]
-fn for_skeleton_keeps_items_present_drops_context_warning() {
-    let (target, _layout) = fresh_library("for-skeleton");
-    std::fs::write(
-        target.join("specs/modules/Empty.toml"),
-        r#"name = "Empty"
-visibility = "pub"
-"#,
-    )
-    .unwrap();
-    let report =
-        validate::run_project_for(&target, None, Some(Capability::Skeleton)).unwrap();
-    assert_eq!(
-        findings_with_rule(&report, "ITEMS-001").len(),
-        1,
-        "ITEMS-001 (Skeleton-tagged) must fire under --for=skeleton"
-    );
-    // Empty has no items[] so it would also fire CONTEXT-100; --for=skeleton
-    // suppresses the StrictGen-only check.
-    assert!(
-        findings_with_rule(&report, "CONTEXT-100").is_empty(),
-        "CONTEXT-100 (StrictGen-only) must not fire under --for=skeleton"
     );
 }
 
@@ -332,8 +273,8 @@ fn cli_for_unknown_value_rejected() {
 }
 
 #[test]
-fn cli_for_skeleton_runs_and_filters() {
-    let (target, _layout) = fresh_library("cli-for-skel");
+fn cli_for_strict_gen_runs_and_filters() {
+    let (target, _layout) = fresh_library("cli-for-strictgen");
     std::fs::write(
         target.join("specs/modules/Empty.toml"),
         r#"name = "Empty"
@@ -342,17 +283,17 @@ visibility = "pub"
     )
     .unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_specdev-analyzer"))
-        .args(["validate", "--no-color", "--for", "skeleton", "--project"])
+        .args(["validate", "--no-color", "--for", "strict-gen", "--project"])
         .arg(&target)
         .output()
-        .expect("running validate --for=skeleton");
+        .expect("running validate --for=strict-gen");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("ITEMS-001"),
-        "skeleton scope must include ITEMS-001 in stdout; got:\n{stdout}"
+        "strict-gen scope must include ITEMS-001 in stdout; got:\n{stdout}"
     );
     assert!(
-        !stdout.contains("CONTEXT-100"),
-        "skeleton scope must omit CONTEXT-100; got:\n{stdout}"
+        stdout.contains("CONTEXT-100"),
+        "strict-gen scope must include CONTEXT-100; got:\n{stdout}"
     );
 }

@@ -110,7 +110,6 @@ pub mod report;
 pub mod resolve;
 pub mod resolved;
 pub mod schema;
-pub mod skeleton;
 pub mod validate;
 
 pub use domain::{DomainConfig, Severity};

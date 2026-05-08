@@ -52,7 +52,7 @@ enum Command {
         #[arg(long, short = 'q')]
         quiet: bool,
         /// Phase 16 Batch B: scope checks to the consumer named here.
-        /// Accepts `schema`, `skeleton`, `strict-gen`, or `cargo-toml`.
+        /// Accepts `schema`, `strict-gen`, or `cargo-toml`.
         /// Schema-tagged checks always run regardless. Without the flag,
         /// every check fires (legacy behavior).
         #[arg(long = "for")]
@@ -249,31 +249,17 @@ enum Command {
         #[command(subcommand)]
         action: ReportAction,
     },
-    /// Spec→codegen handoff (Phase 13, doc 16). Mode resolution: explicit
-    /// `--strict` / `--skeleton` flag (mutually exclusive) > `[project].handoff_mode`
-    /// hint in `spec.toml` > default `implementation`. Strict mode is
-    /// orchestrated by the `/spec-gen` skill (Claude reads `prompt --module`
-    /// then emits source); the analyzer routes the user there. Skeleton
-    /// mode is deterministic — emits a navigable, compilable Rust source
-    /// tree per `[[items]]` entry, runs `cargo check`, and rolls back on
-    /// failure. v1: library-api profile only.
+    /// Spec→codegen handoff. Orchestrated by the `/spec-gen` skill
+    /// (Claude reads `prompt --module` then emits source); the analyzer
+    /// assembles the codegen prompt deterministically.
     Gen {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// Force strict mode (Claude-orchestrated full implementation).
-        /// Mutually exclusive with `--skeleton`. Without either flag, the
-        /// project's `[project].handoff_mode` hint resolves the mode.
-        #[arg(long, conflicts_with = "skeleton")]
-        strict: bool,
-        /// Force skeleton mode (analyzer-emitted `unimplemented!()` tree
-        /// + `cargo check`). Mutually exclusive with `--strict`.
-        #[arg(long)]
-        skeleton: bool,
-        /// F-018: in strict mode, write the assembled codegen prompt for
-        /// the named module to stdout (equivalent to `prompt --module
-        /// <Name>`). Lets `/spec-gen` invoke a single subcommand instead
-        /// of routing through a hint message.
+        /// F-018: write the assembled codegen prompt for the named
+        /// module to stdout (equivalent to `prompt --module <Name>`).
+        /// Lets `/spec-gen` invoke a single subcommand instead of
+        /// routing through a hint message.
         #[arg(long)]
         module: Option<String>,
     },
@@ -430,12 +416,7 @@ fn main() -> ExitCode {
             run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run)
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
-        Command::Gen {
-            project,
-            strict,
-            skeleton,
-            module,
-        } => run_gen(project, spec_path.as_deref(), strict, skeleton, module),
+        Command::Gen { project, module } => run_gen(project, spec_path.as_deref(), module),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -1340,14 +1321,14 @@ fn run_drift(
     }
 }
 
-/// Resolve the spec→codegen handoff mode (Phase 13, doc 16 §4) from
-/// the explicit `--strict` / `--skeleton` flags and the project's
-/// `[project].handoff_mode` hint, then dispatch.
+/// `/spec-gen` orchestration entry point. The analyzer assembles the
+/// codegen prompt deterministically; Claude consumes it and emits
+/// source. With `--module <Name>`, writes the assembled prompt to
+/// stdout (equivalent to `prompt --module <Name>`); without it, prints
+/// a routing hint pointing at the right invocation.
 fn run_gen(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
-    strict: bool,
-    skeleton: bool,
     module: Option<String>,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
@@ -1357,82 +1338,26 @@ fn run_gen(
             return ExitCode::from(2);
         }
     };
-    let resolved = if strict {
-        specdev_analyzer::config::HandoffMode::Implementation
-    } else if skeleton {
-        specdev_analyzer::config::HandoffMode::Skeleton
-    } else {
-        layout
-            .spec
-            .project
-            .handoff_mode
-            .unwrap_or(specdev_analyzer::config::HandoffMode::Implementation)
-    };
-    match resolved {
-        specdev_analyzer::config::HandoffMode::Implementation => {
-            // F-018: when `--module` is given, do the work that the
-            // routing hint used to point at — write the assembled
-            // prompt for that module to stdout. Lets `/spec-gen` invoke
-            // a single subcommand instead of parsing a hint message and
-            // shelling out to `prompt`.
-            if let Some(name) = module {
-                return match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
-                    Ok(s) => {
-                        print!("{s}");
-                        ExitCode::SUCCESS
-                    }
-                    Err(e) => {
-                        report_error(&e);
-                        ExitCode::from(1)
-                    }
-                };
+    if let Some(name) = module {
+        return match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
+            Ok(s) => {
+                print!("{s}");
+                ExitCode::SUCCESS
             }
-            eprintln!(
-                "strict (implementation) mode is orchestrated by the `/spec-gen` skill —\n\
-                 the analyzer assembles the codegen prompt deterministically; Claude emits\n\
-                 source. Pass `--module <Name>` to write the assembled prompt for one\n\
-                 module to stdout, or run `specdev-analyzer prompt --module <Name>` directly\n\
-                 and pipe the output to /spec-gen. To override and run skeleton mode instead,\n\
-                 pass `--skeleton` (or set `[project].handoff_mode = \"skeleton\"` in spec.toml).",
-            );
-            ExitCode::from(2)
-        }
-        specdev_analyzer::config::HandoffMode::Skeleton => {
-            match specdev_analyzer::skeleton::run_skeleton(&layout) {
-                Ok(report) => {
-                    eprintln!(
-                        "skeleton emission OK — {} module(s), {} stub(s), {} re-export(s); \
-                         `cargo check` passed.",
-                        report.modules.len(),
-                        report
-                            .modules
-                            .iter()
-                            .map(|m| m.stub_count)
-                            .sum::<usize>(),
-                        report
-                            .modules
-                            .iter()
-                            .map(|m| m.re_export_count)
-                            .sum::<usize>(),
-                    );
-                    for m in &report.modules {
-                        eprintln!(
-                            "  - {} ({}): {} stubs, {} re-exports",
-                            m.name,
-                            m.path.display(),
-                            m.stub_count,
-                            m.re_export_count
-                        );
-                    }
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    report_error(&e);
-                    ExitCode::from(1)
-                }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
             }
-        }
+        };
     }
+    eprintln!(
+        "codegen is orchestrated by the `/spec-gen` skill — the analyzer assembles\n\
+         the codegen prompt deterministically; Claude emits source. Pass `--module\n\
+         <Name>` to write the assembled prompt for one module to stdout, or run\n\
+         `specdev-analyzer prompt --module <Name>` directly and pipe the output\n\
+         to /spec-gen.",
+    );
+    ExitCode::from(2)
 }
 
 fn run_report_coverage(

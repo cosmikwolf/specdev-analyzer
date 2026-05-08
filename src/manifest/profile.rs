@@ -3,7 +3,6 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use serde_json::Value as JsonValue;
 use std::path::Path;
 
 const SCHEMA_YAML: &str = include_str!("../embedded/profile.schema.yaml");
@@ -17,8 +16,6 @@ pub struct Profile {
     pub cargo_toml: Option<CargoTomlSection>,
     #[serde(default)]
     pub bootstrap: Option<BootstrapSection>,
-    #[serde(default)]
-    pub skeleton: Option<SkeletonSection>,
     #[serde(default)]
     pub context: Option<ContextSection>,
     #[serde(default)]
@@ -131,52 +128,6 @@ pub enum BootstrapStep {
     EmitWorkspaceRoot,
     EmitMemberStubs,
     WalkMembers,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct SkeletonSection {
-    pub supported: bool,
-    #[serde(default)]
-    pub entry_file: String,
-    #[serde(default)]
-    pub entry_template: Option<EntryTemplate>,
-    #[serde(default)]
-    pub extra_files: Vec<JsonValue>,
-    #[serde(default)]
-    pub module_layout: Option<ModuleLayout>,
-    #[serde(default)]
-    pub steps: Vec<SkeletonStep>,
-    #[serde(default)]
-    pub audio_path_stub: Option<AudioPathStub>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AudioPathStub {
-    SilenceAndLog,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EntryTemplate {
-    Empty,
-    LibReExports,
-    MainUnimplemented,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ModuleLayout {
-    Flat,
-    Nested,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SkeletonStep {
-    EmitCargoToml,
-    WalkModules,
-    EmitHandoffMd,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

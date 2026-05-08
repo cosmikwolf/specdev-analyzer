@@ -63,20 +63,6 @@ properties:
           value via `[workspace_package].repository` and members emit
           `repository.workspace = true`.
         minLength: 1
-      handoff_mode:
-        type: string
-        description: |
-          Spec→codegen handoff mode hint for `/spec-gen` (Phase 13, doc
-          16 §4). Optional — `/spec-init` does NOT prompt for it. When
-          absent or `"implementation"`, `/spec-gen` defaults to full
-          implementation (`--strict`). When `"skeleton"`, `/spec-gen`
-          defaults to skeleton-handoff mode (`--skeleton`): emits
-          `unimplemented!("REQ-...")` bodies for every items[] entry
-          and treats `cargo check` passing as the load-bearing
-          discipline. Always overridable per-invocation via the
-          mutually-exclusive `--strict` / `--skeleton` flags.
-        enum: ["implementation", "skeleton"]
-        default: "implementation"
   paths:
     type: object
     additionalProperties: false
