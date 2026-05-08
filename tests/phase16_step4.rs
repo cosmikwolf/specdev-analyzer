@@ -10,9 +10,11 @@
 //! Step 4 coverage:
 //!   1. Manifest dispatch: library-api (`supported: true`) emits the
 //!      expected lib.rs + per-module .rs + Cargo.toml + HANDOFF.md set.
-//!   2. Manifest dispatch: firmware-layered / audio-plugin / rust-workspace
+//!   2. Manifest dispatch: firmware-layered / rust-workspace
 //!      (`supported: false`) error with `SKEL-001` and the
 //!      manifest-vocabulary message (no specific profile name leaked).
+//!      audio-plugin (`supported: true`, silence-and-log policy) is
+//!      covered separately in `audio_plugin_skeleton_silence_and_log.rs`.
 //!   3. Pre-D52 fallback: phase3 firmware-layered (no `profile.yaml`)
 //!      errors with `SKEL-001` and the legacy vocabulary (profile name
 //!      visible — only the manifest path uses D51-clean vocabulary).
@@ -166,11 +168,6 @@ fn assert_skel_001_manifest_vocab(profile: &str, tag: &str) {
 #[test]
 fn manifest_dispatch_firmware_layered_errors_skel_001() {
     assert_skel_001_manifest_vocab("firmware-layered", "fw-skel");
-}
-
-#[test]
-fn manifest_dispatch_audio_plugin_errors_skel_001() {
-    assert_skel_001_manifest_vocab("audio-plugin", "ap-skel");
 }
 
 #[test]

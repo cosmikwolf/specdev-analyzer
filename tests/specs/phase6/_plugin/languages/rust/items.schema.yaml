@@ -76,6 +76,22 @@ properties:
       cases where a downstream codegen or audit step needs structural
       detail.
     type: string
+  is_audio_path:
+    description: >
+      Author-set opt-in flag for silence-and-log skeleton emission on
+      the audio-plugin profile. Default false. When true, the item is
+      treated as audio-path code: skeleton mode emits a silence-and-log
+      stub body (see the audio-plugin profile's
+      `codegen/rust/module.conventions.md` for the emit template)
+      instead of `unimplemented!()`. Audio-plugin codegen prose carries
+      a hardcoded auto-classification list of nih-plug `Plugin` trait
+      methods (process, process_buffers, etc.) that should be marked
+      true; this flag exists for hand-authored DSP-node helpers that
+      the trait list does not reach. The two surfaces compose — neither
+      is sufficient alone. Outside the audio-plugin profile, the flag
+      has no effect.
+    type: boolean
+    default: false
 
 # Kind-discriminated extras via oneOf. Each branch enforces the kind tag
 # and adds kind-specific required/optional fields. The `re_export` branch

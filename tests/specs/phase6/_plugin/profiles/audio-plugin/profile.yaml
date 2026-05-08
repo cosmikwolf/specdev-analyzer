@@ -32,12 +32,19 @@ bootstrap:
   steps: []                       # standalone plugin; no workspace machinery
 
 skeleton:
-  supported: false                # audio-plugin skeleton mode is not in v1
+  supported: true                 # silence-and-log policy: see codegen prose
   entry_file: src/lib.rs
   entry_template: empty
   extra_files: []
   module_layout: flat
-  steps: []
+  steps: [emit_cargo_toml, walk_modules, emit_handoff_md]
+  audio_path_stub: silence_and_log
+  # Audio-thread methods emit a silence-and-log body; non-audio-path
+  # items retain `unimplemented!()`. Classification is two-pronged:
+  # codegen prose carries the hardcoded nih-plug `Plugin` trait method
+  # list, and items[] entries opt in via `is_audio_path = true` for
+  # hand-authored DSP-node helpers the trait list does not reach. See
+  # `codegen/rust/module.conventions.md` § "Skeleton mode (silence-and-log)".
 
 context:
   module_fields_for_prompt:

@@ -228,6 +228,18 @@ properties:
         items:
           type: string
           enum: [emit_cargo_toml, walk_modules, emit_handoff_md]
+      audio_path_stub:
+        description: |
+          AudioPathStub (closed enum): how the skeleton emitter handles
+          audio-thread methods on profiles that target a real-time audio
+          framework. Authoritative when `supported: true` and the
+          profile's codegen prose declares an audio-thread method
+          surface (per the audio-plugin profile's silence-and-log
+          policy). Absent on profiles whose skeletons have no
+          audio-thread concern. Closed enum; new variants amend this
+          schema as they ship.
+        type: string
+        enum: [silence_and_log]
 
   context:
     description: |
