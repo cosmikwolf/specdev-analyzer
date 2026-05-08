@@ -240,6 +240,15 @@ enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Reports over the validated spec. `report coverage` emits the
+    /// requirements → modules matrix that the retired `gen --skeleton`
+    /// HANDOFF.md used to carry as one of its sections; the subcommand
+    /// reads `requirements.toml` + `specs/modules/*.toml` and emits a
+    /// machine-readable matrix without source-tree emission.
+    Report {
+        #[command(subcommand)]
+        action: ReportAction,
+    },
     /// Spec→codegen handoff (Phase 13, doc 16). Mode resolution: explicit
     /// `--strict` / `--skeleton` flag (mutually exclusive) > `[project].handoff_mode`
     /// hint in `spec.toml` > default `implementation`. Strict mode is
@@ -267,6 +276,28 @@ enum Command {
         /// of routing through a hint message.
         #[arg(long)]
         module: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReportAction {
+    /// Emit the requirements → modules coverage matrix. Reads
+    /// `specs/requirements.toml` for requirement ids and walks
+    /// `specs/modules/*.toml` for module-level and items[]-level
+    /// `satisfies` entries. Output: structured matrix plus an
+    /// `orphans` list of unsatisfied requirements. Default format
+    /// is YAML; `--format markdown` opts into a human-readable
+    /// table.
+    Coverage {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Output format: `yaml` (default) or `markdown` / `md`.
+        #[arg(long, default_value = "yaml")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -405,6 +436,13 @@ fn main() -> ExitCode {
             skeleton,
             module,
         } => run_gen(project, spec_path.as_deref(), strict, skeleton, module),
+        Command::Report { action } => match action {
+            ReportAction::Coverage {
+                project,
+                format,
+                output,
+            } => run_report_coverage(project, spec_path.as_deref(), &format, output),
+        },
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
                 run_items_diff(project, spec_path.as_deref(), module)
@@ -1393,6 +1431,65 @@ fn run_gen(
                     ExitCode::from(1)
                 }
             }
+        }
+    }
+}
+
+fn run_report_coverage(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    format: &str,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let format = match specdev_analyzer::coverage::CoverageFormat::parse(format) {
+        Ok(f) => f,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match specdev_analyzer::coverage::build(&layout) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let body = match format {
+        specdev_analyzer::coverage::CoverageFormat::Yaml => {
+            match specdev_analyzer::coverage::render_yaml(&report) {
+                Ok(s) => s,
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        specdev_analyzer::coverage::CoverageFormat::Markdown => {
+            specdev_analyzer::coverage::render_markdown(&report)
+        }
+    };
+    match output {
+        Some(path) => match std::fs::write(&path, &body) {
+            Ok(()) => {
+                eprintln!("wrote coverage report to {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => {
+            print!("{body}");
+            ExitCode::SUCCESS
         }
     }
 }
