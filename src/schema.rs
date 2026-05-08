@@ -136,9 +136,13 @@ impl SchemaRegistry {
         let mut out = Vec::new();
         for err in compiled.iter_errors(value) {
             out.push(
-                Finding::new("SCHEMA", Severity::Error, format!("{err}"))
-                    .with_file(file.to_string())
-                    .with_pointer(err.instance_path().to_string()),
+                Finding::new(
+                    "SCHEMA",
+                    Severity::Error,
+                    crate::diagnostics::format_schema_error(&err),
+                )
+                .with_file(file.to_string())
+                .with_pointer(err.instance_path().to_string()),
             );
         }
         Ok(out)
