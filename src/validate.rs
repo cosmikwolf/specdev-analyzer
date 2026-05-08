@@ -24,7 +24,7 @@ use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
 use crate::graph as graph_checks;
 use crate::kinds;
-use crate::layout::{LayoutContext, LayoutKind};
+use crate::layout::LayoutContext;
 use crate::reduction::{self, Graph};
 use crate::reductions;
 use crate::report::{Finding, Report};
@@ -255,7 +255,7 @@ fn validate_aux_toml(
             Finding::new(
                 schema_rule,
                 Severity::Error,
-                format!("{label}.toml: {err}"),
+                format!("{label}.toml: {}", crate::diagnostics::format_schema_error(&err)),
             )
             .with_file(toml_path.display().to_string())
             .with_pointer(err.instance_path().to_string()),
@@ -339,33 +339,20 @@ fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Js
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     let inv = layout.enumerate();
-    for entry in &inv.directories {
-        if entry.exists {
-            report.push(Finding::new(
-                "LAYOUT-002",
-                Severity::Info,
-                format!("present: {}", entry.label),
-            ));
-        } else {
-            report.push(Finding::new(
-                "LAYOUT-003",
-                Severity::Warning,
-                format!(
-                    "missing: {} (expected at {})",
-                    entry.label,
-                    entry.path.display()
-                ),
-            ));
-        }
-    }
-    // F-009 → Phase 16 §8.1 step 8 (D52): suppress missing-schema warnings
-    // for the per-module / per-requirement schemas when the project's
-    // profile declares no such surface. Per doc 21 §3.4 the load-bearing
-    // signal is `profile.yaml.surface.has_modules` /
-    // `surface.has_requirements`; the modules and requirements suppressions
-    // are independently controlled (the schema and authored manifests
-    // already give us per-schema granularity, so the dispatch is split now
-    // rather than back-patched later).
+
+    // F-009 → Phase 16 §8.1 step 8 (D52) → Phase 17.6: suppress missing-
+    // layout warnings (LAYOUT-003) for module / requirement entries when
+    // the project's profile declares no such surface. Per doc 21 §3.4 the
+    // load-bearing signal is `profile.yaml.surface.has_modules` /
+    // `surface.has_requirements`; the two suppressions are independently
+    // controlled (the schema and authored manifests give us per-surface
+    // granularity).
+    //
+    // Phase 17.6 widens the suppression set: in addition to the per-module
+    // / per-requirement schema files (step 8), we now also suppress the
+    // `specs/modules/` directory entry when `has_modules: false`. Workspace-
+    // root profiles like `rust-workspace` declare no module surface; a
+    // missing `specs/modules/` there is by-design, not a layout violation.
     //
     // Backward-compat fallback per doc 21 §6.5: when `profile.yaml` is
     // absent (pre-D52 projects) OR `manifest.surface` is None, fall back
@@ -384,6 +371,36 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
     // tolerated; deduping is a v1.x cleanup).
     let (suppress_module, suppress_requirements) = compute_surface_suppressions(layout, report);
 
+    for entry in &inv.directories {
+        if entry.exists {
+            report.push(Finding::new(
+                "LAYOUT-002",
+                Severity::Info,
+                format!("present: {}", entry.label),
+            ));
+        } else {
+            if suppress_module && entry.label == "specs/modules/" {
+                continue;
+            }
+            // Skip the missing-warning for the codegen <lang> directory:
+            // it is profile-driven and the project may not have authored
+            // codegen yet. (Intent originally lived in the file loop, where
+            // it was dead code since codegen/<lang>/ is a directory entry.)
+            if entry.label.starts_with("specs/specdev/codegen/") {
+                continue;
+            }
+            report.push(Finding::new(
+                "LAYOUT-003",
+                Severity::Warning,
+                format!(
+                    "missing: {} (expected at {})",
+                    entry.label,
+                    entry.path.display()
+                ),
+            ));
+        }
+    }
+
     for entry in &inv.files {
         if entry.exists {
             report.push(Finding::new(
@@ -392,14 +409,6 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
                 format!("present: {}", entry.label),
             ));
         } else {
-            // Skip the missing-warning for the codegen <lang> directory: it
-            // is profile-driven and the project may not have authored
-            // codegen yet.
-            if entry.kind == LayoutKind::Directory
-                && entry.label.starts_with("specs/specdev/codegen/")
-            {
-                continue;
-            }
             // Surface-driven suppressions per doc 21 §3.4. Each schema is
             // independently gated; the manifest authors per-schema control.
             if suppress_module
@@ -603,9 +612,13 @@ pub fn validate_modules_for(
         if let Some(v) = &validator {
             for err in v.iter_errors(&json) {
                 report.push(
-                    Finding::new("SCHEMA", Severity::Error, format!("{err}"))
-                        .with_file(module_path.display().to_string())
-                        .with_pointer(err.instance_path().to_string()),
+                    Finding::new(
+                        "SCHEMA",
+                        Severity::Error,
+                        crate::diagnostics::format_schema_error(&err),
+                    )
+                    .with_file(module_path.display().to_string())
+                    .with_pointer(err.instance_path().to_string()),
                 );
             }
         } else {

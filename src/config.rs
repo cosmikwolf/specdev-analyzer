@@ -157,7 +157,7 @@ impl SpecConfig {
             let pointer = err.instance_path().to_string();
             let (line, col) = locate_error_in_toml(text, &pointer);
             let field = humanize_pointer(&pointer);
-            let msg = format!("{}: {}", field, err);
+            let msg = format!("{}: {}", field, crate::diagnostics::format_schema_error(&err));
             return Err(anyhow!(LocatedError::new(path, line, col, msg))
                 .context(format!("validating {}", path.display())));
         }

@@ -614,7 +614,7 @@ pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
                     let validator = reduction_metaschema_validator();
                     let mut errs: Vec<String> = validator
                         .iter_errors(&red_value)
-                        .map(|e| format!("{e}"))
+                        .map(|e| crate::diagnostics::format_schema_error(&e))
                         .collect();
                     errs.sort();
                     errs.dedup();

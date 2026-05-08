@@ -185,8 +185,8 @@ handoff = "owned"
 
     // Substituted-template substring assertions (from contract.yaml body).
     assert!(
-        msg.contains("intra-module wiring (Phase 7 v1)"),
-        "expected substituted-template substring `intra-module wiring (Phase 7 v1)`; \
+        msg.contains("intra-module wiring:"),
+        "expected substituted-template substring `intra-module wiring:`; \
          got message:\n{msg}"
     );
     // {bridge_name} substitution.
