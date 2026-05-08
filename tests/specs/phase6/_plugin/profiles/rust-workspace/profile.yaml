@@ -1,12 +1,11 @@
-# Phase 16 manifest — drives analyzer dispatch for rust-workspace shells.
-# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §3.3.
+# Manifest — drives analyzer dispatch for rust-workspace shells.
 # Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
 # Inlined to project at specs/specdev/profile.yaml during bootstrap.
 #
 # `shape: workspace` is descriptive metadata. The actual cargo-toml dispatch
-# fires off `[workspace]` table presence in spec.toml (D36 structural primitive,
-# doc 21 §3.5 layout-driven dispatch carve-out). The Phase 16
-# PROFILE-LAYOUT-MISMATCH validate check ensures the two signals agree.
+# fires off `[workspace]` table presence in spec.toml (layout-driven dispatch
+# carve-out). The PROFILE-LAYOUT-MISMATCH validate check ensures the two
+# signals agree.
 
 name: rust-workspace
 language: rust

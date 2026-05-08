@@ -1,5 +1,4 @@
-# Phase 16 manifest — Cargo deps the egui block contributes.
-# Authoritative spec: specdev-next/outstanding_work/21-analyzer-content-contract.md §4.2.
+# Manifest — Cargo deps the egui block contributes.
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
 
 crates:
