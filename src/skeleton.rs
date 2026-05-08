@@ -116,7 +116,7 @@ pub fn run_skeleton(layout: &LayoutContext) -> Result<SkeletonReport> {
         None => {
             // Pre-D52 backward-compat fallback (doc 21 §6.5). The legacy
             // gate remains until `specdev migrate` ships in step 9.
-            if layout.spec.project.profile != "library-api" {
+            if layout.spec.project.profile != "library-api" { // D51-fallback: pre-D52 legacy gate per doc 21 §6.5; deleted in v1.1 (step 10).
                 return Err(anyhow!(
                     "[SKEL-001] skeleton mode is library-api only in v1; \
                      this project's profile is `{}`. firmware-layered skeleton \

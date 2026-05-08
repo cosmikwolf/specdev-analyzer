@@ -134,10 +134,10 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     // per-shape render functions. Removed in v1.1 per doc 21 §6.5.
     let profile = layout.spec.project.profile.as_str();
     match profile {
-        "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()),
-        "library-api" => render_library(layout, workspace_ctx.as_ref()),
-        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None),
-        "rust-workspace" => Err(anyhow!(
+        "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
+        "library-api" => render_library(layout, workspace_ctx.as_ref()), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
+        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
+        "rust-workspace" => Err(anyhow!( // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
             "spec.toml at {} declares profile `rust-workspace` but has no \
              [workspace] table; add `[workspace]` with `[[workspace.members]]` \
              entries or change the profile",
