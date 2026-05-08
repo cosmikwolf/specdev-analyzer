@@ -212,10 +212,10 @@ description = "echo a string."
     // Compare gen --strict --module against prompt --module — they
     // must produce identical bytes (F-018 collapses the two surfaces).
     let gen_out = std::process::Command::new(bin)
-        .args(["gen", "--strict", "--module", "Core", "--project"])
+        .args(["gen", "--module", "Core", "--project"])
         .arg(&target)
         .output()
-        .expect("gen --strict --module");
+        .expect("gen --module");
     let prompt_out = std::process::Command::new(bin)
         .args(["prompt", "--module", "Core", "--project"])
         .arg(&target)
@@ -223,13 +223,13 @@ description = "echo a string."
         .expect("prompt --module");
     assert!(
         gen_out.status.success(),
-        "gen --strict --module Core failed: {}",
+        "gen --module Core failed: {}",
         String::from_utf8_lossy(&gen_out.stderr)
     );
     assert!(prompt_out.status.success());
     assert_eq!(
         gen_out.stdout, prompt_out.stdout,
-        "gen --strict --module must match prompt --module byte-for-byte"
+        "gen --module must match prompt --module byte-for-byte"
     );
     assert!(
         !gen_out.stdout.is_empty(),
@@ -373,13 +373,15 @@ panic_handler = "abort"
 }
 
 // ===========================================================================
-// F-014 — HANDOFF.md reads `[[requirement]]` (singular per the schema)
-//          and emits a populated coverage matrix.
+// F-014 — coverage report reads `[[requirement]]` (singular per the schema)
+//          and emits a populated coverage matrix. Originally surfaced via
+//          `gen --skeleton` HANDOFF.md; coverage logic relocated to
+//          `report coverage` in Phase 18.5. Same regression guarded.
 // ===========================================================================
 
 #[test]
-fn handoff_md_populates_coverage_matrix_from_singular_requirement_key() {
-    use specdev_analyzer::skeleton;
+fn coverage_report_populates_matrix_from_singular_requirement_key() {
+    use specdev_analyzer::coverage;
 
     let (target, layout) = fresh_library("f014-coverage");
     std::fs::write(
@@ -418,32 +420,27 @@ satisfies = ["REQ-API-001"]
 
     let _ = layout;
     let layout = LayoutContext::discover(&target, None).unwrap();
-    skeleton::run_skeleton(&layout).expect("skeleton");
+    let report = coverage::build(&layout).expect("coverage");
+    let yaml = coverage::render_yaml(&report).expect("yaml render");
 
-    let body = std::fs::read_to_string(target.join("specs/HANDOFF.md")).unwrap();
     assert!(
-        body.contains("| `REQ-API-001` |") && body.contains("| `REQ-API-002` |"),
-        "coverage matrix should list both requirements; body:\n{body}"
+        yaml.contains("REQ-API-001") && yaml.contains("REQ-API-002"),
+        "coverage matrix should list both requirements; yaml:\n{yaml}"
     );
-    assert!(
-        !body.contains("`[[requirements]]` entries — coverage matrix omitted"),
-        "stale plural-key fallback string must not appear; body:\n{body}"
-    );
-    let req1_line = body
-        .lines()
-        .find(|l| l.contains("`REQ-API-001`"))
+    let req1 = report
+        .matrix
+        .iter()
+        .find(|r| r.requirement == "REQ-API-001")
         .expect("REQ-API-001 row");
     assert!(
-        req1_line.contains("`Core`"),
-        "REQ-API-001 should be satisfied by Core; got: {req1_line}"
+        req1.satisfied_by.iter().any(|m| m == "Core"),
+        "REQ-API-001 should be satisfied by Core; got: {:?}",
+        req1.satisfied_by
     );
-    let req2_line = body
-        .lines()
-        .find(|l| l.contains("`REQ-API-002`"))
-        .expect("REQ-API-002 row");
     assert!(
-        req2_line.contains("ORPHAN"),
-        "REQ-API-002 has no satisfier and should be ORPHAN; got: {req2_line}"
+        report.orphans.iter().any(|o| o == "REQ-API-002"),
+        "REQ-API-002 has no satisfier and should be in orphans; got: {:?}",
+        report.orphans
     );
 }
 

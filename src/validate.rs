@@ -48,10 +48,6 @@ pub enum Capability {
     /// is well-formed". Default-on for every other capability since every
     /// downstream consumer needs schema-clean inputs.
     Schema,
-    /// `gen --skeleton` consumes this — the deterministic skeleton-tree
-    /// emitter requires that modules declare `items[]` so the tree has
-    /// something to emit per module.
-    Skeleton,
     /// `gen --strict` (Claude-orchestrated codegen) consumes this. Strict
     /// mode is high-context: a module that omits `context_files` in
     /// strict mode gets no out-of-band prose, which is usually a friction
@@ -70,11 +66,10 @@ impl std::str::FromStr for Capability {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "schema" => Ok(Capability::Schema),
-            "skeleton" => Ok(Capability::Skeleton),
             "strict-gen" => Ok(Capability::StrictGen),
             "cargo-toml" => Ok(Capability::CargoToml),
             other => Err(format!(
-                "unknown capability `{other}`; supported: schema, skeleton, strict-gen, cargo-toml"
+                "unknown capability `{other}`; supported: schema, strict-gen, cargo-toml"
             )),
         }
     }
@@ -1381,15 +1376,13 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
         "unique" | "reference_exists" | "reachability" | "acyclic" => &[Schema],
         "layer_dependency" => &[Schema],
         // Orphan-requirements is a structural check on the spec graph;
-        // strict-gen + skeleton both consume the spec, so failures here
-        // matter for both consumers (a requirement with no satisfier
-        // means an orphan story regardless of how codegen runs).
-        "requirements_have_satisfiers" => &[Schema, Skeleton, StrictGen],
+        // strict-gen consumes the spec, so an unsatisfied requirement
+        // means an orphan story regardless of how codegen runs.
+        "requirements_have_satisfiers" => &[Schema, StrictGen],
         // verified_by_resolves reads source files to validate that
         // requirement.verified_by[] entries name extant items / tests.
-        // It's a strict-gen + skeleton concern (codegen will surface a
-        // verification gap).
-        "verified_by_resolves" => &[Schema, Skeleton, StrictGen],
+        // Strict-gen will surface a verification gap.
+        "verified_by_resolves" => &[Schema, StrictGen],
         // Unknown primitives still surface their DOMAIN-003 warning;
         // tag them as Schema so the typo isn't silenced by --for.
         _ => &[Schema],
@@ -1397,22 +1390,18 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
 }
 
 /// Phase 16 Batch B / F-013 (zfm dogfood): warns when a module has zero
-/// `items[]` entries. Skeleton mode emits an empty source file in that
-/// case, which the dogfood reported as a silent failure mode (modules
-/// look authored but produce no symbols). Strict mode is also affected
-/// because Claude has no items[] to anchor codegen to. Info-level: not
-/// every module needs items (a project mid-port may have empty
-/// modules), but every empty module deserves visibility.
+/// `items[]` entries. Strict mode has no items[] to anchor codegen to.
+/// Info-level: not every module needs items (a project mid-port may
+/// have empty modules), but every empty module deserves visibility.
 ///
-/// Tags: [`Capability::Skeleton`], [`Capability::StrictGen`]. Skipped
-/// when `--for=cargo-toml` is active (cargo-toml emission doesn't
-/// consume items).
+/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
+/// active (cargo-toml emission doesn't consume items).
 pub fn validate_items_present(
     layout: &LayoutContext,
     filter: Option<Capability>,
     report: &mut Report,
 ) {
-    let tags: &[Capability] = &[Capability::Skeleton, Capability::StrictGen];
+    let tags: &[Capability] = &[Capability::StrictGen];
     if !capability_matches(tags, filter) {
         return;
     }
@@ -1444,11 +1433,8 @@ pub fn validate_items_present(
                     "ITEMS-001",
                     Severity::Info,
                     format!(
-                        "module `{name}` has 0 items[] entries — `gen --skeleton` will \
-                         emit an empty file and `gen --strict` has nothing to anchor \
-                         codegen to. Add items[] before running codegen, or set \
-                         `[project].handoff_mode = \"none\"` if this module is \
-                         intentionally architectural-only."
+                        "module `{name}` has 0 items[] entries — `gen` has nothing to \
+                         anchor codegen to. Add items[] before running codegen."
                     ),
                 )
                 .with_file(module_path.display().to_string()),
@@ -1457,18 +1443,16 @@ pub fn validate_items_present(
     }
 }
 
-/// Phase 16 Batch B / F-015 (zfm dogfood): warns when a module has no
-/// `context_files` entries and the project's `[project].handoff_mode`
-/// resolves to a strict-leaning mode (`implementation` or unset). The
-/// dogfood reported `module.context_files` as undiscoverable from the
-/// `/spec-design` interview; surfacing the gap at validate time gives
-/// the user a structural prompt to add prose context (or to explicitly
-/// declare the module shallow enough to need none).
+/// F-015 (zfm dogfood): warns when a module has no `context_files`
+/// entries. The dogfood reported `module.context_files` as
+/// undiscoverable from the `/spec-design` interview; surfacing the gap
+/// at validate time gives the user a structural prompt to add prose
+/// context (or to leave the module shallow enough to need none).
 ///
-/// Tag: [`Capability::StrictGen`]. Skipped when `--for=skeleton` or
-/// `--for=cargo-toml` is active. Warning-level — not every module
-/// needs context files (mechanical glue modules legitimately don't),
-/// but the absence is worth surfacing for shipped strict-gen runs.
+/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
+/// active. Warning-level — not every module needs context files
+/// (mechanical glue modules legitimately don't), but the absence is
+/// worth surfacing for shipped strict-gen runs.
 pub fn validate_context_files_when_strict(
     layout: &LayoutContext,
     filter: Option<Capability>,
@@ -1476,18 +1460,6 @@ pub fn validate_context_files_when_strict(
 ) {
     let tags: &[Capability] = &[Capability::StrictGen];
     if !capability_matches(tags, filter) {
-        return;
-    }
-    // Only fire when the project is on a strict-leaning handoff mode.
-    // `None` defaults to `Implementation` per Phase 13 (doc 16 §4) —
-    // i.e., strict.
-    use crate::config::HandoffMode;
-    let mode = layout
-        .spec
-        .project
-        .handoff_mode
-        .unwrap_or(HandoffMode::Implementation);
-    if !matches!(mode, HandoffMode::Implementation) {
         return;
     }
     let inv = layout.enumerate();
@@ -1517,12 +1489,9 @@ pub fn validate_context_files_when_strict(
                     "CONTEXT-100",
                     Severity::Warning,
                     format!(
-                        "module `{name}` has no `context_files` and the project's \
-                         handoff_mode is `implementation` (strict-leaning). Strict \
-                         codegen has no out-of-band prose to anchor on; consider \
-                         adding `context_files = [\"docs/<...>.md\"]` or set \
-                         `[project].handoff_mode = \"skeleton\"` if this module is \
-                         mechanical enough to skip prose context."
+                        "module `{name}` has no `context_files`. Strict codegen has no \
+                         out-of-band prose to anchor on; consider adding \
+                         `context_files = [\"docs/<...>.md\"]`."
                     ),
                 )
                 .with_file(module_path.display().to_string()),

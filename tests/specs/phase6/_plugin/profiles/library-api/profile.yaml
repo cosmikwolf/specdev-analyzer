@@ -19,14 +19,6 @@ cargo_toml:
 bootstrap:
   steps: []                       # standalone library; no workspace machinery
 
-skeleton:
-  supported: true
-  entry_file: src/lib.rs
-  entry_template: lib_re_exports
-  extra_files: []
-  module_layout: flat
-  steps: [emit_cargo_toml, walk_modules, emit_handoff_md]
-
 context:
   module_fields_for_prompt:
     [items, satisfies, depends_on, context_files, external_deps]

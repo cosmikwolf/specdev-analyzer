@@ -27,16 +27,6 @@ cargo_toml:
 bootstrap:
   steps: []                       # standalone binary; no workspace machinery
 
-skeleton:
-  supported: false                # SKEL-001 — firmware skeleton mode is not v1
-  entry_file: src/main.rs
-  entry_template: main_unimplemented
-  extra_files:
-    - { path: memory.x, source: from_architecture_template }
-    - { path: build.rs, source: linker_script_include }
-  module_layout: nested
-  steps: [emit_cargo_toml, walk_modules]
-
 context:
   module_fields_for_prompt:
     [items, satisfies, depends_on, context_files, external_deps, layer]

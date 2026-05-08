@@ -16,8 +16,7 @@
 use std::path::PathBuf;
 
 use specdev_analyzer::manifest::{
-    BindingLocality, BlockDeps, BootstrapStep, BridgeContract, CrateSource, EntryTemplate,
-    ModuleLayout, Profile, ShapeKind, SkeletonStep,
+    BindingLocality, BlockDeps, BootstrapStep, BridgeContract, CrateSource, Profile, ShapeKind,
 };
 
 fn tmp_path(tag: &str, ext: &str) -> PathBuf {
@@ -60,13 +59,6 @@ cargo_toml:
     open_arrays: ["external_deps"]
 bootstrap:
   steps: []
-skeleton:
-  supported: true
-  entry_file: src/lib.rs
-  entry_template: lib_re_exports
-  extra_files: []
-  module_layout: flat
-  steps: [emit_cargo_toml, walk_modules, emit_handoff_md]
 context:
   module_fields_for_prompt:
     [items, satisfies, depends_on, context_files, external_deps]
@@ -85,13 +77,6 @@ surface:
     let cargo = m.cargo_toml.expect("cargo_toml present");
     assert_eq!(cargo.shape, ShapeKind::Library);
     assert_eq!(cargo.default_edition.as_deref(), Some("2021"));
-    let skel = m.skeleton.expect("skeleton present");
-    assert!(skel.supported);
-    assert_eq!(skel.entry_template, Some(EntryTemplate::LibReExports));
-    assert_eq!(skel.module_layout, Some(ModuleLayout::Flat));
-    assert_eq!(skel.steps.len(), 3);
-    assert_eq!(skel.steps[0], SkeletonStep::EmitCargoToml);
-    assert_eq!(skel.steps[2], SkeletonStep::EmitHandoffMd);
     let surf = m.surface.expect("surface present");
     assert!(surf.has_modules && surf.has_requirements && surf.has_architecture);
 }
@@ -121,15 +106,6 @@ cargo_toml:
     open_arrays: ["external_deps"]
 bootstrap:
   steps: []
-skeleton:
-  supported: false
-  entry_file: src/main.rs
-  entry_template: main_unimplemented
-  extra_files:
-    - { path: memory.x, source: from_architecture_template }
-    - { path: build.rs, source: linker_script_include }
-  module_layout: nested
-  steps: [emit_cargo_toml, walk_modules]
 context:
   module_fields_for_prompt:
     [items, satisfies, depends_on, context_files, external_deps, layer]
@@ -154,11 +130,6 @@ surface:
     let arch_deps = cargo.architecture_deps.unwrap();
     assert_eq!(arch_deps.typed_slots.len(), 3);
     assert_eq!(arch_deps.typed_slots[0].table, "platform");
-    let skel = m.skeleton.unwrap();
-    assert!(!skel.supported);
-    assert_eq!(skel.entry_template, Some(EntryTemplate::MainUnimplemented));
-    assert_eq!(skel.module_layout, Some(ModuleLayout::Nested));
-    assert_eq!(skel.extra_files.len(), 2);
     let ctx = m.context.unwrap();
     assert_eq!(ctx.context_subcommand_extras.len(), 2);
     let hw_extra = &ctx.context_subcommand_extras[1];
@@ -195,13 +166,6 @@ cargo_toml:
     typed_slots: []
     open_arrays: ["external_deps"]
 bootstrap:
-  steps: []
-skeleton:
-  supported: false
-  entry_file: src/lib.rs
-  entry_template: empty
-  extra_files: []
-  module_layout: flat
   steps: []
 context:
   module_fields_for_prompt:
@@ -242,13 +206,6 @@ cargo_toml:
     open_arrays: []
 bootstrap:
   steps: [emit_workspace_root, emit_member_stubs, walk_members]
-skeleton:
-  supported: false
-  entry_file: ""
-  entry_template: empty
-  extra_files: []
-  module_layout: flat
-  steps: []
 context:
   module_fields_for_prompt: []
   context_subcommand_extras: []
@@ -423,20 +380,6 @@ cargo_toml:
     let msg = format!("{err:#}");
     assert!(msg.contains("MANIFEST-001"), "{msg}");
     assert!(msg.contains("chimera") || msg.contains("shape"), "{msg}");
-}
-
-#[test]
-fn profile_rejects_unknown_skeleton_step() {
-    let body = r#"
-name: lib
-language: rust
-skeleton:
-  supported: true
-  steps: [emit_cargo_toml, do_a_dance]
-"#;
-    let p = write("profile-bad-step", body);
-    let err = Profile::load(&p).expect_err("unknown skeleton step should fail");
-    assert!(format!("{err:#}").contains("MANIFEST-001"));
 }
 
 #[test]

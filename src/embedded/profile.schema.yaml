@@ -183,64 +183,6 @@ properties:
           type: string
           enum: [emit_workspace_root, emit_member_stubs, walk_members]
 
-  skeleton:
-    description: |
-      gen --skeleton dispatch (per-profile policy).
-    type: object
-    additionalProperties: false
-    required: [supported]
-    properties:
-      supported:
-        description: |
-          When false, `gen --skeleton` raises SKEL-001 for this profile.
-        type: boolean
-      entry_file:
-        description: |
-          Crate entry-point file (e.g. "src/lib.rs", "src/main.rs"). May
-          be empty when `supported: false`.
-        type: string
-      entry_template:
-        description: |
-          EntryTemplate (closed enum): which scaffolded body the analyzer
-          writes to entry_file when emitting a fresh skeleton.
-        type: string
-        enum: [empty, lib_re_exports, main_unimplemented]
-      extra_files:
-        description: |
-          Additional source-tree files emitted alongside the entry. Sub-shape
-          intentionally open in step 1; tightened as the firmware-layered
-          skeleton work lands (Phase 16 §8.1 step 4).
-        type: array
-        items:
-          type: object
-      module_layout:
-        description: |
-          ModuleLayout (closed enum): how skeleton-emitted modules are laid
-          out in source — flat (one .rs per module under src/) or nested
-          (mod-rs trees).
-        type: string
-        enum: [flat, nested]
-      steps:
-        description: |
-          SkeletonStep[] (closed enum). Ordered list; analyzer follows
-          verbatim.
-        type: array
-        items:
-          type: string
-          enum: [emit_cargo_toml, walk_modules, emit_handoff_md]
-      audio_path_stub:
-        description: |
-          AudioPathStub (closed enum): how the skeleton emitter handles
-          audio-thread methods on profiles that target a real-time audio
-          framework. Authoritative when `supported: true` and the
-          profile's codegen prose declares an audio-thread method
-          surface (per the audio-plugin profile's silence-and-log
-          policy). Absent on profiles whose skeletons have no
-          audio-thread concern. Closed enum; new variants amend this
-          schema as they ship.
-        type: string
-        enum: [silence_and_log]
-
   context:
     description: |
       `prompt --module` and `context --module` dispatch.

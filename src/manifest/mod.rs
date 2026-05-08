@@ -29,9 +29,9 @@ pub mod profile;
 pub use block_deps::{BlockDeps, CrateEntry, CrateSource, CrateSourceTag, RecommendedDep};
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
-    AudioPathStub, BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection,
-    ContextExtra, ContextSection, EntryTemplate, FeaturesSection, ModuleLayout, PairedStub,
-    Profile, ShapeKind, SkeletonSection, SkeletonStep, SurfaceSection,
+    BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection,
+    ContextExtra, ContextSection, FeaturesSection, PairedStub,
+    Profile, ShapeKind, SurfaceSection,
 };
 
 use anyhow::{anyhow, Context, Result};

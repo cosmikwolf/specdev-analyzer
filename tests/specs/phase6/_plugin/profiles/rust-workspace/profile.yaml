@@ -23,14 +23,6 @@ cargo_toml:
 bootstrap:
   steps: [emit_workspace_root, emit_member_stubs, walk_members]
 
-skeleton:
-  supported: false                # workspace gen-skeleton has no per-module surface
-  entry_file: ""                  # n/a
-  entry_template: empty
-  extra_files: []
-  module_layout: flat
-  steps: []
-
 context:
   module_fields_for_prompt: []   # workspace has no module surface
   context_subcommand_extras: []
