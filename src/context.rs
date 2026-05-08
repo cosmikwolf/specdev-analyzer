@@ -490,7 +490,7 @@ fn compute_profile_specific(
     // byte-for-byte for projects without an inlined manifest. Deleted in
     // v1.1 per §6.5.
     match layout.spec.project.profile.as_str() {
-        "firmware-layered" => {
+        "firmware-layered" => { // D51-fallback: pre-D52 hardcoded match arm per doc 21 §6.5; deleted in v1.1 (step 10).
             if let Some(layer) = ent.attrs.get("layer").and_then(|v| v.as_str()) {
                 out.insert(
                     "layer".to_string(),
@@ -503,7 +503,7 @@ fn compute_profile_specific(
                 out.insert("hardware_resources".to_string(), map);
             }
         }
-        "library-api" => {
+        "library-api" => { // D51-fallback: pre-D52 hardcoded match arm per doc 21 §6.5; deleted in v1.1 (step 10).
             if let Some(vis) = ent.attrs.get("visibility").and_then(|v| v.as_str()) {
                 out.insert(
                     "visibility".to_string(),

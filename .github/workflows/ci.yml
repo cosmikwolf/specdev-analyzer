@@ -55,3 +55,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --path . --root "$RUNNER_TEMP/install" --locked
       - run: "$RUNNER_TEMP/install/bin/specdev-analyzer --version"
+
+  agnosticism-lint:
+    # D51 self-enforcement (doc 21 §9). Scans `src/` for hardcoded
+    # profile/block/bridge name string literals using the live names
+    # listed under the sibling `specdev` plugin tree.
+    #
+    # Phase 16 §8.1 step 11 (b): non-blocking. Runs informationally; the
+    # job is permitted to fail without failing the workflow. Phase (c)
+    # blocking upgrade lands as a follow-up commit once one CI run has
+    # confirmed clean (`continue-on-error: true` removed).
+    name: D51 agnosticism lint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout analyzer
+        uses: actions/checkout@v4
+      - name: Checkout specdev plugin tree
+        uses: actions/checkout@v4
+        with:
+          # TODO: replace `<owner>/specdev` once the plugin tree is
+          # published to GitHub. The local workspace currently has no
+          # `origin` remote configured (verified 2026-05-07). The lint
+          # runs locally + via this CI job once the plugin is published.
+          repository: <owner>/specdev
+          path: specdev
+      - name: Run agnosticism lint
+        run: bash .github/scripts/agnosticism-lint.sh ./specdev
