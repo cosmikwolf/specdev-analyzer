@@ -255,7 +255,7 @@ fn validate_aux_toml(
             Finding::new(
                 schema_rule,
                 Severity::Error,
-                format!("{label}.toml: {err}"),
+                format!("{label}.toml: {}", crate::diagnostics::format_schema_error(&err)),
             )
             .with_file(toml_path.display().to_string())
             .with_pointer(err.instance_path().to_string()),
@@ -612,9 +612,13 @@ pub fn validate_modules_for(
         if let Some(v) = &validator {
             for err in v.iter_errors(&json) {
                 report.push(
-                    Finding::new("SCHEMA", Severity::Error, format!("{err}"))
-                        .with_file(module_path.display().to_string())
-                        .with_pointer(err.instance_path().to_string()),
+                    Finding::new(
+                        "SCHEMA",
+                        Severity::Error,
+                        crate::diagnostics::format_schema_error(&err),
+                    )
+                    .with_file(module_path.display().to_string())
+                    .with_pointer(err.instance_path().to_string()),
                 );
             }
         } else {

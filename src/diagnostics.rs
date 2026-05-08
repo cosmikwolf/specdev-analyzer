@@ -10,6 +10,58 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use jsonschema::ValidationError;
+use jsonschema::error::ValidationErrorKind;
+
+/// Closed-enum threshold for full-options listing per F-012.
+///
+/// jsonschema 0.46's default `Display` truncates enum mismatch messages to
+/// `"a", "b" or N other candidates` once the option count exceeds 3. For
+/// closed enums of `<= 8` values that's frustrating: the user has to open
+/// the schema or a block README to see what's allowed. This threshold
+/// keeps the output bounded (8 short string variants render comfortably
+/// on one line) while covering every closed enum the shipped profiles
+/// currently author.
+const ENUM_LIST_ALL_THRESHOLD: usize = 8;
+
+/// Format a `jsonschema::ValidationError` for inclusion in a SCHEMA finding.
+///
+/// Behavior matches the upstream `Display` impl except for closed-enum
+/// mismatches: when the schema's `enum` has `<= ENUM_LIST_ALL_THRESHOLD`
+/// values, every allowed value appears in the message instead of the
+/// truncated `or N other candidates` suffix.
+///
+/// F-012 (2026-05-08 zfm dogfood): the egui panel-kind enum has 5 values
+/// (`central`, `side_left`, `side_right`, `top`, `bottom`); the truncated
+/// form (`"central", "side_left" or 3 other candidates`) hid the value
+/// the user actually wanted. Listing all 5 saves a round-trip.
+pub fn format_schema_error(err: &ValidationError<'_>) -> String {
+    if let ValidationErrorKind::Enum { options } = err.kind() {
+        if let Some(arr) = options.as_array() {
+            if arr.len() <= ENUM_LIST_ALL_THRESHOLD && !arr.is_empty() {
+                let listed = format_enum_options(arr);
+                return format!("{} is not one of {listed}", err.instance());
+            }
+        }
+    }
+    format!("{err}")
+}
+
+fn format_enum_options(options: &[serde_json::Value]) -> String {
+    let total = options.len();
+    let mut buf = String::new();
+    for (i, opt) in options.iter().enumerate() {
+        if i == 0 {
+            buf.push_str(&format!("{opt}"));
+        } else if i == total - 1 {
+            buf.push_str(&format!(" or {opt}"));
+        } else {
+            buf.push_str(&format!(", {opt}"));
+        }
+    }
+    buf
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub struct LocatedError {
     pub path: PathBuf,
@@ -116,6 +168,83 @@ pub fn report_error(err: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn first_error_for(schema: &serde_json::Value, instance: &serde_json::Value) -> String {
+        let validator = jsonschema::options().build(schema).unwrap();
+        let err = validator.iter_errors(instance).next().unwrap();
+        format_schema_error(&err)
+    }
+
+    #[test]
+    fn enum_with_5_values_lists_all_in_message() {
+        // F-012: closed enum of 5 values must be listed in full, not truncated.
+        let schema = json!({
+            "enum": ["central", "side_left", "side_right", "top", "bottom"]
+        });
+        let instance = json!("left");
+        let msg = first_error_for(&schema, &instance);
+        assert!(msg.contains("\"central\""), "missing first option: {msg}");
+        assert!(msg.contains("\"side_left\""), "missing option: {msg}");
+        assert!(msg.contains("\"side_right\""), "missing option: {msg}");
+        assert!(msg.contains("\"top\""), "missing option: {msg}");
+        assert!(msg.contains("\"bottom\""), "missing tail option: {msg}");
+        assert!(
+            !msg.contains("other candidates"),
+            "must not truncate at 5 values: {msg}"
+        );
+    }
+
+    #[test]
+    fn enum_with_8_values_lists_all() {
+        let schema = json!({
+            "enum": ["a", "b", "c", "d", "e", "f", "g", "h"]
+        });
+        let instance = json!("z");
+        let msg = first_error_for(&schema, &instance);
+        for letter in ["\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"e\"", "\"f\"", "\"g\"", "\"h\""] {
+            assert!(msg.contains(letter), "missing {letter} in: {msg}");
+        }
+        assert!(!msg.contains("other candidates"), "must not truncate at 8: {msg}");
+    }
+
+    #[test]
+    fn enum_above_threshold_falls_back_to_truncation() {
+        let schema = json!({
+            "enum": ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+        });
+        let instance = json!("z");
+        let msg = first_error_for(&schema, &instance);
+        // Above threshold: defer to upstream Display, which truncates.
+        assert!(
+            msg.contains("other candidates"),
+            "9 values must use truncated form: {msg}"
+        );
+    }
+
+    #[test]
+    fn enum_with_3_values_shipped_form_is_unchanged() {
+        // Below threshold: upstream already lists all values; behavior is
+        // identical via either path.
+        let schema = json!({"enum": ["a", "b", "c"]});
+        let instance = json!("z");
+        let msg = first_error_for(&schema, &instance);
+        assert!(msg.contains("\"a\""), "{msg}");
+        assert!(msg.contains("\"b\""), "{msg}");
+        assert!(msg.contains("\"c\""), "{msg}");
+        assert!(!msg.contains("other candidates"), "{msg}");
+    }
+
+    #[test]
+    fn non_enum_errors_pass_through_to_upstream_display() {
+        // A `type` mismatch must format identically to upstream Display.
+        let schema = json!({"type": "integer"});
+        let instance = json!("not an int");
+        let msg = first_error_for(&schema, &instance);
+        let validator = jsonschema::options().build(&schema).unwrap();
+        let upstream = format!("{}", validator.iter_errors(&instance).next().unwrap());
+        assert_eq!(msg, upstream);
+    }
 
     #[test]
     fn byte_offset_to_line_col_handles_multiline() {
