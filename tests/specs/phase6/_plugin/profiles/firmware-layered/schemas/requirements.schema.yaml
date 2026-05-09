@@ -64,7 +64,7 @@ $defs:
         minLength: 1
       nature:
         description: >
-          What kind of artifact satisfies this requirement (Phase 8.6/F-006).
+          What kind of artifact satisfies this requirement.
           `module` (default) — a Rust module is expected to carry the
           implementation; the `requirements_have_satisfiers` graph check
           warns if no module declares this requirement in its
@@ -106,3 +106,13 @@ $defs:
           requirement. Free-form for v1.
         type: array
         items: { type: string, minLength: 1 }
+      decided_by:
+        description: >
+          Decision ids that pin this requirement's *how* / *why*.
+          Replaces the free-form `source_ref = "DEC-NNN"` pattern with
+          a typed reference into `decisions.toml`. Validated by graph
+          check `requirement_decided_by_resolves`. Optional — existing
+          requirements without this field continue to validate.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true

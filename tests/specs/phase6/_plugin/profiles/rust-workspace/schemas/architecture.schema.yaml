@@ -7,9 +7,9 @@ description: >
   `*.workspace = true`) and hoisted [[workspace_dependencies]]
   candidates (members opt in via `source = "workspace"`).
 
-  D36 enforcement: this schema MUST NOT carry any per-member fields
-  (modules, requirements, per-crate features). Per-member surface lives
-  in each member's own `specs/` tree.
+  Bidirectional-minimality enforcement: this schema MUST NOT carry any
+  per-member fields (modules, requirements, per-crate features).
+  Per-member surface lives in each member's own `specs/` tree.
 
 type: object
 additionalProperties: false
@@ -48,3 +48,15 @@ properties:
     type: array
     items:
       $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
+  project_decisions:
+    description: >
+      Decision ids that shape the workspace as a whole (member layout,
+      hoisted dependency policy, MSRV policy, release strategy).
+      Workspace-tier decisions implicitly apply to every module in
+      every member crate — child crates do not name workspace
+      decisions in their own `decided_by` / `guided_by`, keeping each
+      member crate self-contained. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true

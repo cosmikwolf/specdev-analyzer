@@ -109,3 +109,13 @@ $defs:
           this requirement. Free-form for v1.
         type: array
         items: { type: string, minLength: 1 }
+      decided_by:
+        description: >
+          Decision ids that pin this requirement's *how* / *why*.
+          Replaces the free-form `source_ref = "DEC-NNN"` pattern with
+          a typed reference into `decisions.toml`. Validated by graph
+          check `requirement_decided_by_resolves`. Optional — existing
+          requirements without this field continue to validate.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true

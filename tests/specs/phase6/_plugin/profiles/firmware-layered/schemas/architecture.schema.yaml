@@ -4,11 +4,11 @@ title: "firmware-layered architecture spec (v1)"
 description: |
   Shape of `specs/architecture.toml` for firmware-layered projects.
 
-  Phase 6.7+: the schema captures project-wide infrastructure picks
-  (platform, runtime, logger) AS WELL AS cross-module port connections.
-  Every Cargo dep is captured here or in the modules; Cargo.toml is
-  emitted by Phase 8's `gen` from these fields. The spec is the source
-  of truth, not Cargo.toml.
+  The schema captures project-wide infrastructure picks (platform,
+  runtime, logger) AS WELL AS cross-module port connections. Every
+  Cargo dep is captured here or in the modules; Cargo.toml is emitted
+  by `gen` from these fields. The spec is the source of truth, not
+  Cargo.toml.
 
   Validation here is structural; codegen-time soft checks (e.g.,
   `[platform].mcu_part` consistency with the inlined MCU block) live
@@ -44,13 +44,13 @@ properties:
         pattern: "^[a-z][a-z0-9_]*$"
       mcu_core:
         description: |
-          ARM core support crate (`cortex-m` typically). Phase 8 emits
+          ARM core support crate (`cortex-m` typically). `gen` emits
           this as a Cargo.toml `[dependencies]` entry.
         $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
       mcu_runtime:
         description: |
           Cortex-M runtime crate (`cortex-m-rt` typically). Provides
-          startup + reset vector. Phase 8 emits as `[dependencies]`.
+          startup + reset vector. `gen` emits as `[dependencies]`.
         $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
 
   runtime:
@@ -125,6 +125,18 @@ properties:
       check); this schema only enforces shape.
     type: array
     items: { $ref: "#/$defs/Connection" }
+
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (platform pick,
+      runtime model, MSRV policy, public API conventions). Distinct
+      from module-scope `guided_by`: project_decisions describes
+      commitments that span the architecture itself rather than any
+      one module's implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
 
 $defs:
   Connection:

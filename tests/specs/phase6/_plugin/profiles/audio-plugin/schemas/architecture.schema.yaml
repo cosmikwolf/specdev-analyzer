@@ -3,11 +3,11 @@ $id: "https://specdev.dev/profiles/audio-plugin/architecture.schema.yaml"
 title: "audio-plugin architecture spec (v1)"
 description: |
   Shape of `specs/architecture.toml` for an audio-plugin project. Three
-  required tables (per Phase 15-A spike §1.2):
+  required tables:
 
     [plugin]   — vendor / display / format identity. Drives
-                 `nih_export_*!` macro selection (D45) and per-format
-                 constant emission (D46).
+                 `nih_export_*!` macro selection and per-format
+                 constant emission.
     [audio]    — main bus channel layout, sample-rate bounds, latency,
                  optional aux input/output sidechains.
     [runtime]  — panic handler enum, realtime_audit informational flag.
@@ -66,7 +66,7 @@ properties:
         $ref: "enums.schema.yaml#/$defs/PluginVersion"
       category:
         description: |
-          Closed enum (D46): instrument | fx | midi-fx | analyzer.
+          Closed enum: instrument | fx | midi-fx | analyzer.
           Codegen prose maps this to per-format constants
           (`VST3_CATEGORIES` string, `CLAP_FEATURES` slice). Free-string
           would be VST3-shaped only; per-format separate fields would
@@ -76,7 +76,7 @@ properties:
         description: |
           Distribution formats this plugin supports. At least one. Drives
           which `nih_export_*!` macros emit and which crate-type targets
-          the plugin Cargo.toml declares (D45):
+          the plugin Cargo.toml declares:
             "vst3"        → cdylib lib target + nih_export_vst3!
             "clap"        → cdylib lib target + nih_export_clap!
             "standalone"  → adds `[[bin]]` standalone target +
@@ -159,7 +159,7 @@ properties:
           Informational flag. When `true`, the project is opting in to
           realtime-audit conventions (no alloc / no lock / no log on
           the audio path). v1 carries this as a marker only; a future
-          `realtime_path_no_alloc` graph-check primitive (D48 bounded
+          `realtime_path_no_alloc` graph-check primitive (bounded
           follow-up) consumes it. v1 codegen prose enforces the
           discipline; tooling enforcement is gated on 15-G dogfood
           evidence.
@@ -185,6 +185,18 @@ properties:
     type: array
     items:
       $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
+
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (workspace shape,
+      build order, MSRV policy, public API conventions). Distinct from
+      module-scope `guided_by`: project_decisions describes commitments
+      that span the architecture itself rather than any one module's
+      implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
 
 $defs:
   AuxBus:

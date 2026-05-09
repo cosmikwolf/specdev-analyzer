@@ -39,10 +39,10 @@ properties:
     uniqueItems: true
   external_deps:
     description: |
-      External crate dependencies this module needs (Phase 6.7+). Each
-      entry becomes a Cargo.toml `[dependencies]` line; the union
-      across all modules in the library determines the full dep set
-      Phase 8's `gen` emits. Use this for crates that aren't gated by
+      External crate dependencies this module needs. Each entry
+      becomes a Cargo.toml `[dependencies]` line; the union across all
+      modules in the library determines the full dep set `gen` emits.
+      Use this for crates that aren't gated by
       a Cargo feature; feature-gated optional deps are still expressed
       via `feature_gates` + the architecture's `[[features]]` table.
     type: array
@@ -61,7 +61,7 @@ properties:
     uniqueItems: true
   bindings:
     description: >
-      Aggregator slot for bridge contributions (Phase 7+). Open in v1.
+      Aggregator slot for bridge contributions. Open in v1.
     type: object
     additionalProperties: true
   items:
@@ -71,10 +71,9 @@ properties:
       static, re-export, or macro contributing to the module's
       contractual surface. Sparseness rule (enforced by the language
       schema): every item except `kind = "re_export"` must carry
-      `satisfies` (≥1 requirement id). Phase 14 introduces this field;
-      consumed by Phase 13's skeleton mode emitter and by Phase 14's
-      three-stage agentic sync (`items diff` / `items propose` /
-      `items apply`).
+      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
+      symbol emission and by the three-stage agentic sync
+      (`items diff` / `items propose` / `items apply`).
     type: array
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
@@ -82,15 +81,24 @@ properties:
   context_files:
     description: >
       Per-module list of project-prose files inlined into the codegen
-      prompt (Phase 13, doc 16). Paths are spec-root-relative
-      (directory containing `spec.toml`). Validate-time checks ensure
-      each file exists, is readable, and is valid UTF-8 (`CONTEXT-001`
-      / `CONTEXT-002` / `CONTEXT-003`). Order is preserved at
-      prompt-assembly time; files inline in declared order between
-      architecture.toml and the module spec. Globs and section
-      anchors are bounded deferrals (doc 16 §5).
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are bounded deferrals.
     type: array
     items:
       type: string
       minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
