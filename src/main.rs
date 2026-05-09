@@ -1339,6 +1339,22 @@ fn run_gen(
         }
     };
     if let Some(name) = module {
+        // Phase 19 / D63 §6: codegen gate. Refuse if the target module
+        // is reachable through any open OpenQuestion. Validate also
+        // surfaces this as a `codegen_unblocked` warning, but gen is
+        // the hard refusal — strict-gen produces no source until the
+        // question is resolved, defaulted, or marked moot.
+        match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
+            Ok(Some(refusal)) => {
+                eprint!("{}", refusal.message);
+                return ExitCode::from(1);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
+            }
+        }
         return match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
             Ok(s) => {
                 print!("{s}");
