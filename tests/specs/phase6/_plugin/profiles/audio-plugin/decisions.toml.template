@@ -18,6 +18,17 @@
 #   - decisions.toml's own closes_questions[] / defaults_for[] —
 #     resolve open questions or commit working defaults
 #
+# Authoring convention — pick ONE direction per cross-reference:
+#   closes_questions[] / closed_by — author one side, not both.
+#   defaults_for[]     / default_via — author one side, not both.
+# The proposal allows both directions for audit-trail symmetry, but
+# graph checks only verify the single direction you author. Authoring
+# both forces you to keep them in sync by hand for no extra
+# verification benefit. Convention: prefer the OQ-side pointer
+# (closed_by / default_via) — it travels with the OQ entry that the
+# codegen-gate walk reads, and the decision body stays focused on the
+# decision content rather than its bookkeeping.
+#
 # Supersession keeps both bodies. When DEC-N supersedes DEC-M:
 #   - DEC-M.status flips to `superseded`. No forward pointer.
 #   - DEC-N (status = accepted) lists `supersedes = ["DEC-M"]`.
