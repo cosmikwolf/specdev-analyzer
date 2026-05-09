@@ -33,6 +33,11 @@
 //!   parent is `requirement[0]`. Any field on the parent object is
 //!   readable: `${parent.name}`, `${parent.id}`, etc. One level of parent
 //!   only — `parent.parent.*` is rejected in v1.
+//! * `root.<k>` — the file-root object (the document loaded from
+//!   `from_spec` / `from`). Use this when the for_each iterates into a
+//!   sub-object whose ancestor isn't the file root, but the author wants
+//!   a field on the file root (e.g. block reductions that iterate
+//!   `nih_plug.parameters[]` and want the enclosing module's `name`).
 //!
 //! Templates have no conditionals, filters, or defaults. Add them via a
 //! metaschema version bump if a real need shows up (see
@@ -232,27 +237,28 @@ pub fn eval_template(template: &str, scope: &Scope<'_>) -> Result<String> {
 }
 
 fn resolve_template_path(expr: &str, scope: &Scope<'_>) -> Result<String> {
-    // `parent.<k>` — read `<k>` off the closest enclosing object of the
-    // current iterator element; if absent there, fall through to the file
-    // root. The fallback preserves backward compatibility with relations
-    // that used `${parent.name}` to mean "the file's name field" when the
-    // iteration was nested inside a sub-object that had no `name`. One
-    // level of `parent` only.
+    // `parent.<k>` — strict closest-enclosing-object lookup. No file-root
+    // fallback. Authors who want a field on the file root must use
+    // `${root.<k>}` instead. One level of `parent` only.
     if let Some(rest) = expr.strip_prefix("parent.") {
         if rest == "parent" || rest.starts_with("parent.") {
             bail!("only one level of `parent` is defined in v1 (offending path: `${{{expr}}}`)")
         }
-        if let Some(parent) = scope.parent {
-            let picks = select(parent, rest);
-            if !picks.is_empty() {
-                return pick_to_string(&picks, expr);
-            }
+        let parent = scope.parent.ok_or_else(|| {
+            anyhow::anyhow!("`${{{expr}}}` referenced but no parent in scope")
+        })?;
+        let picks = select(parent, rest);
+        return pick_to_string(&picks, expr);
+    }
+
+    // `root.<k>` — explicit file-root field lookup. Used by reductions
+    // that iterate into a sub-object but want a field on the document
+    // root (the file loaded from `from_spec` / `from`).
+    if let Some(rest) = expr.strip_prefix("root.") {
+        if rest == "root" || rest.starts_with("root.") {
+            bail!("only one level of `root` is defined in v1 (offending path: `${{{expr}}}`)")
         }
-        // Fall through to file root.
         let picks = select(scope.root, rest);
-        if picks.is_empty() {
-            bail!("template path `${{{expr}}}` resolved to nothing");
-        }
         return pick_to_string(&picks, expr);
     }
 

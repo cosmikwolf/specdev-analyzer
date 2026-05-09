@@ -23,7 +23,7 @@ relations:
     from_spec: "specs/modules/*.toml"
     for_each: 'bindings."embassy+stm32h5-rs".peripheral_tasks[]'
     endpoints:
-      from: "${parent.name}.${.peripheral}"
-      to: "${parent.name}.${.task}"
+      from: "${root.name}.${.peripheral}"
+      to: "${root.name}.${.task}"
     attrs:
       handoff: ".handoff"
