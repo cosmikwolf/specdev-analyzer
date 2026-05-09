@@ -19,23 +19,24 @@ modules_acyclic                              = "error"
 layer_dependency                             = "error"
 connection_endpoints_resolve                 = "error"
 requirement_ids_unique                       = "error"
-requirement_satisfies_resolves               = "warning"
-module_satisfies_resolves                    = "warning"
 requirements_have_satisfiers                 = "warning"
-# Triad ref-resolution + consistency checks (the *how & why* + *known unknowns*).
-requirement_decided_by_resolves              = "error"
-module_guided_by_resolves                    = "error"
-architecture_project_decisions_resolves      = "error"
-decision_supersedes_resolves                 = "error"
+# Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
-decision_closes_questions_resolves           = "error"
-decision_defaults_for_resolves               = "error"
-open_question_affects_resolves               = "error"
-open_question_default_via_resolves           = "error"
 open_question_closed_by_resolves             = "error"
 open_question_status_consistency             = "error"
 codegen_unblocked                            = "warning"
+
+# Convention: typed-relation ref resolution (decided_by, guided_by,
+# project_decisions, supersedes, closes_questions, defaults_for,
+# affects, default_via, satisfies, depends_on, feature_gates,
+# feature.depends_on) is enforced by REDUCE_UNRESOLVED at reduce time
+# — when a target name doesn't resolve, reduction drops the edge and
+# emits REDUCE_UNRESOLVED naming the source entity + the unknown
+# target. graph_check is reserved for non-ref-resolution invariants:
+# uniqueness, acyclicity, attr-shaped reference resolution (e.g.
+# closed_by, connection.from/to), status-cross-reference consistency,
+# codegen gating.
 
 # Module names must be unique across the project.
 [[project.graph_checks]]
@@ -105,24 +106,6 @@ rule = "requirement_ids_unique"
 scope = "Requirement"
 field = "entities[].name"
 
-# Requirement-to-parent traceability: every entry in
-# Requirement.satisfies must reference an existing requirement id.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "requirement_satisfies_resolves"
-scope = "satisfies"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# Module-to-requirement traceability: every entry in Module.satisfies
-# must reference an existing requirement id.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "module_satisfies_resolves"
-scope = "module_satisfies"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
 # Every Requirement with `nature = "module"` (the default) must be
 # satisfied by at least one module — orphan requirements warn (F-006).
 # Set `nature = "architecture" | "build" | "test"` on a requirement to
@@ -134,48 +117,16 @@ entity_scope = "Requirement"
 relation_scope = "module_satisfies"
 
 # ---------------------------------------------------------------------------
-# Triad ref-resolution + consistency.
+# Triad consistency.
 #
-# These checks gate the decisions + open_questions triad: every cross-ref
-# must resolve to an existing entity, the supersession graph must be
-# acyclic with each superseded decision claimed by exactly one accepted
-# successor, and OQ status must agree with the closed_by / default_via
-# fields. The last check (`codegen_unblocked`) is a warning that informs
-# at validate time; the gen-side gate is a hard refusal in
-# `specdev-analyzer gen`.
+# Per the convention header: typed-relation ref resolution is enforced
+# by REDUCE_UNRESOLVED at reduce time. The graph_checks below cover
+# what reduction can't: supersession-chain shape (acyclic + orphan-free
+# + unique-successor), attr-shaped closed_by resolution, OQ status
+# invariants against target Decision status, and the codegen gating
+# warning (the gen-side gate is a hard refusal in `specdev-analyzer
+# gen`).
 # ---------------------------------------------------------------------------
-
-# Requirement.decided_by entries must reference an existing decision.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "requirement_decided_by_resolves"
-scope = "requirement_decided_by_decision"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# Module.guided_by entries must reference an existing decision.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "module_guided_by_resolves"
-scope = "module_guided_by_decision"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# Architecture.project_decisions entries must reference an existing decision.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "architecture_project_decisions_resolves"
-scope = "architecture_project_decision"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# Decision.supersedes entries must reference an existing decision.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "decision_supersedes_resolves"
-scope = "decision_supersedes_decision"
-source_field = "relations[].to"
-target_field = "entities[].name"
 
 # Supersession chain must be acyclic.
 [[project.graph_checks]]
@@ -196,38 +147,6 @@ entity_attr = "status"
 entity_attr_value = "superseded"
 relation_scope = "decision_supersedes_decision"
 expected_count = 1
-
-# Decision.closes_questions entries must reference an existing OQ.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "decision_closes_questions_resolves"
-scope = "decision_closes_open_question"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# Decision.defaults_for entries must reference an existing OQ.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "decision_defaults_for_resolves"
-scope = "decision_defaults_open_question"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# OpenQuestion.affects entries must reference an existing requirement.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "open_question_affects_resolves"
-scope = "open_question_affects_requirement"
-source_field = "relations[].to"
-target_field = "entities[].name"
-
-# OpenQuestion.default_via must reference an existing decision.
-[[project.graph_checks]]
-kind = "reference_exists"
-rule = "open_question_default_via_resolves"
-scope = "open_question_default_via_decision"
-source_field = "relations[].to"
-target_field = "entities[].name"
 
 # OpenQuestion.closed_by is a singular attr (not a relation) — verify it
 # resolves to an existing decision name. The whole-graph view filters
