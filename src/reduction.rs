@@ -186,14 +186,13 @@ fn materialize_entity(
     for file in files {
         let rel_file = relpath(&file, project_root);
         let root_value = load_toml_as_json(&file)?;
-        let parent_name = file_root_name(&root_value);
 
-        let iterations = iterate(&root_value, for_each.as_deref(), parent_name.as_deref());
+        let iterations = iterate(&root_value, for_each.as_deref());
         for iter in iterations {
             let scope = Scope {
                 root: &root_value,
                 current: Some(iter.current),
-                parent_name: iter.parent_name,
+                parent: iter.parent,
             };
             let name = eval_template(&name_template, &scope).with_context(|| {
                 format!("evaluating entity `{qualified_path}` name template in {rel_file}")
@@ -276,14 +275,14 @@ fn materialize_relation(
     for file in files {
         let rel_file = relpath(&file, project_root);
         let root_value = load_toml_as_json(&file)?;
-        let parent_name = file_root_name(&root_value);
+        let parent_name_for_hint = file_root_name(&root_value);
 
-        let iterations = iterate(&root_value, for_each.as_deref(), parent_name.as_deref());
+        let iterations = iterate(&root_value, for_each.as_deref());
         for iter in iterations {
             let scope = Scope {
                 root: &root_value,
                 current: Some(iter.current),
-                parent_name: iter.parent_name,
+                parent: iter.parent,
             };
             let from_name = eval_template(&endpoints_from, &scope).with_context(|| {
                 format!("evaluating relation `{qualified_path}` endpoints.from in {rel_file}")
@@ -303,7 +302,7 @@ fn materialize_relation(
                     &from_name,
                     &to_kind_str,
                     &to_name,
-                    parent_name.as_deref(),
+                    parent_name_for_hint.as_deref(),
                     layout,
                     &graph.entities,
                     project_root,
@@ -327,7 +326,7 @@ fn materialize_relation(
                     &to_name,
                     &from_kind_str,
                     &from_name,
-                    parent_name.as_deref(),
+                    parent_name_for_hint.as_deref(),
                     layout,
                     &graph.entities,
                     project_root,
@@ -590,19 +589,15 @@ pub fn to_yaml(graph: &Graph) -> Result<String> {
 /// One iteration step produced by `iterate()`.
 struct Iter<'a> {
     current: &'a Value,
-    parent_name: Option<&'a str>,
+    parent: Option<&'a Value>,
     pointer: String,
 }
 
-fn iterate<'a>(
-    root: &'a Value,
-    for_each: Option<&str>,
-    parent_name: Option<&'a str>,
-) -> Vec<Iter<'a>> {
+fn iterate<'a>(root: &'a Value, for_each: Option<&str>) -> Vec<Iter<'a>> {
     match for_each {
         None => vec![Iter {
             current: root,
-            parent_name: None,
+            parent: None,
             pointer: String::new(),
         }],
         Some(sel) => {
@@ -614,15 +609,55 @@ fn iterate<'a>(
                     // clone of the value, but we want a reference to the
                     // original so Scope can outlive this closure.
                     let current = resolve_pointer(root, &p.pointer)?;
+                    let parent = parent_value(root, &p.pointer);
                     Some(Iter {
                         current,
-                        parent_name,
+                        parent,
                         pointer: p.pointer,
                     })
                 })
                 .collect()
         }
     }
+}
+
+/// Closest enclosing object of the value at `pointer`. Walks the JSON
+/// pointer's ancestors and returns the nearest one that is a JSON object
+/// (skipping array-index segments). For a top-level pick `/foo/0` this
+/// is the file root; for a nested pick `/items/0/sub/0` this is `items[0]`.
+/// Returns `None` if `pointer` is empty (no parent context — the iteration
+/// IS the root).
+fn parent_value<'a>(root: &'a Value, pointer: &str) -> Option<&'a Value> {
+    if pointer.is_empty() {
+        return None;
+    }
+    let segments: Vec<String> = pointer
+        .split('/')
+        .skip(1)
+        .map(|s| s.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    if segments.is_empty() {
+        return None;
+    }
+    let mut cur = root;
+    let mut last_object: Option<&Value> = if root.is_object() { Some(root) } else { None };
+    for seg in &segments[..segments.len() - 1] {
+        cur = match cur {
+            Value::Object(map) => match map.get(seg) {
+                Some(v) => v,
+                None => return last_object,
+            },
+            Value::Array(arr) => match seg.parse::<usize>().ok().and_then(|i| arr.get(i)) {
+                Some(v) => v,
+                None => return last_object,
+            },
+            _ => return last_object,
+        };
+        if cur.is_object() {
+            last_object = Some(cur);
+        }
+    }
+    last_object
 }
 
 /// Walk a JSON Pointer (per RFC 6901) against `root` and return the matching
