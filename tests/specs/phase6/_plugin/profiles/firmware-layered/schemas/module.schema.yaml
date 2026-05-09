@@ -7,9 +7,9 @@ description: >
   use the `layer` field to drive the layer_dependency graph check (HAL/PAC
   may not depend on application, etc.).
 
-  `bindings` is an open object in v1; Phase 7 lands canonical bridge
-  contributions that close `bindings.<bridge-name>` to a bridge-specific
-  shape. Until then, projects may author `[bindings.<key>]` tables freely.
+  `bindings` is an open object in v1; canonical bridges close
+  `bindings.<bridge-name>` to a bridge-specific shape. Projects may
+  author `[bindings.<key>]` tables freely under any bridge name.
 type: object
 # `unevaluatedProperties: false` rather than `additionalProperties: false`
 # because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
@@ -32,8 +32,8 @@ properties:
     uniqueItems: true
   external_deps:
     description: |
-      External crate dependencies this module needs (Phase 6.7+
-      CrateReference shape). Each entry becomes a Cargo.toml
+      External crate dependencies this module needs (CrateReference
+      shape). Each entry becomes a Cargo.toml
       `[dependencies]` line at gen time; the union with
       architecture-level `[[external_deps]]` determines the project's
       full dep set. Use this for module-scoped crates that aren't
@@ -64,9 +64,10 @@ properties:
     items: { $ref: "#/$defs/ErrorVariant" }
   bindings:
     description: >
-      Aggregator slot for bridge contributions (Phase 7+). Each canonical
-      bridge `<a>+<b>` adds a `bindings.<a>+<b>` entry under this object.
-      Open in v1 to avoid blocking authoring before bridges land.
+      Aggregator slot for bridge contributions. Each canonical bridge
+      `<a>+<b>` adds a `bindings.<a>+<b>` entry under this object.
+      Open in v1 to avoid blocking authoring under bridges that haven't
+      shipped yet.
     type: object
     additionalProperties: true
   items:
@@ -76,10 +77,9 @@ properties:
       static, re-export, or macro contributing to the module's
       contractual surface. Sparseness rule (enforced by the language
       schema): every item except `kind = "re_export"` must carry
-      `satisfies` (≥1 requirement id). Phase 14 introduces this field;
-      consumed by Phase 13's skeleton mode emitter and by Phase 14's
-      three-stage agentic sync (`items diff` / `items propose` /
-      `items apply`).
+      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
+      symbol emission and by the three-stage agentic sync
+      (`items diff` / `items propose` / `items apply`).
     type: array
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
@@ -87,17 +87,26 @@ properties:
   context_files:
     description: >
       Per-module list of project-prose files inlined into the codegen
-      prompt (Phase 13, doc 16). Paths are spec-root-relative
-      (directory containing `spec.toml`). Validate-time checks ensure
-      each file exists, is readable, and is valid UTF-8 (`CONTEXT-001`
-      / `CONTEXT-002` / `CONTEXT-003`). Order is preserved at
-      prompt-assembly time; files inline in declared order between
-      architecture.toml and the module spec. Globs and section
-      anchors are bounded deferrals (doc 16 §5).
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are bounded deferrals.
     type: array
     items:
       type: string
       minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
 
 $defs:

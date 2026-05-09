@@ -1,0 +1,21 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/rust-workspace/enums.schema.yaml"
+title: "rust-workspace enums (v1)"
+description: >
+  Shared closed vocabularies used across the rust-workspace profile.
+  rust-workspace has no module / requirement surface (modules and
+  requirements live per-member, not at workspace tier — see
+  `profile.yaml`'s `surface.has_modules: false`); the only shared
+  vocabulary is the requirement-id grammar reused by `decisions.toml`
+  and `open_questions.toml`.
+
+$defs:
+  RequirementId:
+    description: >
+      Identifier shape shared across requirements, decisions, and
+      open questions. Format: PREFIX-(AREA-)*NUMBER (e.g. DEC-002,
+      OQ-005, REQ-API-001). The leading prefix is open: projects can
+      adopt their published id scheme without rename ceremony.
+      Prefix and AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
