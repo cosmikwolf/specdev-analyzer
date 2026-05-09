@@ -872,6 +872,55 @@ fn execute_graph_checks(
                 rule,
                 severity,
             ),
+            // Phase 19 — `decision_supersedes_chain_consistency`: filter
+            // relations by `relation_scope`, then for each entity matching
+            // the source-side filter, count inbound relations and compare
+            // to `expected_count`.
+            "entity_attr_inbound_count" => match (
+                check.entity_attr.as_deref(),
+                check.entity_attr_value.as_deref(),
+                check.relation_scope.as_deref(),
+                check.expected_count,
+            ) {
+                (Some(ea), Some(eav), Some(rs), Some(exp)) => {
+                    // Joint-filter the graph view: entity_scope filters
+                    // entities[], relation_scope filters relations[].
+                    let entity_scope = check.entity_scope.as_deref().unwrap_or("");
+                    let view = filter_for_layer_dependency(
+                        &graph_json, entity_scope, rs, kindset,
+                    );
+                    graph_checks::entity_attr_inbound_count(&view, ea, eav, exp, rule, severity)
+                }
+                _ => Vec::new(),
+            },
+            // Phase 19 — `open_question_status_consistency`: cross-entity
+            // attr-target-attr consistency check.
+            "entity_attr_target_attr_equals" => match (
+                check.entity_scope.as_deref(),
+                check.entity_attr.as_deref(),
+                check.entity_attr_value.as_deref(),
+                check.target_attr_field.as_deref(),
+                check.target_entity_kind.as_deref(),
+                check.target_attr.as_deref(),
+                check.target_attr_value.as_deref(),
+            ) {
+                (Some(ek), Some(ea), Some(eav), Some(taf), Some(tek), Some(ta), Some(tav)) => {
+                    graph_checks::entity_attr_target_attr_equals(
+                        &graph_json, ek, ea, eav, taf, tek, ta, tav, rule, severity,
+                    )
+                }
+                _ => Vec::new(),
+            },
+            // Phase 19 — `codegen_unblocked` validate-time warning: walks
+            // Module.satisfies → Requirement → OpenQuestion.affects^-1
+            // and fires when any reachable OQ has status = open. The
+            // gen-side hard refusal lives in `gen.rs`; this primitive
+            // mirrors the reachability informational at validate time.
+            "module_reachable_through_open_question" => {
+                graph_checks::module_reachable_through_open_question(
+                    &graph_json, rule, severity,
+                )
+            }
             other => vec![Finding::new(
                 "DOMAIN-003",
                 Severity::Warning,
@@ -879,7 +928,9 @@ fn execute_graph_checks(
                     "domain.toml [{section}] graph_check (rule `{rule}`): \
                      unknown primitive `{other}` — supported: \
                      unique, reference_exists, reachability, acyclic, \
-                     layer_dependency, requirements_have_satisfiers, verified_by_resolves"
+                     layer_dependency, requirements_have_satisfiers, verified_by_resolves, \
+                     entity_attr_inbound_count, entity_attr_target_attr_equals, \
+                     module_reachable_through_open_question"
                 ),
             )],
         };
@@ -1383,6 +1434,11 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
         // requirement.verified_by[] entries name extant items / tests.
         // Strict-gen will surface a verification gap.
         "verified_by_resolves" => &[Schema, StrictGen],
+        // Phase 19 — triad consistency primitives gate codegen via the
+        // companion gate, so tag them Schema (always-on) and StrictGen.
+        "entity_attr_inbound_count"
+        | "entity_attr_target_attr_equals"
+        | "module_reachable_through_open_question" => &[Schema, StrictGen],
         // Unknown primitives still surface their DOMAIN-003 warning;
         // tag them as Schema so the typo isn't silenced by --for.
         _ => &[Schema],

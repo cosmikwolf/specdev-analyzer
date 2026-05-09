@@ -467,6 +467,277 @@ pub fn acyclic(
     }
 }
 
+/// ENTITY_ATTR_INBOUND_COUNT: for every entity whose `attrs.<entity_attr>`
+/// equals `entity_attr_value`, count inbound relations (over the
+/// `relation_scope`-filtered relations[]) and assert the count equals
+/// `expected_count`. Used by `decision_supersedes_chain_consistency` to
+/// guarantee each superseded Decision is claimed by exactly one inbound
+/// `decision_supersedes_decision` edge.
+///
+/// The caller is expected to pre-filter `relations[]` jointly via
+/// `filter_for_layer_dependency`-style filtering so this primitive only
+/// sees the relation kind under consideration. Entities are filtered
+/// inside the primitive via `entity_attr` + `entity_attr_value`.
+pub fn entity_attr_inbound_count(
+    root: &Value,
+    entity_attr: &str,
+    entity_attr_value: &str,
+    expected_count: usize,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let entities = root.get("entities").and_then(|v| v.as_array());
+    let relations = root.get("relations").and_then(|v| v.as_array());
+    let Some(entities) = entities else { return Vec::new() };
+
+    // Count inbound edges per target name.
+    let mut inbound: HashMap<String, usize> = HashMap::new();
+    if let Some(rels) = relations {
+        for r in rels {
+            if let Some(to) = r.get("to").and_then(|t| t.as_str()) {
+                *inbound.entry(to.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let attr_value = ent
+            .get("attrs")
+            .and_then(|a| a.get(entity_attr))
+            .and_then(|v| v.as_str());
+        if attr_value != Some(entity_attr_value) {
+            continue;
+        }
+        let count = inbound.get(name).copied().unwrap_or(0);
+        if count != expected_count {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "entity `{name}` (with `{entity_attr} = \"{entity_attr_value}\"`) \
+                     has {count} inbound relation(s); expected {expected_count}"
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// ENTITY_ATTR_TARGET_ATTR_EQUALS: for every entity matching the source
+/// filter (`entity_attr == entity_attr_value`), follow the source entity's
+/// `target_attr_field` attribute to a target entity (must exist, must be
+/// of kind `target_entity_kind`), then verify the target's `target_attr`
+/// equals `target_attr_value`. Used by `open_question_status_consistency`
+/// to enforce that a closed OQ's `closed_by` Decision is `accepted` (and
+/// likewise for default_committed → default_via).
+///
+/// Operates on the unfiltered graph view so it can reach target entities
+/// of a kind the source filter would exclude.
+#[allow(clippy::too_many_arguments)]
+pub fn entity_attr_target_attr_equals(
+    root: &Value,
+    entity_kind: &str,
+    entity_attr: &str,
+    entity_attr_value: &str,
+    target_attr_field: &str,
+    target_entity_kind: &str,
+    target_attr: &str,
+    target_attr_value: &str,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let entities = root.get("entities").and_then(|v| v.as_array());
+    let Some(entities) = entities else { return Vec::new() };
+
+    // Build (name → entity) for cross-resolution.
+    let mut by_name: BTreeMap<String, &Value> = BTreeMap::new();
+    for ent in entities {
+        if let Some(n) = ent.get("name").and_then(|v| v.as_str()) {
+            by_name.insert(n.to_string(), ent);
+        }
+    }
+
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        if kind != entity_kind {
+            continue;
+        }
+        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else { continue };
+        let attr_value = ent
+            .get("attrs")
+            .and_then(|a| a.get(entity_attr))
+            .and_then(|v| v.as_str());
+        if attr_value != Some(entity_attr_value) {
+            continue;
+        }
+        let Some(target_name) = ent
+            .get("attrs")
+            .and_then(|a| a.get(target_attr_field))
+            .and_then(|v| v.as_str())
+        else {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "entity `{name}` (with `{entity_attr} = \"{entity_attr_value}\"`) \
+                     is missing required attr `{target_attr_field}` — cannot verify \
+                     target `{target_attr} = \"{target_attr_value}\"`"
+                ),
+            ));
+            continue;
+        };
+        let Some(target) = by_name.get(target_name) else {
+            // reference_exists already flags this for relation-shaped
+            // refs; for attr-shaped refs we rely on the dedicated
+            // `*_closed_by_resolves` check. Don't double-report here.
+            continue;
+        };
+        let target_kind = target.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        if target_kind != target_entity_kind {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "entity `{name}`'s `{target_attr_field}` points at `{target_name}` \
+                     of kind `{target_kind}`; expected kind `{target_entity_kind}`"
+                ),
+            ));
+            continue;
+        }
+        let actual = target
+            .get("attrs")
+            .and_then(|a| a.get(target_attr))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if actual != target_attr_value {
+            out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "entity `{name}` (with `{entity_attr} = \"{entity_attr_value}\"`) \
+                     references `{target_name}` whose `{target_attr}` is `\"{actual}\"`; \
+                     expected `\"{target_attr_value}\"`"
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// MODULE_REACHABLE_THROUGH_OPEN_QUESTION (codegen-gate informational
+/// warning, Phase 19): for each Module entity, walk Module.satisfies →
+/// Requirement → OpenQuestion (via open_question_affects_requirement
+/// reversed). If any reachable OQ has `attrs.status == "open"`, fire one
+/// finding per (module, oq) pair. The companion gate in `gen.rs` produces
+/// the hard refusal; this primitive surfaces the same condition at
+/// validate time as a warning.
+///
+/// Operates on the unfiltered graph view because it traverses two
+/// relation kinds and two entity kinds; the call site doesn't pre-filter.
+pub fn module_reachable_through_open_question(
+    root: &Value,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let entities = root
+        .get("entities")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let relations = root
+        .get("relations")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    // Index entities by name for kind + attr lookup.
+    let mut by_name: HashMap<String, Value> = HashMap::new();
+    for ent in &entities {
+        if let Some(n) = ent.get("name").and_then(|v| v.as_str()) {
+            by_name.insert(n.to_string(), ent.clone());
+        }
+    }
+
+    // module_satisfies edges: Module → Requirement.
+    let mut module_to_reqs: HashMap<String, Vec<String>> = HashMap::new();
+    // affects edges (reversed): Requirement → OpenQuestion.
+    let mut req_to_oqs: HashMap<String, Vec<String>> = HashMap::new();
+    for rel in &relations {
+        let Some(kind) = rel.get("kind").and_then(|v| v.as_str()) else { continue };
+        let Some(from) = rel.get("from").and_then(|v| v.as_str()) else { continue };
+        let Some(to) = rel.get("to").and_then(|v| v.as_str()) else { continue };
+        match kind {
+            "module_satisfies" => {
+                module_to_reqs
+                    .entry(from.to_string())
+                    .or_default()
+                    .push(to.to_string());
+            }
+            "open_question_affects_requirement" => {
+                // Edge is OQ → Requirement; we want Requirement → OQ.
+                req_to_oqs
+                    .entry(to.to_string())
+                    .or_default()
+                    .push(from.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut module_names: Vec<&String> = by_name
+        .iter()
+        .filter_map(|(n, e)| {
+            let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            (kind == "Module").then_some(n)
+        })
+        .collect();
+    module_names.sort();
+
+    for module in module_names {
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        let Some(reqs) = module_to_reqs.get(module) else { continue };
+        for req in reqs {
+            let Some(oqs) = req_to_oqs.get(req) else { continue };
+            for oq in oqs {
+                if emitted.contains(oq) {
+                    continue;
+                }
+                let Some(oq_ent) = by_name.get(oq) else { continue };
+                let status = oq_ent
+                    .get("attrs")
+                    .and_then(|a| a.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if status == "open" {
+                    let title = oq_ent
+                        .get("attrs")
+                        .and_then(|a| a.get("title"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    out.push(Finding::new(
+                        rule,
+                        severity,
+                        format!(
+                            "module `{module}` is reachable through open question \
+                             `{oq}` (`{title}`) via requirement `{req}`; codegen will \
+                             refuse to emit until the question is resolved or a default \
+                             is committed"
+                        ),
+                    ));
+                    emitted.insert(oq.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
 /// LAYER_DEPENDENCY (graph-shape, Phase-5): for each relation in the
 /// pre-filtered relation set, both endpoints must resolve to entities in
 /// the pre-filtered entity set, and the `from` entity's layer must appear

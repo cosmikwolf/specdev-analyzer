@@ -137,6 +137,29 @@ pub struct GraphCheck {
     /// dependencies are allowed.
     #[serde(default)]
     pub layer_ordering: Option<Vec<String>>,
+    /// Phase 19 — `entity_attr_inbound_count`: filter `entities[]` to
+    /// rows whose `entity_attr` equals `entity_attr_value`, then count
+    /// inbound `relation_scope` edges per row; assert the count equals
+    /// `expected_count`. Authored alongside `decision_supersedes_chain_consistency`.
+    #[serde(default)]
+    pub entity_attr: Option<String>,
+    #[serde(default)]
+    pub entity_attr_value: Option<String>,
+    #[serde(default)]
+    pub expected_count: Option<usize>,
+    /// Phase 19 — `entity_attr_target_attr_equals`: filter source entities
+    /// by `entity_scope` + `entity_attr == entity_attr_value`; the entity
+    /// referenced by `target_attr_field` (an attr on the source entity)
+    /// must be of kind `target_entity_kind` and have `target_attr ==
+    /// target_attr_value`. Authored alongside `open_question_status_consistency`.
+    #[serde(default)]
+    pub target_attr_field: Option<String>,
+    #[serde(default)]
+    pub target_entity_kind: Option<String>,
+    #[serde(default)]
+    pub target_attr: Option<String>,
+    #[serde(default)]
+    pub target_attr_value: Option<String>,
 }
 
 impl DomainConfig {
