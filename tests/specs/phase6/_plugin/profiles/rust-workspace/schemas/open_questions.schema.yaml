@@ -36,7 +36,7 @@ $defs:
   OpenQuestion:
     type: object
     additionalProperties: false
-    required: [id, title, status, text, affects]
+    required: [id, title, status, text]
     properties:
       id:
         $ref: "enums.schema.yaml#/$defs/RequirementId"
@@ -85,12 +85,15 @@ $defs:
         description: >
           Requirement ids this question affects. The codegen gate
           (`codegen_unblocked`) reaches every module whose `satisfies[]`
-          overlaps this list. At least one entry required — an open
-          question that affects nothing should be rephrased into a
-          decision or deleted.
+          overlaps this list. At workspace tier `affects` is OPTIONAL
+          and may be absent or empty — a workspace-tier OQ with no
+          `affects` implicitly affects every module in every member
+          crate (per D63 §1's workspace-decisions-implicitly-apply-down
+          rule, extended to workspace OQs). Authors who want to scope
+          a workspace OQ to a specific subset of member-crate
+          requirements can list those requirement ids explicitly.
         type: array
         items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
-        minItems: 1
         uniqueItems: true
       category:
         description: >
