@@ -61,6 +61,8 @@ entities:
       title: ".title"
       status: ".status"
       text: ".text"
+      closed_by: ".closed_by"
+      default_via: ".default_via"
 
 relations:
   # Architecture → Decision: project-shape commitments. Drives

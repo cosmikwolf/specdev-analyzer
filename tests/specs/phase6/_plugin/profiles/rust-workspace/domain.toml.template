@@ -11,9 +11,20 @@ name = "{{project_name}}"
 
 [validation]
 [validation.rules]
-unique_member_names              = "error"
-member_paths_unique              = "error"
-workspace_dependencies_unique    = "error"
+unique_member_names                          = "error"
+member_paths_unique                          = "error"
+workspace_dependencies_unique                = "error"
+# Triad ref-resolution + consistency at workspace tier.
+# Module/Requirement-anchored checks live in member crates.
+architecture_project_decisions_resolves      = "error"
+decision_supersedes_resolves                 = "error"
+decision_supersedes_acyclic                  = "error"
+decision_supersedes_chain_consistency        = "error"
+decision_closes_questions_resolves           = "error"
+decision_defaults_for_resolves               = "error"
+open_question_default_via_resolves           = "error"
+open_question_closed_by_resolves             = "error"
+open_question_status_consistency             = "error"
 
 # Member names must be unique within the workspace.
 [[project.graph_checks]]
@@ -35,3 +46,103 @@ kind = "unique"
 rule = "workspace_dependencies_unique"
 scope = "WorkspaceDependency"
 field = "entities[].name"
+
+# ---------------------------------------------------------------------------
+# Triad ref-resolution + consistency (workspace tier).
+#
+# Module/Requirement-anchored checks (`requirement_decided_by_resolves`,
+# `module_guided_by_resolves`, `open_question_affects_resolves`) live in
+# member crates — workspaces don't host modules or requirements directly.
+# The codegen gate likewise applies at member tier, not workspace tier.
+# ---------------------------------------------------------------------------
+
+# Architecture.project_decisions entries must reference an existing decision.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "architecture_project_decisions_resolves"
+scope = "architecture_project_decision"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Decision.supersedes entries must reference an existing decision.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "decision_supersedes_resolves"
+scope = "decision_supersedes_decision"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Supersession chain must be acyclic.
+[[project.graph_checks]]
+kind = "acyclic"
+rule = "decision_supersedes_acyclic"
+scope = "decision_supersedes_decision"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+
+# Each superseded Decision must be claimed by exactly one inbound
+# `decision_supersedes_decision` edge.
+[[project.graph_checks]]
+kind = "entity_attr_inbound_count"
+rule = "decision_supersedes_chain_consistency"
+entity_scope = "Decision"
+entity_attr = "status"
+entity_attr_value = "superseded"
+relation_scope = "decision_supersedes_decision"
+expected_count = 1
+
+# Decision.closes_questions entries must reference an existing OQ.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "decision_closes_questions_resolves"
+scope = "decision_closes_open_question"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# Decision.defaults_for entries must reference an existing OQ.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "decision_defaults_for_resolves"
+scope = "decision_defaults_open_question"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# OpenQuestion.default_via must reference an existing decision.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "open_question_default_via_resolves"
+scope = "open_question_default_via_decision"
+source_field = "relations[].to"
+target_field = "entities[].name"
+
+# OpenQuestion.closed_by must reference an existing decision.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "open_question_closed_by_resolves"
+source_field = "entities[].attrs.closed_by"
+target_field = "entities[].name"
+
+# OQ.status = closed implies closed_by points at an *accepted* Decision.
+[[project.graph_checks]]
+kind = "entity_attr_target_attr_equals"
+rule = "open_question_status_consistency"
+entity_scope = "OpenQuestion"
+entity_attr = "status"
+entity_attr_value = "closed"
+target_attr_field = "closed_by"
+target_entity_kind = "Decision"
+target_attr = "status"
+target_attr_value = "accepted"
+
+# OQ.status = default_committed implies default_via points at an
+# *accepted* Decision.
+[[project.graph_checks]]
+kind = "entity_attr_target_attr_equals"
+rule = "open_question_status_consistency"
+entity_scope = "OpenQuestion"
+entity_attr = "status"
+entity_attr_value = "default_committed"
+target_attr_field = "default_via"
+target_entity_kind = "Decision"
+target_attr = "status"
+target_attr_value = "accepted"

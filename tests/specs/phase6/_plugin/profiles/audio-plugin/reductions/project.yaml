@@ -80,6 +80,8 @@ entities:
       title: ".title"
       status: ".status"
       text: ".text"
+      closed_by: ".closed_by"
+      default_via: ".default_via"
 
 relations:
   # Module-to-module dependency edges (drives modules_acyclic +
