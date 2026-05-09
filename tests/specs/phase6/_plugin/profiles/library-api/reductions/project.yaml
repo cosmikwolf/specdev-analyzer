@@ -175,11 +175,12 @@ relations:
       from: "architecture"
       to: "${.}"
 
-  # Decision → Decision: supersession chain. The relation walks the
-  # `supersedes[]` field on accepted decisions. Drives the supersession
-  # half of `decision_superseded_by_resolves` (the singular
-  # `superseded_by` field on a superseded entry is the same chain seen
-  # from the other side; both must agree).
+  # Decision → Decision: supersession chain. Walks the `supersedes[]`
+  # field on accepted decisions; the targeted decisions must carry
+  # `status = "superseded"`. The chain is one-way (D63 §7) — no
+  # `superseded_by` back-pointer exists. Drives
+  # `decision_supersedes_resolves` and feeds the
+  # `decision_supersedes_chain_consistency` graph check.
   - kind: decision_supersedes_decision
     extends: depends_on
     from_kind: Decision
