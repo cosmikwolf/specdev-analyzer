@@ -294,8 +294,13 @@ fn materialize_relation(
             let provenance = Provenance::new(rel_file.clone(), iter.pointer.clone());
             let mut unresolved = false;
             if !index.contains_key(&(from_kind_str.clone(), from_name.clone())) {
+                // Source-side endpoint missing — rare; usually means
+                // the file root's name field doesn't match a declared
+                // entity. Frame the message so the unknown name is the
+                // attention-grabber.
                 let mut msg = format!(
-                    "unresolved {from_kind_str} endpoint `{from_name}` (relation `{qualified_path}`)"
+                    "unknown {from_kind_str} `{from_name}` (source endpoint of relation \
+                     `{qualified_path}` pointing at {to_kind_str} `{to_name}`)"
                 );
                 let hint = render_bridge_hint(
                     qualified_path,
@@ -318,8 +323,13 @@ fn materialize_relation(
                 unresolved = true;
             }
             if !index.contains_key(&(to_kind_str.clone(), to_name.clone())) {
+                // Target-side endpoint missing — the common "unknown
+                // reference" case. Frame the message so a reader sees
+                // the source entity (which holds the bad reference)
+                // followed by the unknown target.
                 let mut msg = format!(
-                    "unresolved {to_kind_str} endpoint `{to_name}` (relation `{qualified_path}`)"
+                    "{from_kind_str} `{from_name}` references unknown {to_kind_str} \
+                     `{to_name}` (relation `{qualified_path}`)"
                 );
                 let hint = render_bridge_hint(
                     qualified_path,

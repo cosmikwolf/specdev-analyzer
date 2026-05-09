@@ -393,9 +393,8 @@ feature_gates = ["nonexistent"]
     // because module_feature_gate's `to_kind: Feature` doesn't resolve.
     let codes = rule_codes(&report);
     assert!(
-        codes.contains(&"module_feature_gates_resolve".to_string())
-            || codes.contains(&"REDUCE_UNRESOLVED".to_string()),
-        "expected module_feature_gates_resolve or REDUCE_UNRESOLVED; got: {:?}\n{}",
+        codes.contains(&"REDUCE_UNRESOLVED".to_string()),
+        "expected REDUCE_UNRESOLVED for missing feature_gate target; got: {:?}\n{}",
         codes,
         report.render_plain()
     );
