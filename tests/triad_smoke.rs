@@ -975,6 +975,124 @@ fn prompt_byte_stable_across_runs() {
     assert_eq!(p1, p2, "prompt is not byte-stable across two runs");
 }
 
+// ===========================================================================
+// Step 5 (19-E2) — Codegen gate.
+//
+// `prompt::check_codegen_gate` is the API surface; the CLI invokes it
+// before assembling the prompt and exits non-zero with the refusal text
+// per D63 §6 when a reachable OQ has status=open. Tests assert
+// (a) green-path module_ok unblocked, (b) module_blocked refused with
+// the literal three-exit-options message naming OQ-002, (c) round-trip
+// flip OQ-002 to default_committed → unblocked → flip back to open →
+// refused again.
+// ===========================================================================
+
+#[test]
+fn gate_module_ok_unblocked() {
+    let (_, layout) = build_triad_smoke("gate-module-ok");
+    let r = prompt::check_codegen_gate(&layout, "module_ok").expect("gate");
+    assert!(r.is_none(), "module_ok should be unblocked; got: {:?}", r);
+}
+
+#[test]
+fn gate_module_blocked_refusal_message() {
+    let (_, layout) = build_triad_smoke("gate-module-blocked");
+    let r = prompt::check_codegen_gate(&layout, "module_blocked").expect("gate");
+    let refusal = r.expect("module_blocked should be refused");
+    assert_eq!(refusal.module, "module_blocked");
+    assert_eq!(refusal.oq_id, "OQ-002");
+    let m = &refusal.message;
+    assert!(
+        m.contains("Refusing to generate code for module `module_blocked`"),
+        "missing refusal header:\n{m}"
+    );
+    assert!(
+        m.contains("open question `OQ-002`"),
+        "OQ-002 not named:\n{m}"
+    );
+    assert!(m.contains("`Open blocker`"), "OQ title not surfaced:\n{m}");
+    assert!(m.contains("Three exit options:"), "no exit options:\n{m}");
+    assert!(m.contains("1. Resolve via a decision"), "exit 1 missing:\n{m}");
+    assert!(m.contains("2. Commit a default"), "exit 2 missing:\n{m}");
+    assert!(m.contains("3. Mark the question moot"), "exit 3 missing:\n{m}");
+    assert!(
+        m.contains("`specs/open_questions.toml`"),
+        "no pointer to open_questions.toml:\n{m}"
+    );
+}
+
+#[test]
+fn gate_round_trip_open_to_default_committed_to_open() {
+    let (target, layout) = build_triad_smoke("gate-roundtrip");
+    // Initial state: blocked.
+    let r1 = prompt::check_codegen_gate(&layout, "module_blocked").expect("g1");
+    assert!(r1.is_some(), "initial state should be blocked");
+
+    // Flip OQ-002 to default_committed (referencing an accepted DEC-005).
+    let unblocked = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption pending verify."
+default_via = "DEC-001"
+verify = "Run scenario X and observe Y."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker (now defaulted)"
+status = "default_committed"
+text = "Was unknown; defaulted to DEC-005 working approach."
+default_via = "DEC-005"
+verify = "Run scenario Z."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), unblocked).unwrap();
+    let r2 = prompt::check_codegen_gate(&layout, "module_blocked").expect("g2");
+    assert!(
+        r2.is_none(),
+        "after default_committed, should be unblocked; got: {:?}",
+        r2
+    );
+
+    // Flip back to open.
+    let blocked_again = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption pending verify."
+default_via = "DEC-001"
+verify = "Run scenario X and observe Y."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown — blocks module_blocked until resolved."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), blocked_again).unwrap();
+    let r3 = prompt::check_codegen_gate(&layout, "module_blocked").expect("g3");
+    assert!(r3.is_some(), "after re-flip to open, should be blocked");
+}
+
 #[test]
 fn triad_red_codegen_unblocked_warning() {
     // The green smoke fixture already has OQ-002 status=open affecting

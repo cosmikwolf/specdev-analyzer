@@ -250,6 +250,136 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     Ok(out)
 }
 
+/// Codegen-gate refusal returned by [`check_codegen_gate`] when an open
+/// OpenQuestion is reachable from the target module via Module.satisfies
+/// → Requirement → OpenQuestion.affects^-1.
+///
+/// `message` carries the verbatim refusal text (the three-exit-options
+/// block from D63 §6) ready to print to stderr; `oq_id` and `oq_title`
+/// are surfaced separately for tests + structured consumers.
+#[derive(Debug, Clone)]
+pub struct GateRefusal {
+    pub module: String,
+    pub oq_id: String,
+    pub oq_title: String,
+    pub message: String,
+}
+
+/// Phase 19 / D63 §6 — codegen gate.
+///
+/// For module `module_name`, walk `module.satisfies` → Requirement →
+/// `open_question_affects_requirement`-reverse and check whether any
+/// reachable OpenQuestion has `status = open`. Returns `Ok(None)` when
+/// the module is unblocked (no reachable open OQ), `Ok(Some(refusal))`
+/// when blocked. The refusal carries the literal text the user must see
+/// at gen time (three exit options + pointer to specs/open_questions.toml).
+///
+/// Workspace-tier OQs are also consulted when the project sits in a
+/// workspace (mirrors the prompt walk's source set).
+pub fn check_codegen_gate(
+    layout: &LayoutContext,
+    module_name: &str,
+) -> Result<Option<GateRefusal>> {
+    let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
+    if !module_path.is_file() {
+        return Err(anyhow!(
+            "module `{module_name}` not found at {}",
+            module_path.display(),
+        ));
+    }
+    let module_text = std::fs::read_to_string(&module_path)
+        .with_context(|| format!("reading {}", module_path.display()))?;
+    let module_toml: toml::Value = toml::from_str(&module_text)
+        .with_context(|| format!("parsing {}", module_path.display()))?;
+    let satisfies: Vec<String> = module_toml
+        .get("satisfies")
+        .and_then(toml::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
+    let mut all_oqs = local_oqs;
+    if let Some(parent) = layout.project_root.parent() {
+        let parent_specs = parent.join("specs");
+        let parent_spec_toml = parent.join("spec.toml");
+        if parent_spec_toml.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
+                if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
+                    if parsed.get("workspace").is_some() {
+                        for (k, v) in
+                            read_open_questions(&parent_specs.join("open_questions.toml"))?
+                        {
+                            // Local OQs take priority; workspace OQs only fill gaps.
+                            all_oqs.entry(k).or_insert(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sorted for determinism (BTreeMap is already sorted).
+    for (oq_id, entry) in &all_oqs {
+        if entry.status != "open" {
+            continue;
+        }
+        let intersects = entry.affects.iter().any(|r| satisfies.contains(r));
+        if !intersects {
+            continue;
+        }
+        // Look up title for the message.
+        let title = read_open_question_title(
+            &layout.specs_dir.join("open_questions.toml"),
+            oq_id,
+        )
+        .unwrap_or_default();
+        let message = format!(
+            "Refusing to generate code for module `{module_name}`: open question \
+             `{oq_id}` (`{title}`) is unresolved.\n\n\
+             Three exit options:\n\
+             \x20\x201. Resolve via a decision: record a status=accepted Decision \
+             that answers the question, list it in the OQ's `closed_by`, and set \
+             the OQ's status to `closed`.\n\
+             \x20\x202. Commit a default: change the OQ's status to \
+             `default_committed`, set `default_via = \"DEC-...\"` referencing an \
+             accepted Decision, and provide a `verify = \"...\"` placeholder.\n\
+             \x20\x203. Mark the question moot: record a status=accepted Decision \
+             that lists the OQ in `closes_questions`, and set the OQ's status to \
+             `closed`.\n\n\
+             See the project's `specs/open_questions.toml`.\n",
+        );
+        return Ok(Some(GateRefusal {
+            module: module_name.to_string(),
+            oq_id: oq_id.clone(),
+            oq_title: title,
+            message,
+        }));
+    }
+    Ok(None)
+}
+
+fn read_open_question_title(
+    path: &std::path::Path,
+    oq_id: &str,
+) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = toml::from_str(&text).ok()?;
+    let arr = parsed.get("open_question").and_then(toml::Value::as_array)?;
+    for item in arr {
+        if item.get("id").and_then(toml::Value::as_str) == Some(oq_id) {
+            return item
+                .get("title")
+                .and_then(toml::Value::as_str)
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
 /// Collect decisions + default_committed/closed OQ context for a module
 /// per D63 §1. Three sources, deduped:
 ///
