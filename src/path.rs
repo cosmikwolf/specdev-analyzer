@@ -26,8 +26,13 @@
 //!
 //! * `.` — the current iterator element (set by a `for_each` in the
 //!   reduction spec).
-//! * `parent.<k>` — the parent-entity scope. Currently only `parent.name` is
-//!   defined. One level of parent only — `parent.parent.*` is rejected in v1.
+//! * `parent.<k>` — the closest enclosing object of the current iterator
+//!   element (the JSON-pointer ancestor that's an object, skipping array
+//!   indices). For a top-level pick like `/satisfies/0`, parent is the
+//!   file root. For a nested pick like `/requirement/0/decided_by/0`,
+//!   parent is `requirement[0]`. Any field on the parent object is
+//!   readable: `${parent.name}`, `${parent.id}`, etc. One level of parent
+//!   only — `parent.parent.*` is rejected in v1.
 //!
 //! Templates have no conditionals, filters, or defaults. Add them via a
 //! metaschema version bump if a real need shows up (see
@@ -194,9 +199,12 @@ pub struct Scope<'a> {
     pub root: &'a Value,
     /// The current `for_each` element, if any. `${.field}` reads from here.
     pub current: Option<&'a Value>,
-    /// Materialized name of the parent entity, if any. `${parent.name}` reads
-    /// from here. Only `parent.name` is defined in v1.
-    pub parent_name: Option<&'a str>,
+    /// Closest enclosing object of the current iterator element, if any.
+    /// `${parent.<field>}` reads `<field>` off this object. Computed by
+    /// walking the pick's JSON pointer up past array indices to the
+    /// nearest object ancestor; for a top-level pick this is the file
+    /// root.
+    pub parent: Option<&'a Value>,
 }
 
 /// Evaluate a template string. `${<path>}` interpolations are replaced by the
@@ -224,20 +232,28 @@ pub fn eval_template(template: &str, scope: &Scope<'_>) -> Result<String> {
 }
 
 fn resolve_template_path(expr: &str, scope: &Scope<'_>) -> Result<String> {
-    // `parent.<k>` — only `parent.name` defined in v1.
+    // `parent.<k>` — read `<k>` off the closest enclosing object of the
+    // current iterator element; if absent there, fall through to the file
+    // root. The fallback preserves backward compatibility with relations
+    // that used `${parent.name}` to mean "the file's name field" when the
+    // iteration was nested inside a sub-object that had no `name`. One
+    // level of `parent` only.
     if let Some(rest) = expr.strip_prefix("parent.") {
-        return match rest {
-            "name" => scope
-                .parent_name
-                .map(String::from)
-                .ok_or_else(|| anyhow::anyhow!("`parent.name` referenced but no parent in scope")),
-            s if s == "parent" || s.starts_with("parent.") => {
-                bail!("only one level of `parent` is defined in v1 (offending path: `${{{expr}}}`)")
+        if rest == "parent" || rest.starts_with("parent.") {
+            bail!("only one level of `parent` is defined in v1 (offending path: `${{{expr}}}`)")
+        }
+        if let Some(parent) = scope.parent {
+            let picks = select(parent, rest);
+            if !picks.is_empty() {
+                return pick_to_string(&picks, expr);
             }
-            other => {
-                bail!("unsupported parent field `{other}` — only `parent.name` is defined in v1")
-            }
-        };
+        }
+        // Fall through to file root.
+        let picks = select(scope.root, rest);
+        if picks.is_empty() {
+            bail!("template path `${{{expr}}}` resolved to nothing");
+        }
+        return pick_to_string(&picks, expr);
     }
 
     // `.` alone — current element as-is.
@@ -383,7 +399,7 @@ mod tests {
         let scope = Scope {
             root: &root,
             current: Some(&current),
-            parent_name: None,
+            parent: None,
         };
         let out = eval_template("state_${.name}", &scope).expect("eval");
         assert_eq!(out, "state_s0");
@@ -396,7 +412,7 @@ mod tests {
         let scope = Scope {
             root: &root,
             current: Some(&current),
-            parent_name: None,
+            parent: None,
         };
         let out = eval_template("${.}", &scope).expect("eval");
         assert_eq!(out, "raw_value");
@@ -405,23 +421,38 @@ mod tests {
     #[test]
     fn template_parent_name() {
         let root = json!({});
+        let parent = json!({ "name": "ModA" });
         let scope = Scope {
             root: &root,
             current: None,
-            parent_name: Some("ModA"),
+            parent: Some(&parent),
         };
         let out = eval_template("${parent.name}", &scope).expect("eval");
         assert_eq!(out, "ModA");
     }
 
     #[test]
+    fn template_parent_field_generic() {
+        let root = json!({});
+        let parent = json!({ "id": "REQ-001", "name": "thing" });
+        let scope = Scope {
+            root: &root,
+            current: None,
+            parent: Some(&parent),
+        };
+        let out = eval_template("${parent.id}", &scope).expect("eval");
+        assert_eq!(out, "REQ-001");
+    }
+
+    #[test]
     fn template_parent_name_and_current() {
         let current = json!({ "name": "leaf" });
         let root = json!({});
+        let parent = json!({ "name": "ModA" });
         let scope = Scope {
             root: &root,
             current: Some(&current),
-            parent_name: Some("ModA"),
+            parent: Some(&parent),
         };
         let out = eval_template("${parent.name}.${.name}", &scope).expect("eval");
         assert_eq!(out, "ModA.leaf");
@@ -430,10 +461,11 @@ mod tests {
     #[test]
     fn template_rejects_deep_parent() {
         let root = json!({});
+        let parent = json!({ "name": "Mod" });
         let scope = Scope {
             root: &root,
             current: None,
-            parent_name: Some("Mod"),
+            parent: Some(&parent),
         };
         let err = eval_template("${parent.parent.name}", &scope).unwrap_err();
         assert!(
@@ -448,7 +480,7 @@ mod tests {
         let scope = Scope {
             root: &root,
             current: None,
-            parent_name: None,
+            parent: None,
         };
         let err = eval_template("${does.not.exist}", &scope).unwrap_err();
         assert!(
@@ -463,7 +495,7 @@ mod tests {
         let scope = Scope {
             root: &root,
             current: None,
-            parent_name: None,
+            parent: None,
         };
         let err = eval_template("prefix_${.name", &scope).unwrap_err();
         assert!(

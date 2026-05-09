@@ -233,13 +233,15 @@ relations:
 
   # OpenQuestion → Decision: the decision that committed a working
   # default for this question (set when status = `default_committed`).
+  # The for_each walks the singular-optional field directly so OQs
+  # without `default_via` (status = open / closed) emit no edge.
   # Drives `open_question_default_via_resolves`.
   - kind: open_question_default_via_decision
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
     from_spec: "specs/open_questions.toml"
-    for_each: "open_question[]"
+    for_each: "open_question[].default_via"
     endpoints:
-      from: "${.id}"
-      to: "${.default_via}"
+      from: "${parent.id}"
+      to: "${.}"
