@@ -390,3 +390,536 @@ satisfies = ["ZFM-001"]
         report.render_plain()
     );
 }
+
+// ===========================================================================
+// Step 3 (19-E1) — Validate-time ref resolution.
+//
+// Each of the 11 triad graph checks gets a red-path mutation against
+// build_triad_smoke(). Note (judgment call recorded 2026-05-08):
+// the analyzer's reduction step is strict — relations whose endpoints
+// don't resolve are dropped at reduction time and surface as
+// `REDUCE_UNRESOLVED` errors with TOML provenance. This is an existing
+// pre-19 mechanism that pre-empts the `reference_exists` graph checks.
+// As a result, the seven *_resolves rules don't fire on red-path
+// missing-target mutations — REDUCE_UNRESOLVED fires first with the
+// offending name in the message. The new graph_check entries are still
+// authored because (a) they activate when relations land in the graph
+// but reference unresolved entities by some other path, (b) they're
+// required by the D63 contract surface, and (c) they're the natural
+// home for severity overrides per profile via [validation.rules].
+// Tests here therefore assert REDUCE_UNRESOLVED for ref-resolution and
+// the dedicated rule names for the consistency / cycle / gate checks.
+// ===========================================================================
+
+/// Helper: assert that a finding with `rule == expected_rule` fires
+/// against the mutated fixture, AND that the message contains `expect_in_msg`.
+fn assert_rule_fires(
+    report: &specdev_analyzer::Report,
+    expected_rule: &str,
+    expect_in_msg: &str,
+) {
+    let hit = report
+        .findings()
+        .iter()
+        .any(|f| f.rule == expected_rule && f.message.contains(expect_in_msg));
+    assert!(
+        hit,
+        "expected rule `{expected_rule}` to fire with message containing \
+         `{expect_in_msg}`; got:\n{}",
+        report.render_plain()
+    );
+}
+
+#[test]
+fn triad_red_requirement_decided_by_resolves() {
+    // Mutate ZFM-001.decided_by to a non-existent decision (DEC-999, which
+    // satisfies the strict ID regex but isn't authored). The analyzer's
+    // strict reduction surfaces this as REDUCE_UNRESOLVED naming the
+    // missing decision.
+    let (target, _) = build_triad_smoke("red-req-decided-by");
+    let bad = r#"[[source]]
+id = "triad-doc"
+kind = "derived"
+title = "Triad smoke source"
+
+[[requirement]]
+id = "ZFM-001"
+text = "Module-ok shall do the thing"
+nature = "module"
+source = ["triad-doc"]
+decided_by = ["DEC-999"]
+
+[[requirement]]
+id = "ZFM-002"
+text = "Module-blocked shall do the gated thing"
+nature = "module"
+source = ["triad-doc"]
+
+[[requirement]]
+id = "ZFM-003"
+text = "Closed-resolved requirement"
+nature = "module"
+source = ["triad-doc"]
+"#;
+    std::fs::write(target.join("specs/requirements.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-999");
+}
+
+#[test]
+fn triad_red_module_guided_by_resolves() {
+    let (target, _) = build_triad_smoke("red-module-guided-by");
+    let bad = r#"name = "module_ok"
+visibility = "crate"
+description = "Reachable only through default_committed / closed OQs — codegen-unblocked."
+satisfies = ["ZFM-001"]
+guided_by = ["DEC-998"]
+"#;
+    std::fs::write(target.join("specs/modules/module_ok.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-998");
+}
+
+#[test]
+fn triad_red_architecture_project_decisions_resolves() {
+    let (target, _) = build_triad_smoke("red-arch-proj-dec");
+    let bad = r#"project_decisions = ["DEC-997"]
+
+[[features]]
+name = "default"
+default = true
+"#;
+    std::fs::write(target.join("specs/architecture.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-997");
+}
+
+#[test]
+fn triad_red_decision_supersedes_resolves() {
+    let (target, _) = build_triad_smoke("red-supersedes-resolves");
+    let bad = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "We do the thing this way."
+consequences = "Downstream knows X."
+closes_questions = ["OQ-resolved"]
+
+[[decision]]
+id = "DEC-003"
+title = "Default for OQ-001"
+status = "accepted"
+text = "Working default for OQ-001 pending verify."
+defaults_for = ["OQ-001"]
+
+[[decision]]
+id = "DEC-004"
+title = "Successor approach"
+status = "accepted"
+text = "Replaces a non-existent decision."
+supersedes = ["DEC-996"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted decision"
+status = "accepted"
+text = "Serves as the closed_by target for OQ-resolved."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-996");
+}
+
+#[test]
+fn triad_red_decision_supersedes_acyclic() {
+    // Create a cycle: DEC-A supersedes DEC-B and DEC-B supersedes DEC-A.
+    // Both must be status=superseded for one to be the supersedes target;
+    // we set both as `superseded` (the chain check will also fire, that's
+    // expected — we're asserting the acyclic check fires).
+    let (target, _) = build_triad_smoke("red-supersedes-cycle");
+    let bad = r#"[[decision]]
+id = "DEC-A"
+title = "A supersedes B"
+status = "superseded"
+text = "A."
+supersedes = ["DEC-B"]
+
+[[decision]]
+id = "DEC-B"
+title = "B supersedes A"
+status = "superseded"
+text = "B."
+supersedes = ["DEC-A"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted decision"
+status = "accepted"
+text = "Serves as the closed_by target for OQ-resolved."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    // Strip references to removed decisions from arch + reqs.
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        "[[features]]\nname = \"default\"\ndefault = true\n",
+    )
+    .unwrap();
+    let reqs = r#"[[source]]
+id = "triad-doc"
+kind = "derived"
+title = "Triad smoke source"
+
+[[requirement]]
+id = "ZFM-001"
+text = "Module-ok shall do the thing"
+nature = "module"
+source = ["triad-doc"]
+
+[[requirement]]
+id = "ZFM-002"
+text = "Module-blocked shall do the gated thing"
+nature = "module"
+source = ["triad-doc"]
+
+[[requirement]]
+id = "ZFM-003"
+text = "Closed-resolved requirement"
+nature = "module"
+source = ["triad-doc"]
+"#;
+    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    let module_ok = r#"name = "module_ok"
+visibility = "crate"
+description = "Trimmed."
+satisfies = ["ZFM-001"]
+"#;
+    std::fs::write(target.join("specs/modules/module_ok.toml"), module_ok).unwrap();
+    // Adjust open_questions to drop OQ-001's default_via (DEC-001 is gone).
+    let open_questions = r#"[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "decision_supersedes_acyclic", "cycle detected");
+}
+
+#[test]
+fn triad_red_decision_supersedes_chain_consistency_orphan() {
+    // A `superseded` decision with no inbound `supersedes` edge.
+    let (target, _) = build_triad_smoke("red-orphan-superseded");
+    let bad = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "We do the thing this way."
+consequences = "Downstream knows X."
+closes_questions = ["OQ-resolved"]
+
+[[decision]]
+id = "DEC-002"
+title = "Orphan superseded"
+status = "superseded"
+text = "Marked superseded but no successor claims me."
+
+[[decision]]
+id = "DEC-003"
+title = "Default for OQ-001"
+status = "accepted"
+text = "Working default for OQ-001 pending verify."
+defaults_for = ["OQ-001"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted decision"
+status = "accepted"
+text = "closed_by target."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(
+        &report,
+        "decision_supersedes_chain_consistency",
+        "DEC-002",
+    );
+}
+
+#[test]
+fn triad_red_decision_closes_questions_resolves() {
+    let (target, _) = build_triad_smoke("red-closes-questions");
+    let bad = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "Closes a non-existent OQ."
+closes_questions = ["OQ-995"]
+
+[[decision]]
+id = "DEC-003"
+title = "Default for OQ-001"
+status = "accepted"
+text = "Working default."
+defaults_for = ["OQ-001"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted"
+status = "accepted"
+text = "Plain."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    // Drop the OQ-resolved entry since DEC-001 no longer closes it.
+    let open_questions = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption."
+default_via = "DEC-001"
+verify = "Run scenario X and observe Y."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    // Drop ZFM-003 since OQ-resolved is gone.
+    let reqs = r#"[[source]]
+id = "triad-doc"
+kind = "derived"
+title = "Triad smoke source"
+
+[[requirement]]
+id = "ZFM-001"
+text = "Module-ok shall do the thing"
+nature = "module"
+source = ["triad-doc"]
+decided_by = ["DEC-001"]
+
+[[requirement]]
+id = "ZFM-002"
+text = "Module-blocked shall do the gated thing"
+nature = "module"
+source = ["triad-doc"]
+"#;
+    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "OQ-995");
+}
+
+#[test]
+fn triad_red_decision_defaults_for_resolves() {
+    let (target, _) = build_triad_smoke("red-defaults-for");
+    let bad = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "Plain."
+closes_questions = ["OQ-resolved"]
+
+[[decision]]
+id = "DEC-003"
+title = "Defaults for non-existent OQ"
+status = "accepted"
+text = "Working default."
+defaults_for = ["OQ-994"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted"
+status = "accepted"
+text = "Plain."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    // Re-author OQ-001 to drop default_via (DEC-003 no longer defaults for it).
+    let open_questions = r#"[[open_question]]
+id = "OQ-001"
+title = "Now without a default_via"
+status = "open"
+text = "Was default_committed but DEC-003 went away."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "OQ-994");
+}
+
+#[test]
+fn triad_red_open_question_affects_resolves() {
+    let (target, _) = build_triad_smoke("red-oq-affects");
+    let bad = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption."
+default_via = "DEC-001"
+verify = "Run scenario X."
+affects = ["ZFM-993"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "ZFM-993");
+}
+
+#[test]
+fn triad_red_open_question_default_via_resolves() {
+    let (target, _) = build_triad_smoke("red-oq-default-via");
+    let bad = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption."
+default_via = "DEC-992"
+verify = "Run scenario X."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-005"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-005"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-992");
+}
+
+#[test]
+fn triad_red_open_question_closed_by_resolves() {
+    let (target, _) = build_triad_smoke("red-oq-closed-by");
+    let bad = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption."
+default_via = "DEC-001"
+verify = "Run scenario X."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by a missing decision"
+status = "closed"
+text = "Resolved."
+closed_by = "DEC-VAPOR"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "open_question_closed_by_resolves", "DEC-VAPOR");
+}
+
+#[test]
+fn triad_red_open_question_status_consistency_closed_with_non_accepted_target() {
+    // OQ-resolved is `closed` and `closed_by = "DEC-002"`, but DEC-002 is
+    // `superseded`, not `accepted`. Status-consistency check should fire.
+    let (target, _) = build_triad_smoke("red-status-consistency");
+    let open_questions = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption."
+default_via = "DEC-001"
+verify = "Run scenario X."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Genuinely unknown."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by a superseded decision"
+status = "closed"
+text = "DEC-002 is superseded; the OQ shouldn't claim closure via a non-accepted Decision."
+closed_by = "DEC-002"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "open_question_status_consistency", "DEC-002");
+}
+
+#[test]
+fn triad_red_codegen_unblocked_warning() {
+    // The green smoke fixture already has OQ-002 status=open affecting
+    // ZFM-002 satisfied by module_blocked — the warning fires by default.
+    let (target, _) = build_triad_smoke("red-codegen-unblocked");
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "codegen_unblocked", "module_blocked");
+    // Ensure module_ok is NOT flagged (its only OQ in scope is OQ-001
+    // which is `default_committed`, and OQ-resolved which is `closed`).
+    let any_ok_flagged = report
+        .findings()
+        .iter()
+        .any(|f| f.rule == "codegen_unblocked" && f.message.contains("module_ok"));
+    assert!(
+        !any_ok_flagged,
+        "codegen_unblocked should not flag module_ok; got:\n{}",
+        report.render_plain()
+    );
+}
