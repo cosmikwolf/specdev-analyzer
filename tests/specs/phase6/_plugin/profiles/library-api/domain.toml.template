@@ -46,7 +46,8 @@ field = "entities[].name"
 [[project.graph_checks]]
 kind = "acyclic"
 rule = "modules_acyclic"
-scope = "depends_on"
+entity_scope = "Module"
+relation_scope = "depends_on"
 edges_from = "relations[].from"
 edges_to = "relations[].to"
 

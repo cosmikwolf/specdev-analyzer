@@ -811,7 +811,61 @@ fn execute_graph_checks(
                 _ => Vec::new(),
             },
             "acyclic" => match (check.edges_from.as_deref(), check.edges_to.as_deref()) {
-                (Some(ef), Some(et)) => graph_checks::acyclic(&view, ef, et, rule, severity),
+                (Some(ef), Some(et)) => {
+                    // Optional joint filter: when both entity_scope and
+                    // relation_scope are set, retain only entities of
+                    // the entity kind AND only relations whose endpoints
+                    // are in that entity set AND whose kind extends the
+                    // relation kind. Lets module-deps acyclicity exclude
+                    // broader canonical-`depends_on` chains (e.g. triad
+                    // relations from Requirement → Decision) by scoping
+                    // to (Module, depends_on) — only Module → Module
+                    // edges remain in view.
+                    let scoped_view = if let (Some(es), Some(rs)) = (
+                        check.entity_scope.as_deref(),
+                        check.relation_scope.as_deref(),
+                    ) {
+                        let mut v = filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                        // Drop relations whose endpoints aren't in the
+                        // filtered entity set — chain-walked relation
+                        // kinds otherwise carry edges to entities of a
+                        // different kind than entity_scope.
+                        let entity_names: BTreeSet<String> = v
+                            .get("entities")
+                            .and_then(|e| e.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|e| {
+                                        e.get("name")
+                                            .and_then(|n| n.as_str())
+                                            .map(str::to_string)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if let Some(rels) =
+                            v.get_mut("relations").and_then(|r| r.as_array_mut())
+                        {
+                            rels.retain(|r| {
+                                let from_in = r
+                                    .get("from")
+                                    .and_then(|f| f.as_str())
+                                    .map(|s| entity_names.contains(s))
+                                    .unwrap_or(false);
+                                let to_in = r
+                                    .get("to")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| entity_names.contains(s))
+                                    .unwrap_or(false);
+                                from_in && to_in
+                            });
+                        }
+                        v
+                    } else {
+                        view.clone()
+                    };
+                    graph_checks::acyclic(&scoped_view, ef, et, rule, severity)
+                }
                 _ => Vec::new(),
             },
             "layer_dependency" => layer_dependency_dispatch(
