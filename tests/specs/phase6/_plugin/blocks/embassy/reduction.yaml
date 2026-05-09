@@ -19,7 +19,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "embassy.tasks[]"
-    name: "${parent.name}.${.name}"
+    name: "${root.name}.${.name}"
     attrs:
       pool_size: ".pool_size"
       priority: ".priority"
@@ -28,7 +28,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "embassy.channels[]"
-    name: "${parent.name}.${.name}"
+    name: "${root.name}.${.name}"
     attrs:
       payload_type: ".payload_type"
       depth: ".depth"

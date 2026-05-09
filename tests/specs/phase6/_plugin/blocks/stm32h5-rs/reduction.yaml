@@ -19,7 +19,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "stm32h5.peripherals[]"
-    name: "${parent.name}.${.name}"
+    name: "${root.name}.${.name}"
     attrs:
       kind: ".kind"
       instance: ".instance"
@@ -28,7 +28,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "stm32h5.pins[]"
-    name: "${parent.name}.${.name}"
+    name: "${root.name}.${.name}"
     attrs:
       port: ".port"
       pin: ".pin"

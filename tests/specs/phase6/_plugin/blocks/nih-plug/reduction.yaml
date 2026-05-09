@@ -12,16 +12,16 @@ metaschema_version: "v1"
 # This keeps namespaces clean across multi-module specs (rare in v1
 # but unblocked for future multi-shell scenarios).
 #
-# v1 declares no relations. The Phase 15-E `egui+nih-plug` bridge
-# adds the `widget_binds_parameter` relation by reaching from Region
-# (egui block entity) to Parameter (this block's entity).
+# v1 declares no relations. The `egui+nih-plug` bridge adds the
+# `widget_binds_parameter` relation by reaching from Region (egui
+# block entity) to Parameter (this block's entity).
 
 entities:
   - kind: Parameter
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "nih_plug.parameters[]"
-    name: "${parent.name}.${.id}"
+    name: "${root.name}.${.id}"
     attrs:
       id:   ".id"
       kind: ".kind"
@@ -30,7 +30,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "nih_plug.audio_ports[]"
-    name: "${parent.name}.${.name}"
+    name: "${root.name}.${.name}"
     attrs:
       direction:     ".direction"
       channel_count: ".channel_count"
@@ -40,7 +40,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "nih_plug.midi"
-    name: "${parent.name}.midi"
+    name: "${root.name}.midi"
     attrs:
       input:       ".input"
       output:      ".output"

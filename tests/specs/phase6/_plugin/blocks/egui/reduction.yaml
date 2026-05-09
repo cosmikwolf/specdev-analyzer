@@ -22,7 +22,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "egui.panels[]"
-    name: "${parent.name}.${.id}"
+    name: "${root.name}.${.id}"
     attrs:
       kind:   ".kind"
       width:  ".width"
@@ -32,7 +32,7 @@ entities:
     extends: Module
     from: "specs/modules/*.toml"
     for_each: "egui.regions[]"
-    name: "${parent.name}.${.id}"
+    name: "${root.name}.${.id}"
     attrs:
       panel:   ".panel"
       purpose: ".purpose"
@@ -47,5 +47,5 @@ relations:
     from_spec: "specs/modules/*.toml"
     for_each: "egui.regions[]"
     endpoints:
-      from: "${parent.name}.${.id}"
-      to:   "${parent.name}.${.panel}"
+      from: "${root.name}.${.id}"
+      to:   "${root.name}.${.panel}"
