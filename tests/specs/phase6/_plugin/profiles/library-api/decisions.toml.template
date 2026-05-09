@@ -1,0 +1,73 @@
+# Project decisions — the *how & why*.
+#
+# A decision pins an implementation choice over the alternatives that
+# were considered. Each decision has:
+#   - a stable id (e.g. DEC-001), shared id grammar with requirements
+#     and open questions
+#   - a status: `accepted` (drives current behavior) or `superseded`
+#     (kept as reasoning trail; codegen prompt walks skip these)
+#   - a one-line `title` and full `text` body
+#   - optional prose: `context` (why we needed to decide),
+#     `consequences` (what follows), `alternatives` (what we rejected),
+#     `verification` (how we'll know we got it right)
+#
+# Decisions cross-reference the rest of the spec via:
+#   - requirement.decided_by[]   — pin the *how* of a requirement
+#   - module.guided_by[]         — inform a module without pinning a req
+#   - architecture.project_decisions[] — shape the project as a whole
+#   - decisions.toml's own closes_questions[] / defaults_for[] —
+#     resolve open questions or commit working defaults
+#
+# Supersession keeps both bodies. When DEC-N supersedes DEC-M:
+#   - DEC-M.status flips to `superseded` and gains
+#     `superseded_by = "DEC-N"`
+#   - DEC-N (status = accepted) optionally lists `supersedes = ["DEC-M"]`
+# The codegen prompt walk follows only `accepted` decisions.
+#
+# Delete the EXAMPLE entries below once the project has real decisions.
+
+# EXAMPLE: an accepted decision pinning a requirement's implementation.
+# [[decision]]
+# id = "DEC-001"
+# title = "Use `thiserror` for the public error type"
+# status = "accepted"
+# text = """
+# Define the crate's public error type as an enum derived via
+# `thiserror::Error`. Variants map 1:1 to the failure modes called
+# out in REQ-ERR-001..004; transparent `#[from]` conversions wire
+# upstream io / parse errors.
+# """
+# consequences = """
+# `thiserror` is added to runtime deps (not just dev-deps). Public
+# enum variants become semver-load-bearing — adding a variant is a
+# minor bump unless `#[non_exhaustive]` is set (it is).
+# """
+# alternatives = """
+# Hand-rolled enum + Display impl: rejected as boilerplate-heavy.
+# `anyhow::Error` for the public surface: rejected — anyhow is for
+# applications, libraries should expose typed errors.
+# """
+# source = ["rust-api-guidelines"]
+# source_ref = "C-GOOD-ERR"
+
+# EXAMPLE: a decision that resolves an open question.
+# [[decision]]
+# id = "DEC-002"
+# title = "Default feature set ships `serde` integration"
+# status = "accepted"
+# text = """
+# The crate's default features include `serde`. Library consumers
+# overwhelmingly want the integration; the +1 dep is acceptable.
+# """
+# closes_questions = ["OQ-001"]
+
+# EXAMPLE: a superseded decision (kept as reasoning trail).
+# [[decision]]
+# id = "DEC-003"
+# title = "Use `log` for diagnostics"
+# status = "superseded"
+# text = """
+# Original choice: `log` crate facade. Replaced by tracing (DEC-004)
+# once async support became a requirement.
+# """
+# superseded_by = "DEC-004"

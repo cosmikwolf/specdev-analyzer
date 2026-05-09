@@ -123,13 +123,16 @@ struct ProfileFile {
     substitute: bool,
 }
 
-/// Build the per-language file plan for a profile. The required entries
-/// (manifest, domain, project reduction) are hard-coded; everything
-/// under `schemas/` and `codegen/<lang>/` is dynamically enumerated so a
-/// profile can ship arbitrary supporting schemas (e.g. firmware-layered's
-/// `metadata.schema.yaml`) and arbitrary codegen-prose files (e.g.
-/// rust-workspace's `workspace.conventions.md` instead of
-/// `module.conventions.md`) without touching this code.
+/// Build the per-language file plan for a profile. The two routing
+/// special cases (`spec.toml.template` → project root,
+/// `domain.toml.template` → `specs/specdev/`) are hard-coded; everything
+/// else under the profile root, `schemas/`, and `codegen/<lang>/` is
+/// dynamically enumerated so a profile can ship arbitrary supporting
+/// schemas (e.g. firmware-layered's `metadata.schema.yaml`), arbitrary
+/// codegen-prose files (e.g. rust-workspace's `workspace.conventions.md`),
+/// and arbitrary `<artifact>.toml.template` files at the profile root
+/// (architecture / requirements / decisions / open_questions / future
+/// additions) without touching this code.
 fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> {
     let mut plan: Vec<ProfileFile> = vec![
         ProfileFile {
@@ -143,21 +146,47 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             substitute: true,
         },
         ProfileFile {
-            src_rel: PathBuf::from("architecture.toml.template"),
-            dst_rel: PathBuf::from("specs/architecture.toml"),
-            substitute: true,
-        },
-        ProfileFile {
-            src_rel: PathBuf::from("requirements.toml.template"),
-            dst_rel: PathBuf::from("specs/requirements.toml"),
-            substitute: true,
-        },
-        ProfileFile {
             src_rel: PathBuf::from("reductions/project.yaml"),
             dst_rel: PathBuf::from("specs/specdev/reductions/project.yaml"),
             substitute: false,
         },
     ];
+
+    // Dynamically enumerate `*.toml.template` files at the profile
+    // root. Each `<basename>.toml.template` emits to
+    // `<target>/specs/<basename>.toml`. `spec.toml.template` and
+    // `domain.toml.template` are skipped here (they have non-standard
+    // routing handled above). The dispatch is data-driven: a profile
+    // adds a new author-facing TOML artifact by dropping a template
+    // file into the profile root; bootstrap picks it up automatically.
+    let mut root_templates: Vec<PathBuf> = std::fs::read_dir(profile_dir)
+        .with_context(|| format!("reading {}", profile_dir.display()))?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.ends_with(".toml.template"))
+        })
+        .collect();
+    root_templates.sort();
+    for entry in root_templates {
+        let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        // Routing special cases handled above.
+        if file_name == "spec.toml.template" || file_name == "domain.toml.template" {
+            continue;
+        }
+        // `<basename>.toml.template` → `specs/<basename>.toml`.
+        let basename = file_name.trim_end_matches(".template");
+        plan.push(ProfileFile {
+            src_rel: PathBuf::from(file_name),
+            dst_rel: PathBuf::from(format!("specs/{basename}")),
+            substitute: true,
+        });
+    }
 
     // Phase 16 step 2.5: when the profile ships a `profile.yaml` manifest
     // (D52 / doc 21), copy it byte-faithfully alongside `domain.toml`. The
