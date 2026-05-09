@@ -26,4 +26,101 @@ entities:
     attrs:
       version: ".version"
 
-relations: []
+  # Architecture singleton — anchor for top-level relations
+  # (project_decisions). One per workspace.
+  - kind: Architecture
+    extends: structural
+    from: "specs/architecture.toml"
+    name: "architecture"
+
+  # Decisions — workspace-tier *how & why*. Workspace decisions
+  # implicitly apply to every module in every member crate; child
+  # crates do not name workspace decisions in their own
+  # `decided_by` / `guided_by`.
+  - kind: Decision
+    extends: structural
+    from: "specs/decisions.toml"
+    for_each: "decision[]"
+    name: "${.id}"
+    attrs:
+      title: ".title"
+      status: ".status"
+      text: ".text"
+
+  # Open questions — workspace-tier *known unknowns*. The workspace
+  # tier rarely carries OQs since it has no requirements to affect;
+  # the kind is declared so the schema is consistent across profiles
+  # and so authoring an OQ at workspace tier is structurally possible
+  # if a real cross-cutting unknown emerges.
+  - kind: OpenQuestion
+    extends: structural
+    from: "specs/open_questions.toml"
+    for_each: "open_question[]"
+    name: "${.id}"
+    attrs:
+      title: ".title"
+      status: ".status"
+      text: ".text"
+
+relations:
+  # Architecture → Decision: project-shape commitments. Drives
+  # `architecture_project_decisions_resolves`. The only decision-anchored
+  # relation that applies at workspace tier — Module/Requirement-anchored
+  # relations live in member crates.
+  - kind: architecture_project_decision
+    extends: depends_on
+    from_kind: Architecture
+    to_kind: Decision
+    from_spec: "specs/architecture.toml"
+    for_each: "project_decisions[]"
+    endpoints:
+      from: "architecture"
+      to: "${.}"
+
+  # Decision → Decision: supersession chain via `supersedes[]` on
+  # accepted decisions.
+  - kind: decision_supersedes_decision
+    extends: depends_on
+    from_kind: Decision
+    to_kind: Decision
+    from_spec: "specs/decisions.toml"
+    for_each: "decision[].supersedes[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Decision → OpenQuestion: closure references. Drives
+  # `decision_closes_questions_resolve`.
+  - kind: decision_closes_open_question
+    extends: depends_on
+    from_kind: Decision
+    to_kind: OpenQuestion
+    from_spec: "specs/decisions.toml"
+    for_each: "decision[].closes_questions[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Decision → OpenQuestion: default-commit references. Drives
+  # `decision_defaults_for_resolve`.
+  - kind: decision_defaults_open_question
+    extends: depends_on
+    from_kind: Decision
+    to_kind: OpenQuestion
+    from_spec: "specs/decisions.toml"
+    for_each: "decision[].defaults_for[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # OpenQuestion → Decision: which decision committed the working
+  # default. Drives `open_question_default_via_resolves`.
+  - kind: open_question_default_via_decision
+    extends: depends_on
+    from_kind: OpenQuestion
+    to_kind: Decision
+    from_spec: "specs/open_questions.toml"
+    for_each: "open_question[]"
+    endpoints:
+      from: "${.id}"
+      to: "${.default_via}"
