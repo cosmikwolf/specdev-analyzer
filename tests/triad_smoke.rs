@@ -1112,3 +1112,93 @@ fn triad_red_codegen_unblocked_warning() {
         report.render_plain()
     );
 }
+
+// Regression for the 2.5-B joint-filter — when a project authors the
+// dual back-references that the proposal §5 documents (`closes_questions`
+// ↔ `closed_by`, `defaults_for` ↔ `default_via`) on the SAME decision
+// pair (so each direction is a 2-cycle in the canonical depends_on view),
+// modules_acyclic must NOT fire. Pre-2.5-B this scenario was blocked
+// because the cycle check chain-walked all canonical-`depends_on`
+// relations including the triad ones.
+#[test]
+fn modules_acyclic_ignores_triad_dual_back_references() {
+    let (target, _layout) = build_triad_smoke("acyclic-joint-filter");
+
+    // Author the dual back-reference on DEC-001 ↔ OQ-resolved AND on
+    // DEC-003 ↔ OQ-001 (both pair directions present). Pre-2.5-B this
+    // would form 2-cycles in the canonical depends_on view and trip
+    // modules_acyclic.
+    let decisions = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "We do the thing this way."
+consequences = "Downstream knows X."
+closes_questions = ["OQ-resolved"]
+
+[[decision]]
+id = "DEC-002"
+title = "Original approach"
+status = "superseded"
+text = "Initial choice; replaced by DEC-004 once we learned more."
+
+[[decision]]
+id = "DEC-003"
+title = "Default for OQ-001"
+status = "accepted"
+text = "Working default for OQ-001 pending verify."
+defaults_for = ["OQ-001"]
+
+[[decision]]
+id = "DEC-004"
+title = "Successor approach"
+status = "accepted"
+text = "Replaces DEC-002 with the corrected approach."
+supersedes = ["DEC-002"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted decision"
+status = "accepted"
+text = "Co-target for OQ-resolved (kept for parity with the smoke fixture)."
+"#;
+    std::fs::write(target.join("specs/decisions.toml"), decisions).unwrap();
+
+    let open_questions = r#"[[open_question]]
+id = "OQ-001"
+title = "Default-committed question"
+status = "default_committed"
+text = "Working assumption pending verify."
+default_via = "DEC-003"
+verify = "Run scenario X and observe Y."
+affects = ["ZFM-001"]
+
+[[open_question]]
+id = "OQ-002"
+title = "Open blocker"
+status = "open"
+text = "Blocks module_blocked until resolved."
+affects = ["ZFM-002"]
+
+[[open_question]]
+id = "OQ-resolved"
+title = "Closed by DEC-001"
+status = "closed"
+text = "Symmetric back-reference: DEC-001 closes OQ-resolved AND OQ-resolved.closed_by = DEC-001."
+closed_by = "DEC-001"
+affects = ["ZFM-003"]
+"#;
+    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+
+    let report = validate::run_project(&target, None).expect("validate");
+    let cycle_findings: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| f.rule == "modules_acyclic")
+        .collect();
+    assert!(
+        cycle_findings.is_empty(),
+        "modules_acyclic should not fire on triad dual back-references; got:\n{}",
+        report.render_plain()
+    );
+}
