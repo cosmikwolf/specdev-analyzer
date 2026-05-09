@@ -12,7 +12,7 @@
 //! Per D29: the analyzer assembles the prompt; Claude does the
 //! emission. This module's output is plumbing, not codegen.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
@@ -302,7 +302,8 @@ pub fn check_codegen_gate(
         .unwrap_or_default();
 
     let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
-    let mut all_oqs = local_oqs;
+    let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
+    let mut workspace_specs: Option<std::path::PathBuf> = None;
     if let Some(parent) = layout.project_root.parent() {
         let parent_specs = parent.join("specs");
         let parent_spec_toml = parent.join("spec.toml");
@@ -310,20 +311,18 @@ pub fn check_codegen_gate(
             if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
                 if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
                     if parsed.get("workspace").is_some() {
-                        for (k, v) in
-                            read_open_questions(&parent_specs.join("open_questions.toml"))?
-                        {
-                            // Local OQs take priority; workspace OQs only fill gaps.
-                            all_oqs.entry(k).or_insert(v);
-                        }
+                        workspace_oqs =
+                            read_open_questions(&parent_specs.join("open_questions.toml"))?;
+                        workspace_specs = Some(parent_specs);
                     }
                 }
             }
         }
     }
 
-    // Sorted for determinism (BTreeMap is already sorted).
-    for (oq_id, entry) in &all_oqs {
+    // Local-tier OQs gate when their affects[] overlaps the module's
+    // satisfies[]. Iteration is deterministic via BTreeMap ordering.
+    for (oq_id, entry) in &local_oqs {
         if entry.status != "open" {
             continue;
         }
@@ -331,26 +330,16 @@ pub fn check_codegen_gate(
         if !intersects {
             continue;
         }
-        // Look up title for the message.
         let title = read_open_question_title(
             &layout.specs_dir.join("open_questions.toml"),
             oq_id,
         )
         .unwrap_or_default();
-        let message = format!(
-            "Refusing to generate code for module `{module_name}`: open question \
-             `{oq_id}` (`{title}`) is unresolved.\n\n\
-             Three exit options:\n\
-             \x20\x201. Resolve via a decision: record a status=accepted Decision \
-             that answers the question, list it in the OQ's `closed_by`, and set \
-             the OQ's status to `closed`.\n\
-             \x20\x202. Commit a default: change the OQ's status to \
-             `default_committed`, set `default_via = \"DEC-...\"` referencing an \
-             accepted Decision, and provide a `verify = \"...\"` placeholder.\n\
-             \x20\x203. Mark the question moot: record a status=accepted Decision \
-             that lists the OQ in `closes_questions`, and set the OQ's status to \
-             `closed`.\n\n\
-             See the project's `specs/open_questions.toml`.\n",
+        let message = build_refusal_message(
+            module_name,
+            oq_id,
+            &title,
+            "the project's `specs/open_questions.toml`",
         );
         return Ok(Some(GateRefusal {
             module: module_name.to_string(),
@@ -359,7 +348,66 @@ pub fn check_codegen_gate(
             message,
         }));
     }
+
+    // Workspace-tier OQs implicitly apply down (D63 §1, extended to
+    // OQs in 2.5-C). When `affects` is empty/absent the OQ blocks every
+    // module in every member crate; when populated, it acts like a
+    // local OQ with explicit scope. Local-tier OQs with the same id
+    // take precedence over workspace entries.
+    for (oq_id, entry) in &workspace_oqs {
+        if local_oqs.contains_key(oq_id) {
+            continue;
+        }
+        if entry.status != "open" {
+            continue;
+        }
+        let intersects = entry.affects.is_empty()
+            || entry.affects.iter().any(|r| satisfies.contains(r));
+        if !intersects {
+            continue;
+        }
+        let title = workspace_specs
+            .as_ref()
+            .and_then(|p| read_open_question_title(&p.join("open_questions.toml"), oq_id))
+            .unwrap_or_default();
+        let message = build_refusal_message(
+            module_name,
+            oq_id,
+            &title,
+            "the workspace's `specs/open_questions.toml`",
+        );
+        return Ok(Some(GateRefusal {
+            module: module_name.to_string(),
+            oq_id: oq_id.clone(),
+            oq_title: title,
+            message,
+        }));
+    }
+
     Ok(None)
+}
+
+fn build_refusal_message(
+    module_name: &str,
+    oq_id: &str,
+    title: &str,
+    pointer: &str,
+) -> String {
+    format!(
+        "Refusing to generate code for module `{module_name}`: open question \
+         `{oq_id}` (`{title}`) is unresolved.\n\n\
+         Three exit options:\n\
+         \x20\x201. Resolve via a decision: record a status=accepted Decision \
+         that answers the question, list it in the OQ's `closed_by`, and set \
+         the OQ's status to `closed`.\n\
+         \x20\x202. Commit a default: change the OQ's status to \
+         `default_committed`, set `default_via = \"DEC-...\"` referencing an \
+         accepted Decision, and provide a `verify = \"...\"` placeholder.\n\
+         \x20\x203. Mark the question moot: record a status=accepted Decision \
+         that lists the OQ in `closes_questions`, and set the OQ's status to \
+         `closed`.\n\n\
+         See {pointer}.\n",
+    )
 }
 
 fn read_open_question_title(
