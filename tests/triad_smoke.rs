@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     layout::LayoutContext,
-    reduction, validate,
+    prompt, reduction, validate,
 };
 
 const FIXTURE_TAG: &str = "specdev-triad-smoke";
@@ -902,6 +902,77 @@ affects = ["ZFM-003"]
     std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "open_question_status_consistency", "DEC-002");
+}
+
+// ===========================================================================
+// Step 4 (19-E3) — Codegen prompt-walk.
+//
+// `prompt::assemble_module_prompt` includes a "Decisions and known
+// unknowns" section per D63 §1: module's local guided_by, module's
+// requirements' decided_by, plus workspace-tier decisions when the
+// project sits in a workspace. Default-committed OQs surface their
+// verify text; closed OQs link to the resolving Decision; superseded
+// Decisions are skipped (D63 §7).
+// ===========================================================================
+
+#[test]
+fn prompt_includes_module_decisions_and_default_committed_oq() {
+    let (_, layout) = build_triad_smoke("prompt-module-ok");
+    let p = prompt::assemble_module_prompt(&layout, "module_ok").expect("prompt");
+
+    // DEC-001 inlined (from ZFM-001.decided_by AND module_ok.guided_by — deduped).
+    assert!(p.contains("Decision DEC-001:"), "DEC-001 absent:\n{p}");
+    assert!(
+        p.contains("We do the thing this way."),
+        "DEC-001 text missing:\n{p}"
+    );
+    assert!(
+        p.contains("Downstream knows X."),
+        "DEC-001 consequences missing:\n{p}"
+    );
+
+    // OQ-001: default_committed, affects ZFM-001 → in scope for module_ok.
+    assert!(
+        p.contains("Open question OQ-001 (working assumption)"),
+        "OQ-001 default_committed marker missing:\n{p}"
+    );
+    assert!(
+        p.contains("Run scenario X and observe Y."),
+        "OQ-001 verify text missing:\n{p}"
+    );
+
+    // DEC-002 (superseded) MUST NOT appear.
+    assert!(
+        !p.contains("Decision DEC-002:"),
+        "superseded DEC-002 leaked into prompt:\n{p}"
+    );
+
+    // DEC-001 should appear exactly once (deduped across guided_by + decided_by).
+    let dec001_count = p.matches("Decision DEC-001:").count();
+    assert_eq!(
+        dec001_count, 1,
+        "DEC-001 not deduped (appeared {dec001_count} times):\n{p}"
+    );
+}
+
+#[test]
+fn prompt_blocked_module_surfaces_open_oq() {
+    let (_, layout) = build_triad_smoke("prompt-module-blocked");
+    // module_blocked satisfies ZFM-002 which is affected by OQ-002 (open).
+    // The prompt walk surfaces this with a loud `(UNRESOLVED — gen will refuse)` line.
+    let p = prompt::assemble_module_prompt(&layout, "module_blocked").expect("prompt");
+    assert!(
+        p.contains("Open question OQ-002 (UNRESOLVED"),
+        "open OQ-002 not surfaced for module_blocked:\n{p}"
+    );
+}
+
+#[test]
+fn prompt_byte_stable_across_runs() {
+    let (_, layout) = build_triad_smoke("prompt-stability");
+    let p1 = prompt::assemble_module_prompt(&layout, "module_ok").expect("prompt1");
+    let p2 = prompt::assemble_module_prompt(&layout, "module_ok").expect("prompt2");
+    assert_eq!(p1, p2, "prompt is not byte-stable across two runs");
 }
 
 #[test]
