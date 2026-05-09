@@ -184,6 +184,20 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         out.push('\n');
     }
 
+    // Phase 19 / D63 §1: decisions + default-committed OQs in scope.
+    // Walks `specs/decisions.toml` + `specs/open_questions.toml` per-tier,
+    // dedupes across (a) module's local guided_by, (b) module's
+    // requirements' decided_by, (c) workspace-tier decisions when the
+    // module sits inside a workspace member crate. OQs in scope are the
+    // ones reachable via Module.satisfies → Requirement →
+    // OpenQuestion.affects^-1.
+    let decision_oq = collect_decision_oq_context(layout, module_name, &module_toml)?;
+    if !decision_oq.is_empty() {
+        section_header(&mut out, "Decisions and known unknowns");
+        out.push_str(&decision_oq);
+        out.push('\n');
+    }
+
     section_header(&mut out, "Architecture (`specs/architecture.toml`)");
     if arch_path.is_file() {
         out.push_str("```toml\n");
@@ -234,6 +248,370 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     warn_if_over_budget(module_name, out.len());
 
     Ok(out)
+}
+
+/// Collect decisions + default_committed/closed OQ context for a module
+/// per D63 §1. Three sources, deduped:
+///
+/// (a) module.guided_by (each id resolves to a Decision)
+/// (b) requirements satisfied by the module → each requirement.decided_by
+/// (c) workspace-tier decisions when this project sits inside a workspace
+///
+/// Output is sorted by id for byte-stability. Status=`superseded`
+/// decisions are skipped (D63 §7). OQs are surfaced when they affect any
+/// of the module's satisfied requirements:
+///   - status = default_committed → "(working assumption)" + verify text
+///   - status = closed             → "(resolved)" + pointer to closed_by
+///   - status = open               → omitted at prompt time (the gen gate
+///     refuses before reaching this code path; for `prompt` (no-gate)
+///     surface, the open OQ is the loud signal that gen will refuse).
+pub fn collect_decision_oq_context(
+    layout: &LayoutContext,
+    module_name: &str,
+    module_toml: &toml::Value,
+) -> Result<String> {
+    use std::collections::BTreeMap;
+
+    // -- gather requirements + decisions + OQs per tier ---------------------
+
+    // Per-project requirements + sources file → list of requirement
+    // (id, decided_by). The module is rooted at `layout.project_root`;
+    // we read this project's requirements.toml as primary.
+    let satisfies: Vec<String> = module_toml
+        .get("satisfies")
+        .and_then(toml::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Local decisions/oqs.
+    let local_decisions = read_decisions(&layout.specs_dir.join("decisions.toml"))?;
+    let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
+
+    // Workspace-tier decisions/oqs (D63 §1c). The workspace's
+    // specs/decisions.toml lives one level up from a member crate's
+    // project_root when the project sits inside a `<workspace>/<member>/`
+    // shape. The detection heuristic: a workspace's spec.toml lives at
+    // `<parent>/spec.toml` and declares `[workspace]`. We probe the
+    // parent directory; if `<parent>/specs/decisions.toml` exists, treat
+    // it as workspace tier.
+    let mut workspace_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
+    let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
+    if let Some(parent) = layout.project_root.parent() {
+        let parent_specs = parent.join("specs");
+        let parent_dec = parent_specs.join("decisions.toml");
+        let parent_spec_toml = parent.join("spec.toml");
+        if parent_dec.is_file() && parent_spec_toml.is_file() {
+            // Confirm this parent is a workspace.
+            if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
+                if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
+                    if parsed.get("workspace").is_some() {
+                        for (k, v) in read_decisions(&parent_dec)? {
+                            workspace_decisions.insert(k, v);
+                        }
+                        for (k, v) in
+                            read_open_questions(&parent_specs.join("open_questions.toml"))?
+                        {
+                            workspace_oqs.insert(k, v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Per-project requirements: id → decided_by[].
+    let req_decided_by = read_requirement_decided_by(&layout.requirements_toml_path)?;
+    // Per-project OQs: keyed by (id → entry), already in local_oqs.
+    // Per-project requirement → affecting OQs (reverse of OQ.affects).
+    let req_to_oqs = build_req_to_oqs(&local_oqs);
+
+    // -- compute the in-scope decision id set per D63 §1 -------------------
+
+    let mut in_scope_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
+    let mut emit_decision = |id: &str, decisions: &BTreeMap<String, DecisionEntry>| {
+        if let Some(d) = decisions.get(id) {
+            if d.status == "superseded" {
+                return;
+            }
+            in_scope_decisions.insert(id.to_string(), d.clone());
+        }
+    };
+
+    // (a) module.guided_by
+    let guided_by: Vec<String> = module_toml
+        .get("guided_by")
+        .and_then(toml::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in &guided_by {
+        emit_decision(id, &local_decisions);
+        emit_decision(id, &workspace_decisions);
+    }
+
+    // (b) module.satisfies → Requirement.decided_by
+    for req_id in &satisfies {
+        let Some(decision_ids) = req_decided_by.get(req_id) else { continue };
+        for id in decision_ids {
+            emit_decision(id, &local_decisions);
+            emit_decision(id, &workspace_decisions);
+        }
+    }
+
+    // (c) workspace-tier decisions
+    for (id, entry) in &workspace_decisions {
+        if entry.status == "superseded" {
+            continue;
+        }
+        in_scope_decisions.insert(id.clone(), entry.clone());
+    }
+
+    // -- compute in-scope OQs ---------------------------------------------
+
+    let mut in_scope_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
+    for req_id in &satisfies {
+        if let Some(oq_ids) = req_to_oqs.get(req_id) {
+            for oq_id in oq_ids {
+                if let Some(entry) = local_oqs.get(oq_id) {
+                    in_scope_oqs.insert(oq_id.clone(), entry.clone());
+                }
+            }
+        }
+    }
+    // Workspace-tier OQs rarely apply to a member module (no requirements
+    // at workspace tier in the reduction model), but include any OQ
+    // whose `affects` array names a satisfied requirement.
+    for (oq_id, entry) in &workspace_oqs {
+        for affects in &entry.affects {
+            if satisfies.iter().any(|s| s == affects) {
+                in_scope_oqs.insert(oq_id.clone(), entry.clone());
+            }
+        }
+    }
+
+    // -- render -----------------------------------------------------------
+
+    let mut out = String::new();
+    if in_scope_decisions.is_empty() && in_scope_oqs.is_empty() {
+        return Ok(out);
+    }
+
+    // Module header.
+    out.push_str(&format!("Context for module `{module_name}`:\n\n"));
+
+    if !in_scope_decisions.is_empty() {
+        for (id, d) in &in_scope_decisions {
+            out.push_str(&format!("Decision {id}: {}.\n{}\n", d.title, d.text));
+            if let Some(c) = &d.consequences {
+                out.push_str(&format!("Consequences: {c}\n"));
+            }
+            out.push('\n');
+        }
+    }
+
+    if !in_scope_oqs.is_empty() {
+        for (id, oq) in &in_scope_oqs {
+            match oq.status.as_str() {
+                "default_committed" => {
+                    out.push_str(&format!(
+                        "Open question {id} (working assumption): {}.",
+                        oq.text
+                    ));
+                    if let Some(v) = &oq.verify {
+                        out.push_str(&format!(" Verify by: {v}"));
+                    }
+                    out.push('\n');
+                }
+                "closed" => {
+                    let cb = oq.closed_by.as_deref().unwrap_or("(unknown)");
+                    out.push_str(&format!(
+                        "Open question {id} (resolved): see Decision {cb}.\n"
+                    ));
+                }
+                "open" => {
+                    out.push_str(&format!(
+                        "Open question {id} (UNRESOLVED — gen will refuse): {}.\n",
+                        oq.text
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+#[derive(Debug, Clone)]
+struct DecisionEntry {
+    title: String,
+    status: String,
+    text: String,
+    consequences: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OpenQuestionEntry {
+    pub(crate) status: String,
+    pub(crate) text: String,
+    pub(crate) closed_by: Option<String>,
+    pub(crate) verify: Option<String>,
+    pub(crate) affects: Vec<String>,
+}
+
+fn read_decisions(
+    path: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, DecisionEntry>> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<String, DecisionEntry> = BTreeMap::new();
+    if !path.is_file() {
+        return Ok(out);
+    }
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if let Some(arr) = parsed.get("decision").and_then(toml::Value::as_array) {
+        for item in arr {
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let title = item
+                .get("title")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let status = item
+                .get("status")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let text = item
+                .get("text")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let consequences = item
+                .get("consequences")
+                .and_then(toml::Value::as_str)
+                .map(str::to_string);
+            out.insert(
+                id.to_string(),
+                DecisionEntry {
+                    title,
+                    status,
+                    text,
+                    consequences,
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn read_open_questions(
+    path: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, OpenQuestionEntry>> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
+    if !path.is_file() {
+        return Ok(out);
+    }
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) {
+        for item in arr {
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let status = item
+                .get("status")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let text = item
+                .get("text")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let closed_by = item
+                .get("closed_by")
+                .and_then(toml::Value::as_str)
+                .map(str::to_string);
+            let verify = item
+                .get("verify")
+                .and_then(toml::Value::as_str)
+                .map(str::to_string);
+            let affects: Vec<String> = item
+                .get("affects")
+                .and_then(toml::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            out.insert(
+                id.to_string(),
+                OpenQuestionEntry {
+                    status,
+                    text,
+                    closed_by,
+                    verify,
+                    affects,
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+fn read_requirement_decided_by(
+    path: &std::path::Path,
+) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if !path.is_file() {
+        return Ok(out);
+    }
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    if let Some(arr) = parsed.get("requirement").and_then(toml::Value::as_array) {
+        for item in arr {
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let decisions: Vec<String> = item
+                .get("decided_by")
+                .and_then(toml::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            out.insert(id.to_string(), decisions);
+        }
+    }
+    Ok(out)
+}
+
+fn build_req_to_oqs(
+    oqs: &std::collections::BTreeMap<String, OpenQuestionEntry>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    use std::collections::BTreeMap;
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (oq_id, entry) in oqs {
+        for req_id in &entry.affects {
+            out.entry(req_id.clone()).or_default().push(oq_id.clone());
+        }
+    }
+    out
 }
 
 /// Emit a `tracing::warn!` when the assembled prompt exceeds 80% of the
