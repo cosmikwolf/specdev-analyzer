@@ -19,10 +19,12 @@
 #     resolve open questions or commit working defaults
 #
 # Supersession keeps both bodies. When DEC-N supersedes DEC-M:
-#   - DEC-M.status flips to `superseded` and gains
-#     `superseded_by = "DEC-N"`
-#   - DEC-N (status = accepted) optionally lists `supersedes = ["DEC-M"]`
-# The codegen prompt walk follows only `accepted` decisions.
+#   - DEC-M.status flips to `superseded`. No forward pointer.
+#   - DEC-N (status = accepted) lists `supersedes = ["DEC-M"]`.
+# The chain is one-way; the `decision_supersedes_chain_consistency`
+# graph check enforces orphan-freedom (every superseded entry is
+# pointed at by exactly one accepted entry's `supersedes[]`) and
+# acyclicity. The codegen prompt walk follows only `accepted` decisions.
 #
 # Delete the EXAMPLE entries below once the project has real decisions.
 
@@ -61,7 +63,8 @@
 # """
 # closes_questions = ["OQ-001"]
 
-# EXAMPLE: a superseded decision (kept as reasoning trail).
+# EXAMPLE: a supersession pair — superseded entry kept as reasoning
+# trail, accepted successor names it in `supersedes[]`.
 # [[decision]]
 # id = "DEC-003"
 # title = "Use `log` for diagnostics"
@@ -70,4 +73,13 @@
 # Original choice: `log` crate facade. Replaced by tracing (DEC-004)
 # once async support became a requirement.
 # """
-# superseded_by = "DEC-004"
+#
+# [[decision]]
+# id = "DEC-004"
+# title = "Switch diagnostics to `tracing`"
+# status = "accepted"
+# text = """
+# Replace `log` with `tracing`. Async-aware spans were the trigger;
+# downstream consumers can still use `tracing-log` to bridge.
+# """
+# supersedes = ["DEC-003"]

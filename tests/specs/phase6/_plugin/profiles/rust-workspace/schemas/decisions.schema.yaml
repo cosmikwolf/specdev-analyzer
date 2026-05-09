@@ -44,10 +44,9 @@ $defs:
           `accepted` decisions drive current behavior — the codegen
           prompt walk inlines them and graph checks treat their
           back-references as live. `superseded` decisions persist as
-          reasoning trail; the prompt walk skips them. A superseded
-          decision must point forward to its successor via
-          `superseded_by`; the successor (status = accepted) may point
-          back via `supersedes[]`.
+          reasoning trail; the prompt walk skips them. The successor
+          (status = accepted) lists the older entry in `supersedes[]`;
+          superseded entries carry no forward pointer.
         type: string
         enum: [accepted, superseded]
       text:
@@ -95,17 +94,15 @@ $defs:
           section, line, file path. Mirrors `Requirement.source_ref`.
         type: string
         minLength: 1
-      superseded_by:
-        description: >
-          Id of the accepted decision that replaced this one. Required
-          when `status = "superseded"`; forbidden otherwise (graph
-          check `decision_superseded_by_resolves` enforces resolution).
-        $ref: "enums.schema.yaml#/$defs/RequirementId"
       supersedes:
         description: >
           Ids of older decisions this one replaces. Optional on
           `accepted` decisions; the targeted decisions must carry
-          `status = "superseded"`.
+          `status = "superseded"`. The chain is one-way (D63 §7) —
+          there is no `superseded_by` back-pointer; the
+          `decision_supersedes_chain_consistency` graph check walks
+          these arrays to validate orphans, cycles, and unique
+          successorship.
         type: array
         items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
         uniqueItems: true
