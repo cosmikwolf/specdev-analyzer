@@ -263,6 +263,25 @@ enum Command {
         #[arg(long)]
         module: Option<String>,
     },
+    /// Record SHA-256 hashes of generated files in
+    /// `specs/specdev/gen-lineage.toml`. Invoked by the `/spec-gen`
+    /// skill after emission — the analyzer cannot know which files the
+    /// codegen prose prescribed, so the skill passes them explicitly.
+    /// Re-recording a path replaces its entry. `report gen-drift`
+    /// classifies recorded files later.
+    GenRecord {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module the files were generated for. Omit for project-level
+        /// emissions (Cargo.toml).
+        #[arg(long)]
+        module: Option<String>,
+        /// Emitted file paths (absolute, or relative to cwd). Each must
+        /// resolve inside the project root.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -284,6 +303,16 @@ enum ReportAction {
         /// Write to this file instead of stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+    /// Classify every file recorded in `gen-lineage.toml` as clean
+    /// (bytes match the recorded hash), edited (generated then
+    /// hand-edited), or missing (recorded but gone). Pure reporter;
+    /// hash-level only — it detects THAT a file changed, not what.
+    /// Exit 0 when clean, 1 on drift, 2 on hard error.
+    GenDrift {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
     },
 }
 
@@ -417,12 +446,20 @@ fn main() -> ExitCode {
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gen { project, module } => run_gen(project, spec_path.as_deref(), module),
+        Command::GenRecord {
+            project,
+            module,
+            files,
+        } => run_gen_record(project, spec_path.as_deref(), module, files),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
                 format,
                 output,
             } => run_report_coverage(project, spec_path.as_deref(), &format, output),
+            ReportAction::GenDrift { project } => {
+                run_report_gen_drift(project, spec_path.as_deref())
+            }
         },
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
@@ -1374,6 +1411,71 @@ fn run_gen(
          to /spec-gen.",
     );
     ExitCode::from(2)
+}
+
+fn run_gen_record(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: Option<String>,
+    files: Vec<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    match specdev_analyzer::gen_lineage::record_files(
+        &layout,
+        module.as_deref(),
+        &files,
+        &generated_at,
+    ) {
+        Ok(recorded) => {
+            for path in &recorded {
+                println!("recorded {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_gen_drift(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match specdev_analyzer::gen_lineage::run_gen_drift(&layout) {
+        Ok(report) => match report.to_yaml() {
+            Ok(yaml) => {
+                print!("{yaml}");
+                if report.is_clean() {
+                    ExitCode::SUCCESS
+                } else {
+                    // Drift present → exit 1 so the skill can branch
+                    // without parsing the YAML.
+                    ExitCode::from(1)
+                }
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        },
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
 }
 
 fn run_report_coverage(
