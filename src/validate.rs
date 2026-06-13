@@ -1434,15 +1434,29 @@ pub struct Summary {
     pub requirements: usize,
     pub sources: usize,
     pub graph_checks: usize,
+    pub decisions: usize,
+    pub open_questions: usize,
+    /// Subset of `open_questions` with `status = "open"` — the ones
+    /// that gate codegen for the modules they reach.
+    pub open_questions_open: usize,
 }
 
 impl Summary {
-    /// One-line rendering for the CLI tail.
+    /// One-line rendering for the CLI tail. The triad counts append
+    /// only when at least one triad file has entries, so pre-triad
+    /// projects keep the original four-field line.
     pub fn render(&self) -> String {
-        format!(
+        let mut line = format!(
             "loaded {} modules / {} requirements / {} sources / {} graph checks",
             self.modules, self.requirements, self.sources, self.graph_checks,
-        )
+        );
+        if self.decisions > 0 || self.open_questions > 0 {
+            line.push_str(&format!(
+                " / {} decisions / {} open questions ({} open)",
+                self.decisions, self.open_questions, self.open_questions_open,
+            ));
+        }
+        line
     }
 }
 
@@ -1457,13 +1471,60 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
 
     let (requirements, sources) = count_requirements_and_sources(layout);
     let graph_checks = count_graph_checks(layout);
+    let decisions = count_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
+    let (open_questions, open_questions_open) = count_open_questions(layout);
 
     Summary {
         modules,
         requirements,
         sources,
         graph_checks,
+        decisions,
+        open_questions,
+        open_questions_open,
     }
+}
+
+/// Best-effort count of a top-level array-of-tables in a TOML file.
+/// Missing or unparseable files count as zero, mirroring
+/// [`count_requirements_and_sources`].
+fn count_toml_array(path: &std::path::Path, key: &str) -> usize {
+    if !path.is_file() {
+        return 0;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
+        return 0;
+    };
+    parsed
+        .get(key)
+        .and_then(toml::Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0)
+}
+
+/// Best-effort (total, open) counts over `specs/open_questions.toml`.
+fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
+    let path = layout.specs_dir.join("open_questions.toml");
+    if !path.is_file() {
+        return (0, 0);
+    }
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (0, 0);
+    };
+    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
+        return (0, 0);
+    };
+    let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) else {
+        return (0, 0);
+    };
+    let open = arr
+        .iter()
+        .filter(|q| q.get("status").and_then(toml::Value::as_str) == Some("open"))
+        .count();
+    (arr.len(), open)
 }
 
 /// Capability tags carried by each registered graph-check primitive

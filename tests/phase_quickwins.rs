@@ -275,11 +275,34 @@ fn summary_render_format_is_one_line_with_each_count() {
         requirements: 12,
         sources: 3,
         graph_checks: 9,
+        decisions: 0,
+        open_questions: 0,
+        open_questions_open: 0,
+    };
+    let line = s.render();
+    // Pre-triad projects (zero decisions / open questions) keep the
+    // original four-field line — no trailing triad counts.
+    assert_eq!(
+        line,
+        "loaded 7 modules / 12 requirements / 3 sources / 9 graph checks"
+    );
+}
+
+#[test]
+fn summary_render_appends_triad_counts_when_present() {
+    let s = validate::Summary {
+        modules: 7,
+        requirements: 12,
+        sources: 3,
+        graph_checks: 9,
+        decisions: 4,
+        open_questions: 2,
+        open_questions_open: 1,
     };
     let line = s.render();
     assert_eq!(
         line,
-        "loaded 7 modules / 12 requirements / 3 sources / 9 graph checks"
+        "loaded 7 modules / 12 requirements / 3 sources / 9 graph checks / 4 decisions / 2 open questions (1 open)"
     );
 }
 
