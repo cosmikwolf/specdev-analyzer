@@ -75,8 +75,10 @@ $defs:
           architecture-level decision (e.g. `[plugin].formats`,
           `[audio].default_channel_layout`) and not a module's
           responsibility. `build` — captured by build configuration
-          (Cargo features, target). `test` — captured by a test suite.
-          The check only fires for `nature = "module"` requirements.
+          (Cargo features, target). `test` — captured by a test suite;
+          the `requirements_have_satisfiers` check exempts these, but
+          `test_requirements_have_verifiers` warns instead when no test
+          item's `verifies` names the requirement (D60).
         type: string
         enum: [module, architecture, build, test]
         default: module

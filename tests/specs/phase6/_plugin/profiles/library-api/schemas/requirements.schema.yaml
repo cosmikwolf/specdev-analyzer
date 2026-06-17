@@ -71,8 +71,10 @@ $defs:
           `satisfies` array. `architecture` — captured by feature flags
           / re-exports / public API shape, not a module body.
           `build` — captured by Cargo configuration (features, MSRV).
-          `test` — captured by a test suite. The check only fires for
-          `nature = "module"` requirements.
+          `test` — captured by a test suite; the
+          `requirements_have_satisfiers` check exempts these, but
+          `test_requirements_have_verifiers` warns instead when no test
+          item's `verifies` names the requirement (D60).
         type: string
         enum: [module, architecture, build, test]
         default: module

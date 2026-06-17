@@ -23,6 +23,7 @@ modules_acyclic                              = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 requirements_have_satisfiers                 = "warning"
+test_requirements_have_verifiers             = "warning"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
@@ -62,13 +63,30 @@ field = "entities[].name"
 
 # Every Requirement with `nature = "module"` (the default) must be
 # satisfied by at least one module — orphan requirements warn (F-006).
-# Set `nature = "architecture" | "build" | "test"` on a requirement to
-# exempt it from this check.
+# Set `nature = "architecture" | "build"` to exempt; `nature = "test"`
+# requirements are exempt HERE but covered by the test-verifier check
+# below instead.
 [[project.graph_checks]]
 kind = "requirements_have_satisfiers"
 rule = "requirements_have_satisfiers"
 entity_scope = "Requirement"
 relation_scope = "module_satisfies"
+
+# Every Requirement with `nature = "test"` must be verified by at least
+# one test item (a `[[items]]` entry with `test = true` whose `verifies`
+# names it) — the test-surface analogue of requirements_have_satisfiers
+# (D60). Uses the generic `entity_has_inbound_relation` primitive with an
+# attr filter scoping the check to `nature = "test"`; the `test_verifies`
+# edges come from `items[].verifies[]` reduction. Reference resolution
+# (a `verifies` id naming a real requirement) is handled at reduce time
+# by REDUCE_UNRESOLVED, not here.
+[[project.graph_checks]]
+kind = "entity_has_inbound_relation"
+rule = "test_requirements_have_verifiers"
+entity_scope = "Requirement"
+entity_attr = "nature"
+entity_attr_value = "test"
+relation_scope = "test_verifies"
 
 # ---------------------------------------------------------------------------
 # Triad consistency.

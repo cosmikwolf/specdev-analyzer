@@ -398,12 +398,22 @@ pub fn requirements_have_satisfiers(
 /// `relation_label` is the `relation_scope` string from the check config,
 /// used verbatim in the message.
 ///
-/// Emits one finding per orphan entity. No exemption mechanism in v1 — if
-/// a profile needs one, add an optional attr-filter the same way
-/// `requirements_have_satisfiers` keys off `attrs.nature`.
+/// Optional attr filter: when `entity_attr` + `entity_attr_value` are
+/// both `Some`, only entities whose `attrs.<entity_attr>` equals the value
+/// are checked (others are exempt). This is how Phase 21's
+/// `test_requirements_have_verifiers` scopes the orphan check to
+/// `nature = "test"` requirements without disturbing the unfiltered
+/// `nature`-agnostic consumers (audio-plugin's `parameters_have_bindings`
+/// passes `None`/`None`). A missing attr never matches a concrete filter
+/// value, so attr-filtered checks silently skip entities that don't carry
+/// the attr at all.
+///
+/// Emits one finding per orphan entity.
 pub fn entity_has_inbound_relation(
     root: &Value,
     relation_label: &str,
+    entity_attr: Option<&str>,
+    entity_attr_value: Option<&str>,
     rule: &str,
     severity: Severity,
 ) -> Vec<Finding> {
@@ -425,6 +435,17 @@ pub fn entity_has_inbound_relation(
         let Some(name) = ent.get("name").and_then(|n| n.as_str()) else {
             continue;
         };
+        // Optional attr filter: skip entities that don't match the
+        // requested `attrs.<attr> == value`. Missing attr never matches.
+        if let (Some(attr), Some(want)) = (entity_attr, entity_attr_value) {
+            let have = ent
+                .get("attrs")
+                .and_then(|a| a.get(attr))
+                .and_then(|v| v.as_str());
+            if have != Some(want) {
+                continue;
+            }
+        }
         if referenced.contains(name) {
             continue;
         }
@@ -1091,7 +1112,7 @@ mod tests {
                 { "kind": "parameter_binding", "from": "synth", "to": "synth.op1_crs" },
             ],
         });
-        let f = entity_has_inbound_relation(&v, "parameter_binding", "parameters_have_bindings", Severity::Warning);
+        let f = entity_has_inbound_relation(&v, "parameter_binding", None, None, "parameters_have_bindings", Severity::Warning);
         assert_eq!(f.len(), 1, "exactly one orphan expected");
         let msg = &f[0].message;
         assert!(msg.contains("synth.master_volume"), "names the orphan: {msg}");
@@ -1111,8 +1132,37 @@ mod tests {
                 { "kind": "parameter_binding", "from": "synth", "to": "synth.algorithm" },
             ],
         });
-        let f = entity_has_inbound_relation(&v, "parameter_binding", "parameters_have_bindings", Severity::Warning);
+        let f = entity_has_inbound_relation(&v, "parameter_binding", None, None, "parameters_have_bindings", Severity::Warning);
         assert!(f.is_empty(), "multi-bound parameter is not an orphan: {f:?}");
+    }
+
+    #[test]
+    fn entity_has_inbound_relation_attr_filter_scopes_to_matching_entities() {
+        // Phase 21: only `nature = "test"` requirements are checked for an
+        // inbound test_verifies edge. A nature=module requirement with no
+        // test_verifies must NOT be flagged (it's out of scope), and a
+        // nature=test requirement with no verifier MUST be flagged.
+        let v = json!({
+            "entities": [
+                { "kind": "Requirement", "name": "REQ-1", "attrs": { "nature": "module" } },
+                { "kind": "Requirement", "name": "REQ-2", "attrs": { "nature": "test" } },
+                { "kind": "Requirement", "name": "REQ-3", "attrs": { "nature": "test" } },
+            ],
+            "relations": [
+                { "kind": "test_verifies", "from": "m", "to": "REQ-2" },
+            ],
+        });
+        let f = entity_has_inbound_relation(
+            &v,
+            "test_verifies",
+            Some("nature"),
+            Some("test"),
+            "test_requirements_have_verifiers",
+            Severity::Warning,
+        );
+        assert_eq!(f.len(), 1, "only the unverified test requirement is flagged: {f:?}");
+        assert!(f[0].message.contains("REQ-3"), "names REQ-3: {}", f[0].message);
+        assert!(!f[0].message.contains("REQ-1"), "must not flag the module req");
     }
 
     #[test]

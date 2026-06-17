@@ -120,6 +120,7 @@ pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Rep
     validate_architecture(layout, &mut report)?;
     validate_requirements(layout, &mut report)?;
     validate_items_present(layout, filter, &mut report);
+    validate_reserved_test_kinds(layout, filter, &mut report);
     validate_context_files_when_strict(layout, filter, &mut report);
     validate_profile_layout_match(layout, &mut report);
     Ok(report)
@@ -925,7 +926,14 @@ fn execute_graph_checks(
                     (Some(es), Some(rs)) => {
                         let view =
                             filter_for_layer_dependency(&graph_json, es, rs, kindset);
-                        graph_checks::entity_has_inbound_relation(&view, rs, rule, severity)
+                        graph_checks::entity_has_inbound_relation(
+                            &view,
+                            rs,
+                            check.entity_attr.as_deref(),
+                            check.entity_attr_value.as_deref(),
+                            rule,
+                            severity,
+                        )
                     }
                     _ => Vec::new(),
                 }
@@ -1633,6 +1641,65 @@ pub fn validate_items_present(
                 )
                 .with_file(module_path.display().to_string()),
             );
+        }
+    }
+}
+
+/// Phase 21 / D61: warns when a test item declares a `test_kind` whose
+/// emission is reserved-but-not-shipped in v1 (`bench` / `fuzz`). The
+/// schema accepts the enum slot so post-v1 promotion needs no spec
+/// migration, but `gen` emits nothing for it — surfacing the gap at
+/// validate time keeps authors from being surprised at codegen.
+///
+/// Tag: [`Capability::StrictGen`] — the gap only matters when codegen
+/// actually runs.
+pub fn validate_reserved_test_kinds(
+    layout: &LayoutContext,
+    filter: Option<Capability>,
+    report: &mut Report,
+) {
+    let tags: &[Capability] = &[Capability::StrictGen];
+    if !capability_matches(tags, filter) {
+        return;
+    }
+    const RESERVED: &[&str] = &["bench", "fuzz"];
+    let inv = layout.enumerate();
+    for module_path in &inv.modules {
+        let Ok(text) = std::fs::read_to_string(module_path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
+            continue;
+        };
+        let Some(items) = parsed.get("items").and_then(toml::Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            if item.get("test").and_then(toml::Value::as_bool) != Some(true) {
+                continue;
+            }
+            let Some(kind) = item.get("test_kind").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            if RESERVED.contains(&kind) {
+                let name = item
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or("<unnamed>");
+                report.push(
+                    Finding::new(
+                        "TEST-KIND-001",
+                        Severity::Warning,
+                        format!(
+                            "test item `{name}` has test_kind = \"{kind}\", which reserves \
+                             the enum slot but emits no body in v1 — `gen` will skip it. \
+                             Use `unit` / `integration` / `doc`, or hand-author the \
+                             {kind} harness until v1.x ships emission."
+                        ),
+                    )
+                    .with_file(module_path.display().to_string()),
+                );
+            }
         }
     }
 }
