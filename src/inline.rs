@@ -2,10 +2,9 @@
 //!
 //! Deterministic file copies plugin → project, with a single rolled-up
 //! [`crate::lineage`] entry recording origin + version + content hash. Re-inline
-//! is unconditionally refused in Phase 3; `--merge` is Phase 4.
+//! is unconditionally refused; updates require `--merge`.
 //!
-//! Layout assumed in the plugin tree (Phase 3 fixture; Phases 5–9 produce
-//! the canonical content):
+//! Layout assumed in the plugin tree:
 //!
 //! ```text
 //! <plugin-root>/
@@ -22,7 +21,7 @@
 //!     README.md
 //! ```
 //!
-//! Files copied to the project tree (matches doc 15 §4 layout):
+//! Files copied to the project tree:
 //!
 //! - block schema      → `specs/specdev/schemas/inlined/blocks/<name>.schema.yaml`
 //! - block reduction   → `specs/specdev/reductions/blocks/<name>.yaml`
@@ -64,7 +63,7 @@ pub fn lex_order_bridge(name: &str) -> Result<(&str, &str)> {
     }
     if a.contains('+') || b.contains('+') {
         return Err(anyhow!(
-            "[BRIDGE-LEX-001] bridge name {name:?} contains more than one `+`; n-ary bridges are deferred (doc 15 §12)",
+            "[BRIDGE-LEX-001] bridge name {name:?} contains more than one `+`; n-ary bridges are deferred",
         ));
     }
     if a >= b {
@@ -87,7 +86,7 @@ pub(crate) struct UnitFile {
     /// to mirror the plugin layout under `specs/specdev/upstream/`.
     pub(crate) rel_src_in_unit: PathBuf,
     /// Bytes the analyzer copied. Captured at preflight read so the hash
-    /// witnesses what was actually deployed (D33).
+    /// witnesses what was actually deployed.
     pub(crate) bytes: Vec<u8>,
 }
 
@@ -95,10 +94,10 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("reading {}", path.display()))
 }
 
-/// Read the plugin's `plugin.json` and return the `version` field. Phase 3
-/// uses this to populate `origin_version` on inlined units. Falls back to
-/// `"unknown"` if the field is missing — plugin-author-CI lints this in a
-/// follow-up phase.
+/// Read the plugin's `plugin.json` and return the `version` field. Used to
+/// populate `origin_version` on inlined units. Falls back to
+/// `"unknown"` if the field is missing — plugin-author-CI lints this
+/// separately.
 fn plugin_version(plugin_root: &Path) -> Result<String> {
     let manifest = plugin_root.join(crate::plugin_root::PLUGIN_MARKER);
     let text =
@@ -178,10 +177,10 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
             bytes: read_file(&codegen_src)?,
         });
 
-        // Phase 16 step 2.5: per-language `deps.yaml` manifest joins the
-        // block's per-unit file set when present (D52 / doc 21 §4). Bytes
-        // participate in `content_hash` automatically via the rolled-up
-        // hash; pre-D52 blocks without deps.yaml keep their existing hash.
+        // Per-language `deps.yaml` manifest joins the block's per-unit file
+        // set when present. Bytes participate in `content_hash` automatically
+        // via the rolled-up hash; blocks without deps.yaml keep their
+        // existing hash.
         let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
         if deps_src.is_file() {
             files.push(UnitFile {
@@ -245,7 +244,7 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
             bytes: read_file(&codegen_src)?,
         });
 
-        // D65: per-language `deps.yaml` manifest joins the bridge's
+        // Per-language `deps.yaml` manifest joins the bridge's
         // per-unit file set when present, mirroring the block shape.
         // Bridges own join-product crates (a dep that exists only
         // because two blocks are paired — e.g. an async-HAL crate);
@@ -263,12 +262,11 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
         }
     }
 
-    // Phase 16 step 2.5: language-neutral `contract.yaml` manifest joins
-    // the bridge's per-unit file set when present (D52 / doc 21 §5). It
-    // lives at the bridge dir top level (not under codegen/<lang>/) and
-    // inlines next to the bridge's reduction file. Bytes participate in
-    // `content_hash` automatically via the rolled-up hash; pre-D52 bridges
-    // without contract.yaml keep their existing hash.
+    // Language-neutral `contract.yaml` manifest joins the bridge's per-unit
+    // file set when present. It lives at the bridge dir top level (not under
+    // codegen/<lang>/) and inlines next to the bridge's reduction file. Bytes
+    // participate in `content_hash` automatically via the rolled-up hash;
+    // bridges without contract.yaml keep their existing hash.
     let contract_src = unit_dir.join("contract.yaml");
     if contract_src.is_file() {
         files.push(UnitFile {
@@ -321,7 +319,7 @@ fn refuse_if_dst_exists(
         let dst = specdev_root.join(&f.rel_dst);
         if dst.exists() {
             return Err(anyhow!(
-                "[INLINE-002] {unit_label}: refuse to overwrite existing {}; use `specdev inline --merge` (Phase 4) or `git checkout -- specs/specdev/...` to reset",
+                "[INLINE-002] {unit_label}: refuse to overwrite existing {}; use `specdev inline --merge` or `git checkout -- specs/specdev/...` to reset",
                 dst.display(),
             ));
         }
@@ -353,8 +351,8 @@ pub(crate) fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Resul
 /// Append a `$ref` to the aggregator's `allOf:` array, then write back. The
 /// aggregator file is project-managed (not under the determinism invariant
 /// for content_hash), so re-emit via `serde_yaml` is acceptable. Idempotent:
-/// running the same insertion twice produces a single entry. Phase-3
-/// callers always run this on a fresh inline (caller has already refused
+/// running the same insertion twice produces a single entry. Callers
+/// always run this on a fresh inline (caller has already refused
 /// re-inline); idempotency guards against double-runs from test harnesses.
 fn aggregator_add_ref(module_schema_path: &Path, ref_path: &str) -> Result<()> {
     let text = std::fs::read_to_string(module_schema_path)
@@ -408,7 +406,7 @@ pub fn run_inline_block(layout: &LayoutContext, plugin_root: &Path, name: &str) 
     let mut lineage = Lineage::load(&layout.specdev_root)?;
     if lineage.has_block(name) {
         return Err(anyhow!(
-            "[INLINE-002] block {name:?} is already inlined (lineage entry present); use `specdev inline {name} --merge` (Phase 4) to update from upstream, or `git checkout -- specs/specdev/...` to reset",
+            "[INLINE-002] block {name:?} is already inlined (lineage entry present); use `specdev inline {name} --merge` to update from upstream, or `git checkout -- specs/specdev/...` to reset",
         ));
     }
     let files = collect_block_files(plugin_root, name)?;
@@ -456,7 +454,7 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
 
     if lineage.has_bridge(name) {
         return Err(anyhow!(
-            "[INLINE-002] bridge `{name}` is already inlined (lineage entry present); use `specdev inline-bridge {name} --merge` (Phase 4) to update",
+            "[INLINE-002] bridge `{name}` is already inlined (lineage entry present); use `specdev inline-bridge {name} --merge` to update",
         ));
     }
 
@@ -498,7 +496,7 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
 /// the block name + a `BLOCK-LINT-NNN` code + a one-line message). The
 /// CLI prints these as-is without additional prefixing.
 ///
-/// Phase 6.5 work; complements `lint_plugin_bridges`. The two lints are
+/// Complements `lint_plugin_bridges`. The two lints are
 /// independent walks; `run_plugin_lint` aggregates them.
 ///
 /// Checks per block:

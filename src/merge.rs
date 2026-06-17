@@ -1,6 +1,6 @@
 //! `specdev inline <block> --merge` and `specdev inline-bridge <a>+<b> --merge`.
 //!
-//! Line-based 3-way merge via `git merge-file` (doc 15 §5.3, Phase 4 plan).
+//! Line-based 3-way merge via `git merge-file`.
 //! For each file in the unit, three inputs:
 //!
 //! - `base`   — bytes-as-of-inlining, read from `specs/specdev/upstream/...`
@@ -16,7 +16,7 @@
 //! Any mismatch errors `MERGE-FILESET` rather than guessing intent —
 //! file-set evolution (added/removed files in a unit) is a future widening.
 //!
-//! No `--force`: per doc 15 §5.3, git owns destructive resets.
+//! No `--force`: git owns destructive resets.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -249,7 +249,7 @@ fn run_merge_unit(
 /// Roll up the merged file set's content_hash. Mirrors
 /// [`crate::inline::rollup_hash`] but takes the merged bytes (which may
 /// differ from theirs/ours for compatible 3-way files). Sort is by
-/// `rel_dst` to match Phase 3.
+/// `rel_dst` to match the inline rollup.
 fn rollup_merged(merged: &[(UnitFile, Vec<u8>, bool)]) -> String {
     let mut entries: Vec<(&Path, &[u8])> = merged
         .iter()

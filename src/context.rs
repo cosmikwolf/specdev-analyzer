@@ -1,4 +1,4 @@
-//! Phase 11.5: focused dependency cone for one module.
+//! Focused dependency cone for one module.
 //!
 //! `specdev-analyzer context --module <Name>` emits the file set + sibling
 //! modules a Claude-orchestrating skill needs to read in order to author,
@@ -10,9 +10,6 @@
 //! schema. No new graph-check primitive. The cone is one hop deep — a
 //! skill that needs transitive context calls `context` again on the
 //! next-hop module.
-//!
-//! See `specdev-next/19-analyzer-context-subcommand.md` for the full
-//! design rationale.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -447,16 +444,15 @@ fn module_from_provenance(source_file: &str) -> Option<String> {
     Some(stem.to_string())
 }
 
-/// Phase 16 §8.1 step 5: dispatch off the inlined `profile.yaml`'s
+/// Dispatch off the inlined `profile.yaml`'s
 /// `context.context_subcommand_extras`. Each extra declares either a
 /// `from_attr` lookup (read named attr off the Module entity, emit as a
 /// string field) or a `kind: collect_local_entities_by_kind` walk
 /// (group locally-owned entities by kind suffix; emit as a nested map).
 ///
-/// Backward-compat fallback: when no `profile.yaml` is present
-/// (pre-D52 projects), the legacy match-on-profile-name path fires.
-/// Removed in v1.1 alongside the cargo_toml / skeleton fallbacks
-/// (doc 21 §6.5).
+/// Backward-compat fallback: when no `profile.yaml` is present, the
+/// legacy match-on-profile-name path fires. Removed in v1.1 alongside
+/// the cargo_toml / skeleton fallbacks.
 fn compute_profile_specific(
     layout: &LayoutContext,
     module: &str,
@@ -486,11 +482,11 @@ fn compute_profile_specific(
         return Ok(out);
     }
 
-    // Pre-D52 backward-compat (legacy hardcoded match). Behavior preserved
-    // byte-for-byte for projects without an inlined manifest. Deleted in
-    // v1.1 per §6.5.
+    // Backward-compat (legacy hardcoded match). Behavior preserved
+    // byte-for-byte for projects without an inlined manifest. Removed in
+    // v1.1.
     match layout.spec.project.profile.as_str() {
-        "firmware-layered" => { // D51-fallback: pre-D52 hardcoded match arm per doc 21 §6.5; deleted in v1.1 (step 10).
+        "firmware-layered" => { // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
             if let Some(layer) = ent.attrs.get("layer").and_then(|v| v.as_str()) {
                 out.insert(
                     "layer".to_string(),
@@ -503,7 +499,7 @@ fn compute_profile_specific(
                 out.insert("hardware_resources".to_string(), map);
             }
         }
-        "library-api" => { // D51-fallback: pre-D52 hardcoded match arm per doc 21 §6.5; deleted in v1.1 (step 10).
+        "library-api" => { // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
             if let Some(vis) = ent.attrs.get("visibility").and_then(|v| v.as_str()) {
                 out.insert(
                     "visibility".to_string(),
@@ -601,7 +597,7 @@ fn collect_local_entities_by_kind(
     Some(serde_yaml::Value::Mapping(yaml))
 }
 
-/// Load `<specdev_root>/profile.yaml` if present (Phase 16 §8.1 step 5).
+/// Load `<specdev_root>/profile.yaml` if present.
 /// Mirror of the helpers in `cargo_toml.rs` and `skeleton.rs` — kept
 /// module-private here too; a shared `manifest::loader_for(layout)` is a
 /// v1.x cleanup item.

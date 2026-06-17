@@ -1,5 +1,4 @@
-//! Triad smoke fixture (TF1) — Run 2's gating artifact for the
-//! Phase 19 decisions + open_questions triad.
+//! Triad smoke fixture — the decisions + open_questions triad.
 //!
 //! The fixture exercises every triad graph check (10 reference-resolution
 //! checks + 1 status-consistency check) plus the codegen gate. Subsequent
@@ -7,7 +6,7 @@
 //! walk, gate refusal) consume `build_triad_smoke()` to scaffold a
 //! canonical project and then assert against the analyzer behavior.
 //!
-//! Acceptance gates (per the work order's §TF1):
+//! Acceptance gates:
 //!
 //! 1. `validate` reports 0 errors, 1 warning (`codegen_unblocked` for
 //!    `module_blocked`).
@@ -18,9 +17,6 @@
 //!    `[codegen_unblocked]` naming OQ-002.
 //! 5. Removing `decisions.toml` and `open_questions.toml` leaves
 //!    `validate` clean (additivity regression).
-//!
-//! Gate 1 + the per-check positive paths land here in Step 1; the deeper
-//! gates (2–5) land alongside the analyzer behavior in Steps 3–5.
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +33,7 @@ fn plugin_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("specs")
-        .join("phase6")
+        .join("full_plugin")
         .join("_plugin")
 }
 
@@ -232,8 +228,8 @@ satisfies = ["ZFM-002"]
 
 // ===========================================================================
 // Baseline — the smoke fixture loads, reduces, and materializes every
-// triad entity + relation kind. Subsequent steps (Step 2 / 3 / 4 / 5)
-// add the per-graph-check assertions, prompt-walk byte stability, and
+// triad entity + relation kind. The remaining sections add the
+// per-graph-check assertions, prompt-walk byte stability, and
 // gate-refusal end-to-end.
 // ===========================================================================
 
@@ -294,8 +290,7 @@ fn triad_smoke_reduces_clean() {
     );
 
     // The OQ without `default_via` (OQ-002, status = open) emits no
-    // open_question_default_via_decision edge — this is the empirical
-    // verification of step 0b's reshape.
+    // open_question_default_via_decision edge.
     let default_via_edges: Vec<_> = graph
         .relations
         .iter()
@@ -317,10 +312,9 @@ fn triad_smoke_reduces_clean() {
 #[test]
 fn triad_smoke_validate_baseline() {
     // Establish the baseline that validate runs cleanly on the smoke
-    // fixture. With Run 1 reductions in place but Run 2 graph checks
-    // not yet authored, this test asserts only that validate doesn't
-    // surface unrelated errors. Step 2 + Step 3 will tighten this to
-    // assert the 11 graph checks fire as expected.
+    // fixture, asserting that validate doesn't surface unrelated errors.
+    // The dedicated graph-check tests below tighten this to assert the 11
+    // graph checks fire as expected.
     let (target, _layout) = build_triad_smoke("validate-baseline");
     let report = validate::run_project(&target, None).expect("validate");
     let errors: Vec<_> = report
@@ -330,27 +324,25 @@ fn triad_smoke_validate_baseline() {
         .collect();
     assert!(
         errors.is_empty(),
-        "validate baseline should be error-free pre-19-C graph checks; got:\n{}",
+        "validate baseline should be error-free; got:\n{}",
         report.render_plain()
     );
 }
 
 #[test]
 fn triad_smoke_additivity_when_files_removed() {
-    // Acceptance gate 5 (TF1): removing decisions.toml and
-    // open_questions.toml from the fixture must still leave validate
-    // clean. Today's analyzer is already additive (the new files +
-    // refs are optional); this regression-pins the property going
-    // into Run 2.
+    // Acceptance gate 5: removing decisions.toml and open_questions.toml
+    // from the fixture must still leave validate clean. The analyzer is
+    // additive (the new files + refs are optional); this regression-pins
+    // the property.
     let (target, _layout) = build_triad_smoke("additivity");
     std::fs::remove_file(target.join("specs/decisions.toml")).unwrap();
     std::fs::remove_file(target.join("specs/open_questions.toml")).unwrap();
 
     // Strip references to decisions / OQs from the surviving spec
-    // files so missing-id checks don't fire (those checks ARE the
-    // point of 19-C — they should fire in the populated case but not
-    // here, where the files are simply absent and so should every
-    // ref-side field be).
+    // files so missing-id checks don't fire (those checks should fire in
+    // the populated case but not here, where the files are simply absent
+    // and so should every ref-side field be).
     let arch = r#"[[features]]
 name = "default"
 default = true
@@ -392,23 +384,22 @@ satisfies = ["ZFM-001"]
 }
 
 // ===========================================================================
-// Step 3 (19-E1) — Validate-time ref resolution.
+// Validate-time ref resolution.
 //
 // Each of the 11 triad graph checks gets a red-path mutation against
-// build_triad_smoke(). Note (judgment call recorded 2026-05-08):
-// the analyzer's reduction step is strict — relations whose endpoints
-// don't resolve are dropped at reduction time and surface as
-// `REDUCE_UNRESOLVED` errors with TOML provenance. This is an existing
-// pre-19 mechanism that pre-empts the `reference_exists` graph checks.
-// As a result, the seven *_resolves rules don't fire on red-path
-// missing-target mutations — REDUCE_UNRESOLVED fires first with the
-// offending name in the message. The new graph_check entries are still
-// authored because (a) they activate when relations land in the graph
-// but reference unresolved entities by some other path, (b) they're
-// required by the D63 contract surface, and (c) they're the natural
-// home for severity overrides per profile via [validation.rules].
-// Tests here therefore assert REDUCE_UNRESOLVED for ref-resolution and
-// the dedicated rule names for the consistency / cycle / gate checks.
+// build_triad_smoke(). Note: the analyzer's reduction step is strict —
+// relations whose endpoints don't resolve are dropped at reduction time
+// and surface as `REDUCE_UNRESOLVED` errors with TOML provenance. This
+// pre-empts the `reference_exists` graph checks. As a result, the seven
+// *_resolves rules don't fire on red-path missing-target mutations —
+// REDUCE_UNRESOLVED fires first with the offending name in the message.
+// The graph_check entries are still authored because (a) they activate
+// when relations land in the graph but reference unresolved entities by
+// some other path, (b) they're required by the contract surface, and
+// (c) they're the natural home for severity overrides per profile via
+// [validation.rules]. Tests here therefore assert REDUCE_UNRESOLVED for
+// ref-resolution and the dedicated rule names for the consistency /
+// cycle / gate checks.
 // ===========================================================================
 
 /// Helper: assert that a finding with `rule == expected_rule` fires
@@ -905,14 +896,13 @@ affects = ["ZFM-003"]
 }
 
 // ===========================================================================
-// Step 4 (19-E3) — Codegen prompt-walk.
+// Codegen prompt-walk.
 //
 // `prompt::assemble_module_prompt` includes a "Decisions and known
-// unknowns" section per D63 §1: module's local guided_by, module's
-// requirements' decided_by, plus workspace-tier decisions when the
-// project sits in a workspace. Default-committed OQs surface their
-// verify text; closed OQs link to the resolving Decision; superseded
-// Decisions are skipped (D63 §7).
+// unknowns" section: module's local guided_by, module's requirements'
+// decided_by, plus workspace-tier decisions when the project sits in a
+// workspace. Default-committed OQs surface their verify text; closed OQs
+// link to the resolving Decision; superseded Decisions are skipped.
 // ===========================================================================
 
 #[test]
@@ -976,11 +966,11 @@ fn prompt_byte_stable_across_runs() {
 }
 
 // ===========================================================================
-// Step 5 (19-E2) — Codegen gate.
+// Codegen gate.
 //
 // `prompt::check_codegen_gate` is the API surface; the CLI invokes it
 // before assembling the prompt and exits non-zero with the refusal text
-// per D63 §6 when a reachable OQ has status=open. Tests assert
+// when a reachable OQ has status=open. Tests assert
 // (a) green-path module_ok unblocked, (b) module_blocked refused with
 // the literal three-exit-options message naming OQ-002, (c) round-trip
 // flip OQ-002 to default_committed → unblocked → flip back to open →
@@ -1113,19 +1103,19 @@ fn triad_red_codegen_unblocked_warning() {
     );
 }
 
-// Regression for the 2.5-B joint-filter — when a project authors the
-// dual back-references that the proposal §5 documents (`closes_questions`
-// ↔ `closed_by`, `defaults_for` ↔ `default_via`) on the SAME decision
-// pair (so each direction is a 2-cycle in the canonical depends_on view),
-// modules_acyclic must NOT fire. Pre-2.5-B this scenario was blocked
-// because the cycle check chain-walked all canonical-`depends_on`
-// relations including the triad ones.
+// Regression for the joint-filter — when a project authors dual
+// back-references (`closes_questions` ↔ `closed_by`, `defaults_for` ↔
+// `default_via`) on the SAME decision pair (so each direction is a
+// 2-cycle in the canonical depends_on view), modules_acyclic must NOT
+// fire. Previously this scenario was blocked because the cycle check
+// chain-walked all canonical-`depends_on` relations including the triad
+// ones.
 #[test]
 fn modules_acyclic_ignores_triad_dual_back_references() {
     let (target, _layout) = build_triad_smoke("acyclic-joint-filter");
 
     // Author the dual back-reference on DEC-001 ↔ OQ-resolved AND on
-    // DEC-003 ↔ OQ-001 (both pair directions present). Pre-2.5-B this
+    // DEC-003 ↔ OQ-001 (both pair directions present). Previously this
     // would form 2-cycles in the canonical depends_on view and trip
     // modules_acyclic.
     let decisions = r#"[[decision]]

@@ -177,7 +177,7 @@ impl Report {
 }
 
 /// Render the `{file}:{line}{pointer}` prefix for a finding. Line is additive:
-/// when absent, output is byte-identical to the pre-phase-14 format
+/// when absent, output is byte-identical to the legacy format
 /// (`{file}{pointer}` or `{pointer}` alone).
 fn render_loc(file: &Option<String>, pointer: &str, line: Option<u32>) -> String {
     match (file, pointer, line) {

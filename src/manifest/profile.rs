@@ -1,5 +1,5 @@
 //! `profile.yaml` — analyzer dispatch metadata for one profile.
-//! Schema: `src/embedded/profile.schema.yaml`. Authoritative spec: doc 21 §3.
+//! Schema: `src/embedded/profile.schema.yaml`.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -138,9 +138,9 @@ pub struct ContextSection {
     pub context_subcommand_extras: Vec<ContextExtra>,
 }
 
-/// Open shape in step 1 — captures whichever fields the manifest
-/// supplies. Sub-shape tightens in step 5 (`context.rs` refactor) when
-/// the dispatch consumer pins the discriminator.
+/// Open shape — captures whichever fields the manifest supplies. The
+/// sub-shape tightens when the dispatch consumer (`context.rs`) pins the
+/// discriminator.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ContextExtra {
     pub field: String,

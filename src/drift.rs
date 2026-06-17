@@ -9,7 +9,7 @@
 //! - `Both`          — `ours != upstream` AND `plugin != upstream`
 //!
 //! Pure reporter: drift never modifies files. The merge-with-base call is
-//! `specdev inline --merge` (Phase 4 [`crate::merge`]).
+//! `specdev inline --merge` ([`crate::merge`]).
 //!
 //! Three broken-invariant cases are reported as **errors**, not as
 //! categories — they signal a corrupted project tree:
@@ -217,9 +217,9 @@ fn drift_one_unit(
                 ));
             }
             // Plugin-only (upstream + project both missing): the plugin
-            // added a file since inlining. Phase 4 v1 doesn't auto-import;
+            // added a file since inlining. v1 doesn't auto-import;
             // surface as PluginMoved on a synthesized empty base. Future
-            // phases can widen.
+            // versions can widen.
             (None, None, Some(_)) => FileCategory::PluginMoved,
             // Plugin removed a file the project still has. Project may
             // also have local edits. Classify as the closest 3-way fit:

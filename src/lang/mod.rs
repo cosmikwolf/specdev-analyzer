@@ -1,8 +1,8 @@
-//! Language adapters for the audit pipeline (Phase 8).
+//! Language adapters for the audit pipeline.
 //!
 //! Each adapter binds a spec `language` string to a tree-sitter grammar,
-//! an embedded `.scm` query, and a per-language parameter parser. Per D9
-//! the rest of the analyzer must never switch on language by name — it
+//! an embedded `.scm` query, and a per-language parameter parser. The
+//! rest of the analyzer must never switch on language by name — it
 //! resolves an adapter through [`adapter_for`] and calls trait methods.
 
 pub mod c;

@@ -1,7 +1,7 @@
-//! Phase-2 resolved data structures.
+//! Resolved data structures.
 //!
 //! Sits one level above [`crate::reductions`]'s `Raw*` types: where the
-//! Phase-1 loader hands back kind names as opaque strings, this module
+//! The loader hands back kind names as opaque strings, this module
 //! holds the post-resolution form — kind paths parsed into [`KindPath`]s,
 //! `extends` targets resolved to either a canonical anchor or another
 //! qualified kind, and bodies kept verbatim for the executor.

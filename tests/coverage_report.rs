@@ -1,5 +1,4 @@
-//! Integration tests for the `report coverage` subcommand
-//! (Phase 18.5 §18.5-E).
+//! Integration tests for the `report coverage` subcommand.
 //!
 //! Coverage:
 //!   * Empty `requirements.toml` → empty matrix, no error.
@@ -16,11 +15,11 @@ use std::process::Command;
 
 use specdev_analyzer::bootstrap::{self, BootstrapInputs};
 
-fn phase6_plugin() -> PathBuf {
+fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("specs")
-        .join("phase6")
+        .join("full_plugin")
         .join("_plugin")
 }
 
@@ -48,7 +47,7 @@ fn analyzer_bin() -> PathBuf {
 fn fresh_library_project(tag: &str) -> PathBuf {
     let target = tmp_dir(tag);
     bootstrap::run_bootstrap(
-        &phase6_plugin(),
+        &full_plugin(),
         &BootstrapInputs {
             profile: "library-api".into(),
             language: "rust".into(),

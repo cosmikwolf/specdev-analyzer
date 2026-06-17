@@ -1,12 +1,12 @@
 //! Reduction executor — open-vocabulary `(entities, relations)` graph.
 //!
-//! Phase 2 rewires the executor to drive off the [`EffectiveKindSet`]
+//! The executor drives off the [`EffectiveKindSet`]
 //! produced by [`crate::reductions::resolve`], rather than a closed-enum
 //! `ReductionSpec`. Entity and Relation records are keyed by *qualified*
 //! kind paths (e.g. `embassy.Task`, `embassy+lvgl.renders`). Cross-domain
 //! dispatch happens through the `extends` chain on each record.
 //!
-//! The doc-10 §"Scoping rules (v1)" semantics are preserved verbatim:
+//! The scoping rules (v1) semantics are preserved verbatim:
 //!
 //! * `parent.name` in a `for_each` scope resolves to the file-root's `name`
 //!   field. Nested-parent references (`parent.parent.*`) are rejected.
@@ -95,7 +95,7 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<(G
 ///
 /// The layout (rather than just the project root) is threaded through so
 /// the bridge-aware `REDUCE_UNRESOLVED` hint can locate inlined bridge
-/// `contract.yaml` manifests under `<reductions_dir>/bridges/`. Pre-D52
+/// `contract.yaml` manifests under `<reductions_dir>/bridges/`. Pre-manifest
 /// projects without inlined manifests fall back to the legacy generic
 /// hint string.
 pub fn execute_kindset(
@@ -380,16 +380,16 @@ fn materialize_relation(
     Ok(())
 }
 
-/// Phase 16 §8.1 step 7 — render the bridge-aware hint line appended
+/// Render the bridge-aware hint line appended
 /// to a `REDUCE_UNRESOLVED` finding when the relation is bridge-qualified
-/// (`<a>+<b>.<rel>`). Per doc 21 §5.4, the message body comes from the
+/// (`<a>+<b>.<rel>`). The message body comes from the
 /// bridge's inlined `contract.yaml` `diagnostic_template`, with closed-set
 /// `{bridge_name}` / `{parameter}` / `{decl_module}` / `{binding_module}`
 /// placeholders substituted from the unresolved-relation context.
 ///
-/// **Pre-D52 backward-compat:** when the contract.yaml is absent (older
+/// **Pre-manifest backward-compat:** when the contract.yaml is absent (older
 /// inlined trees, hand-authored project-local bridges), fall back to the
-/// generic Batch A hint string verbatim. Mirrors §6.5.
+/// generic hint string verbatim.
 ///
 /// **Token-unresolvable fallback:** unresolvable tokens render as
 /// `<unknown>` in the substituted output AND emit a separate
@@ -406,7 +406,7 @@ fn materialize_relation(
 /// without the actionable advice (move the binding, or move the
 /// declaration). This helper appends that advice from the bridge's
 /// authored manifest — generic over every bridge, no per-bridge name in
-/// the analyzer (D51).
+/// the analyzer.
 #[allow(clippy::too_many_arguments)]
 fn render_bridge_hint(
     qualified_path: &str,
@@ -458,11 +458,11 @@ fn render_bridge_hint(
     };
 
     let Some(contract) = contract else {
-        // Pre-D52 backward-compat: legacy generic hint string verbatim.
+        // Pre-manifest backward-compat: legacy generic hint string verbatim.
         return legacy_bridge_hint(head);
     };
 
-    // Resolve placeholder values per §5.4 (§6.4 token table).
+    // Resolve placeholder values from the token table.
     //
     // - `{bridge_name}` is always available (qualified-path head).
     // - `{parameter}` is always available (the unresolved endpoint name
@@ -515,7 +515,7 @@ fn render_bridge_hint(
         .replace("{decl_module}", &decl_module_resolved)
         .replace("{binding_module}", &binding_module_resolved);
 
-    // Per §5.4: emit one info finding per unresolvable token, carrying
+    // Emit one info finding per unresolvable token, carrying
     // the same provenance as the parent error.
     for (token, reason) in &unresolvable_tokens {
         report.push(
@@ -531,7 +531,7 @@ fn render_bridge_hint(
     format!("\n  hint: {body}")
 }
 
-/// Pre-D52 backward-compat: the legacy Batch A hint text. Used verbatim
+/// Pre-manifest backward-compat: the legacy hint text. Used verbatim
 /// when a bridge has no inlined `contract.yaml`.
 fn legacy_bridge_hint(head: &str) -> String {
     format!(
@@ -544,7 +544,7 @@ fn legacy_bridge_hint(head: &str) -> String {
 /// Look up `<reductions_dir>/bridges/<head>.contract.yaml` and load it
 /// via the strongly-typed loader. Three return shapes:
 ///   - `Ok(Some(contract))` — file present and valid.
-///   - `Ok(None)` — file absent (pre-D52 backward-compat per §6.5).
+///   - `Ok(None)` — file absent (pre-manifest backward-compat).
 ///   - `Err(_)` — file present but malformed; caller surfaces the
 ///     load error as `MANIFEST-001`.
 fn load_bridge_contract(layout: &LayoutContext, head: &str) -> Result<Option<BridgeContract>> {

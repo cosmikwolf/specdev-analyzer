@@ -1,13 +1,12 @@
 //! `specdev bootstrap --profile <name> [<target>]`.
 //!
 //! One-shot scaffolding from a plugin profile into a fresh project tree.
-//! Profiles are not inlineable and have no lineage entry of their own
-//! (doc 15 §3.3) — the only lineage written here is a `[meta]` stamp
+//! Profiles are not inlineable and have no lineage entry of their own —
+//! the only lineage written here is a `[meta]` stamp
 //! recording the plugin version and the profile name, which inline /
 //! drift consult to interpret upstream changes.
 //!
-//! Layout assumed in the plugin tree (Phase 3 fixture; Phase 5 lands
-//! `firmware-layered` and `library-api` for real):
+//! Layout assumed in the plugin tree:
 //!
 //! ```text
 //! <plugin-root>/profiles/<name>/
@@ -19,7 +18,7 @@
 //!   README.md                 # author-facing, NOT copied
 //! ```
 //!
-//! Output layout matches doc 15 §4. Templates support a closed set of
+//! Templates support a closed set of
 //! placeholder tokens; any unrecognized `{{...}}` is a fatal error.
 
 use std::path::{Path, PathBuf};
@@ -100,7 +99,7 @@ fn substitute(text: &str, inputs: &BootstrapInputs, source_label: &str) -> Resul
             i = token_end;
         } else {
             // UTF-8-safe pass-through: find the next placeholder (or end of
-            // string) and copy the slice verbatim. Pre-Phase-14 templates
+            // string) and copy the slice verbatim. Earlier templates
             // were ASCII-only, masking the bug; YAML schemas with em-dashes
             // and other multi-byte chars surface it.
             let next_open = text[i..].find("{{").map(|r| i + r).unwrap_or(bytes.len());
@@ -188,12 +187,10 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
         });
     }
 
-    // Phase 16 step 2.5: when the profile ships a `profile.yaml` manifest
-    // (D52 / doc 21), copy it byte-faithfully alongside `domain.toml`. The
-    // file is static YAML; no template substitution applies. Profiles
-    // authored before Phase 16 (and the phase3 fixture) have no
-    // profile.yaml — bootstrap silently skips, and the analyzer falls back
-    // to the pre-D51 default per doc 21 §6.5.
+    // When the profile ships a `profile.yaml` manifest, copy it
+    // byte-faithfully alongside `domain.toml`. The file is static YAML; no
+    // template substitution applies. Profiles without profile.yaml are
+    // skipped silently, and the analyzer falls back to its built-in default.
     if profile_dir.join("profile.yaml").is_file() {
         plan.push(ProfileFile {
             src_rel: PathBuf::from("profile.yaml"),
@@ -202,14 +199,14 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
         });
     }
 
-    // Phase 16 step 3c: when the profile ships a `templates/` directory
-    // (referenced from profile.yaml's `paired_stub.template_file` and any
-    // future template_file fields), copy each file byte-faithfully to
+    // When the profile ships a `templates/` directory (referenced from
+    // profile.yaml's `paired_stub.template_file` and any future
+    // template_file fields), copy each file byte-faithfully to
     // `<target>/specs/specdev/templates/`. Tokens in the file body are
-    // resolved at render time (per doc 21 §6.4 — closed `{key}` grammar);
-    // bootstrap-time copy is byte-faithful. Subdirectories are not
-    // walked in v1 (no shipped template needs them); a flat layout
-    // matches doc 15's "specs/specdev/ is structurally addressable."
+    // resolved at render time (closed `{key}` grammar); bootstrap-time copy
+    // is byte-faithful. Subdirectories are not walked in v1 (no shipped
+    // template needs them); a flat layout keeps `specs/specdev/`
+    // structurally addressable.
     let templates_dir = profile_dir.join("templates");
     if templates_dir.is_dir() {
         let mut template_entries: Vec<PathBuf> = std::fs::read_dir(&templates_dir)
@@ -287,10 +284,10 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
-            // Phase 14: `module.schema.yaml` carries the `{{language}}`
+            // `module.schema.yaml` carries the `{{language}}`
             // placeholder in its items[] $ref, so it must be substituted at
-            // bootstrap. All other profile schemas are still copied byte-
-            // faithfully (D33). Closed-set placeholder grammar ensures
+            // bootstrap. All other profile schemas are copied byte-
+            // faithfully. Closed-set placeholder grammar ensures
             // unrelated `{{...}}` patterns in any schema would surface as
             // BOOTSTRAP-002, not silent corruption.
             let substitute = file_name == "module.schema.yaml";
@@ -344,8 +341,8 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     // Validate language is supported by the profile by checking that
     // `codegen/<language>/` exists with at least one `*.conventions.md`
     // file. Errors here name the language so users see the missing-
-    // codegen issue before any bytes are written. (Phase 8.6: was
-    // previously hardcoded to `module.conventions.md`; rust-workspace
+    // codegen issue before any bytes are written. (The convention file
+    // name is no longer hardcoded to `module.conventions.md`; rust-workspace
     // ships `workspace.conventions.md` instead.)
     let codegen_lang_dir = profile_dir.join("codegen").join(&inputs.language);
     let has_conventions = codegen_lang_dir.is_dir()
@@ -370,7 +367,7 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     }
 
     // Copy files per the plan. Substitute templates; verbatim-copy schema
-    // and codegen content (D33 — analyzer never re-emits YAML/Markdown).
+    // and codegen content (analyzer never re-emits YAML/Markdown).
     let plan = profile_plan(&profile_dir, &inputs.language)?;
     for f in &plan {
         let src = profile_dir.join(&f.src_rel);
@@ -399,15 +396,15 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
         }
     }
 
-    // Phase 14: inline the language tier. `${PLUGIN_ROOT}/languages/<lang>/`
+    // Inline the language tier. `${PLUGIN_ROOT}/languages/<lang>/`
     // holds per-language item-kind vocabulary (items.schema.yaml in v1, plus
     // items.scm tree-sitter queries). Every `*.schema.yaml` under the
     // language dir is copied verbatim into
     // `<target>/specs/specdev/schemas/inlined/languages/<lang>/`, where the
     // aggregator MapRetriever picks them up under the `inlined/languages/<lang>/`
     // prefix. The languages tier is silently skipped when the language has
-    // no entry under `${PLUGIN_ROOT}/languages/` — pre-Phase-14 languages
-    // (and languages whose item vocabulary hasn't been authored) bootstrap
+    // no entry under `${PLUGIN_ROOT}/languages/` — languages without a
+    // language tier (and languages whose item vocabulary hasn't been authored) bootstrap
     // without an `items[]` substrate, which is fine for v1.
     let lang_src_dir = plugin_root.join("languages").join(&inputs.language);
     if lang_src_dir.is_dir() {
@@ -450,7 +447,7 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
             .with_context(|| format!("creating {}", abs.display()))?;
     }
 
-    // Phase 16 §8.1 step 6: walk the manifest's `bootstrap.steps` and
+    // Walk the manifest's `bootstrap.steps` and
     // dispatch each step to its handler. v1 handlers cover the closed
     // enum (`emit_workspace_root` / `emit_member_stubs` / `walk_members`);
     // only the rust-workspace shape currently authors a non-empty step
@@ -465,8 +462,8 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
         }
     }
 
-    // Write the lineage [meta] stamp. Profiles get no entry of their own
-    // (doc 15 §3.3); only `[meta]` records "this project was bootstrapped
+    // Write the lineage [meta] stamp. Profiles get no entry of their own;
+    // only `[meta]` records "this project was bootstrapped
     // from plugin X at version Y with profile Z."
     let mut lineage = Lineage::default();
     lineage.meta = Some(MetaSection {
@@ -478,9 +475,9 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     Ok(())
 }
 
-/// Phase 16 §8.1 step 6: load the just-copied `profile.yaml` from the
+/// Load the just-copied `profile.yaml` from the
 /// bootstrapped tree and return its `bootstrap.steps`. `Ok(None)` when the
-/// manifest is absent (pre-D52 profiles like the phase3 fixture) or when
+/// manifest is absent (profiles without a manifest) or when
 /// `bootstrap.steps` is empty (the closed-set non-workspace profiles —
 /// library-api, firmware-layered, audio-plugin all author `steps: []`).
 /// `Err` only on a malformed manifest; surfaces as `MANIFEST-001`.
@@ -501,7 +498,7 @@ fn manifest_bootstrap_steps(specdev_root: &Path) -> Result<Option<Vec<BootstrapS
     }
 }
 
-/// Phase 16 §8.1 step 6: dispatch one `BootstrapStep` against the
+/// Dispatch one `BootstrapStep` against the
 /// bootstrapped target. The closed enum has three variants in v1:
 ///
 /// * `EmitWorkspaceRoot` — defensive validation: the bootstrapped
@@ -511,7 +508,7 @@ fn manifest_bootstrap_steps(specdev_root: &Path) -> Result<Option<Vec<BootstrapS
 ///   the table). Today the rust-workspace `spec.toml.template` writes the
 ///   table directly, so this step is a no-op pass for that profile.
 /// * `EmitMemberStubs` — no-op v1. The dispatch shell exists; per-member
-///   stub directory creation lands in a follow-up phase gated on real
+///   stub directory creation is future work gated on real
 ///   workspace-bootstrap dogfood.
 /// * `WalkMembers` — no-op v1. Recursive per-member bootstrap deferred.
 ///

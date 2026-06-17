@@ -1,6 +1,6 @@
 //! `spec.toml` loader — project-level manifest.
 //!
-//! Phase 1 of the blocks + bridges + profiles arc. `spec.toml` is parsed and
+//! Part of the blocks + bridges + profiles arc. `spec.toml` is parsed and
 //! validated against an embedded JSON Schema that the analyzer ships
 //! (`src/embedded/spec.schema.yaml`). Two-pass validation:
 //!
@@ -10,7 +10,7 @@
 //!    fields, value-shape errors, and unknown keys (`additionalProperties:
 //!    false`).
 //!
-//! There is **no resolution chain at analyze time** (doc 15 §11 invariant 5):
+//! There is **no resolution chain at analyze time** (load-bearing invariant):
 //! `spec.toml` carries the entire project shape directly, with `[paths].specs`
 //! and `[paths].source` resolved relative to the manifest's location.
 
@@ -29,7 +29,7 @@ pub struct SpecConfig {
     pub spec_version: String,
     pub project: ProjectSection,
     pub paths: PathsSection,
-    /// Workspace marker (Phase 8.6+). Set on a `rust-workspace` project's
+    /// Workspace marker. Set on a `rust-workspace` project's
     /// root `spec.toml`; absent on member crates and on standalone
     /// (non-workspace) projects. Member-mode `cargo-toml` walks up to
     /// find the first ancestor `spec.toml` carrying this table.
@@ -42,16 +42,16 @@ pub struct ProjectSection {
     pub name: String,
     pub profile: String,
     pub language: String,
-    /// Rust edition (Phase 6.7+). Optional; defaults to "2021" at gen time.
+    /// Rust edition. Optional; defaults to "2021" at gen time.
     #[serde(default)]
     pub edition: Option<String>,
-    /// SPDX license identifier (Phase 6.7+). Optional; libraries use it.
+    /// SPDX license identifier. Optional; libraries use it.
     #[serde(default)]
     pub license: Option<String>,
-    /// Project description (Phase 6.7+). Optional; libraries use it.
+    /// Project description. Optional; libraries use it.
     #[serde(default)]
     pub description: Option<String>,
-    /// Repository URL (Phase 8.6+). Optional; libraries use it. For
+    /// Repository URL. Optional; libraries use it. For
     /// workspace members this is normally omitted in favor of the
     /// workspace's canonical value.
     #[serde(default)]
@@ -120,8 +120,8 @@ impl SpecConfig {
         let validator = spec_schema_validator();
         if let Err(err) = validator.validate(&raw_json) {
             // The jsonschema 0.46 API: `validate` returns the first error; use
-            // `iter_errors` for the full set. Phase 1 surfaces the first one
-            // with file:line precision; later phases can fan out to multi-error
+            // `iter_errors` for the full set. We surface the first one
+            // with file:line precision; this can later fan out to multi-error
             // reporting per finding.
             let pointer = err.instance_path().to_string();
             let (line, col) = locate_error_in_toml(text, &pointer);

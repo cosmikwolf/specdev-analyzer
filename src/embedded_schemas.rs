@@ -1,7 +1,7 @@
 //! Embedded, project-independent JSON Schemas registered in retriever
 //! maps so `$ref`s to their `$id` resolve regardless of project content.
 //!
-//! Phase 6.7 introduces the first such schema: `CrateReference`, a
+//! The first such schema is `CrateReference`, a
 //! reusable struct shared across profile-level architecture schemas
 //! and module-level `external_deps`. The aggregator and the
 //! architecture-validation pipelines both register the entries returned

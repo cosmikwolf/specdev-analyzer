@@ -1,12 +1,10 @@
 //! Skill-facing context printer.
 //!
-//! Phase 1: the prior-arc D13 cascade (`[paths.overrides]` → `.specdev/` →
-//! plugin defaults) is retired at analyze time per doc 15 §11 invariant 5.
-//! What remains is a thin shim: skills (via `scripts/resolve-context`)
-//! invoke `specdev-analyzer resolve` to discover where a project lives. The
-//! Phase-1 implementation prints the discovered [`LayoutContext`] as YAML
-//! and exits 0. Phase 11 reworks the skills layer and decides this
-//! subcommand's long-term shape.
+//! The prior cascade (`[paths.overrides]` → `.specdev/` → plugin defaults) is
+//! retired at analyze time. What remains is a thin shim: skills (via
+//! `scripts/resolve-context`) invoke `specdev-analyzer resolve` to discover
+//! where a project lives. The implementation prints the discovered
+//! [`LayoutContext`] as YAML and exits 0.
 
 use std::path::Path;
 

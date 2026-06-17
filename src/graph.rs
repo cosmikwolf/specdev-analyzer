@@ -400,7 +400,7 @@ pub fn requirements_have_satisfiers(
 ///
 /// Optional attr filter: when `entity_attr` + `entity_attr_value` are
 /// both `Some`, only entities whose `attrs.<entity_attr>` equals the value
-/// are checked (others are exempt). This is how Phase 21's
+/// are checked (others are exempt). This is how
 /// `test_requirements_have_verifiers` scopes the orphan check to
 /// `nature = "test"` requirements without disturbing the unfiltered
 /// `nature`-agnostic consumers (audio-plugin's `parameters_have_bindings`
@@ -715,7 +715,7 @@ pub fn entity_attr_target_attr_equals(
 }
 
 /// MODULE_REACHABLE_THROUGH_OPEN_QUESTION (codegen-gate informational
-/// warning, Phase 19): for each Module entity, walk Module.satisfies →
+/// warning): for each Module entity, walk Module.satisfies →
 /// Requirement → OpenQuestion (via open_question_affects_requirement
 /// reversed). If any reachable OQ has `attrs.status == "open"`, fire one
 /// finding per (module, oq) pair. The companion gate in `gen.rs` produces
@@ -823,7 +823,7 @@ pub fn module_reachable_through_open_question(
     out
 }
 
-/// LAYER_DEPENDENCY (graph-shape, Phase-5): for each relation in the
+/// LAYER_DEPENDENCY (graph-shape): for each relation in the
 /// pre-filtered relation set, both endpoints must resolve to entities in
 /// the pre-filtered entity set, and the `from` entity's layer must appear
 /// in `ordering` at a position less than or equal to the `to` entity's
@@ -943,7 +943,7 @@ pub fn layer_dependency_graph(
 
 /// LAYER_DEPENDENCY (legacy source-data shape): retained for the existing
 /// unit test and any caller that still passes raw `modules[].layer` /
-/// `modules[].depends_on[]` selectors. Phase 5+ uses
+/// `modules[].depends_on[]` selectors. New callers use
 /// [`layer_dependency_graph`] above.
 pub fn layer_dependency(
     root: &Value,
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn entity_has_inbound_relation_multi_target_param_is_satisfied() {
-        // D58: a parameter may carry multiple bindings. Two edges to the
+        // A parameter may carry multiple bindings. Two edges to the
         // same Parameter still leave zero orphans.
         let v = json!({
             "entities": [{ "kind": "nih-plug.Parameter", "name": "synth.algorithm" }],
@@ -1138,7 +1138,7 @@ mod tests {
 
     #[test]
     fn entity_has_inbound_relation_attr_filter_scopes_to_matching_entities() {
-        // Phase 21: only `nature = "test"` requirements are checked for an
+        // Only `nature = "test"` requirements are checked for an
         // inbound test_verifies edge. A nature=module requirement with no
         // test_verifies must NOT be flagged (it's out of scope), and a
         // nature=test requirement with no verifier MUST be flagged.

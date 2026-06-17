@@ -1,11 +1,10 @@
-//! Phase 16 manifest loaders (D52 / doc 21).
+//! Manifest loaders.
 //!
 //! Three runtime-loaded YAML manifests drive the analyzer's
-//! profile/block/bridge dispatch in Phase 16. This module ships the
+//! profile/block/bridge dispatch. This module ships the
 //! deserialization + validation surface; dispatch wiring lives in the
 //! consumer modules (`cargo_toml.rs`, `skeleton.rs`, `context.rs`,
-//! `bootstrap.rs`, `reduction.rs`, `validate.rs`) and lands in
-//! subsequent §8.1 steps.
+//! `bootstrap.rs`, `reduction.rs`, `validate.rs`).
 //!
 //! Each manifest:
 //!   - has its YAML JSON Schema under `src/embedded/`
@@ -18,9 +17,7 @@
 //! Errors are anyhow::Error with surface that names the file path + line.
 //! Schema violations come with closed-enum hints from jsonschema's output.
 //!
-//! Step 1 (this module) is purely additive: nothing in the existing
-//! analyzer pipeline calls these loaders yet. Tests assert round-trip
-//! against the 10 draft manifests in doc 21 §3.3 / §4.2 / §5.3.
+//! Tests assert round-trip against the draft manifests.
 
 pub mod block_deps;
 pub mod bridge_contract;

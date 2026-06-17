@@ -1,6 +1,6 @@
 //! Kind-path parser.
 //!
-//! Doc 10 amendment §"Path grammar (informal)" defines three forms:
+//! The path grammar defines three forms:
 //!
 //! ```text
 //! unqualified      = Type | relation-name
@@ -15,8 +15,8 @@
 //! Bridge-qualified paths require `left < right` lexicographically. This
 //! parser enforces lex-order at parse time. The reduction loader
 //! independently enforces lex-order on bridge filesystem names — see
-//! `reductions::resolve` (plan §"Lex-order is enforced in two places,
-//! intentionally"). Both checks point at the same human error class but
+//! `reductions::resolve`. Lex-order is enforced in these two places
+//! intentionally: both checks point at the same human error class but
 //! catch it at different lifecycle stages.
 //!
 //! Bridges do NOT declare entities — only relations — so the bridge form

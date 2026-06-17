@@ -1,4 +1,4 @@
-//! Tree-sitter-backed item extraction (Phase 10 surface, per D40).
+//! Tree-sitter-backed item extraction.
 
 use std::path::Path;
 
@@ -31,7 +31,7 @@ pub fn extract_items_from_source(
         "rust" => RUST_QUERY,
         // Other languages add their items.scm + match arm here. v1 ships Rust only.
         other => anyhow::bail!(
-            "extract-items: no items.scm query for language `{other}`; v1 ships Rust only (Phase 9 adds C, Phase 14-C ships C items)"
+            "extract-items: no items.scm query for language `{other}`; v1 ships Rust only"
         ),
     };
 
@@ -362,7 +362,7 @@ impl Show for T {}
         let items = extract(source);
         // Tree-sitter will match `inner` because the query isn't anchored;
         // this test documents current behaviour. Filtering local-fn items
-        // is a Phase 14 concern (items diff against module spec carries
+        // is an items-sync concern (items diff against module spec carries
         // the right context).
         let fns: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Fn).collect();
         assert!(fns.iter().any(|i| i.name == "outer"));

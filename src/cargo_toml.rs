@@ -1,4 +1,4 @@
-//! Phase 8b: deterministic Cargo.toml emission from spec metadata.
+//! Deterministic Cargo.toml emission from spec metadata.
 //!
 //! Reads `spec.toml` `[project]` + `architecture.toml` (`[platform]`,
 //! `[runtime]`, `[logger]`, `[[external_deps]]`, `[msrv]`,
@@ -6,14 +6,14 @@
 //! Cargo.toml whose content is a deterministic projection of the
 //! spec.
 //!
-//! Phase 6.7 commitment: every Cargo dep is in the spec; Cargo.toml
-//! is OUTPUT. This module is the OUTPUT half.
+//! Every Cargo dep is in the spec; Cargo.toml is OUTPUT. This module
+//! is the OUTPUT half.
 //!
-//! Per D29 the analyzer doesn't generate Rust source code — but
-//! Cargo.toml is configuration, not source. It's the same shape as
-//! `extract` (deterministic projection in analyzer; Claude not
-//! involved). The skill's `spec-gen` flow calls this subcommand to
-//! emit Cargo.toml; Claude emits the .rs source files.
+//! The analyzer doesn't generate Rust source code — but Cargo.toml is
+//! configuration, not source. It's the same shape as `extract`
+//! (deterministic projection in the analyzer; Claude not involved).
+//! The skill's `spec-gen` flow calls this subcommand to emit
+//! Cargo.toml; Claude emits the .rs source files.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ pub(crate) struct CrateRef {
     #[serde(default)]
     optional: Option<bool>,
     /// When `true`, route this crate to `[dev-dependencies]` instead of
-    /// `[dependencies]` (D58 commitment 6; Phase 21 carry-in). Test-only
+    /// `[dependencies]`. Test-only
     /// deps (test/bench/fuzz harness crates like `approx`, `proptest`,
     /// `criterion`) compile only for the test target. This is a routing
     /// flag, not a Cargo key — it never appears in the rendered value.
@@ -88,7 +88,7 @@ enum CrateSourceTag {
 /// non-fatal warnings (e.g., version conflicts across modules).
 ///
 /// `extra_files` carries paired source-tree side effects the analyzer
-/// must produce alongside the Cargo.toml (F-016): the audio-plugin
+/// must produce alongside the Cargo.toml: the audio-plugin
 /// `[[bin]]` row references `src/bin/standalone.rs`, so a write of the
 /// rendered Cargo.toml without a paired stub at that path leaves cargo
 /// in a broken state. Each entry is (project-relative path, body); the
@@ -106,45 +106,44 @@ pub struct RenderedCargoToml {
 ///
 /// * **Workspace root** (`[workspace]` table set in spec.toml) →
 ///   [`render_workspace_root`]: emits `[workspace]` + `[workspace.package]`
-///   + `[workspace.dependencies]`. Layout-driven; doc 21 §3.5.
+///   + `[workspace.dependencies]`. Layout-driven.
 /// * **Workspace member** (no `[workspace]` table, but an ancestor
 ///   spec.toml carries one whose `members[].path` references this
 ///   directory) → renders the per-shape body with workspace-aware
 ///   field inheritance: package fields owned by `[workspace_package]`
 ///   become `<field>.workspace = true`; deps with
 ///   `source = "workspace"` render as `{ workspace = true, ... }`.
-/// * **Manifest-driven (D52 / doc 21 §3.4):** when the project's
-///   inlined `specs/specdev/profile.yaml` exists, dispatch off
+/// * **Manifest-driven:** when the project's inlined
+///   `specs/specdev/profile.yaml` exists, dispatch off
 ///   `cargo_toml.shape` (`library` / `binary` / `plugin` / `workspace`).
-///   This is the post-Phase-16 path — analyzer holds zero compile-time
+///   This is the preferred path — the analyzer holds zero compile-time
 ///   knowledge of profile names.
-/// * **Backward-compat fallback:** for projects bootstrapped pre-D52,
-///   fall back to the legacy profile-name match. The fallback is a
-///   transition aid; doc 21 §6.5 schedules its removal in v1.1 once
-///   `specdev migrate` ships and one engagement cycle has elapsed.
+/// * **Backward-compat fallback:** for projects bootstrapped before the
+///   manifest era, fall back to the legacy profile-name match. The
+///   fallback is a transition aid removed in v1.1.
 pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     if layout.spec.workspace.is_some() {
         return render_workspace_root(layout);
     }
     let workspace_ctx = WorkspaceContext::find_for(layout)?;
 
-    // D52 / doc 21 §3.4: when `specs/specdev/profile.yaml` is present,
-    // dispatch off `cargo_toml.shape`. The manifest body is loaded and
+    // When `specs/specdev/profile.yaml` is present, dispatch off
+    // `cargo_toml.shape`. The manifest body is loaded and
     // validated by `Profile::load`; failures (missing fields, unknown
     // shape, etc.) surface as MANIFEST-001 with line-precise context.
     if let Some(manifest) = load_inlined_profile(layout)? {
         return render_by_shape(layout, &manifest, workspace_ctx.as_ref());
     }
 
-    // Backward-compat fallback for pre-D52 projects (no profile.yaml in
-    // the inlined tree). Routes by `[project].profile` name to the same
-    // per-shape render functions. Removed in v1.1 per doc 21 §6.5.
+    // Backward-compat fallback for projects without a profile.yaml in
+    // the inlined tree. Routes by `[project].profile` name to the same
+    // per-shape render functions. Removed in v1.1.
     let profile = layout.spec.project.profile.as_str();
     match profile {
-        "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
-        "library-api" => render_library(layout, workspace_ctx.as_ref()), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
-        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
-        "rust-workspace" => Err(anyhow!( // D51-fallback: pre-D52 backward-compat dispatch per doc 21 §6.5; deleted in v1.1 (step 10).
+        "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "library-api" => render_library(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "rust-workspace" => Err(anyhow!( // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
             "spec.toml at {} declares profile `rust-workspace` but has no \
              [workspace] table; add `[workspace]` with `[[workspace.members]]` \
              entries or change the profile",
@@ -158,9 +157,9 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 }
 
 /// Load `<specdev_root>/profile.yaml` if it exists. Returns `Ok(None)`
-/// when the manifest is absent (pre-D52 projects); `Err` only on a
-/// malformed/invalid manifest. Step 2.5 ensures every freshly-bootstrapped
-/// project has this file when its profile ships one.
+/// when the manifest is absent; `Err` only on a malformed/invalid
+/// manifest. Bootstrap ensures every freshly-bootstrapped project has
+/// this file when its profile ships one.
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<Profile>> {
     let path = layout.specdev_root.join("profile.yaml");
     if !path.is_file() {
@@ -169,9 +168,9 @@ fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<Profile>> {
     Profile::load(&path).map(Some)
 }
 
-/// Manifest-driven dispatch (D52). Each `ShapeKind` routes to the
-/// existing per-shape render function — step 3a is pure routing, no
-/// behavior change inside the renderers. Step 3b threads the manifest's
+/// Manifest-driven dispatch. Each `ShapeKind` routes to the
+/// existing per-shape render function — pure routing, no
+/// behavior change inside the renderers. Threads the manifest's
 /// `cargo_toml.bin` section to `render_audio_plugin` so its `[[bin]]`
 /// gate can be evaluated against the manifest spec instead of the
 /// hardcoded `[plugin].formats` contains `"standalone"` literal.
@@ -199,21 +198,21 @@ fn render_by_shape(
     }
 }
 
-/// Step 3d: enumerate inlined blocks and collect each block's per-language
-/// `deps.yaml` contribution as a flat `Vec<CrateRef>`. Closes F-012 + F-017
-/// (blocks now contribute Cargo deps; users no longer mirror those crates
-/// in `[[external_deps]]` by hand).
+/// Enumerate inlined blocks and collect each block's per-language
+/// `deps.yaml` contribution as a flat `Vec<CrateRef>`. Blocks contribute
+/// Cargo deps so users no longer mirror those crates in
+/// `[[external_deps]]` by hand.
 ///
 /// Discovery: scan `<inlined_blocks_dir>/*.schema.yaml` for block names
 /// (one per file basename), then read
 /// `<codegen_dir>/blocks/<block>/deps.yaml` via `BlockDeps::load`. The
 /// load is `Ok(BlockDeps::default())` when the file is absent, so blocks
-/// inlined pre-D52 (or blocks that simply ship no Rust deps) silently
+/// without a deps file (or blocks that simply ship no Rust deps) silently
 /// contribute zero crates.
 ///
 /// `recommended_external_deps[]` is intentionally NOT injected here —
-/// per doc 21 §4.3 it's surfaced by `/spec-design` Step 2 as authoring
-/// suggestions; auto-injection would erode D35 (spec is source of truth).
+/// it's surfaced by `/spec-design` as authoring suggestions;
+/// auto-injection would erode the spec-is-source-of-truth invariant.
 ///
 /// Order discipline: callers merge **after** architecture-level and
 /// module-level deps so user-authored versions win on conflict (the
@@ -259,7 +258,7 @@ fn collect_inlined_block_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> {
 }
 
 /// Walk the inlined-bridge inventory and return every bridge's
-/// `deps.yaml` contribution as a flat `Vec<CrateRef>` (D65). Mirrors
+/// `deps.yaml` contribution as a flat `Vec<CrateRef>`. Mirrors
 /// [`collect_inlined_block_deps`] — same manifest schema, same loader,
 /// path `<codegen_dir>/bridges/<bridge>/deps.yaml`. Bridges own
 /// join-product crates: deps that exist only because two blocks are
@@ -310,7 +309,7 @@ fn collect_inlined_bridge_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> 
 /// exists because the manifest loader (validated against
 /// `block_deps.schema.yaml`) and the renderer's parser (validated
 /// against `crate_reference.schema.yaml`) ship as separate types. A
-/// future v1.x cleanup could unify them; out of scope for step 3d.
+/// future v1.x cleanup could unify them; out of scope here.
 fn block_crate_entry_to_crate_ref(entry: &bd_module::CrateEntry) -> CrateRef {
     CrateRef {
         crate_name: entry.name.clone(),
@@ -324,7 +323,7 @@ fn block_crate_entry_to_crate_ref(entry: &bd_module::CrateEntry) -> CrateRef {
         default_features: entry.default_features,
         optional: entry.optional,
         // Block/bridge deps are compile-time deps; test-only routing is a
-        // module/architecture-level `external_deps` concern (Phase 21).
+        // module/architecture-level `external_deps` concern.
         test_only: None,
     }
 }
@@ -357,8 +356,8 @@ fn translate_block_source(s: &bd_module::CrateSource) -> CrateSource {
 /// Evaluate a closed-enum `BinGate` against architecture.toml. Returns
 /// `true` when the gate condition is met (i.e. the bin should emit).
 /// Unknown gate variants are deliberately a compile error — the closed
-/// enum forces a doc-21 amendment + analyzer-side dispatch addition for
-/// any new gate, mirroring the discipline applied to ShapeKind.
+/// enum forces an analyzer-side dispatch addition for any new gate,
+/// mirroring the discipline applied to ShapeKind.
 fn evaluate_bin_gate(gate: &BinGate, arch: &toml::value::Table) -> bool {
     match gate {
         BinGate::ArchitectureArrayContains { table, field, value } => arch
@@ -543,12 +542,12 @@ fn render_firmware(
     for c in collect_module_external_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // Step 3d: block-contributed deps via `<codegen>/blocks/<block>/deps.yaml`.
+    // Block-contributed deps via `<codegen>/blocks/<block>/deps.yaml`.
     // Merged AFTER user-authored deps so user spec wins on conflict.
     for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // Bridge-contributed join-product deps. Merged AFTER block deps
     // (user > blocks > bridges; first insert wins, conflicts warn).
     for c in collect_inlined_bridge_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
@@ -590,21 +589,21 @@ fn render_library(
     let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Library architecture currently has no [[external_deps]] (per
-    // Phase 6.7 plan: library-api's typed picks live at module
-    // level), but accept it if present for future flexibility.
+    // Library architecture currently has no [[external_deps]]
+    // (library-api's typed picks live at module level), but accept it
+    // if present for future flexibility.
     for c in extract_crate_ref_array(arch.get("external_deps"))? {
         merge_dep(&mut deps, c, &mut warnings);
     }
     for c in collect_module_external_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // Step 3d: block-contributed deps. Merged AFTER user-authored deps
+    // Block-contributed deps. Merged AFTER user-authored deps
     // so user spec wins on conflict.
     for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // Bridge-contributed join-product deps. Merged AFTER block deps
     // (user > blocks > bridges; first insert wins, conflicts warn).
     for c in collect_inlined_bridge_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
@@ -667,8 +666,8 @@ fn render_library(
 
 /// Render Cargo.toml for an `audio-plugin` profile project.
 ///
-/// Per Phase 15-A spike (D45): the plugin crate is always a `cdylib`
-/// (the C-ABI surface VST3 and CLAP both require). When
+/// The plugin crate is always a `cdylib` (the C-ABI surface VST3 and
+/// CLAP both require). When
 /// `[plugin].formats` contains `"standalone"`, also emit a `[[bin]]`
 /// target `name = "<project-name>-standalone"`, `path =
 /// "src/bin/standalone.rs"` — the bin links the same lib so the
@@ -693,9 +692,9 @@ fn render_audio_plugin(
 
     let parsed_features = parse_library_features(arch.get("features"))?;
 
-    // Step 3b: bin emission gate. When the manifest carries a
+    // Bin emission gate. When the manifest carries a
     // `cargo_toml.bin.gate`, evaluate it (closed-set `BinGate` enum).
-    // When the manifest is absent (pre-D52 fallback) or carries no
+    // When the manifest is absent or carries no
     // gate, fall back to the legacy hardcoded `[plugin].formats`-
     // contains-`"standalone"` check. Both paths produce the same boolean
     // for any architecture.toml the audio-plugin profile authors today.
@@ -727,12 +726,12 @@ fn render_audio_plugin(
     for c in collect_module_external_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // Step 3d: block-contributed deps. Merged AFTER user-authored deps
+    // Block-contributed deps. Merged AFTER user-authored deps
     // so user spec wins on conflict.
     for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
-    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // Bridge-contributed join-product deps. Merged AFTER block deps
     // (user > blocks > bridges; first insert wins, conflicts warn).
     for c in collect_inlined_bridge_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
@@ -742,7 +741,7 @@ fn render_audio_plugin(
     write_package_section(&mut text, project, /* rust_version */ None, workspace);
     text.push('\n');
 
-    // [lib] always cdylib for audio-plugin (D45). Plugin shells live in
+    // [lib] always cdylib for audio-plugin. Plugin shells live in
     // src/lib.rs and run nih_export_*! macros that target the C ABI.
     text.push_str("[lib]\n");
     text.push_str("crate-type = [\"cdylib\"]\n");
@@ -788,16 +787,16 @@ fn render_audio_plugin(
 
     write_dependencies_section(&mut text, &deps);
 
-    // F-016: pair the [[bin]] standalone row with a stub source file so
+    // Pair the [[bin]] standalone row with a stub source file so
     // the project compiles immediately after a fresh emit. The caller
     // skips the write if the file already exists, so hand-edited bins
     // are never overwritten.
     //
-    // Step 3c: when the manifest path provides a `paired_stub.template_file`
+    // When the manifest path provides a `paired_stub.template_file`
     // entry, read the file from `<specdev_root>/<template_file>` (copied
-    // there at bootstrap time per step 3c's bootstrap.rs extension) and
-    // substitute `{project_name}` with `[project].name`. When the manifest
-    // path is absent (pre-D52 backward-compat), fall back to the legacy
+    // there at bootstrap time) and substitute `{project_name}` with
+    // `[project].name`. When the manifest path is absent
+    // (backward-compat), fall back to the legacy
     // `standalone_bin_stub()` literal — preserves byte-parity for projects
     // that pre-date the manifest era.
     let mut extra_files: Vec<(PathBuf, String)> = Vec::new();
@@ -816,17 +815,17 @@ fn render_audio_plugin(
     })
 }
 
-/// Step 3c: read the paired-stub template referenced by the audio-plugin
+/// Read the paired-stub template referenced by the audio-plugin
 /// manifest's `cargo_toml.bin.paired_stub.template_file` and substitute
 /// `{project_name}` with the project's crate name. The template path is
 /// stored in the manifest as relative to the profile dir (e.g.
 /// `templates/standalone-stub.rs.template`); after bootstrap copies the
 /// `templates/` tree to `<specdev_root>/templates/`, the same relative
-/// path resolves under the inlined tree. Per doc 21 §6.4, the only
-/// allowed token in this body is `{project_name}`; other `{...}` patterns
-/// pass through unchanged (closed-grammar enforcement of the body itself
-/// is a v1.x concern — the template is plugin-author content and a
-/// stray brace is the author's bug to find).
+/// path resolves under the inlined tree. The only allowed token in this
+/// body is `{project_name}`; other `{...}` patterns pass through
+/// unchanged (closed-grammar enforcement of the body itself is a v1.x
+/// concern — the template is plugin-author content and a stray brace is
+/// the author's bug to find).
 fn read_paired_stub_body(
     layout: &LayoutContext,
     paired_stub: &PairedStub,
@@ -842,7 +841,7 @@ fn read_paired_stub_body(
     Ok(body.replace("{project_name}", project_name))
 }
 
-/// F-016: minimal `src/bin/standalone.rs` stub paired with the
+/// Minimal `src/bin/standalone.rs` stub paired with the
 /// `[[bin]]` row when `[plugin].formats` includes `"standalone"`. The
 /// body uses `nih_plug::prelude::nih_export_standalone::<MyPlugin>()`
 /// — author replaces `MyPlugin` with their concrete plugin type once
@@ -850,10 +849,9 @@ fn read_paired_stub_body(
 /// a `compile_error!` so a fresh emit produces a friendly compile-time
 /// reminder instead of a confusing missing-file error.
 ///
-/// Step 3c retains this literal as the **backward-compat fallback** for
-/// pre-D52 projects (no manifest, no `paired_stub.template_file`). The
-/// manifest path reads from the inlined template instead — see
-/// `read_paired_stub_body`.
+/// Retained as the **backward-compat fallback** for projects without a
+/// manifest (no `paired_stub.template_file`). The manifest path reads
+/// from the inlined template instead — see `read_paired_stub_body`.
 fn standalone_bin_stub(crate_name: &str) -> String {
     format!(
         "//! Standalone host for `{crate_name}` (F-016 stub).\n\
@@ -1142,7 +1140,7 @@ fn write_package_section(
     };
 
     // version — workspace-inheritable; not on standalone ProjectSection
-    // today (could become a per-crate override field in a future phase).
+    // today (could become a per-crate override field later).
     if inherits("version") {
         text.push_str("version.workspace = true\n");
     }
@@ -1186,8 +1184,8 @@ fn write_package_section(
 
 fn write_dependencies_section(text: &mut String, deps: &BTreeMap<String, CrateRef>) {
     // Partition by the `test_only` routing flag: regular deps go under
-    // `[dependencies]`, test-only deps under `[dev-dependencies]`
-    // (D58 §6 / Phase 21). `test_only` is never rendered into the value.
+    // `[dependencies]`, test-only deps under `[dev-dependencies]`.
+    // `test_only` is never rendered into the value.
     text.push_str("[dependencies]\n");
     for (name, c) in deps.iter().filter(|(_, c)| c.test_only != Some(true)) {
         text.push_str(&format!("{} = {}\n", name, render_dep_value(c)));

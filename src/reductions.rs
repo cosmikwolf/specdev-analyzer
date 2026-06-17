@@ -1,4 +1,4 @@
-//! Layout-level reduction loader and Phase-2 path-qualified resolver.
+//! Layout-level reduction loader and path-qualified resolver.
 //!
 //! Two layers:
 //!
@@ -8,7 +8,7 @@
 //!    `serde_yaml::Value`, and computes the namespace from filesystem
 //!    location. Pure I/O + parsing — no `extends:` resolution, no kind
 //!    path-qualification.
-//! 2. [`resolve`] (Phase 2) takes the [`ReductionInventory`] and produces
+//! 2. [`resolve`] takes the [`ReductionInventory`] and produces
 //!    an [`crate::resolved::EffectiveKindSet`]: rewrites unqualified
 //!    declarations to qualified form, validates the path grammar,
 //!    resolves `extends` chains via fixed-point iteration, and detects
@@ -60,7 +60,7 @@ pub struct RawReduction {
     pub namespace: ReductionNamespace,
     pub raw: serde_yaml::Value,
     pub kind_declarations: Vec<RawKindDecl>,
-    /// Original YAML text, retained for source-line lookup during Phase-2
+    /// Original YAML text, retained for source-line lookup during
     /// resolution. Re-reading from disk would work but this avoids a second
     /// I/O per file when resolve() is called.
     pub source_text: String,
@@ -196,8 +196,7 @@ fn load_one(path: &Path, namespace: ReductionNamespace) -> Result<RawReduction> 
 }
 
 /// Shallow walk the parsed YAML for `kind:` and `extends:` strings inside
-/// the conventional `entities:` and `relations:` lists. Phase 2 will replace
-/// this with proper structured parsing.
+/// the conventional `entities:` and `relations:` lists.
 fn collect_kind_declarations(raw: &serde_yaml::Value, source_text: &str) -> Vec<RawKindDecl> {
     let mut out = Vec::new();
     // Translate to JSON for easy walking — both formats share a tree
@@ -285,14 +284,14 @@ fn parse_bridge_namespace(stem: &str, is_local: bool) -> Option<ReductionNamespa
 }
 
 // ---------------------------------------------------------------------------
-// Phase-2 resolver: open-vocabulary kind resolution.
+// Resolver: open-vocabulary kind resolution.
 // ---------------------------------------------------------------------------
 
 /// Walk every loaded reduction, rewrite unqualified kind names to qualified
 /// form by file location, validate the path grammar, resolve `extends`
 /// chains to canonical anchors, and produce the [`EffectiveKindSet`].
 ///
-/// Findings emitted (rule codes per the Phase-2 plan):
+/// Findings emitted (rule codes):
 ///
 /// * `METASCHEMA-001` — non-canonical entity/relation missing `extends:`.
 /// * `METASCHEMA-002` — `extends:` target does not name a canonical anchor
@@ -307,8 +306,8 @@ fn parse_bridge_namespace(stem: &str, is_local: bool) -> Option<ReductionNamespa
 ///
 /// Lex-order is also enforced inside [`crate::kinds::parse`] for path
 /// strings inside reduction bodies; the filesystem-name check here is the
-/// distinct, complementary check (plan §"Lex-order is enforced in two
-/// places, intentionally").
+/// distinct, complementary check — lex-order is enforced in these two
+/// places intentionally.
 pub fn resolve(inv: &ReductionInventory) -> (EffectiveKindSet, Vec<Finding>) {
     let mut findings: Vec<Finding> = Vec::new();
 
@@ -392,8 +391,8 @@ fn bridge_filesystem_checks(inv: &ReductionInventory, findings: &mut Vec<Finding
         }
     }
 
-    // METASCHEMA-004 — canonical/local shadow. Warning per doc 10
-    // §"Declaration sites and resolution"; canonical takes precedence.
+    // METASCHEMA-004 — canonical/local shadow. Warning;
+    // canonical takes precedence.
     let canonical_files: BTreeMap<String, PathBuf> = inv
         .bridges_canonical
         .iter()
@@ -998,7 +997,7 @@ source = "src"
     }
 
     // -----------------------------------------------------------------
-    // Phase-2 resolver tests
+    // Resolver tests
     // -----------------------------------------------------------------
 
     fn write_project_yaml(root: &Path, body: &str) {

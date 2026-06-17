@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# D51 enforcement: no hardcoded profile/block/bridge name string literals
-# in `specdev-analyzer/src/` (excluding `embedded/`, doc-strings, in-source
-# `#[cfg(test)] mod tests` blocks, and explicitly allowlisted lines).
+# Two checks:
 #
-# Implements doc 21 §9 (CI lint specification).
+#   1. NAME agnosticism: no hardcoded profile/block/bridge name string
+#      literals in `specdev-analyzer/src/` (excluding `embedded/`,
+#      doc-strings, in-source `#[cfg(test)] mod tests` blocks, and
+#      explicitly allowlisted lines).
+#   2. PLANNING references: no phase nomenclature / decision-ID / doc /
+#      specdev-next pointers in `src/` or `tests/` (.rs only). See the
+#      "Planning-references check" section near the bottom for carve-outs.
+#
+# Both run every invocation; the script exits non-zero if either fails.
 #
 # Usage:
 #   .github/scripts/agnosticism-lint.sh [<plugin-tree-path>]
@@ -176,8 +182,60 @@ done
 
 if [ "$violation_count" -eq 0 ]; then
   echo "agnosticism-lint: clean. No D51 violations."
-  exit 0
+else
+  echo "agnosticism-lint: $violation_count name(s) had violations." >&2
+fi
+echo
+
+# ---------------------------------------------------------------------------
+# Planning-references check.
+#
+# The analyzer surface (its tests included) is what users and integrators
+# read; internal planning nomenclature there is a dangling pointer into a
+# workspace they cannot see. Ban it across `src/` and `tests/` (.rs only):
+#
+#   - phase nomenclature: `Phase N`, `phase_N`, `phase-N`, `phaseN`
+#   - decision-ID references: `D<N>` (e.g. `D51`, `D62`)
+#   - design-doc pointers: `doc N`, `specdev-next`
+#
+# Unlike the name check above, planning refs are banned in doc-strings too —
+# that is where most of them lived. Carve-outs:
+#
+#   1. `// D51-fallback:` structural markers (tied to this lint; they flag
+#      pre-manifest backward-compat code removed in v1.1). The `D51`
+#      substring there is structural, not a citation.
+#   2. A trailing `// PLANNING-OK: <reason>` per-line escape, for the rare
+#      line that genuinely must carry such a token (e.g. a string fixture
+#      the lint itself consumes).
+#
+# Languages, error-code families (`BRIDGE-LEX-001`, `TEST-KIND-001`, …), and
+# dogfood finding IDs (`F-006`) are not planning pointers and do not match.
+PLANNING_RE='[Pp]hase[ _-]?[0-9]|\bD[0-9]+\b|\bdoc [0-9]+|specdev-next'
+
+analyzer_root_dir="$(dirname "$analyzer_src")"
+tests_dir="$analyzer_root_dir/tests"
+scan_dirs=("$analyzer_src")
+[ -d "$tests_dir" ] && scan_dirs+=("$tests_dir")
+
+planning_count=0
+planning_hits=$(grep -rnE --include='*.rs' "$PLANNING_RE" "${scan_dirs[@]}" 2>/dev/null \
+  | grep -vE 'D51-fallback|PLANNING-OK' || true)
+
+if [ -n "$planning_hits" ]; then
+  echo "planning-reference violation(s) — strip phase/decision/doc/specdev-next pointers"
+  echo "(or escape a genuine keeper with a trailing \` // PLANNING-OK: <reason>\`):"
+  echo "$planning_hits" | sed 's/^/  /'
+  planning_count=$(printf '%s\n' "$planning_hits" | grep -c .)
+  echo
+else
+  echo "agnosticism-lint: planning-references clean."
 fi
 
-echo "agnosticism-lint: $violation_count name(s) had violations." >&2
-exit "$violation_count"
+# ---------------------------------------------------------------------------
+# Combined verdict.
+total=$((violation_count + planning_count))
+if [ "$total" -eq 0 ]; then
+  exit 0
+fi
+echo "agnosticism-lint: $violation_count name violation(s), $planning_count planning-reference violation(s)." >&2
+exit 1

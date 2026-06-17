@@ -1,5 +1,4 @@
-//! Read/write `specs/specdev/gen-lineage.toml` + the gen-drift report
-//! (D64 in `02-decisions.md`).
+//! Read/write `specs/specdev/gen-lineage.toml` + the gen-drift report.
 //!
 //! `lineage.toml` witnesses the spec-machinery direction (inlined plugin
 //! content). This file witnesses the other direction: files emitted by
@@ -23,7 +22,7 @@
 //! a path replaces its entry — the file always reflects the latest gen run.
 //! Byte-stability via `BTreeMap`, same discipline as [`crate::lineage`].
 //!
-//! Scope fence (D64): this is a hash-level tripwire only. It detects THAT
+//! Scope fence: this is a hash-level tripwire only. It detects THAT
 //! a generated file changed, not WHAT changed or whether the change is
 //! spec-equivalent. Semantic comparison is the (separately gated) audit
 //! subcommand's territory.
