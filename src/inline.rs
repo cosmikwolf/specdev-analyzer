@@ -244,6 +244,23 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
             rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
             bytes: read_file(&codegen_src)?,
         });
+
+        // D65: per-language `deps.yaml` manifest joins the bridge's
+        // per-unit file set when present, mirroring the block shape.
+        // Bridges own join-product crates (a dep that exists only
+        // because two blocks are paired — e.g. an async-HAL crate);
+        // neither block may declare those without reaching across the
+        // pairing. Bytes participate in `content_hash` automatically
+        // via the rolled-up hash; bridges without deps.yaml keep their
+        // existing hash.
+        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
+        if deps_src.is_file() {
+            files.push(UnitFile {
+                rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/deps.yaml")),
+                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
+                bytes: read_file(&deps_src)?,
+            });
+        }
     }
 
     // Phase 16 step 2.5: language-neutral `contract.yaml` manifest joins

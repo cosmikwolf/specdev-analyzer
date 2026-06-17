@@ -14,7 +14,9 @@
 //!
 //! Coverage:
 //!   1. Embassy block contributes `embassy-executor` + `embassy-time`.
-//!   2. STM32h5-rs block contributes `embassy-stm32`.
+//!   2. `embassy-stm32` is bridge-owned (D65): stm32h5-rs alone
+//!      contributes nothing; the embassy+stm32h5-rs bridge contributes
+//!      it with its default chip feature.
 //!   3. User authoring wins on conflict (warning surfaces).
 //!   4. `recommended_external_deps[]` is NOT auto-injected.
 //!   5. Profile-agnostic: works for audio-plugin too (nih_plug).
@@ -99,22 +101,40 @@ fn embassy_block_contributes_executor_and_time() {
 }
 
 // ===========================================================================
-// 2 — STM32h5-rs block contributes embassy-stm32 with unstable-pac feature
+// 2 — embassy-stm32 is the bridge's join-product dep (D65), NOT the
+//     stm32h5-rs block's. Block alone contributes nothing; inlining the
+//     embassy+stm32h5-rs bridge contributes embassy-stm32 with its chip
+//     feature.
 // ===========================================================================
 
 #[test]
-fn stm32h5_rs_block_contributes_embassy_stm32_with_features() {
+fn stm32h5_rs_block_alone_contributes_no_crates() {
     let (_target, layout) =
         fresh_project(&phase6_plugin(), "firmware-layered", "demo", "stm32h5");
     run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     let out = render(&layout).unwrap().text;
     assert!(
+        !out.contains("embassy-stm32"),
+        "stm32h5-rs alone must NOT contribute embassy-stm32 (bridge-owned per D65):\n{out}"
+    );
+}
+
+#[test]
+fn bridge_contributes_embassy_stm32_with_chip_feature() {
+    let (_target, layout) =
+        fresh_project(&phase6_plugin(), "firmware-layered", "demo", "bridge-deps");
+    run_inline_block(&layout, &phase6_plugin(), "embassy").unwrap();
+    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
+    specdev_analyzer::inline::run_inline_bridge(&layout, &phase6_plugin(), "embassy+stm32h5-rs")
+        .unwrap();
+    let out = render(&layout).unwrap().text;
+    assert!(
         out.contains("embassy-stm32"),
-        "stm32h5-rs must contribute embassy-stm32:\n{out}"
+        "embassy+stm32h5-rs bridge must contribute embassy-stm32:\n{out}"
     );
     assert!(
-        out.contains("unstable-pac"),
-        "stm32h5-rs must contribute embassy-stm32 with unstable-pac feature:\n{out}"
+        out.contains("stm32h563zi"),
+        "bridge's embassy-stm32 must carry its default chip feature:\n{out}"
     );
 }
 
@@ -152,9 +172,9 @@ source = "crates-io"
         rendered.text
     );
     assert!(
-        !rendered.text.contains(r#"embassy-executor = { version = "0.6""#)
-            && !rendered.text.contains(r#"embassy-executor = "0.6""#),
-        "block's 0.6 version must NOT appear when user pinned 0.5:\n{}",
+        !rendered.text.contains(r#"embassy-executor = { version = "0.10""#)
+            && !rendered.text.contains(r#"embassy-executor = "0.10""#),
+        "block's 0.10 version must NOT appear when user pinned 0.5:\n{}",
         rendered.text
     );
     assert!(
@@ -180,6 +200,9 @@ fn recommended_external_deps_are_not_auto_injected() {
     // them. Step 3d must NOT inject them silently.
     let (target, layout) =
         fresh_project(&phase6_plugin(), "firmware-layered", "demo", "no-recommend");
+    // embassy provides the positive control (its crates[] are non-empty);
+    // stm32h5-rs provides the recommended_external_deps under test.
+    run_inline_block(&layout, &phase6_plugin(), "embassy").unwrap();
     run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
     // Strip the bootstrapped architecture.toml's [[external_deps]] which
     // ships cortex-m / cortex-m-rt by default — we want to test that
@@ -197,9 +220,9 @@ target_triple = "thumbv8m.main-none-eabihf"
     .unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
     let out = render(&layout).unwrap().text;
-    // embassy-stm32 (from crates[]) should be present.
+    // embassy-executor (from embassy's crates[]) should be present.
     assert!(
-        out.contains("embassy-stm32"),
+        out.contains("embassy-executor"),
         "block crates[] must be merged:\n{out}"
     );
     // cortex-m and cortex-m-rt (from recommended_external_deps[]) must

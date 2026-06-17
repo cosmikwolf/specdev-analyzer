@@ -1,0 +1,24 @@
+# Manifest — Cargo deps the embassy+stm32h5-rs bridge contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml (bridges
+# reuse the block deps manifest shape).
+#
+# `embassy-stm32` is the join product of this pairing: it exists only
+# because embassy tasks own STM32 peripherals. Neither block may declare
+# it — embassy must stay HAL-agnostic and stm32h5-rs must stay
+# runtime-agnostic — so the bridge owns it.
+#
+# The chip feature pins this bridge's default verification target
+# (Nucleo-H563ZI). embassy-stm32 requires exactly one full part-number
+# feature (`stm32h563zi`, not the architecture.toml `mcu_part` family
+# prefix `stm32h563`). Projects on a different H5 part override by
+# declaring `embassy-stm32` themselves under `[[external_deps]]` in
+# architecture.toml with their part's feature — user-authored deps win
+# the merge.
+
+crates:
+  - name: embassy-stm32
+    version: "0.6"
+    features: ["stm32h563zi", "rt", "time-driver-any", "exti"]
+    source: crates-io
+
+recommended_external_deps: []

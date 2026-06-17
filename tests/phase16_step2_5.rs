@@ -330,6 +330,9 @@ fn inline_bridge_hash_stable_across_reinline_with_contract_yaml() {
             .join("codegen/rust/bridges/embassy+stm32h5-rs/README.md"),
         layout
             .specdev_root
+            .join("codegen/rust/bridges/embassy+stm32h5-rs/deps.yaml"),
+        layout
+            .specdev_root
             .join("reductions/bridges/embassy+stm32h5-rs.contract.yaml"),
     ];
     for f in &dst_files {

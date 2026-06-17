@@ -87,10 +87,22 @@ fn fixture_block_deps_load_cleanly() {
             .join("deps.yaml");
         let m = BlockDeps::load(&p)
             .unwrap_or_else(|e| panic!("deps for block {name} failed to load: {e:#}"));
-        assert!(
-            !m.crates.is_empty(),
-            "block {name} should declare at least one crate (recommended_external_deps is suggestion-only)"
-        );
+        // stm32h5-rs is intentionally topology-only (D65): the non-embassy
+        // STM32H5 HAL has no usable crates.io release yet, and the
+        // production path (`embassy-stm32`) is the embassy+stm32h5-rs
+        // bridge's join-product dep, never the block's. Every other block
+        // contributes at least one crate.
+        if *name == "stm32h5-rs" {
+            assert!(
+                m.crates.is_empty(),
+                "stm32h5-rs is topology-only and must declare no crates (embassy-stm32 is bridge-owned per D65)"
+            );
+        } else {
+            assert!(
+                !m.crates.is_empty(),
+                "block {name} should declare at least one crate (recommended_external_deps is suggestion-only)"
+            );
+        }
     }
 }
 
@@ -148,6 +160,24 @@ fn live_plugin_tree_bridge_contracts_load_cleanly() {
     }
 }
 
+#[test]
+fn live_plugin_tree_bridge_deps_load_cleanly() {
+    // D65: bridges may ship a codegen/<lang>/deps.yaml for join-product
+    // crates (same manifest shape as block deps). `load` returns the
+    // default for bridges that ship none, so this covers both cases.
+    let root = live_plugin();
+    for name in BRIDGES {
+        let p = root
+            .join("bridges")
+            .join(name)
+            .join("codegen")
+            .join("rust")
+            .join("deps.yaml");
+        BlockDeps::load(&p)
+            .unwrap_or_else(|e| panic!("live bridge deps for {name} failed: {e:#}"));
+    }
+}
+
 // ===========================================================================
 // 3 — Fixture ↔ live tree byte-equality (catches sync drift)
 // ===========================================================================
@@ -168,6 +198,14 @@ fn fixture_matches_live_plugin_tree_byte_for_byte() {
     for name in BRIDGES {
         let rel = format!("bridges/{name}/contract.yaml");
         pairs.push((live_root.join(&rel), fixture_root.join(&rel), "contract"));
+    }
+    // D65: bridge deps.yaml joins the byte-equality set when the live
+    // bridge ships one (not all bridges contribute deps).
+    for name in BRIDGES {
+        let rel = format!("bridges/{name}/codegen/rust/deps.yaml");
+        if live_root.join(&rel).is_file() {
+            pairs.push((live_root.join(&rel), fixture_root.join(&rel), "bridge deps"));
+        }
     }
     pairs.push((
         live_root.join("profiles/audio-plugin/templates/standalone-stub.rs.template"),
