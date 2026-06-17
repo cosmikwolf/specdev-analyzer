@@ -312,3 +312,27 @@ Module specs in this profile typically carry block-contributed tables:
 Read the relevant block / bridge READMEs for those emission rules.
 This profile prose covers only the architecture-level shape (crate
 type, layer ordering, format/category constants, realtime discipline).
+
+## Parameter binding model
+
+`module.parameter_bindings[]` declares how each nih-plug parameter
+translates into an engine-side write when the host changes it. The
+table is **co-resident with `[nih_plug]` on the plugin_shell module**
+(the shell owns the parameter surface; the engine stays framework-
+agnostic and exposes only plain setters/fields). Codegen turns the
+table into a single deterministic `apply_param_changes` dispatcher —
+one match arm per row, in declaration order, byte-identical across
+runs.
+
+Each row reads `self.params.<id>.value()`, applies `value_transform`,
+then writes per `target_kind`:
+
+- `method` → `<target>(<target_args…>)` (receiver `&mut self.engine`);
+- `field`  → `<target> = value;`;
+- `custom` → `self.<target>(value);` (hand-authored fn).
+
+Six value transforms: `identity` (default), `clamp { min, max }`,
+`scale { factor }`, `enum_to_u8`, `db_to_amp`, `custom { fn }`. A
+parameter may carry multiple rows (multi-target; emit all in order).
+See the live profile's `codegen/rust/module.conventions.md`
+§ "Parameter binding model" for the full table and worked example.

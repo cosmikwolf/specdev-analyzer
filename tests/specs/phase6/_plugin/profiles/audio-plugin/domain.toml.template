@@ -23,6 +23,7 @@ layer_dependency                             = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 requirements_have_satisfiers                 = "warning"
+parameters_have_bindings                     = "warning"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
@@ -83,6 +84,21 @@ kind = "requirements_have_satisfiers"
 rule = "requirements_have_satisfiers"
 entity_scope = "Requirement"
 relation_scope = "module_satisfies"
+
+# Every nih-plug Parameter must be wired to at least one engine write
+# (D58, load-bearing orphan check). Catches "added a parameter, forgot
+# to bind it to the engine" at validate time. Uses the generic
+# `entity_has_inbound_relation` primitive — every Parameter must be the
+# target of at least one `parameter_binding` edge. Multi-target bindings
+# (D58) leave the check satisfied; the `parameter_binding_unique` slot is
+# intentionally omitted. Reference resolution (binding.parameter → a
+# real Parameter) is handled at reduce time by REDUCE_UNRESOLVED, not
+# here, per the convention header.
+[[project.graph_checks]]
+kind = "entity_has_inbound_relation"
+rule = "parameters_have_bindings"
+entity_scope = "nih-plug.Parameter"
+relation_scope = "parameter_binding"
 
 # ---------------------------------------------------------------------------
 # Triad consistency.

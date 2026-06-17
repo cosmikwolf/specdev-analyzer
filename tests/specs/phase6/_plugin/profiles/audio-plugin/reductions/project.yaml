@@ -233,6 +233,33 @@ relations:
       from: "${parent.id}"
       to: "${.}"
 
+  # Module → Parameter: each `[[parameter_bindings]]` row wires one
+  # nih-plug parameter to an engine-side write (D58/D59). Co-resident
+  # with `[nih_plug]` on the plugin_shell module, so `${root.name}`
+  # (the binding module) is the same module that declares the
+  # parameter — the `to` endpoint resolves locally, exactly like the
+  # `egui+nih-plug` bridge's `widget_binds_parameter`. Extends
+  # `depends_on` so the generic graph primitives run with zero domain
+  # knowledge. REDUCE_UNRESOLVED handles the load-bearing referential
+  # check: `parameter` must resolve to a Parameter entity on this
+  # module (surfaces as `references unknown nih-plug.Parameter`). The
+  # orphan check `parameters_have_bindings` walks the inbound edges
+  # this relation contributes. Multi-target (D58) is fine — two rows
+  # for one parameter materialize two edges to the same Parameter; the
+  # orphan check still passes and codegen emits both arms in order.
+  - kind: parameter_binding
+    extends: depends_on
+    from_kind: Module
+    to_kind: nih-plug.Parameter
+    from_spec: "specs/modules/*.toml"
+    for_each: "parameter_bindings[]"
+    endpoints:
+      from: "${root.name}"
+      to:   "${root.name}.${.parameter}"
+    attrs:
+      target_kind: ".target_kind"
+      target:      ".target"
+
   # OpenQuestion → Decision: the decision that committed a working
   # default for this question (set when status = `default_committed`).
   # The for_each walks the singular-optional field directly so OQs

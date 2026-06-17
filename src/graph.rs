@@ -384,6 +384,70 @@ pub fn requirements_have_satisfiers(
     out
 }
 
+/// ENTITY_HAS_INBOUND_RELATION: each entity in scope must be the target of
+/// at least one relation in scope. The generic orphan check — "every X is
+/// referenced by at least one Y." Unlike `requirements_have_satisfiers`
+/// (which carries requirement-specific vocabulary and a `nature`-based
+/// exemption), this primitive is vocabulary-neutral: it names the entity's
+/// own `kind` and the relation label in the diagnostic, so it reads
+/// correctly for any (entity, relation) pairing a profile registers.
+///
+/// The caller pre-filters the JSON view via `filter_for_layer_dependency`
+/// so that `entities[]` holds only the entity scope and `relations[]` only
+/// the relation scope; the primitive itself does no kind filtering. The
+/// `relation_label` is the `relation_scope` string from the check config,
+/// used verbatim in the message.
+///
+/// Emits one finding per orphan entity. No exemption mechanism in v1 — if
+/// a profile needs one, add an optional attr-filter the same way
+/// `requirements_have_satisfiers` keys off `attrs.nature`.
+pub fn entity_has_inbound_relation(
+    root: &Value,
+    relation_label: &str,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let Some(entities) = root.get("entities").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let referenced: BTreeSet<String> = root
+        .get("relations")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| r.get("to").and_then(|t| t.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        if referenced.contains(name) {
+            continue;
+        }
+        // Human-readable noun: the last path segment of the entity kind
+        // (e.g. `nih-plug.Parameter` → `Parameter`). Falls back to the
+        // whole kind, then to "entity".
+        let noun = ent
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .map(|k| k.rsplit('.').next().unwrap_or(k))
+            .unwrap_or("entity");
+        out.push(Finding::new(
+            rule,
+            severity,
+            format!(
+                "{noun} `{name}` has no inbound `{relation_label}` relation; \
+                 every {noun} must be referenced by at least one `{relation_label}`"
+            ),
+        ));
+    }
+    out
+}
+
 /// ACYCLIC: the directed graph defined by (edges_from, edges_to) has no cycles.
 pub fn acyclic(
     root: &Value,
@@ -1011,6 +1075,44 @@ mod tests {
         let v = json!({ "src": [{ "x": "b" }], "tgt": [{ "y": "a" }] });
         let f = reference_exists(&v, "src[].x", "tgt[].y", "R1", Severity::Error);
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn entity_has_inbound_relation_flags_orphan_with_neutral_noun() {
+        // Two Parameters; only one is a binding target. The other is an
+        // orphan and the message must use the entity's own kind noun
+        // (last path segment), not requirement vocabulary.
+        let v = json!({
+            "entities": [
+                { "kind": "nih-plug.Parameter", "name": "synth.op1_crs" },
+                { "kind": "nih-plug.Parameter", "name": "synth.master_volume" },
+            ],
+            "relations": [
+                { "kind": "parameter_binding", "from": "synth", "to": "synth.op1_crs" },
+            ],
+        });
+        let f = entity_has_inbound_relation(&v, "parameter_binding", "parameters_have_bindings", Severity::Warning);
+        assert_eq!(f.len(), 1, "exactly one orphan expected");
+        let msg = &f[0].message;
+        assert!(msg.contains("synth.master_volume"), "names the orphan: {msg}");
+        assert!(msg.contains("Parameter "), "uses last-segment noun, not the qualified kind: {msg}");
+        assert!(msg.contains("`parameter_binding`"), "names the relation: {msg}");
+        assert!(!msg.contains("requirement"), "must not leak requirement vocabulary: {msg}");
+    }
+
+    #[test]
+    fn entity_has_inbound_relation_multi_target_param_is_satisfied() {
+        // D58: a parameter may carry multiple bindings. Two edges to the
+        // same Parameter still leave zero orphans.
+        let v = json!({
+            "entities": [{ "kind": "nih-plug.Parameter", "name": "synth.algorithm" }],
+            "relations": [
+                { "kind": "parameter_binding", "from": "synth", "to": "synth.algorithm" },
+                { "kind": "parameter_binding", "from": "synth", "to": "synth.algorithm" },
+            ],
+        });
+        let f = entity_has_inbound_relation(&v, "parameter_binding", "parameters_have_bindings", Severity::Warning);
+        assert!(f.is_empty(), "multi-bound parameter is not an orphan: {f:?}");
     }
 
     #[test]
