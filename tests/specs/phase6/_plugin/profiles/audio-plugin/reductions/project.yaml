@@ -146,6 +146,23 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
+  # Test-item → Requirement (D60): `[[items]]` entries with `test = true`
+  # carry `verifies[]`; reduce into Module → Requirement edges so
+  # `test_requirements_have_verifiers` confirms every `nature = "test"`
+  # requirement has a verifier. `${root.name}` is the declaring module
+  # (the source endpoint). REDUCE_UNRESOLVED catches a `verifies` id that
+  # names no requirement. Items stay un-materialized as entities — only
+  # the reference edge is lifted, mirroring `module_satisfies`.
+  - kind: test_verifies
+    extends: depends_on
+    from_kind: Module
+    to_kind: Requirement
+    from_spec: "specs/modules/*.toml"
+    for_each: "items[].verifies[]"
+    endpoints:
+      from: "${root.name}"
+      to: "${.}"
+
   # Requirement → Decision: pin a requirement's *how*. Drives
   # `requirement_decided_by_resolves`.
   - kind: requirement_decided_by_decision

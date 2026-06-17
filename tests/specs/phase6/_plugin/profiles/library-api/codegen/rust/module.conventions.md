@@ -79,6 +79,20 @@ or `pub struct` lacks an items[] entry, codegen emits it but does NOT
 trace it to a requirement; an in-source-only public item is permitted
 (non-spec-significant API surface) but uncommon.
 
+## Test items
+
+An `[[items]]` entry with `test = true` is a test (D60): a `kind = "fn"`
+item using `verifies = [...]` (against `nature = "test"` requirements)
+instead of `satisfies`. Emit per `test_kind` (D61): `unit` →
+`#[cfg(test)] mod tests` in the module file; `integration` →
+`tests/<name>.rs`; `doc` → a `///` example on the named item; `bench` /
+`fuzz` reserve the slot but emit nothing in v1 (validate warns). Write a
+working body from the prompt's "Test items (verification context)"
+section; emit `todo!("verifies <ids>")` only when the criteria are
+insufficient. Test-harness crates use a module `external_deps` entry with
+`test_only = true` → `[dev-dependencies]`. See the live profile's
+`codegen/rust/module.conventions.md` § "Test items" for the full table.
+
 ## Re-exports (via items[])
 
 Re-exports are authored as `[[items]]` entries with `kind = "re_export"`.

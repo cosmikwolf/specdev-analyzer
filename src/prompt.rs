@@ -234,6 +234,19 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         }
     }
 
+    // Phase 21 / D60: test-item verification context. For each
+    // `[[items]]` entry with `test = true`, resolve its `verifies[]` ids
+    // to the requirement text + verification hints (`verified_by`) +
+    // (Phase 19) the `verification` text of any `decided_by` decision, so
+    // the codegen LLM has the criteria to write the test body rather than
+    // inventing them. Empty when the module declares no test items.
+    let test_ctx = collect_test_item_context(layout, &module_toml)?;
+    if !test_ctx.is_empty() {
+        section_header(&mut out, "Test items (verification context)");
+        out.push_str(&test_ctx);
+        out.push('\n');
+    }
+
     section_header(
         &mut out,
         &format!("Module spec (`specs/modules/{module_name}.toml`)"),
@@ -248,6 +261,104 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     warn_if_over_budget(module_name, out.len());
 
     Ok(out)
+}
+
+/// Build the test-item verification context block (Phase 21 / D60).
+///
+/// Walks the module's `items[]` for entries with `test = true`, and for
+/// each resolves its `verifies[]` requirement ids against
+/// `specs/requirements.toml` (text + `verified_by` hints) and, through
+/// each requirement's `decided_by[]`, the `verification` text of the
+/// referenced decisions in `specs/decisions.toml`. Deterministic: items,
+/// verifies ids, and decided_by ids are walked in declaration order.
+/// Returns an empty string when the module has no test items.
+fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) -> Result<String> {
+    let items = module_toml
+        .get("items")
+        .and_then(toml::Value::as_array)
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    let test_items: Vec<&toml::Value> = items
+        .iter()
+        .filter(|it| it.get("test").and_then(toml::Value::as_bool) == Some(true))
+        .collect();
+    if test_items.is_empty() {
+        return Ok(String::new());
+    }
+
+    // Lazy-load the requirement and decision tables once.
+    let reqs = load_toml_array(&layout.specs_dir.join("requirements.toml"), "requirement");
+    let decisions = load_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
+    let req_by_id = |id: &str| reqs.iter().find(|r| r.get("id").and_then(toml::Value::as_str) == Some(id));
+    let dec_by_id = |id: &str| {
+        decisions
+            .iter()
+            .find(|d| d.get("id").and_then(toml::Value::as_str) == Some(id))
+    };
+
+    let mut out = String::new();
+    out.push_str(
+        "These `items[]` entries are tests. Emit each per its `test_kind` (see the \
+         profile conventions). Write a working test body from the verification context \
+         below; emit `todo!(\"verifies <ids>\")` only when the criteria are insufficient \
+         to write the test.\n\n",
+    );
+
+    for item in test_items {
+        let name = item.get("name").and_then(toml::Value::as_str).unwrap_or("<unnamed>");
+        let kind = item
+            .get("test_kind")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("unit");
+        out.push_str(&format!("### `{name}` (test_kind = `{kind}`)\n"));
+        if let Some(desc) = item.get("description").and_then(toml::Value::as_str) {
+            out.push_str(&format!("{desc}\n"));
+        }
+        let verifies = item
+            .get("verifies")
+            .and_then(toml::Value::as_array)
+            .map(|a| a.as_slice())
+            .unwrap_or(&[]);
+        for vid in verifies.iter().filter_map(toml::Value::as_str) {
+            match req_by_id(vid) {
+                Some(req) => {
+                    let text = req.get("text").and_then(toml::Value::as_str).unwrap_or("");
+                    out.push_str(&format!("- **{vid}**: {text}\n"));
+                    if let Some(vb) = req.get("verified_by").and_then(toml::Value::as_array) {
+                        let hints: Vec<&str> = vb.iter().filter_map(toml::Value::as_str).collect();
+                        if !hints.is_empty() {
+                            out.push_str(&format!("  - verification hints: {}\n", hints.join("; ")));
+                        }
+                    }
+                    if let Some(db) = req.get("decided_by").and_then(toml::Value::as_array) {
+                        for did in db.iter().filter_map(toml::Value::as_str) {
+                            if let Some(v) = dec_by_id(did)
+                                .and_then(|d| d.get("verification"))
+                                .and_then(toml::Value::as_str)
+                            {
+                                out.push_str(&format!("  - {did} verification: {v}\n"));
+                            }
+                        }
+                    }
+                }
+                None => {
+                    out.push_str(&format!("- **{vid}**: (requirement not found)\n"));
+                }
+            }
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Best-effort load of a top-level array-of-tables from a TOML file.
+/// Missing / unparseable files yield an empty vec.
+fn load_toml_array(path: &std::path::Path, key: &str) -> Vec<toml::Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+        .and_then(|v| v.get(key).and_then(toml::Value::as_array).cloned())
+        .unwrap_or_default()
 }
 
 /// Codegen-gate refusal returned by [`check_codegen_gate`] when an open

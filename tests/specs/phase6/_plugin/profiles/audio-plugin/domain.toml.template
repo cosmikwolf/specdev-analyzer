@@ -23,6 +23,7 @@ layer_dependency                             = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 requirements_have_satisfiers                 = "warning"
+test_requirements_have_verifiers             = "warning"
 parameters_have_bindings                     = "warning"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
@@ -77,13 +78,28 @@ field = "entities[].name"
 
 # Every Requirement with `nature = "module"` (the default) must be
 # satisfied by at least one module — orphan requirements warn (F-006).
-# Set `nature = "architecture" | "build" | "test"` on a requirement to
-# exempt it from this check.
+# Set `nature = "architecture" | "build"` to exempt; `nature = "test"`
+# requirements are exempt HERE but covered by the test-verifier check
+# below instead.
 [[project.graph_checks]]
 kind = "requirements_have_satisfiers"
 rule = "requirements_have_satisfiers"
 entity_scope = "Requirement"
 relation_scope = "module_satisfies"
+
+# Every Requirement with `nature = "test"` must be verified by at least
+# one test item (a `[[items]]` entry with `test = true` whose `verifies`
+# names it) — D60. Generic `entity_has_inbound_relation` primitive with a
+# `nature = "test"` attr filter; `test_verifies` edges come from
+# `items[].verifies[]` reduction. Reference resolution is reduce-time
+# REDUCE_UNRESOLVED.
+[[project.graph_checks]]
+kind = "entity_has_inbound_relation"
+rule = "test_requirements_have_verifiers"
+entity_scope = "Requirement"
+entity_attr = "nature"
+entity_attr_value = "test"
+relation_scope = "test_verifies"
 
 # Every nih-plug Parameter must be wired to at least one engine write
 # (D58, load-bearing orphan check). Catches "added a parameter, forgot

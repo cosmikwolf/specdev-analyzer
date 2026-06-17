@@ -282,6 +282,18 @@ DSP primitives across module boundaries.
 profile) is excluded from `gen --skeleton` until silence-and-log stubs
 land (bounded follow-up).
 
+### Test items
+
+An `[[items]]` entry with `test = true` is a test (D60): `kind = "fn"`
+using `verifies = [...]` (against `nature = "test"` requirements) instead
+of `satisfies`, with `test_kind` driving emit — `unit` →
+`#[cfg(test)] mod tests`; `integration` → `tests/<name>.rs`; `doc` → a
+`///` example; `bench` / `fuzz` reserve the slot (no v1 emission, validate
+warns). `test_requirements_have_verifiers` warns on an unverified test
+requirement. Write the body from the prompt's "Test items (verification
+context)" section; `todo!("verifies <ids>")` only when criteria are
+insufficient. See the library-api profile prose for the full table.
+
 ## Cross-module dependencies
 
 `module.depends_on[]` does not directly emit code. Rust's module system

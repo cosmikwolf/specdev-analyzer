@@ -98,3 +98,11 @@ $defs:
           allows `optional` at the member-dep site even when version /
           source / default-features are workspace-inherited.
         type: boolean
+      test_only:
+        description: |
+          Set to `true` to route this crate to `[dev-dependencies]`
+          instead of `[dependencies]`. Test/bench/fuzz harness crates
+          (`approx`, `proptest`, `criterion`) that compile only for the
+          test target. Defaults to `false` when absent. A routing flag,
+          not a Cargo key — it never appears in the rendered dep value.
+        type: boolean

@@ -42,6 +42,13 @@ pub(crate) struct CrateRef {
     /// the member-dep site even when the rest is workspace-inherited.
     #[serde(default)]
     optional: Option<bool>,
+    /// When `true`, route this crate to `[dev-dependencies]` instead of
+    /// `[dependencies]` (D58 commitment 6; Phase 21 carry-in). Test-only
+    /// deps (test/bench/fuzz harness crates like `approx`, `proptest`,
+    /// `criterion`) compile only for the test target. This is a routing
+    /// flag, not a Cargo key — it never appears in the rendered value.
+    #[serde(default)]
+    test_only: Option<bool>,
 }
 
 /// Closed-set tagged union for `CrateReference.source`. Mirrors the
@@ -316,6 +323,9 @@ fn block_crate_entry_to_crate_ref(entry: &bd_module::CrateEntry) -> CrateRef {
         },
         default_features: entry.default_features,
         optional: entry.optional,
+        // Block/bridge deps are compile-time deps; test-only routing is a
+        // module/architecture-level `external_deps` concern (Phase 21).
+        test_only: None,
     }
 }
 
@@ -1175,9 +1185,22 @@ fn write_package_section(
 }
 
 fn write_dependencies_section(text: &mut String, deps: &BTreeMap<String, CrateRef>) {
+    // Partition by the `test_only` routing flag: regular deps go under
+    // `[dependencies]`, test-only deps under `[dev-dependencies]`
+    // (D58 §6 / Phase 21). `test_only` is never rendered into the value.
     text.push_str("[dependencies]\n");
-    for (name, c) in deps {
+    for (name, c) in deps.iter().filter(|(_, c)| c.test_only != Some(true)) {
         text.push_str(&format!("{} = {}\n", name, render_dep_value(c)));
+    }
+    let dev: Vec<(&String, &CrateRef)> = deps
+        .iter()
+        .filter(|(_, c)| c.test_only == Some(true))
+        .collect();
+    if !dev.is_empty() {
+        text.push_str("\n[dev-dependencies]\n");
+        for (name, c) in dev {
+            text.push_str(&format!("{} = {}\n", name, render_dep_value(c)));
+        }
     }
 }
 
