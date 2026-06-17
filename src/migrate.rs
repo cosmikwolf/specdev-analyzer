@@ -1,7 +1,7 @@
-//! `specdev-analyzer migrate` — populate Phase 16 manifests for pre-D52 projects.
+//! `specdev-analyzer migrate` — populate manifests for pre-manifest projects.
 //!
-//! Doc 21 §6.5 specifies the backwards-compat path: projects bootstrapped
-//! before Phase 16 ship no `profile.yaml` / `deps.yaml` / `contract.yaml` in
+//! The backwards-compat path: projects bootstrapped before manifests existed
+//! ship no `profile.yaml` / `deps.yaml` / `contract.yaml` in
 //! their inlined tree. `migrate` walks the project's lineage, resolves which
 //! profile / blocks / bridges it has, and byte-copies the missing manifests
 //! from the plugin tree's HEAD. Lineage `content_hash` is updated to the
@@ -11,13 +11,13 @@
 //!
 //! Idempotency: when every lineage entry's hash already matches the plugin-
 //! HEAD rolled-up hash, migrate is a true no-op (zero file writes). When
-//! the plugin tree itself is pre-D52 (no manifests), every collector
+//! the plugin tree itself is pre-manifest (no manifests), every collector
 //! returns the legacy file set and the rolled-up hash matches lineage —
 //! migrate becomes a no-op for those units. This is correct: there is
 //! nothing to migrate to.
 //!
 //! Project-local bridges (`reductions/bridges/local/...`) have no lineage
-//! entry per D33 and are skipped — there is no plugin source to byte-copy
+//! entry and are skipped — there is no plugin source to byte-copy
 //! from.
 //!
 //! Error families:
@@ -66,7 +66,7 @@ pub struct SkippedUnit {
 #[derive(Debug, Clone, Default)]
 pub struct MigrateReport {
     /// Profile-shell migration (one entry max — there is at most one
-    /// inlined profile per project per doc 15 §3.3).
+    /// inlined profile per project).
     pub profile_files_written: Vec<PathBuf>,
     pub profile_skipped: bool,
     pub migrated: Vec<MigratedUnit>,
@@ -341,7 +341,7 @@ fn apply_unit_migration(
 
     // Rewrite the upstream snapshot with the FULL plugin-HEAD file set so
     // the recorded merge-base matches the new content_hash. The previous
-    // upstream snapshot reflected the pre-D52 (no-manifest) bytes; after
+    // upstream snapshot reflected the pre-manifest (no-manifest) bytes; after
     // migrate it must reflect what the lineage hash now witnesses.
     let upstream_files: Vec<(PathBuf, Vec<u8>)> = files
         .iter()

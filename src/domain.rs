@@ -116,28 +116,28 @@ pub struct GraphCheck {
     pub module_deps_field: Option<String>,
     #[serde(default)]
     pub allowed_deps_table: Option<String>,
-    /// Phase-5 layer_dependency (graph-shape rewrite): entity-side kind
+    /// layer_dependency (graph-shape rewrite): entity-side kind
     /// scope. Filters `entities[]` to entries whose kind extends this
     /// kind. Used jointly with `relation_scope` and `layer_field`.
     #[serde(default)]
     pub entity_scope: Option<String>,
-    /// Phase-5 layer_dependency: relation-side kind scope. Filters
+    /// layer_dependency: relation-side kind scope. Filters
     /// `relations[]` to entries whose kind extends this kind.
     #[serde(default)]
     pub relation_scope: Option<String>,
-    /// Phase-5 layer_dependency: path to the layer string on each
+    /// layer_dependency: path to the layer string on each
     /// scoped entity (e.g. `attrs.layer`). Looked up against each entity
     /// in the filtered view.
     #[serde(default)]
     pub layer_field: Option<String>,
-    /// Phase-5 layer_dependency: layers in declared order, top-most
+    /// layer_dependency: layers in declared order, top-most
     /// first (e.g. `["application", "middleware", "driver", "HAL", "PAC"]`).
     /// A relation's `from` layer must appear in `ordering` at a position
     /// less-than-or-equal to its `to` layer's position. Same-layer
     /// dependencies are allowed.
     #[serde(default)]
     pub layer_ordering: Option<Vec<String>>,
-    /// Phase 19 — `entity_attr_inbound_count`: filter `entities[]` to
+    /// `entity_attr_inbound_count`: filter `entities[]` to
     /// rows whose `entity_attr` equals `entity_attr_value`, then count
     /// inbound `relation_scope` edges per row; assert the count equals
     /// `expected_count`. Authored alongside `decision_supersedes_chain_consistency`.
@@ -147,7 +147,7 @@ pub struct GraphCheck {
     pub entity_attr_value: Option<String>,
     #[serde(default)]
     pub expected_count: Option<usize>,
-    /// Phase 19 — `entity_attr_target_attr_equals`: filter source entities
+    /// `entity_attr_target_attr_equals`: filter source entities
     /// by `entity_scope` + `entity_attr == entity_attr_value`; the entity
     /// referenced by `target_attr_field` (an attr on the source entity)
     /// must be of kind `target_entity_kind` and have `target_attr ==

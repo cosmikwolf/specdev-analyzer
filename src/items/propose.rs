@@ -1,4 +1,4 @@
-//! Phase 14 three-stage sync — Stage 2 scaffolding: `items propose`.
+//! Three-stage sync — Stage 2 scaffolding: `items propose`.
 //!
 //! Builds a *proposal scaffold* from `items diff` output. The scaffold
 //! is purely deterministic: every drift entry is enriched with the

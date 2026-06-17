@@ -1,12 +1,11 @@
 //! Canonical kind sets, loaded from the embedded metaschemas at startup.
 //!
-//! The canonical root-kind and relation-kind enums are closed at v1 (doc 10
-//! §"Canonical root kinds" / §"Canonical relation vocabulary"). They form
-//! the *base* vocabulary; blocks and bridges contribute path-qualified kinds
-//! that classify under the base via `extends`.
+//! The canonical root-kind and relation-kind enums are closed at v1. They
+//! form the *base* vocabulary; blocks and bridges contribute path-qualified
+//! kinds that classify under the base via `extends`.
 //!
-//! These sets are embedded in the analyzer (doc 15 §11 invariant 5: no
-//! plugin lookup at analyze time). The embedded YAMLs at
+//! These sets are embedded in the analyzer (no plugin lookup at analyze
+//! time). The embedded YAMLs at
 //! `src/embedded/{root_kinds,relation_kinds}.schema.yaml` are the source of
 //! truth; we parse them once at first use.
 

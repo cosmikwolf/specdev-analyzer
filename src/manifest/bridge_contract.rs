@@ -1,6 +1,5 @@
 //! `contract.yaml` — bridge dispatch metadata.
 //! Schema: `src/embedded/bridge_contract.schema.yaml`.
-//! Authoritative spec: doc 21 §5.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;

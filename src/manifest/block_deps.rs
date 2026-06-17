@@ -1,6 +1,5 @@
 //! `codegen/<lang>/deps.yaml` — per (block, language) Cargo dep
 //! contributions. Schema: `src/embedded/block_deps.schema.yaml`.
-//! Authoritative spec: doc 21 §4.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -73,7 +72,7 @@ pub struct RecommendedDep {
 impl BlockDeps {
     /// Load and validate a block `deps.yaml`. Returns
     /// `BlockDeps::default()` if the file is absent — the manifest is
-    /// optional per doc 21 §4 (block has no Rust deps to contribute).
+    /// optional (block has no Rust deps to contribute).
     pub fn load(path: &Path) -> Result<Self> {
         if !path.is_file() {
             return Ok(Self::default());

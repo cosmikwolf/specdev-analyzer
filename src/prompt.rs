@@ -1,4 +1,4 @@
-//! Phase 8: deterministic prompt assembly for `specdev gen`.
+//! Deterministic prompt assembly for `specdev gen`.
 //!
 //! Reads a module spec + the inlined blocks/bridges' codegen prose +
 //! the project's architecture.toml, and concatenates them into a
@@ -9,7 +9,7 @@
 //! then emitted in lex order. The same project + module produces a
 //! byte-identical prompt across runs.
 //!
-//! Per D29: the analyzer assembles the prompt; Claude does the
+//! The analyzer assembles the prompt; Claude does the
 //! emission. This module's output is plumbing, not codegen.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -184,7 +184,7 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         out.push('\n');
     }
 
-    // Phase 19 / D63 §1: decisions + default-committed OQs in scope.
+    // Decisions + default-committed OQs in scope.
     // Walks `specs/decisions.toml` + `specs/open_questions.toml` per-tier,
     // dedupes across (a) module's local guided_by, (b) module's
     // requirements' decided_by, (c) workspace-tier decisions when the
@@ -234,10 +234,10 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         }
     }
 
-    // Phase 21 / D60: test-item verification context. For each
+    // Test-item verification context. For each
     // `[[items]]` entry with `test = true`, resolve its `verifies[]` ids
     // to the requirement text + verification hints (`verified_by`) +
-    // (Phase 19) the `verification` text of any `decided_by` decision, so
+    // the `verification` text of any `decided_by` decision, so
     // the codegen LLM has the criteria to write the test body rather than
     // inventing them. Empty when the module declares no test items.
     let test_ctx = collect_test_item_context(layout, &module_toml)?;
@@ -263,7 +263,7 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     Ok(out)
 }
 
-/// Build the test-item verification context block (Phase 21 / D60).
+/// Build the test-item verification context block.
 ///
 /// Walks the module's `items[]` for entries with `test = true`, and for
 /// each resolves its `verifies[]` requirement ids against
@@ -366,7 +366,7 @@ fn load_toml_array(path: &std::path::Path, key: &str) -> Vec<toml::Value> {
 /// → Requirement → OpenQuestion.affects^-1.
 ///
 /// `message` carries the verbatim refusal text (the three-exit-options
-/// block from D63 §6) ready to print to stderr; `oq_id` and `oq_title`
+/// block) ready to print to stderr; `oq_id` and `oq_title`
 /// are surfaced separately for tests + structured consumers.
 #[derive(Debug, Clone)]
 pub struct GateRefusal {
@@ -376,7 +376,7 @@ pub struct GateRefusal {
     pub message: String,
 }
 
-/// Phase 19 / D63 §6 — codegen gate.
+/// Codegen gate.
 ///
 /// For module `module_name`, walk `module.satisfies` → Requirement →
 /// `open_question_affects_requirement`-reverse and check whether any
@@ -460,8 +460,8 @@ pub fn check_codegen_gate(
         }));
     }
 
-    // Workspace-tier OQs implicitly apply down (D63 §1, extended to
-    // OQs in 2.5-C). When `affects` is empty/absent the OQ blocks every
+    // Workspace-tier OQs implicitly apply down. When `affects` is
+    // empty/absent the OQ blocks every
     // module in every member crate; when populated, it acts like a
     // local OQ with explicit scope. Local-tier OQs with the same id
     // take precedence over workspace entries.
@@ -539,15 +539,15 @@ fn read_open_question_title(
     None
 }
 
-/// Collect decisions + default_committed/closed OQ context for a module
-/// per D63 §1. Three sources, deduped:
+/// Collect decisions + default_committed/closed OQ context for a module.
+/// Three sources, deduped:
 ///
 /// (a) module.guided_by (each id resolves to a Decision)
 /// (b) requirements satisfied by the module → each requirement.decided_by
 /// (c) workspace-tier decisions when this project sits inside a workspace
 ///
 /// Output is sorted by id for byte-stability. Status=`superseded`
-/// decisions are skipped (D63 §7). OQs are surfaced when they affect any
+/// decisions are skipped. OQs are surfaced when they affect any
 /// of the module's satisfied requirements:
 ///   - status = default_committed → "(working assumption)" + verify text
 ///   - status = closed             → "(resolved)" + pointer to closed_by
@@ -580,7 +580,7 @@ pub fn collect_decision_oq_context(
     let local_decisions = read_decisions(&layout.specs_dir.join("decisions.toml"))?;
     let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
 
-    // Workspace-tier decisions/oqs (D63 §1c). The workspace's
+    // Workspace-tier decisions/oqs. The workspace's
     // specs/decisions.toml lives one level up from a member crate's
     // project_root when the project sits inside a `<workspace>/<member>/`
     // shape. The detection heuristic: a workspace's spec.toml lives at
@@ -618,7 +618,7 @@ pub fn collect_decision_oq_context(
     // Per-project requirement → affecting OQs (reverse of OQ.affects).
     let req_to_oqs = build_req_to_oqs(&local_oqs);
 
-    // -- compute the in-scope decision id set per D63 §1 -------------------
+    // -- compute the in-scope decision id set -----------------------------
 
     let mut in_scope_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
     let mut emit_decision = |id: &str, decisions: &BTreeMap<String, DecisionEntry>| {

@@ -23,11 +23,11 @@ use specdev_analyzer::{
     validate, Severity,
 };
 
-fn phase6_plugin() -> PathBuf {
+fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("specs")
-        .join("phase6")
+        .join("full_plugin")
         .join("_plugin")
 }
 
@@ -53,7 +53,7 @@ fn hello_firmware_project(tag: &str) -> (PathBuf, LayoutContext) {
     let target = workspace.join("hello-firmware");
     std::fs::create_dir_all(&target).unwrap();
     bootstrap::run_bootstrap(
-        &phase6_plugin(),
+        &full_plugin(),
         &BootstrapInputs {
             profile: "firmware-layered".into(),
             language: "rust".into(),
@@ -63,9 +63,9 @@ fn hello_firmware_project(tag: &str) -> (PathBuf, LayoutContext) {
     )
     .unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
-    run_inline_block(&layout, &phase6_plugin(), "embassy").unwrap();
-    run_inline_block(&layout, &phase6_plugin(), "stm32h5-rs").unwrap();
-    run_inline_bridge(&layout, &phase6_plugin(), "embassy+stm32h5-rs").unwrap();
+    run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
+    run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
+    run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
 
     // Concrete MCU pick: uncomment the template's example part.
     let arch_path = target.join("specs/architecture.toml");
@@ -202,7 +202,7 @@ fn cargo_toml_render_carries_block_and_platform_deps() {
     let (_target, layout) = hello_firmware_project("cargo");
     let rendered = cargo_toml::render(&layout).unwrap();
     // Block deps.yaml (embassy), bridge deps.yaml (embassy-stm32, the
-    // D65 join product), and profile-template platform picks must all
+    // bridge join product), and profile-template platform picks must all
     // survive the manifest-driven dispatch.
     for dep in [
         "embassy-executor",

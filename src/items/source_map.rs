@@ -1,15 +1,14 @@
 //! Spec module name → on-disk source file resolution.
 //!
-//! Phase 10 convention (per the items[] sequencing in
-//! `05-implementation-plan.md`):
+//! Convention:
 //!
-//! 1. Convention: `<project>/<source_root>/<snake_case(name)>.<ext>`.
+//! 1. `<project>/<source_root>/<snake_case(name)>.<ext>`.
 //! 2. For Rust + flat layout, also try `<snake_case(name)>/mod.<ext>`.
 //!
-//! Phase 14 may add `module.metadata.SourceMapping.file` overrides as
+//! A future `module.metadata.SourceMapping.file` override may be added as
 //! items[] sync surfaces real needs. For now we only honour the
-//! convention because pre-Phase-14 specs don't carry items[] yet, and
-//! `verified_by_resolves` (Phase 10's first consumer) only needs
+//! convention because specs without items[] don't carry them yet, and
+//! `verified_by_resolves` (the first consumer) only needs
 //! convention-based resolution.
 
 use std::path::{Path, PathBuf};

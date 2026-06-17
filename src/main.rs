@@ -51,7 +51,7 @@ enum Command {
         /// Errors, warnings, and the summary/counts tail still print.
         #[arg(long, short = 'q')]
         quiet: bool,
-        /// Phase 16 Batch B: scope checks to the consumer named here.
+        /// Scope checks to the consumer named here.
         /// Accepts `schema`, `strict-gen`, or `cargo-toml`.
         /// Schema-tagged checks always run regardless. Without the flag,
         /// every check fires (legacy behavior).
@@ -68,9 +68,9 @@ enum Command {
         output: PathBuf,
     },
     /// Extract structured items (top-level Rust constructs) from each module's
-    /// source file. Output is the substrate Phase 14's items[] sync diffs
+    /// source file. Output is the substrate the items[] sync diffs run
     /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
-    /// skill (Phase 11b).
+    /// skill.
     ExtractItems {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -80,10 +80,10 @@ enum Command {
         #[arg(long)]
         module: Option<String>,
     },
-    /// Pre-flight surface for the Claude-mediated `/spec-reverse` skill (11b).
+    /// Pre-flight surface for the Claude-mediated `/spec-reverse` skill.
     /// Reports the blocks currently inlined in the project, validates the
     /// `--into` arg if provided, and emits coarse ambiguity warnings when
-    /// multiple blocks are inlined without scoping. Phase 10 surface only —
+    /// multiple blocks are inlined without scoping. Pre-flight surface only —
     /// actual TOML emission is Claude's job in the skill.
     Reverse {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
@@ -96,10 +96,10 @@ enum Command {
         #[arg(long)]
         into: Option<String>,
     },
-    /// Phase 14 three-stage agentic sync. `items diff <module>` is
+    /// Three-stage agentic sync. `items diff <module>` is
     /// stage 1: deterministic detection of drift between spec items[]
-    /// and tree-sitter-extracted source items. `items propose` (14-F)
-    /// and `items apply` (14-G) layer on top.
+    /// and tree-sitter-extracted source items. `items propose`
+    /// and `items apply` layer on top.
     Items {
         #[command(subcommand)]
         action: ItemsAction,
@@ -169,7 +169,7 @@ enum Command {
     },
     /// Emit a deterministic Cargo.toml derived from the project's
     /// spec.toml + architecture.toml + module-level external_deps.
-    /// Phase 6.7 commitment: every Cargo dep is captured in the spec;
+    /// Every Cargo dep is captured in the spec;
     /// this subcommand renders the OUTPUT half. Lex-sorted deps;
     /// stable across runs. Conflict warnings on stderr.
     CargoToml {
@@ -192,13 +192,13 @@ enum Command {
         #[arg(long)]
         module: String,
     },
-    /// Phase 11.5 — focused dependency cone for one module. Emits the
+    /// Focused dependency cone for one module. Emits the
     /// schema files, plugin-tree READMEs, target module path, and the
     /// one-hop set of related sibling modules. Skill consumers
     /// (`/spec-design`, `/spec-edit`, `/spec-reverse`) read only the
     /// listed files instead of every module under `specs/modules/`.
     /// Read-only graph projection over the existing reduction; no new
-    /// schema or graph primitives. See `19-analyzer-context-subcommand.md`.
+    /// schema or graph primitives.
     Context {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -213,8 +213,8 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Phase 16 §8.1 step 9 — populate Phase 16 manifests for projects
-    /// bootstrapped before D52 shipped. Walks the project's lineage,
+    /// Populate manifests for projects bootstrapped before the manifest
+    /// formats shipped. Walks the project's lineage,
     /// resolves which profile / blocks / bridges it has, and byte-copies
     /// the missing manifests (`profile.yaml`, `templates/*`, per-block
     /// `deps.yaml`, per-bridge `contract.yaml`) from the plugin tree's
@@ -222,8 +222,8 @@ enum Command {
     /// `origin` / `origin_version` / `inlined_at` stay frozen — they
     /// record the original inline, not the migration. No-op when the
     /// manifests are already present (true byte-stable idempotency).
-    /// Backward-compat aid; deletion gated on the v1.1 `default-fallback
-    /// removal` trigger per doc 21 §6.5.
+    /// Backward-compat aid; deletion gated on the future `default-fallback
+    /// removal` trigger.
     Migrate {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -667,7 +667,7 @@ fn run_extract_items(
         None => {
             eprintln!(
                 "[ITEMS-001] no language adapter for `{language}`; supported: rust. \
-                 Phase 10 ships Rust only — Phase 9 adds C, Phase 14-C ships C items."
+                 v1 ships Rust only; C support is planned."
             );
             return ExitCode::from(2);
         }
@@ -680,8 +680,8 @@ fn run_extract_items(
 
     let inventory = layout.enumerate();
     for module_path in &inventory.modules {
-        // Module filename stem is the spec module name (per Phase 1's
-        // inventory convention: `specs/modules/<Name>.toml`).
+        // Module filename stem is the spec module name (inventory
+        // convention: `specs/modules/<Name>.toml`).
         let name: String = match module_path.file_stem().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -1376,7 +1376,7 @@ fn run_gen(
         }
     };
     if let Some(name) = module {
-        // Phase 19 / D63 §6: codegen gate. Refuse if the target module
+        // Codegen gate. Refuse if the target module
         // is reachable through any open OpenQuestion. Validate also
         // surfaces this as a `codegen_unblocked` warning, but gen is
         // the hard refusal — strict-gen produces no source until the

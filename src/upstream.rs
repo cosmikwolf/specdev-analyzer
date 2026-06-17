@@ -1,8 +1,7 @@
 //! `specs/specdev/upstream/` — bytes-as-of-inlining for every inlined unit.
 //!
-//! Doc 15 §4 layout amendment + D34 in `02-decisions.md`. This directory is
-//! the **merge base** for `--merge` (Phase 4) and the reference point for
-//! `drift`'s 3-way comparison. It mirrors the unit's plugin-source layout:
+//! This directory is the **merge base** for `--merge` and the reference point
+//! for `drift`'s 3-way comparison. It mirrors the unit's plugin-source layout:
 //! `upstream/blocks/embassy/{schema.yaml, reduction.yaml, codegen/<lang>/README.md}`.
 //!
 //! Authoritative, not a cache: the bytes are not regenerable. The plugin
@@ -49,7 +48,7 @@ pub fn upstream_unit_present(specdev_root: &Path, kind: UnitKind, name: &str) ->
 /// Write a unit's upstream bytes from a list of `(rel_src_in_unit, bytes)`
 /// pairs. `rel_src_in_unit` is the path relative to the unit dir in the
 /// plugin (e.g. `schema.yaml`, `codegen/rust/README.md`) — *not* the
-/// project-destination path. Files are written verbatim (D33).
+/// project-destination path. Files are written verbatim.
 pub fn write_upstream_files(
     specdev_root: &Path,
     kind: UnitKind,

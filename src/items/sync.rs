@@ -1,4 +1,4 @@
-//! Phase 14 three-stage sync — Stage 1: deterministic detection
+//! Three-stage sync — Stage 1: deterministic detection
 //! (`items diff`).
 //!
 //! Walks a module's spec items[] and the corresponding source file's
@@ -254,7 +254,7 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
         .with_context(|| format!("[ITEM-102] {label}: TOML parse failed"))?;
     let spec_items = parse_spec_items(&value, &label)?;
 
-    // Resolve source file via the language adapter (Phase 10 surface).
+    // Resolve source file via the language adapter.
     let language = &layout.spec.project.language;
     let adapter = crate::lang::adapter_for(language)
         .ok_or_else(|| anyhow!("[ITEM-101] no language adapter for `{language}`"))?;

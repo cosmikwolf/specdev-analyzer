@@ -1,6 +1,6 @@
 //! Extract pipeline.
 //!
-//! Phase 2 implementation. Validates the project, runs the open-vocabulary
+//! Validates the project, runs the open-vocabulary
 //! reduction executor against the resolved [`EffectiveKindSet`], and
 //! produces canonical YAML for codegen consumption:
 //!

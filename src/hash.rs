@@ -1,4 +1,4 @@
-//! Content hashing for inlined units (D33 in `02-decisions.md`).
+//! Content hashing for inlined units.
 //!
 //! The hash covers the exact bytes the analyzer copied from plugin to
 //! project — no normalization, no re-emission. Canonicalization (LF,
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn hash_changes_with_trailing_newline() {
-        // Witness for D33: a trailing-newline difference is visible.
+        // A trailing-newline difference is visible.
         let a = content_hash(b"hello");
         let b = content_hash(b"hello\n");
         assert_ne!(a, b);

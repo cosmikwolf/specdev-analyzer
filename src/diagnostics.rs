@@ -1,7 +1,7 @@
 //! File:line:col-shaped error payloads.
 //!
-//! Phase 1 introduces the `<path>:<line>:<col>: <message>` error format the
-//! plan calls for as the CLI baseline. Errors carry a `LocatedError` payload
+//! The `<path>:<line>:<col>: <message>` error format is the CLI baseline.
+//! Errors carry a `LocatedError` payload
 //! when the originating subsystem (TOML parser, YAML parser, JSON Schema
 //! validator) can pinpoint a source position; the top-level `report_error`
 //! helper renders that payload as the first line so a user can jump to the

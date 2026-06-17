@@ -1,7 +1,7 @@
 //! Tree-sitter item extraction.
 //!
-//! Phase 10 (per D40, 2026-05-02) ships `extract-items` as the surface
-//! that Phase 14's items[] sync builds on. The output shape
+//! Ships `extract-items` as the surface that items[] sync builds on.
+//! The output shape
 //! (`ExtractedItem`) is the strict subset of the spec-side `Item`
 //! schema: `kind` + `name` + optional `signature` + optional
 //! `attributes[]` + source span. Spec-only fields (`description`,

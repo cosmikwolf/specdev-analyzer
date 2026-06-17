@@ -1,4 +1,4 @@
-//! Phase 14 three-stage sync — Stage 3: `items apply`.
+//! Three-stage sync — Stage 3: `items apply`.
 //!
 //! Reads an approved proposal file, validates the approval gate, and
 //! mutates `specs/modules/<Name>.toml` per each entry's recommendation.

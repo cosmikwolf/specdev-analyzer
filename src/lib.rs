@@ -1,8 +1,8 @@
 //! # `specdev_analyzer` — domain-agnostic analyzer for TOML specs.
 //!
-//! Phase 2 of the blocks + bridges + profiles arc. The analyzer reads a
+//! Part of the blocks + bridges + profiles arc. The analyzer reads a
 //! project's `spec.toml` and `specs/specdev/` tree directly; there is **no
-//! resolution chain at analyze time** (doc 15 §11 invariant 5). The plugin
+//! resolution chain at analyze time**. The plugin
 //! is the source of profiles and blocks at *bootstrap* and *inline* time
 //! only — runtime analyze paths consult only project-local content plus
 //! the canonical metaschemas that ship embedded in this crate.
@@ -17,17 +17,16 @@
 //! | Reduce to a universal graph       | [`reduction::run_project`]             | [`reduction::Graph`] + [`Report`]   |
 //! | Extract canonical YAML            | [`extract::run_project`]               | [`extract::ExtractionResult`] |
 //!
-//! ## Phase-2 cut line
+//! ## Metaschema model
 //!
-//! Phase 2 lands the metaschema amendment: the closed-enum metaschema is
-//! retired in favor of a path-qualified resolver and an open-vocabulary
-//! [`resolved::EffectiveKindSet`]. Block- and bridge-contributed kinds
-//! classify under the canonical base via `extends` chains. The aggregator
-//! schema compiles into a [`jsonschema::Validator`] reused across module
-//! TOMLs; cycles in the inlined-fragment graph fail at compile time
-//! (AGGREGATOR-003).
+//! The closed-enum metaschema is retired in favor of a path-qualified
+//! resolver and an open-vocabulary [`resolved::EffectiveKindSet`]. Block-
+//! and bridge-contributed kinds classify under the canonical base via
+//! `extends` chains. The aggregator schema compiles into a
+//! [`jsonschema::Validator`] reused across module TOMLs; cycles in the
+//! inlined-fragment graph fail at compile time (AGGREGATOR-003).
 //!
-//! Phase-2 finding codes:
+//! Resolver / validation finding codes:
 //! - `METASCHEMA-001..005` — resolver findings (missing/unresolved
 //!   `extends`, lex-order, canonical/local shadow, invalid grammar).
 //! - `AGGREGATOR-005` — failed jsonschema compile.
@@ -36,18 +35,18 @@
 //! - `REDUCE_UNRESOLVED` — relation endpoint does not name a materialized
 //!   `(qualified-kind, name)` pair.
 //!
-//! Phase-3 error codes (returned as `anyhow::Error` payloads, not findings —
-//! these abort a CLI run rather than accumulate into a [`Report`]):
+//! Bootstrap / inline error codes (returned as `anyhow::Error` payloads, not
+//! findings — these abort a CLI run rather than accumulate into a [`Report`]):
 //! - `PLUGIN-001` — plugin root not resolvable.
 //! - `BOOTSTRAP-001` — target tree already exists / profile invalid.
 //! - `BOOTSTRAP-002` — unknown placeholder in profile template.
 //! - `INLINE-001` — block / bridge not found in plugin tree.
-//! - `INLINE-002` — already inlined (lineage entry present); use `--merge` (Phase 4).
+//! - `INLINE-002` — already inlined (lineage entry present); use `--merge`.
 //! - `INLINE-003` — bridge requires a missing prerequisite block.
 //! - `BRIDGE-LEX-001` — bridge name not lex-ordered (`a < b`).
 //! - `LINEAGE-001` — lineage.toml is malformed.
 //!
-//! Phase-4 error codes (also `anyhow::Error` payloads):
+//! Merge / drift error codes (also `anyhow::Error` payloads):
 //! - `MERGE-001` — `git merge-file` not available on PATH or invocation failed.
 //! - `MERGE-002` — merge produced conflicts; resolve markers and retry.
 //! - `MERGE-003` — `--merge` requested for a unit with no lineage entry.
@@ -57,14 +56,14 @@
 //! - `DRIFT-INVARIANT-002` — upstream entry present, no inlined file.
 //! - `DRIFT-INVARIANT-003` — lineage entry points at no files at all.
 //!
-//! Phase-5 finding codes (in [`Report`] alongside the rest):
+//! Architecture / requirements finding codes (in [`Report`] alongside the rest):
 //! - `LAYOUT-005` — `specs/architecture.toml` absent (info; project may
 //!   have no architecture-level wiring yet).
 //! - `LAYOUT-006` — `specs/requirements.toml` absent (info).
 //! - `SCHEMA-ARCH` — `architecture.toml` fails its profile-shipped schema.
 //! - `SCHEMA-REQ` — `requirements.toml` fails its profile-shipped schema.
 //!
-//! Phase-6.5 plugin-lint codes (emitted by `plugin-lint`, not via Report —
+//! Plugin-lint codes (emitted by `plugin-lint`, not via Report —
 //! these run at plugin-author CI time, before any project context):
 //! - `BLOCK-LINT-001` — block missing required `schema.yaml`.
 //! - `BLOCK-LINT-002` — block missing required `reduction.yaml`.

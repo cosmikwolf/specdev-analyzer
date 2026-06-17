@@ -1,10 +1,9 @@
 //! Project layout discovery.
 //!
-//! Phase 1 of the blocks + bridges + profiles arc. [`LayoutContext`] is the
-//! single source of truth for "where things live in the project" — it
-//! consumes a parsed [`SpecConfig`] and derives every directory and file path
-//! the analyzer needs to load. There is **no resolution chain** at analyze
-//! time (doc 15 §11 invariant 5); every path is rooted at `spec.toml`'s
+//! [`LayoutContext`] is the single source of truth for "where things live in
+//! the project" — it consumes a parsed [`SpecConfig`] and derives every
+//! directory and file path the analyzer needs to load. There is **no
+//! resolution chain** at analyze time; every path is rooted at `spec.toml`'s
 //! directory, never at a plugin or `.specdev/` cascade.
 //!
 //! [`LayoutContext::enumerate`] returns a [`LayoutInventory`] of expected
@@ -40,7 +39,7 @@ pub struct LayoutContext {
     pub inlined_blocks_dir: PathBuf,
     /// `<schemas_dir>/inlined/bridges/`
     pub inlined_bridges_dir: PathBuf,
-    /// `<schemas_dir>/inlined/languages/` — Phase 14 fourth top-level
+    /// `<schemas_dir>/inlined/languages/` — fourth top-level
     /// plugin tier. Holds per-language item-kind vocabulary
     /// (`languages/<lang>/items.schema.yaml`) inlined at bootstrap.
     pub inlined_languages_dir: PathBuf,
@@ -62,9 +61,9 @@ pub struct LayoutContext {
     pub modules_dir: PathBuf,
     /// `<specs_dir>/architecture.toml` — profile-owned architecture-level
     /// authoring (firmware-layered: connections; library-api: features).
-    /// Phase 5+ adds this alongside the existing module TOMLs.
+    /// Lives alongside the existing module TOMLs.
     pub architecture_toml_path: PathBuf,
-    /// `<specs_dir>/requirements.toml` — sources + requirements (Phase 5+).
+    /// `<specs_dir>/requirements.toml` — sources + requirements.
     pub requirements_toml_path: PathBuf,
     /// `<schemas_dir>/architecture.schema.yaml` — schema validating
     /// architecture.toml.
@@ -163,7 +162,7 @@ impl LayoutContext {
             ),
             // `inlined/languages/` is intentionally NOT in the standard
             // inventory: it is bootstrap-created for projects whose language
-            // ships an items[] vocabulary, but pre-Phase-14 projects (and
+            // ships an items[] vocabulary, but older projects (and
             // languages without item vocabulary) bootstrap without it. The
             // aggregator MapRetriever guards on `is_dir()` itself, so a
             // missing dir is a no-op rather than a layout warning.

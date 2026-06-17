@@ -1,6 +1,6 @@
 //! Read/write `specs/specdev/lineage.toml`.
 //!
-//! Shape (doc 15 §5.5; D33 in `02-decisions.md`):
+//! Shape:
 //!
 //! ```toml
 //! [meta]
@@ -23,7 +23,7 @@
 //!
 //! The single `content_hash` per unit is a rolled-up hash over the unit's
 //! file set (see [`crate::inline`]). Profiles intentionally have no entry —
-//! they are one-shot scaffolding (doc 15 §3.3).
+//! they are one-shot scaffolding.
 //!
 //! Byte-stability is preserved via `BTreeMap`: blocks and bridges serialize
 //! in lex order regardless of insertion order.
@@ -98,7 +98,7 @@ impl Lineage {
     }
 
     /// Serialize to a TOML string (byte-stable). Public for tests + the
-    /// snapshot-stability check in `tests/phase3.rs`.
+    /// snapshot-stability check.
     pub fn to_toml_string(&self) -> Result<String> {
         toml::to_string(self).context("serializing lineage")
     }

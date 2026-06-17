@@ -7,7 +7,7 @@
 //!    inlined fragments under `inlined/blocks/` and `inlined/bridges/`.
 //!    Validates that every fragment carries a unique `$id` and that the
 //!    fragment graph is acyclic.
-//! 2. [`compile`] (Phase 2) runs the resolver pass first, then assembles
+//! 2. [`compile`] runs the resolver pass first, then assembles
 //!    the aggregated schema into a [`jsonschema::Validator`] for use by
 //!    [`crate::validate::validate_modules`]. Cycles in the fragment graph
 //!    are fatal at this stage (AGGREGATOR-003).
@@ -104,8 +104,7 @@ pub fn resolve(layout: &LayoutContext, report: &mut Report) -> Result<Aggregator
         }
     }
 
-    // Phase 2 promotes cycle detection from warn → error. Doc 10's
-    // commitment: "Phase 2 will fail at compile time" — we now do.
+    // Cycle detection is fatal at compile time (not merely a warning).
     let cycles = detect_cycles(&fragments);
     summary.cycles_detected = cycles.len();
     for cycle in &cycles {
@@ -333,7 +332,7 @@ fn dfs_for_cycle(
 }
 
 // ---------------------------------------------------------------------------
-// Phase-2 schema compilation: assemble the aggregator + inlined fragments
+// Schema compilation: assemble the aggregator + inlined fragments
 // into a `jsonschema::Validator` callers can reuse across module TOMLs.
 // ---------------------------------------------------------------------------
 
@@ -411,7 +410,7 @@ impl Retrieve for MapRetriever {
         }
         // Try `inlined/blocks/<name>` and `inlined/bridges/<name>` style
         // paths used by the aggregator's `$ref` strings. The languages
-        // tier (Phase 14) uses a one-level-deeper path
+        // tier uses a one-level-deeper path
         // `inlined/languages/<lang>/<name>`; substring-match the prefix
         // and let `self.docs` carry the full key.
         for prefix in [
@@ -436,7 +435,7 @@ impl Retrieve for MapRetriever {
 pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
     let mut docs: HashMap<String, Value> = HashMap::new();
 
-    // Embedded, project-independent schemas (Phase 6.7+). Registered
+    // Embedded, project-independent schemas. Registered
     // under both `$id` and filename so `$ref` to either form resolves.
     for (keys, value) in crate::embedded_schemas::embedded_schema_entries() {
         for k in keys {
@@ -516,7 +515,7 @@ pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Va
         }
     }
 
-    // Phase 14: language tier. `inlined/languages/<lang>/*.schema.yaml`
+    // Language tier. `inlined/languages/<lang>/*.schema.yaml`
     // — one level deeper than blocks/bridges because language identifiers
     // are part of the path (the project's [project].language). Register
     // each schema under its $id, basename, and the full

@@ -1,4 +1,4 @@
-//! Validate-pipeline orchestrator (Phase 2 of the blocks + bridges + profiles arc).
+//! Validate-pipeline orchestrator for the blocks + bridges + profiles arc.
 //!
 //! Layered:
 //!   1. [`validate_layout`] — discovers `spec.toml`, builds a
@@ -35,7 +35,7 @@ use crate::resolved::{EffectiveKindSet, ResolvedExtends};
 /// recognizable while we land the rewrite.
 pub type Inputs = LayoutContext;
 
-/// Capability tag carried on each registered check (Phase 16 Batch B).
+/// Capability tag carried on each registered check.
 /// Used by `validate --for=<capability>` to scope the checks that fire to
 /// the slice the caller cares about; absent the flag every check runs.
 ///
@@ -53,10 +53,9 @@ pub enum Capability {
     /// strict mode gets no out-of-band prose, which is usually a friction
     /// (F-015 from the zfm dogfood).
     StrictGen,
-    /// `cargo-toml` emission consumes this. Reserved; no checks tagged
-    /// `CargoToml` ship in Batch B (the cargo-toml emitter today reads
-    /// architecture.toml directly; Phase 16 will introduce
-    /// `block_deps_resolve` here).
+    /// `cargo-toml` emission consumes this. Reserved; no checks are
+    /// currently tagged `CargoToml` (the cargo-toml emitter today reads
+    /// architecture.toml directly).
     #[allow(dead_code)]
     CargoToml,
 }
@@ -94,7 +93,7 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Re
     run(&layout)
 }
 
-/// Phase 16 Batch B variant: filters which checks fire by `Capability`.
+/// Capability-filtered variant: filters which checks fire by `Capability`.
 /// `None` runs every check (= legacy `run_project` behavior). `Some(cap)`
 /// runs only checks tagged with that capability or with `Schema`
 /// (well-formedness is universal).
@@ -112,7 +111,7 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
     run_for(layout, None)
 }
 
-/// Phase 16 Batch B variant: see [`run_project_for`].
+/// Capability-filtered variant: see [`run_project_for`].
 pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Report> {
     let mut report = Report::default();
     validate_layout(layout, &mut report)?;
@@ -128,7 +127,7 @@ pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Rep
 
 /// Schema-validate `specs/architecture.toml` against
 /// `specs/specdev/schemas/architecture.schema.yaml`. Findings emitted via
-/// `SCHEMA-ARCH`. Phase 5+.
+/// `SCHEMA-ARCH`.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     validate_aux_toml(
@@ -144,7 +143,7 @@ pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Res
 
 /// Schema-validate `specs/requirements.toml` against
 /// `specs/specdev/schemas/requirements.schema.yaml`. Findings emitted via
-/// `SCHEMA-REQ`. Phase 5+.
+/// `SCHEMA-REQ`.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_requirements(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     validate_aux_toml(
@@ -291,7 +290,7 @@ impl Retrieve for AuxRetriever {
 fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, JsonValue>> {
     let mut docs: HashMap<String, JsonValue> = HashMap::new();
 
-    // Embedded, project-independent schemas (Phase 6.7+). Registered
+    // Embedded, project-independent schemas. Registered
     // under both `$id` and filename so `$ref` to either form resolves.
     for (keys, value) in crate::embedded_schemas::embedded_schema_entries() {
         for k in keys {
@@ -336,27 +335,23 @@ fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Js
 pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     let inv = layout.enumerate();
 
-    // F-009 → Phase 16 §8.1 step 8 (D52) → Phase 17.6: suppress missing-
-    // layout warnings (LAYOUT-003) for module / requirement entries when
-    // the project's profile declares no such surface. Per doc 21 §3.4 the
-    // load-bearing signal is `profile.yaml.surface.has_modules` /
-    // `surface.has_requirements`; the two suppressions are independently
+    // F-009: suppress missing-layout warnings (LAYOUT-003) for module /
+    // requirement entries when the project's profile declares no such
+    // surface. The load-bearing signal is `profile.yaml.surface.has_modules`
+    // / `surface.has_requirements`; the two suppressions are independently
     // controlled (the schema and authored manifests give us per-surface
     // granularity).
     //
-    // Phase 17.6 widens the suppression set: in addition to the per-module
-    // / per-requirement schema files (step 8), we now also suppress the
-    // `specs/modules/` directory entry when `has_modules: false`. Workspace-
-    // root profiles like `rust-workspace` declare no module surface; a
-    // missing `specs/modules/` there is by-design, not a layout violation.
+    // The suppression set also covers the `specs/modules/` directory entry
+    // when `has_modules: false`. Workspace-root profiles like
+    // `rust-workspace` declare no module surface; a missing `specs/modules/`
+    // there is by-design, not a layout violation.
     //
-    // Backward-compat fallback per doc 21 §6.5: when `profile.yaml` is
-    // absent (pre-D52 projects) OR `manifest.surface` is None, fall back
-    // to the legacy `layout.spec.workspace.is_some()` heuristic for both
-    // suppressions. The fallback preserves pre-step-8 behavior verbatim
-    // for existing projects and is deleted in v1.1 alongside the other
-    // §6.5 fallbacks once `specdev migrate` ships and one engagement
-    // cycle has elapsed.
+    // Backward-compat fallback: when `profile.yaml` is absent OR
+    // `manifest.surface` is None, fall back to the legacy
+    // `layout.spec.workspace.is_some()` heuristic for both suppressions. The
+    // fallback preserves pre-manifest behavior verbatim for existing
+    // projects and is removed in v1.1.
     //
     // Malformed-manifest path: load failures surface a single
     // `MANIFEST-001` finding; the suppression then degrades to the
@@ -405,7 +400,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
                 format!("present: {}", entry.label),
             ));
         } else {
-            // Surface-driven suppressions per doc 21 §3.4. Each schema is
+            // Surface-driven suppressions. Each schema is
             // independently gated; the manifest authors per-schema control.
             if suppress_module
                 && entry.label == "specs/specdev/schemas/module.schema.yaml"
@@ -511,7 +506,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
     Ok(())
 }
 
-/// Phase 2 module pass.
+/// Module pass.
 ///
 /// 1. Build the [`EffectiveKindSet`] via [`reductions::resolve`] and merge
 ///    its findings into `report` (METASCHEMA-001/002/003/004/005).
@@ -531,8 +526,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
     validate_modules_for(layout, None, report)
 }
 
-/// Phase 16 Batch B: filter-aware variant. See [`Capability`] and
-/// [`run_for`].
+/// Filter-aware variant. See [`Capability`] and [`run_for`].
 pub fn validate_modules_for(
     layout: &LayoutContext,
     filter: Option<Capability>,
@@ -540,15 +534,15 @@ pub fn validate_modules_for(
 ) -> Result<()> {
     let inv = layout.enumerate();
 
-    // Step 1: build effective kind set.
+    // Stage 1: build effective kind set.
     let raw_inv = reductions::load_all(layout)?;
     let (kindset, kindset_findings) = reductions::resolve(&raw_inv);
     report.extend(kindset_findings);
 
-    // Step 2: compile aggregator schema.
+    // Stage 2: compile aggregator schema.
     let validator = aggregator::compile(layout, report)?;
 
-    // Step 3: validate each module TOML.
+    // Stage 3: validate each module TOML.
     for module_path in &inv.modules {
         let rel = module_path
             .strip_prefix(&layout.project_root)
@@ -632,7 +626,7 @@ pub fn validate_modules_for(
         validate_context_files(layout, &parsed, module_path, report);
     }
 
-    // Step 4: domain.toml graph-check resolution + execution.
+    // Stage 4: domain.toml graph-check resolution + execution.
     if layout.domain_toml_path.is_file() {
         match DomainConfig::load(&layout.domain_toml_path) {
             Ok(dom) => {
@@ -651,7 +645,7 @@ pub fn validate_modules_for(
                     report,
                 );
 
-                // Step 5: run executor + project graph_checks.
+                // Stage 5: run executor + project graph_checks.
                 let mut exec_report = Report::default();
                 let graph =
                     reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
@@ -693,7 +687,7 @@ pub fn validate_modules_for(
     Ok(())
 }
 
-/// Validate `module.context_files` (Phase 13, doc 16 §3): each declared
+/// Validate `module.context_files`: each declared
 /// path is spec-root-relative, must exist, must be readable, and must be
 /// valid UTF-8. Schema validation upstream guarantees the field shape
 /// (string array, lex-unique). This function adds the per-file
@@ -742,7 +736,7 @@ fn validate_context_files(
 /// Run domain.toml graph_checks against the executor's project graph.
 ///
 /// The executor's [`Graph`] is serialized to a JSON value and walked via
-/// the existing selector primitives in [`crate::graph`]. Two Phase-2
+/// the existing selector primitives in [`crate::graph`]. Two
 /// adaptations:
 ///
 /// 1. **Transitive-extends pre-filtering.** When a check's `scope` field
@@ -777,8 +771,8 @@ fn execute_graph_checks(
         let severity = domain.severity_of(rule);
         let primitive = check.kind.as_str();
 
-        // Phase 16 Batch B: skip primitives whose tags don't match the
-        // active --for filter. `Schema`-tagged checks always run (they
+        // Skip primitives whose tags don't match the active --for filter.
+        // `Schema`-tagged checks always run (they
         // gate every downstream consumer).
         if !capability_matches(primitive_tags(primitive), filter) {
             continue;
@@ -914,7 +908,7 @@ fn execute_graph_checks(
                     _ => Vec::new(),
                 }
             }
-            // Phase 20 — `entity_has_inbound_relation`: the generic orphan
+            // `entity_has_inbound_relation`: the generic orphan
             // check. Joint-filter entities by `entity_scope` and relations
             // by `relation_scope`, then flag any in-scope entity that is
             // never a relation target. Reuses the same joint-filter
@@ -938,20 +932,19 @@ fn execute_graph_checks(
                     _ => Vec::new(),
                 }
             }
-            // D37 / Phase 10: source-aware check. Each
+            // source-aware check. Each
             // `requirement.verified_by[]` entry resolves against tree-sitter-
             // extracted top-level items + #[test] items per module. Unlike
             // the other primitives, this one reads filesystem source via
-            // the items extraction surface (Phase 10 ships the surface;
-            // Phase 14 promotes the warning to error when items[] is the
-            // authoritative substrate).
+            // the items extraction surface. The warning promotes to error
+            // when items[] is the authoritative substrate.
             "verified_by_resolves" => verified_by_resolves_dispatch(
                 &graph_json,
                 layout,
                 rule,
                 severity,
             ),
-            // Phase 19 — `decision_supersedes_chain_consistency`: filter
+            // `decision_supersedes_chain_consistency`: filter
             // relations by `relation_scope`, then for each entity matching
             // the source-side filter, count inbound relations and compare
             // to `expected_count`.
@@ -972,7 +965,7 @@ fn execute_graph_checks(
                 }
                 _ => Vec::new(),
             },
-            // Phase 19 — `open_question_status_consistency`: cross-entity
+            // `open_question_status_consistency`: cross-entity
             // attr-target-attr consistency check.
             "entity_attr_target_attr_equals" => match (
                 check.entity_scope.as_deref(),
@@ -990,7 +983,7 @@ fn execute_graph_checks(
                 }
                 _ => Vec::new(),
             },
-            // Phase 19 — `codegen_unblocked` validate-time warning: walks
+            // `codegen_unblocked` validate-time warning: walks
             // Module.satisfies → Requirement → OpenQuestion.affects^-1
             // and fires when any reachable OQ has status = open. The
             // gen-side hard refusal lives in `gen.rs`; this primitive
@@ -1037,14 +1030,14 @@ fn graph_json_full<'a>(
 ///
 /// Two execution modes coexist:
 ///
-/// 1. **Graph-shape mode (Phase 5+, preferred):** `entity_scope` +
+/// 1. **Graph-shape mode (preferred):** `entity_scope` +
 ///    `relation_scope` + `layer_field` + `layer_ordering`. The graph is
 ///    jointly filtered (entities of the entity kind, relations of the
 ///    relation kind) and [`graph_checks::layer_dependency_graph`] is
 ///    invoked.
 /// 2. **Legacy mode:** `module_layer_field` + `module_deps_field` +
 ///    `[layers.allowed_deps]` table. Source-data shape; retained for
-///    pre-Phase-5 callers and the existing unit test.
+///    legacy callers and the existing unit test.
 fn layer_dependency_dispatch(
     full_graph: &JsonValue,
     check: &GraphCheck,
@@ -1082,7 +1075,7 @@ fn layer_dependency_dispatch(
     Vec::new()
 }
 
-/// D37 / Phase 10 — `verified_by_resolves` dispatch.
+/// `verified_by_resolves` dispatch.
 ///
 /// For each `Requirement` entity carrying a `verified_by[]` attr, parse
 /// each entry and attempt resolution against the per-module item
@@ -1102,8 +1095,8 @@ fn layer_dependency_dispatch(
 /// source, the requirement entry is treated as "no candidates" and no
 /// finding fires (avoids a wall of warnings for greenfield specs).
 ///
-/// Severity: warning in v1.0; promotes to error in v1.1 alongside Phase
-/// 14 items[] (per D37). Error code: `VERIFIED-BY-RESOLVES-001`.
+/// Severity: warning in v1.0; promotes to error in v1.1 alongside the
+/// items[] surface. Error code: `VERIFIED-BY-RESOLVES-001`.
 fn verified_by_resolves_dispatch(
     graph_json: &JsonValue,
     layout: &LayoutContext,
@@ -1191,7 +1184,7 @@ fn verified_by_resolves_dispatch(
                 let name = name.trim();
                 let items = get_items(module);
                 if items.is_empty() {
-                    // Pre-implementation module: skip (silent), per D37.
+                    // Pre-implementation module: skip (silent).
                     continue;
                 }
                 items.iter().any(|i| i.name == name)
@@ -1390,7 +1383,7 @@ fn entity_extends_to(kindset: &EffectiveKindSet, ekind: &str, target: &str) -> b
 /// the [`EffectiveKindSet`]. The check's primitive `kind` field is *not*
 /// a kind reference (it names the check primitive: `acyclic`,
 /// `reachability`, etc.); the kind references live in the selector
-/// fields. Phase 2's load-time resolution takes whichever fields hold
+/// fields. Load-time resolution takes whichever fields hold
 /// kind paths, parses them, and verifies they resolve in the effective
 /// set. Unresolved → `DOMAIN-003`.
 ///
@@ -1553,8 +1546,8 @@ fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
     (arr.len(), open)
 }
 
-/// Capability tags carried by each registered graph-check primitive
-/// (Phase 16 Batch B). Driven by `validate --for=<capability>`. Tags
+/// Capability tags carried by each registered graph-check primitive.
+/// Driven by `validate --for=<capability>`. Tags
 /// are intentionally redundant — every primitive tags `Schema` because
 /// well-formedness gates every downstream consumer; some additionally
 /// tag domain-specific consumers (`Skeleton`, `StrictGen`, etc.).
@@ -1571,7 +1564,7 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
         // strict-gen consumes the spec, so an unsatisfied requirement
         // means an orphan story regardless of how codegen runs.
         "requirements_have_satisfiers" => &[Schema, StrictGen],
-        // Phase 20 — generic orphan check; structural on the spec graph,
+        // Generic orphan check; structural on the spec graph,
         // and strict-gen consumes the spec, so an orphan entity (e.g. a
         // parameter with no engine binding) is a gap regardless of how
         // codegen runs.
@@ -1580,7 +1573,7 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
         // requirement.verified_by[] entries name extant items / tests.
         // Strict-gen will surface a verification gap.
         "verified_by_resolves" => &[Schema, StrictGen],
-        // Phase 19 — triad consistency primitives gate codegen via the
+        // Triad consistency primitives gate codegen via the
         // companion gate, so tag them Schema (always-on) and StrictGen.
         "entity_attr_inbound_count"
         | "entity_attr_target_attr_equals"
@@ -1591,7 +1584,7 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
     }
 }
 
-/// Phase 16 Batch B / F-013 (zfm dogfood): warns when a module has zero
+/// F-013 (zfm dogfood): warns when a module has zero
 /// `items[]` entries. Strict mode has no items[] to anchor codegen to.
 /// Info-level: not every module needs items (a project mid-port may
 /// have empty modules), but every empty module deserves visibility.
@@ -1645,7 +1638,7 @@ pub fn validate_items_present(
     }
 }
 
-/// Phase 21 / D61: warns when a test item declares a `test_kind` whose
+/// Warns when a test item declares a `test_kind` whose
 /// emission is reserved-but-not-shipped in v1 (`bench` / `fuzz`). The
 /// schema accepts the enum slot so post-v1 promotion needs no spec
 /// migration, but `gen` emits nothing for it — surfacing the gap at
@@ -1809,28 +1802,26 @@ fn count_graph_checks(layout: &LayoutContext) -> usize {
     }
 }
 
-/// Phase 16 §8.1 step 8 — manifest-driven dispatch for the `module.schema.yaml`
+/// Manifest-driven dispatch for the `module.schema.yaml`
 /// / `requirements.schema.yaml` missing-warning suppressions. Returns
 /// `(suppress_module, suppress_requirements)`.
 ///
-/// Manifest path (D52): when `<specdev_root>/profile.yaml` is present,
+/// Manifest path: when `<specdev_root>/profile.yaml` is present,
 /// inspect `manifest.surface.has_modules` and `manifest.surface.has_requirements`.
 /// Each schema is independently gated; today every shipped profile happens
 /// to have `has_requirements` mirror `has_modules`, but the schema admits
 /// asymmetric configurations (a profile could declare `has_modules: false`
 /// + `has_requirements: true`) and the dispatch wires the granularity now.
 ///
-/// Backward-compat fallback per doc 21 §6.5: when `profile.yaml` is absent
+/// Backward-compat fallback: when `profile.yaml` is absent
 /// OR `manifest.surface` is None, fall back to the legacy
 /// `layout.spec.workspace.is_some()` heuristic for BOTH suppressions.
-/// Preserves pre-D52 fixture behavior verbatim. Deleted in v1.1 once
-/// `specdev migrate` ships per doc 21 §6.5.
+/// Preserves pre-manifest fixture behavior verbatim. Removed in v1.1.
 ///
 /// Malformed-manifest path: `MANIFEST-001` finding pushed; fall back to
 /// the legacy heuristic so we don't surface a "missing schema" warning
 /// stacked on the manifest-load error. The suppression site emits no
-/// finding of its own (it's purely a control-flow decision), so D51
-/// vocabulary doesn't bite here.
+/// finding of its own (it's purely a control-flow decision).
 fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> (bool, bool) {
     use crate::manifest::Profile;
     let manifest_path = layout.specdev_root.join("profile.yaml");
@@ -1857,19 +1848,19 @@ fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> 
     }
 }
 
-/// Phase 16 §8.1 step 3e — validate-time consistency check between
+/// Validate-time consistency check between
 /// the inlined `profile.yaml` (`cargo_toml.shape`) and the project's
-/// spec.toml `[workspace]` table presence (per doc 21 §3.5).
+/// spec.toml `[workspace]` table presence.
 ///
 /// `shape: workspace` is descriptive metadata: a profile claims its
 /// projects are workspace-shaped, but actual workspace dispatch is
-/// layout-driven (the `[workspace]` table in spec.toml is canonical
-/// per D36). When the two disagree, the project is in an unrenderable
+/// layout-driven (the `[workspace]` table in spec.toml is canonical).
+/// When the two disagree, the project is in an unrenderable
 /// state — `cargo-toml render` will eventually error, but surfacing
 /// the mismatch at validate time gives the user a structural prompt
 /// before they hit the render path.
 ///
-/// No-op when `profile.yaml` is absent (pre-D52 backward compat) or
+/// No-op when `profile.yaml` is absent (backward compat) or
 /// has no `cargo_toml` section. Manifest load errors surface as
 /// `MANIFEST-001` findings; cargo-toml render will produce a
 /// matching diagnostic, so consumers see the same root cause from

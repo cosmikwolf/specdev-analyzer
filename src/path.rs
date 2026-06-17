@@ -40,8 +40,7 @@
 //!   `nih_plug.parameters[]` and want the enclosing module's `name`).
 //!
 //! Templates have no conditionals, filters, or defaults. Add them via a
-//! metaschema version bump if a real need shows up (see
-//! `specdev-next/10-metaschema.md:163-171`).
+//! metaschema version bump if a real need shows up.
 
 use std::fmt::Write as _;
 
