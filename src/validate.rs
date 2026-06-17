@@ -913,6 +913,23 @@ fn execute_graph_checks(
                     _ => Vec::new(),
                 }
             }
+            // Phase 20 — `entity_has_inbound_relation`: the generic orphan
+            // check. Joint-filter entities by `entity_scope` and relations
+            // by `relation_scope`, then flag any in-scope entity that is
+            // never a relation target. Reuses the same joint-filter
+            // infrastructure as `requirements_have_satisfiers` but with a
+            // vocabulary-neutral diagnostic (audio-plugin's
+            // `parameters_have_bindings` is the first consumer).
+            "entity_has_inbound_relation" => {
+                match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
+                    (Some(es), Some(rs)) => {
+                        let view =
+                            filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                        graph_checks::entity_has_inbound_relation(&view, rs, rule, severity)
+                    }
+                    _ => Vec::new(),
+                }
+            }
             // D37 / Phase 10: source-aware check. Each
             // `requirement.verified_by[]` entry resolves against tree-sitter-
             // extracted top-level items + #[test] items per module. Unlike
@@ -982,7 +999,8 @@ fn execute_graph_checks(
                     "domain.toml [{section}] graph_check (rule `{rule}`): \
                      unknown primitive `{other}` — supported: \
                      unique, reference_exists, reachability, acyclic, \
-                     layer_dependency, requirements_have_satisfiers, verified_by_resolves, \
+                     layer_dependency, requirements_have_satisfiers, \
+                     entity_has_inbound_relation, verified_by_resolves, \
                      entity_attr_inbound_count, entity_attr_target_attr_equals, \
                      module_reachable_through_open_question"
                 ),
@@ -1545,6 +1563,11 @@ fn primitive_tags(name: &str) -> &'static [Capability] {
         // strict-gen consumes the spec, so an unsatisfied requirement
         // means an orphan story regardless of how codegen runs.
         "requirements_have_satisfiers" => &[Schema, StrictGen],
+        // Phase 20 — generic orphan check; structural on the spec graph,
+        // and strict-gen consumes the spec, so an orphan entity (e.g. a
+        // parameter with no engine binding) is a gap regardless of how
+        // codegen runs.
+        "entity_has_inbound_relation" => &[Schema, StrictGen],
         // verified_by_resolves reads source files to validate that
         // requirement.verified_by[] entries name extant items / tests.
         // Strict-gen will surface a verification gap.

@@ -1,0 +1,155 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/audio-plugin/parameter_bindings.schema.yaml"
+title: "audio-plugin parameter bindings (v1)"
+description: |
+  Schema fragment for the `parameter_bindings` table on an audio-plugin
+  module. Each `[[parameter_bindings]]` row declares how one nih-plug
+  parameter translates into an engine-side write when the host changes
+  the parameter — the "third leg" of the plugin-shell ↔ engine bridge
+  (the `egui+nih-plug` bridge wires parameters → widgets; this wires
+  parameters → engine writes).
+
+  Locality (D58, refined Phase 20): the table is **co-resident with
+  `[nih_plug]` on the `plugin_shell` module**. The binding's only
+  spec-entity reference is the parameter, which lives on the shell; the
+  reducer resolves `parameter → <shell>.<id>` locally (same reduce-time
+  path as the `egui+nih-plug` bridge). The engine stays framework-
+  agnostic — it owns only the *target* method, never the parameter
+  surface. Codegen emits one `apply_param_changes` match arm per row in
+  declaration order (see the profile's `codegen/rust/module.conventions.md`,
+  §"Parameter binding model").
+
+  Shape commitments (D58): bindings are **explicit** (no convention
+  auto-binding in v1); a single parameter MAY appear on multiple rows
+  (**multi-target allowed**; emission is declaration order; no
+  uniqueness check); context-dependent writes ride the `custom`
+  transform escape hatch. Value-transform vocabulary (D59): six named
+  transforms + `custom`.
+
+  This schema is self-contained: the parameter-id pattern is inlined
+  rather than $ref'd against the nih-plug block, so the fragment
+  composes against any module exposing the field.
+type: object
+properties:
+  parameter_bindings:
+    description: |
+      Per-module parameter → engine-write bindings. One row per write.
+      Empty (or omitted) means this module declares no bindings.
+    type: array
+    items: { $ref: "#/$defs/ParameterBinding" }
+
+$defs:
+  ParameterId:
+    description: snake_case parameter id (matches nih-plug's ParameterId pattern).
+    type: string
+    pattern: "^[a-z][a-z0-9_]*$"
+
+  ParameterBinding:
+    type: object
+    additionalProperties: false
+    required: [parameter, target_kind, target]
+    properties:
+      parameter:
+        description: |
+          Source parameter id. Resolves at reduce time against a
+          `[nih_plug.parameters].id` declared on this same module
+          (co-residency, D58); a missing reference surfaces as a
+          `REDUCE_UNRESOLVED` error.
+        $ref: "#/$defs/ParameterId"
+      target_kind:
+        description: |
+          How the write is expressed.
+            method — `target` is a method path; emit `target(args…)`.
+            field  — `target` is a dotted state path; emit `target = value`.
+            custom — `target` names a hand-authored fn `(value, &mut self)`;
+                     emit `self.target(value)`. The escape hatch for
+                     context-dependent or multi-field writes.
+        type: string
+        enum: [method, field, custom]
+      target:
+        description: |
+          For `method`: a method path (`ChipEngine::set_op_crs`) or
+          receiver-method (`self.engine.set_op_crs`). For `field`: a
+          dotted path on the engine/plugin state (`voice.lfo1.pmd`).
+          For `custom`: the name of an author-written fn on the module.
+          Tokens are emitted verbatim at the call site — the spec does
+          not type-check them; the Rust compiler does.
+        type: string
+        minLength: 1
+      target_args:
+        description: |
+          Argument list for `method` and `custom` targets, emitted
+          verbatim in order. The literal token `value` carries the
+          parameter's incoming value *after* `value_transform`. Omit
+          for `field` targets (the value is the RHS of the assignment)
+          and for zero-arg methods. A `method` target with no
+          `target_args` defaults to `[value]`.
+        type: array
+        items: { type: string, minLength: 1 }
+      value_transform:
+        description: |
+          How the parameter value is reshaped before the write (D59).
+          Defaults to `identity` when omitted.
+        $ref: "#/$defs/ValueTransform"
+      description:
+        description: |
+          Optional prose, load-bearing for `custom` targets: it tells
+          the codegen LLM (and human reviewers) what the hand-authored
+          fn must do.
+        type: string
+
+  ValueTransform:
+    description: |
+      Closed set of six named transforms plus a `custom` escape hatch
+      (D59). Discriminated on `kind`.
+
+        identity       — pass through unchanged.
+        clamp          — `value.clamp(min, max)`.
+        scale          — `value * factor`.
+        enum_to_u8     — `value as u8` (EnumParam → u8 engine field).
+        db_to_amp      — `10f32.powf(value / 20.0)` (dB → linear gain).
+        custom         — reference a hand-authored fn `fn(value) -> _`
+                         named by `fn`; the escape hatch for math the
+                         named set doesn't cover.
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind: { const: identity }
+      - type: object
+        additionalProperties: false
+        required: [kind, min, max]
+        properties:
+          kind: { const: clamp }
+          min: { type: number }
+          max: { type: number }
+      - type: object
+        additionalProperties: false
+        required: [kind, factor]
+        properties:
+          kind: { const: scale }
+          factor: { type: number }
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind: { const: enum_to_u8 }
+      - type: object
+        additionalProperties: false
+        required: [kind]
+        properties:
+          kind: { const: db_to_amp }
+      - type: object
+        additionalProperties: false
+        required: [kind, fn]
+        properties:
+          kind: { const: custom }
+          fn:
+            description: |
+              Name of a hand-authored pure transform fn `fn(value) -> _`
+              on the module. v1 does not validate its existence at
+              reduce time (items[] are not reduced to entities); the
+              compile catches a missing fn.
+            type: string
+            minLength: 1

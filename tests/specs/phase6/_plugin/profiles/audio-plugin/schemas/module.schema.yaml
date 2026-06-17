@@ -74,6 +74,19 @@ properties:
       in v1.
     type: object
     additionalProperties: true
+  parameter_bindings:
+    description: >
+      Parameter → engine-write bindings (D58/D59). Co-resident with
+      `[nih_plug]` on the plugin_shell module: each row maps one
+      nih-plug parameter to an engine method/field/custom write, driving
+      deterministic `apply_param_changes` emission. Unlike the open
+      `bindings.*` slot this is a named property because
+      `unevaluatedProperties: false` would otherwise reject it. See the
+      `parameter_bindings.schema.yaml` fragment for the row shape and
+      the value-transform vocabulary.
+    type: array
+    items:
+      $ref: "parameter_bindings.schema.yaml#/$defs/ParameterBinding"
   items:
     description: >
       Top-level Rust constructs that carry spec significance — items[]
