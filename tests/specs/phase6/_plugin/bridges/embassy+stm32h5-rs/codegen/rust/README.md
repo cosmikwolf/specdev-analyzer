@@ -3,14 +3,97 @@
 These conventions describe how a `bindings."embassy+stm32h5-rs"` table
 on a module spec maps to Rust source. They layer on top of the embassy
 block's task/channel emission and the stm32h5-rs block's peripheral/pin
-emission; this bridge handles the **handoff** of a stm32h5-rs peripheral
+topology; this bridge handles the **handoff** of an STM32H5 peripheral
 handle into an embassy task.
 
-The bridge does NOT introduce a new HAL crate. The peripheral handles
-are constructed via `stm32h5xx-hal` (per the stm32h5-rs block); this
-bridge just wires them into spawn sites or shared statics. embassy's
-async wrappers (the `embassy-stm32` crate) are out of scope for this
-bridge — promote to a `v1.x` variant if a real project needs them.
+The bridge owns the **join-product crate**: `embassy-stm32`, the
+embassy-flavored STM32 HAL. It exists only because these two blocks are
+paired — embassy alone is HAL-agnostic, stm32h5-rs alone is
+runtime-agnostic — so the dependency and the type vocabulary below
+belong to the bridge, not to either block. When this bridge is inlined,
+its `embassy-stm32` type mappings replace the stm32h5-rs block's
+(forward-looking) `stm32h5xx-hal` patterns for every task-owned
+peripheral: bridge prose wins over block prose for cross-block wiring.
+
+## Crate dependencies
+
+This bridge contributes one crate (see `deps.yaml`):
+
+```toml
+embassy-stm32 = { version = "0.6", features = ["stm32h563zi", "rt", "time-driver-any", "exti"] }
+```
+
+- The chip feature is a **full part number** (`stm32h563zi`, the
+  Nucleo-H563ZI verification target) — embassy-stm32 requires exactly
+  one. Note this is NOT the `[platform].mcu_part` family prefix
+  (`stm32h563`); projects on a different H5 part override by declaring
+  `embassy-stm32` under `[[external_deps]]` in `architecture.toml` with
+  their part's feature — user-authored deps win the merge.
+- `time-driver-any` wires embassy-time's driver to an H5 timer; do not
+  also enable a specific `time-driver-tim*` feature.
+- `memory-x` is deliberately NOT enabled — the profile owns `memory.x`
+  emission and a crate-emitted copy would conflict with a hand-authored
+  one.
+
+## Entry-point integration
+
+`embassy_stm32::init` replaces both the PAC `Peripherals::take()`
+pattern and any clock-setup scaffolding in the entry point:
+
+Each typed handle is **constructed at the entry point** (where the
+`Peripherals` and `Irqs` live) and passed by value into the owning
+module's `init`. Raw `Peri` fields never cross the module boundary —
+only finished handles do:
+
+```rust
+#[embassy_executor::main]
+async fn main(spawner: embassy_executor::Spawner) {
+    let p = embassy_stm32::init(embassy_stm32::Config::default());
+
+    // GPIO output: construct then hand off.
+    let led = embassy_stm32::gpio::Output::new(
+        p.PB0,
+        embassy_stm32::gpio::Level::Low,
+        embassy_stm32::gpio::Speed::Low,
+    );
+    blinky::init(&spawner, led);
+
+    // Async USART with GPDMA: construct then hand off.
+    let uart = embassy_stm32::usart::Uart::new(
+        p.USART3, p.PD9, p.PD8,        // peri, rx, tx
+        p.GPDMA1_CH0, p.GPDMA1_CH1,    // tx_dma, rx_dma
+        Irqs,                          // interrupt bindings
+        embassy_stm32::usart::Config::default(),
+    )
+    .unwrap();
+    uart_echo::init(&spawner, uart);
+}
+```
+
+`Uart::new`'s argument order is `(peri, rx, tx, tx_dma, rx_dma, irq,
+config)` and it returns `Result<Uart, ConfigError>` — unwrap at the
+entry point. `#[embassy_executor::main]` (from the embassy block's
+executor) is the entry attribute; do NOT also emit
+`#[cortex_m_rt::entry]` — the macro expands to it. `embassy_stm32::init`
+configures clocks (default config runs from HSI; project-specific clock
+trees go in a `Config` value documented in `architecture.toml` notes)
+and returns the one-time `Peripherals` struct. **Do NOT** call
+`embassy_stm32::init` anywhere but the entry point.
+
+Async peripherals need their interrupt handlers bound once at crate
+root via `bind_interrupts!`. A DMA-driven USART binds BOTH the USART
+interrupt AND each GPDMA channel interrupt (channel `N` → vector
+`GPDMA1_CHANNEL<N>`):
+
+```rust
+use embassy_stm32::{bind_interrupts, dma, peripherals, usart};
+
+bind_interrupts!(struct Irqs {
+    USART3 => usart::InterruptHandler<peripherals::USART3>;
+    GPDMA1_CHANNEL0 => dma::InterruptHandler<peripherals::GPDMA1_CH0>;
+    GPDMA1_CHANNEL1 => dma::InterruptHandler<peripherals::GPDMA1_CH1>;
+});
+```
 
 ## When to emit
 
@@ -20,11 +103,28 @@ an `embassy.tasks[]` on the same module; the `peripheral` field names a
 `stm32h5.peripherals[]` on the same module. The `handoff` field
 (default `owned`) picks one of the two emission patterns below.
 
+The peripheral type follows embassy-stm32's instance-erased handles:
+
+| stm32h5 `kind` | embassy-stm32 type (task-side)                     |
+|----------------|-----------------------------------------------------|
+| USART / UART   | `usart::Uart<'static, Async>`                       |
+| SPI            | `spi::Spi<'static, Async>`                          |
+| I2C            | `i2c::I2c<'static, Async>`                          |
+| GPIO (pin out) | `gpio::Output<'static>`                             |
+| GPIO (pin in)  | `gpio::Input<'static>` / `exti::ExtiInput<'static>` |
+| TIM            | `timer::simple_pwm::SimplePwm<'static, T>`          |
+| ADC            | `adc::Adc<'static, T>`                              |
+
+`stm32h5.pins[]` entries on a bound module map to `gpio::Output` /
+`gpio::Input` handles constructed from the pin's `port`+`pin` peripheral
+(e.g. `PB0`) at the entry point and passed into the module's init.
+
 ## Pattern 1 — `handoff = "owned"` (typical)
 
-The peripheral handle is constructed in the module's init function and
-moved into the task at spawn time. The task's signature takes the
-handle by value; ownership is exclusive.
+The peripheral handle is constructed at the entry point (or in the
+module's init from raw peripherals) and moved into the task at spawn
+time. The task's signature takes the handle by value; ownership is
+exclusive.
 
 Worked example — module `Uart` with one embassy task `read_uart` and
 one stm32h5-rs peripheral `uart_dev`:
@@ -48,36 +148,33 @@ peripheral = "uart_dev"
 handoff = "owned"
 ```
 
-Emits:
+Emits (module file):
 
 ```rust
-use embassy_executor::Spawner;
-use stm32h5xx_hal::pac::USART3;
-use stm32h5xx_hal::serial::Serial;
+use embassy_stm32::mode::Async;
+use embassy_stm32::usart::Uart;
 
 #[embassy_executor::task]
-async fn read_uart(uart_dev: Serial<USART3>) {
+async fn read_uart(mut uart_dev: Uart<'static, Async>) {
     // user code reads/writes uart_dev
     loop { /* ... */ }
 }
 
-pub fn init(spawner: Spawner, /* peripheral construction args */) {
-    let uart_dev: Serial<USART3> = Serial::new(/* ... */);
-    spawner.spawn(read_uart(uart_dev)).unwrap();
+pub fn init(spawner: &embassy_executor::Spawner, uart_dev: Uart<'static, Async>) {
+    spawner.spawn(read_uart(uart_dev).unwrap());
 }
 ```
 
-The peripheral type follows the stm32h5-rs block's mapping table
-(`USART<n>` → `Serial<USARTn>`, `SPI<n>` → `Spi<SPIn, ...>`, etc.).
-**Do NOT** wrap the `Serial<USART3>` in a `Mutex` for `owned` handoff —
-the task takes it by value; sharing is not the contract.
+The `Uart` is constructed at the entry point (where `Peripherals` and
+`Irqs` live) and passed in. **Do NOT** wrap an `owned` handle in a
+`Mutex` — the task takes it by value; sharing is not the contract.
 
 ## Pattern 2 — `handoff = "shared"` (multi-task sharing)
 
 The peripheral handle lives in a `static` `embassy_sync::mutex::Mutex`
 at module scope; tasks acquire `.lock().await` to use it. Use when
 multiple embassy tasks must share the same peripheral (e.g., one task
-reads, another writes the same UART).
+reads, another writes the same I2C bus).
 
 Worked example — module `Bus` with two tasks sharing one I2C peripheral:
 
@@ -109,15 +206,16 @@ peripheral = "i2c_dev"
 handoff = "shared"
 ```
 
-Emits:
+Emits (module file):
 
 ```rust
+use embassy_stm32::i2c::I2c;
+use embassy_stm32::mode::Async;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use stm32h5xx_hal::i2c::I2c;
-use stm32h5xx_hal::pac::I2C1;
 
-static I2C_DEV: Mutex<CriticalSectionRawMutex, Option<I2c<I2C1>>> = Mutex::new(None);
+static I2C_DEV: Mutex<CriticalSectionRawMutex, Option<I2c<'static, Async>>> =
+    Mutex::new(None);
 
 #[embassy_executor::task]
 async fn read_sensor() {
@@ -133,22 +231,18 @@ async fn write_actuator() {
     // user code uses i2c
 }
 
-pub fn init(spawner: embassy_executor::Spawner, /* peripheral args */) {
-    let i2c_dev: I2c<I2C1> = I2c::new(/* ... */);
+pub fn init(spawner: &embassy_executor::Spawner, i2c_dev: I2c<'static, Async>) {
     {
-        // critical_section::with isn't strictly needed at init (no
-        // tasks running yet) but keeps the pattern uniform with
-        // run-time mutators.
         let mut g = I2C_DEV.try_lock().unwrap();
         *g = Some(i2c_dev);
     }
-    spawner.spawn(read_sensor()).unwrap();
-    spawner.spawn(write_actuator()).unwrap();
+    spawner.spawn(read_sensor().unwrap());
+    spawner.spawn(write_actuator().unwrap());
 }
 ```
 
 The `Option<T>` wrapper is needed because `Mutex::new` is `const`-ctor
-and most HAL handles aren't `const`-constructible. The init function
+and HAL handles aren't `const`-constructible. The init function
 populates the `Some(_)` once. Tasks `unwrap()` because by the time they
 run, init has already filled the slot — programming error to spawn
 before `init`.
@@ -168,13 +262,15 @@ forbid holding a non-`Send` borrow across `.await`. embassy_sync's
   is not in scope; if needed, model it as a higher-level
   `architecture.toml` connection or a future bridge variant.
 
-- **`#[interrupt]` handlers are out of scope.** A peripheral interrupt
-  vector still uses `cortex-m-rt`'s `#[interrupt]` attribute on a free
-  function (per the stm32h5-rs block's prose). The bridge does NOT
-  emit interrupt scaffolds — those remain the project's responsibility,
-  layered on top of the spawn pattern emitted here.
+- **Interrupt binding lives at the entry point.** Async peripherals
+  require `bind_interrupts!` (see "Entry-point integration"); the
+  bridge emits that binding once at crate root, NOT per module. Raw
+  `#[interrupt]` free-function handlers (the stm32h5-rs block's
+  non-embassy pattern) must not coexist with a `bind_interrupts!` entry
+  for the same vector.
 
-- **No new Cargo deps from this bridge.** All required crates come from
-  the embassy block (`embassy-executor`, `embassy-sync`,
-  `embassy-time`) and the stm32h5-rs block (`stm32h5xx-hal`,
-  `stm32h5xx-pac`). The bridge does not contribute its own crate.
+- **This bridge's deps come from its `deps.yaml`.** The embassy block
+  contributes the runtime crates (`embassy-executor`, `embassy-sync`,
+  `embassy-time`); the stm32h5-rs block currently contributes none; the
+  bridge contributes `embassy-stm32`. Do not hand-mirror any of these
+  in `[[external_deps]]` unless overriding a version or chip feature.

@@ -15,18 +15,18 @@ This block contributes three crates: `embassy-executor`, `embassy-sync`,
 `embassy-time`.
 
 ```toml
-embassy-executor = { version = "0.7", features = ["arch-cortex-m", "executor-thread"] }
-embassy-sync = "0.7"
-embassy-time = "0.4"
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-sync = "0.8"
+embassy-time = "0.5"
 ```
 
 The exact features depend on the target. Single-core Cortex-M projects
-use `arch-cortex-m` + `executor-thread`; multi-core or async-from-interrupt
+use `platform-cortex-m` + `executor-thread`; multi-core or async-from-interrupt
 contexts add features per the embassy book. **Do NOT** add `embassy-stm32`
 or other peripheral-HAL crates from this block — that pairing is owned by
 the relevant bridge (e.g. `embassy+stm32h5-rs`).
 
-### Project-level integration (Phase 6.7+)
+### Project-level integration
 
 embassy is a runtime layer; it sits on top of `[platform]` (Cortex-M
 core/runtime crates) and `[runtime]` (panic handler, optional
@@ -40,11 +40,16 @@ as follows:
   `use <crate> as _;` at crate root, emitted by the firmware-layered
   profile's main.rs scaffolding.
 - **Critical section.** embassy uses `critical-section` for ISR-safe
-  primitives. By default, `cortex-m` provides the implementation
-  (cortex-m's `critical-section-single-core` feature). If
-  `[runtime].critical_section_impl` is set, the project picked an
-  override — emit `cortex_m::interrupt::free` ↔ user-impl wiring per
-  the override crate's docs.
+  primitives, which needs a registered implementation or the link fails
+  with `undefined symbol: _critical_section_1_0_acquire`. On
+  single-core Cortex-M the implementation is `cortex-m`'s
+  `critical-section-single-core` feature — but it is **not** on by
+  default. The project must enable it explicitly in `architecture.toml`:
+  add `features = ["critical-section-single-core"]` to
+  `[platform.mcu_core]` (the cortex-m dep). If
+  `[runtime].critical_section_impl` is set instead, the project picked
+  an override crate — do not also enable the cortex-m feature (two
+  implementations also fail to link).
 - **Allocator (optional).** If `[runtime].allocator` is set, embassy
   tasks may use `alloc::*` types. Without it, channels and statics are
   the only persistent surface.
@@ -122,15 +127,22 @@ that defeat the runtime's design.
 ## Spawning at init
 
 The module's init function is the canonical spawn site. Pass a
-`Spawner` reference (from `embassy_executor::Spawner`); call
-`spawner.spawn(<task>(<args>)).unwrap()` per task.
+`&Spawner` reference (from `embassy_executor::Spawner`); call
+`spawner.spawn(<task>(<args>).unwrap())` per task.
+
+Note the `.unwrap()` placement: with `embassy-executor` 0.10+, a task
+function returns `Result<SpawnToken, SpawnError>` and `Spawner::spawn`
+consumes the `SpawnToken` and returns `()`. So the `unwrap()` goes on
+the **task call** (inside `spawn(...)`), not on the `spawn` call. The
+older `spawner.spawn(task()).unwrap()` shape does not compile against
+0.10.
 
 Worked example — module `SensorReader` with one `read_sensor` task that
 publishes to channel `events`:
 
 ```rust
-pub fn init(spawner: embassy_executor::Spawner) {
-    spawner.spawn(read_sensor(EVENTS.sender())).unwrap();
+pub fn init(spawner: &embassy_executor::Spawner) {
+    spawner.spawn(read_sensor(EVENTS.sender()).unwrap());
 }
 ```
 
@@ -145,7 +157,7 @@ that should panic, not propagate.
 
 Anything held across an `.await` point in a task must be `Send` (the
 embassy executor moves tasks across threads on multi-core targets, and
-the `arch-cortex-m` executor still requires `Send` for soundness with
+the `platform-cortex-m` executor still requires `Send` for soundness with
 interrupt-driven wake-ups). Codegen guidelines:
 
 - Task-local state held across awaits must be `Send`. Raw pointers,

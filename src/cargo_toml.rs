@@ -251,6 +251,51 @@ fn collect_inlined_block_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> {
     Ok(out)
 }
 
+/// Walk the inlined-bridge inventory and return every bridge's
+/// `deps.yaml` contribution as a flat `Vec<CrateRef>` (D65). Mirrors
+/// [`collect_inlined_block_deps`] — same manifest schema, same loader,
+/// path `<codegen_dir>/bridges/<bridge>/deps.yaml`. Bridges own
+/// join-product crates: deps that exist only because two blocks are
+/// paired (e.g. an async-flavored HAL crate), which neither block may
+/// declare without reaching across the pairing.
+///
+/// Order discipline: callers merge after architecture-level,
+/// module-level, AND block-level deps — user authoring wins first, then
+/// blocks, then bridges (the most-derived contribution merges last).
+fn collect_inlined_bridge_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> {
+    let mut out: Vec<CrateRef> = Vec::new();
+    if !layout.inlined_bridges_dir.is_dir() {
+        return Ok(out);
+    }
+    let mut bridge_names: Vec<String> = std::fs::read_dir(&layout.inlined_bridges_dir)
+        .with_context(|| format!("reading {}", layout.inlined_bridges_dir.display()))?
+        .filter_map(|r| r.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name().and_then(|s| s.to_str())?;
+            name.strip_suffix(".schema.yaml").map(String::from)
+        })
+        .collect();
+    bridge_names.sort();
+    for bridge in bridge_names {
+        let deps_path = layout
+            .codegen_dir
+            .join("bridges")
+            .join(&bridge)
+            .join("deps.yaml");
+        let deps = BlockDeps::load(&deps_path).with_context(|| {
+            format!(
+                "loading bridge deps.yaml for `{bridge}` at {}",
+                deps_path.display()
+            )
+        })?;
+        for entry in &deps.crates {
+            out.push(block_crate_entry_to_crate_ref(entry));
+        }
+    }
+    Ok(out)
+}
+
 /// Bridge `BlockDeps::CrateEntry` (manifest shape) to `cargo_toml::CrateRef`
 /// (renderer shape). The two structs carry the same fields under
 /// different names; this fn is a transparent translation. The two
@@ -493,6 +538,11 @@ fn render_firmware(
     for c in collect_inlined_block_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
+    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // (user > blocks > bridges; first insert wins, conflicts warn).
+    for c in collect_inlined_bridge_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
 
     let mut text = String::new();
     write_package_section(&mut text, project, /* rust_version */ None, workspace);
@@ -542,6 +592,11 @@ fn render_library(
     // Step 3d: block-contributed deps. Merged AFTER user-authored deps
     // so user spec wins on conflict.
     for c in collect_inlined_block_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // (user > blocks > bridges; first insert wins, conflicts warn).
+    for c in collect_inlined_bridge_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
 
@@ -665,6 +720,11 @@ fn render_audio_plugin(
     // Step 3d: block-contributed deps. Merged AFTER user-authored deps
     // so user spec wins on conflict.
     for c in collect_inlined_block_deps(layout)? {
+        merge_dep(&mut deps, c, &mut warnings);
+    }
+    // D65: bridge-contributed join-product deps. Merged AFTER block deps
+    // (user > blocks > bridges; first insert wins, conflicts warn).
+    for c in collect_inlined_bridge_deps(layout)? {
         merge_dep(&mut deps, c, &mut warnings);
     }
 
