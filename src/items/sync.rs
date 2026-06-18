@@ -50,24 +50,6 @@ pub struct SpecItem {
     /// re_exports; target_type/trait_ref for impls). Carried verbatim.
     #[serde(skip_serializing_if = "serde_json::Map::is_empty", default)]
     pub extras: serde_json::Map<String, serde_json::Value>,
-    /// Methods declared on this item. Non-empty only for `impl`/`trait`
-    /// items that track their methods. Matched hierarchically against the
-    /// parent's extracted methods by the diff.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub methods: Vec<SpecMethod>,
-}
-
-/// One spec-side method declared under an `impl`/`trait` item's
-/// `methods` array. Sub-item of its parent `SpecItem`.
-#[derive(Debug, Clone, Serialize)]
-pub struct SpecMethod {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub description: String,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub satisfies: Vec<String>,
 }
 
 /// Pair of spec + source views of the same (kind, name) item.
@@ -181,15 +163,10 @@ pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Resul
             .get("signature_hint")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let methods = table
-            .get("methods")
-            .and_then(|v| v.as_array())
-            .map(|arr| parse_spec_methods(arr))
-            .unwrap_or_default();
 
         // Capture kind-discriminated extras. Convert the table to JSON
         // and strip the canonical keys; whatever remains rides through
-        // verbatim. `methods` is a first-class field, not an extra.
+        // verbatim.
         let mut extras = toml_table_to_json_map(table);
         for k in [
             "kind",
@@ -197,7 +174,6 @@ pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Resul
             "description",
             "satisfies",
             "signature_hint",
-            "methods",
         ] {
             extras.remove(k);
         }
@@ -209,47 +185,10 @@ pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Resul
             satisfies,
             signature_hint,
             extras,
-            methods,
         });
     }
 
     Ok(out)
-}
-
-/// Parse an `[[items.methods]]` array into `SpecMethod` entries. Malformed
-/// entries (missing `name`) are dropped — schema validation is the gate
-/// that rejects them; the diff only ever runs on validated specs.
-fn parse_spec_methods(arr: &[toml::Value]) -> Vec<SpecMethod> {
-    arr.iter()
-        .filter_map(|raw| {
-            let t = raw.as_table()?;
-            let name = t.get("name").and_then(|v| v.as_str())?.to_string();
-            let signature = t
-                .get("signature")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            let description = t
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let satisfies = t
-                .get("satisfies")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some(SpecMethod {
-                name,
-                signature,
-                description,
-                satisfies,
-            })
-        })
-        .collect()
 }
 
 /// Best-effort `toml::Value::Table` → `serde_json::Map` conversion.
@@ -391,7 +330,6 @@ mod tests {
             signature: Some("fn  foo(x:  u32)  ->  u32".into()),
             attributes: vec![],
             span: span(),
-            methods: vec![],
         };
         assert!(signature_drift("fn foo(x: u32) -> u32", &item).is_none());
         assert!(signature_drift("fn foo(x: u64) -> u32", &item).is_some());
@@ -405,7 +343,6 @@ mod tests {
             signature: None,
             attributes: vec![],
             span: span(),
-            methods: vec![],
         };
         // Hint vs. nothing → drift.
         let d = signature_drift("fn foo()", &item);
