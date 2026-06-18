@@ -97,6 +97,76 @@ extern \"C\" {
     assert!(impl_item.name.starts_with("Show for"));
 }
 
+#[test]
+fn extract_excludes_impl_and_trait_methods() {
+    // Methods inside impl/trait bodies are NOT items — the impl/trait is the
+    // item; its methods are codegen-derived from the impl's prose. The
+    // items.scm query is anchored to top-level (direct `source_file`
+    // children), so associated fns never surface as phantom top-level items.
+    // Regression guard for the F-008 phantom-method storm that made every
+    // module with an impl report drift against a (correct) method-free spec.
+    let source = "\
+pub struct Counter { n: u32 }
+
+impl Counter {
+    pub fn new() -> Self { Self { n: 0 } }
+    pub fn incr(&mut self) { self.n += 1; }
+    pub fn get(&self) -> u32 { self.n }
+}
+
+pub trait Resettable {
+    fn reset(&mut self);
+    fn is_reset(&self) -> bool { false }
+}
+
+impl Resettable for Counter {
+    fn reset(&mut self) { self.n = 0; }
+}
+
+pub fn free_function() {}
+";
+    let items = extract_items_from_source(source, &RustAdapter).unwrap();
+    let names: Vec<_> = items
+        .iter()
+        .map(|i| (i.kind, i.name.clone()))
+        .collect();
+
+    // Top-level items ARE extracted: the struct, the trait, both impls.
+    assert!(items
+        .iter()
+        .any(|i| i.kind == ItemKind::Struct && i.name == "Counter"));
+    assert!(items
+        .iter()
+        .any(|i| i.kind == ItemKind::Trait && i.name == "Resettable"));
+    assert_eq!(
+        items.iter().filter(|i| i.kind == ItemKind::Impl).count(),
+        2,
+        "both impl blocks are items; got: {names:?}"
+    );
+
+    // Methods inside impl/trait bodies are NOT items.
+    for method in ["new", "incr", "get", "reset", "is_reset"] {
+        assert!(
+            !items
+                .iter()
+                .any(|i| i.kind == ItemKind::Fn && i.name == method),
+            "method `{method}` must NOT be a top-level item (F-008); got: {names:?}"
+        );
+    }
+
+    // The only `fn` item is the top-level free function.
+    let fns: Vec<_> = items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Fn)
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(
+        fns,
+        vec!["free_function"],
+        "only the top-level free fn is an item; got: {names:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // reverse pre-flight
 // ---------------------------------------------------------------------------
