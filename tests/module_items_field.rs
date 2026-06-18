@@ -290,3 +290,169 @@ satisfies = ["DEMO-3"]
         "validate should reject methods[] on a non-impl/trait item; stderr:\n{stderr}"
     );
 }
+
+/// Bootstrap a fresh library-api project, drop a single module spec, and
+/// return whether `validate` accepts it (plus stderr for diagnostics).
+/// Shared by the methods[] schema-shape cases below.
+fn validate_single_module(tag: &str, module_file: &str, toml_body: &str) -> (bool, String) {
+    let plugin_root = full_plugin();
+    let target = tmp_dir(tag);
+    bootstrap::run_bootstrap(
+        &plugin_root,
+        &BootstrapInputs {
+            profile: "library-api".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap();
+    std::fs::write(target.join("specs/modules").join(module_file), toml_body).unwrap();
+    let (ok, _stdout, stderr) = run_validate(&target);
+    (ok, stderr)
+}
+
+#[test]
+fn trait_item_with_methods_validates_clean() {
+    // methods[] is permitted on `trait` items as well as `impl` items.
+    let (ok, stderr) = validate_single_module(
+        "trait-methods",
+        "Clock.toml",
+        r#"name = "Clock"
+visibility = "pub"
+
+[[items]]
+name = "Clock"
+kind = "trait"
+description = "Abstracts a monotonic now source as a Duration since a fixed epoch."
+satisfies = ["DEMO-1"]
+
+  [[items.methods]]
+  name = "now"
+  signature = "fn now(&self) -> Duration"
+"#,
+    );
+    assert!(ok, "trait + methods[] should validate; stderr:\n{stderr}");
+}
+
+#[test]
+fn plain_trait_without_methods_still_validates() {
+    // Regression guard: `trait` was split into its own oneOf branch when
+    // methods[] landed. A plain trait (no methods) must still validate
+    // exactly as before — the split must not have changed trait semantics.
+    let (ok, stderr) = validate_single_module(
+        "plain-trait",
+        "Clock.toml",
+        r#"name = "Clock"
+visibility = "pub"
+
+[[items]]
+name = "Clock"
+kind = "trait"
+description = "Abstracts a monotonic now source as a Duration since a fixed epoch."
+satisfies = ["DEMO-1"]
+"#,
+    );
+    assert!(
+        ok,
+        "plain trait (no methods) must still validate after the branch split; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn impl_without_methods_still_validates() {
+    // Backward compatibility: an impl that does not track its methods (no
+    // methods[] array) must keep validating — absent methods[] = "not tracked."
+    let (ok, stderr) = validate_single_module(
+        "impl-no-methods",
+        "Limiter.toml",
+        r#"name = "Limiter"
+visibility = "pub"
+
+[[items]]
+name = "RateLimiter"
+kind = "impl"
+description = "Inherent impl exposing the public rate-limiting surface."
+target_type = "RateLimiter"
+satisfies = ["DEMO-1"]
+"#,
+    );
+    assert!(
+        ok,
+        "impl without methods[] must validate (backward compat); stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn method_missing_name_errors() {
+    // `name` is required on every method entry.
+    let (ok, _stderr) = validate_single_module(
+        "method-no-name",
+        "Limiter.toml",
+        r#"name = "Limiter"
+visibility = "pub"
+
+[[items]]
+name = "RateLimiter"
+kind = "impl"
+description = "Inherent impl."
+target_type = "RateLimiter"
+satisfies = ["DEMO-1"]
+
+  [[items.methods]]
+  signature = "fn anon(&self)"
+"#,
+    );
+    assert!(!ok, "a method without `name` must be rejected");
+}
+
+#[test]
+fn method_with_unknown_field_errors() {
+    // The method object is `additionalProperties: false` — a typo'd or
+    // unsupported field must be rejected rather than silently ignored.
+    let (ok, _stderr) = validate_single_module(
+        "method-typo",
+        "Limiter.toml",
+        r#"name = "Limiter"
+visibility = "pub"
+
+[[items]]
+name = "RateLimiter"
+kind = "impl"
+description = "Inherent impl."
+target_type = "RateLimiter"
+satisfies = ["DEMO-1"]
+
+  [[items.methods]]
+  name = "go"
+  retrun_type = "u32"
+"#,
+    );
+    assert!(
+        !ok,
+        "an unknown field on a method (additionalProperties:false) must be rejected"
+    );
+}
+
+#[test]
+fn re_export_with_methods_errors() {
+    // methods[] is forbidden on re_export items.
+    let (ok, _stderr) = validate_single_module(
+        "reexport-methods",
+        "Reexp.toml",
+        r#"name = "Reexp"
+visibility = "pub"
+
+[[items]]
+name = "Foo"
+kind = "re_export"
+description = "Re-export of an inner type."
+target = "internal::Foo"
+visibility = "pub"
+
+  [[items.methods]]
+  name = "x"
+"#,
+    );
+    assert!(!ok, "methods[] on a re_export must be rejected");
+}
