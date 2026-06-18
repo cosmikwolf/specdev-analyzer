@@ -54,6 +54,28 @@ pub struct ExtractedItem {
     pub attributes: Vec<String>,
     /// Source span (1-based line numbers) where the item is defined.
     pub span: Span,
+    /// Methods (associated fns) belonging to this item. Populated only for
+    /// `impl`/`trait` kinds, and only by the method-aware extraction pass;
+    /// empty for every other kind and for impls/traits whose methods are not
+    /// tracked. Methods are sub-items of their parent, never surfaced as
+    /// top-level items, and the items diff matches them hierarchically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<ExtractedMethod>,
+}
+
+/// A method (associated fn) belonging to an `impl` or `trait`
+/// [`ExtractedItem`]. A sub-item of its parent — extraction attaches it to
+/// the parent rather than emitting it as a top-level item.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtractedMethod {
+    /// Method identifier as written in source.
+    pub name: String,
+    /// Optional signature shape (e.g. `fn foo(&self, n: u32) -> Bar`),
+    /// compared against the spec method's `signature` to detect drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Source span (1-based, inclusive) of the method.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

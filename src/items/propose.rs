@@ -363,6 +363,7 @@ mod tests {
             satisfies: vec![],
             signature_hint: None,
             extras,
+            methods: vec![],
         };
         let y = spec_item_to_yaml(&spec);
         let m = y.as_mapping().expect("mapping");

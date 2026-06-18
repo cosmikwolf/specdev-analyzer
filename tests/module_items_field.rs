@@ -199,3 +199,94 @@ description = "A function without any requirement traceability."
         "validate should fail when a non-re_export item omits satisfies; stderr:\n{stderr}"
     );
 }
+
+#[test]
+fn impl_item_with_methods_validates_clean() {
+    let plugin_root = full_plugin();
+    let target = tmp_dir("impl-methods");
+    bootstrap::run_bootstrap(
+        &plugin_root,
+        &BootstrapInputs {
+            profile: "library-api".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap();
+
+    // An impl item carrying a methods[] sub-array — the method-as-sub-item
+    // shape. Methods may carry name + signature + description + satisfies.
+    std::fs::write(
+        target.join("specs/modules/Limiter.toml"),
+        r#"name = "Limiter"
+visibility = "pub"
+
+[[items]]
+name = "RateLimiter"
+kind = "impl"
+description = "Inherent impl exposing the public rate-limiting surface."
+target_type = "RateLimiter"
+satisfies = ["DEMO-2"]
+
+  [[items.methods]]
+  name = "try_acquire"
+  signature = "fn try_acquire(&mut self, n: u32) -> Result<(), RateLimited>"
+  description = "Refill against the clock then consume n permits."
+  satisfies = ["DEMO-2"]
+
+  [[items.methods]]
+  name = "new"
+  signature = "fn new(quota: Quota, clock: C) -> Self"
+"#,
+    )
+    .unwrap();
+
+    let (ok, _stdout, stderr) = run_validate(&target);
+    assert!(
+        ok,
+        "validate should accept an impl item with a methods[] sub-array; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn methods_on_non_impl_item_errors() {
+    let plugin_root = full_plugin();
+    let target = tmp_dir("methods-misplaced");
+    bootstrap::run_bootstrap(
+        &plugin_root,
+        &BootstrapInputs {
+            profile: "library-api".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap();
+
+    // methods[] is permitted only on impl/trait items. A struct carrying
+    // methods[] must be rejected by the schema's kind-discriminated oneOf.
+    std::fs::write(
+        target.join("specs/modules/Widget.toml"),
+        r#"name = "Widget"
+visibility = "pub"
+
+[[items]]
+name = "Widget"
+kind = "struct"
+description = "A plain data struct that should not carry methods[]."
+satisfies = ["DEMO-3"]
+
+  [[items.methods]]
+  name = "nope"
+  signature = "fn nope(&self)"
+"#,
+    )
+    .unwrap();
+
+    let (ok, _stdout, stderr) = run_validate(&target);
+    assert!(
+        !ok,
+        "validate should reject methods[] on a non-impl/trait item; stderr:\n{stderr}"
+    );
+}
