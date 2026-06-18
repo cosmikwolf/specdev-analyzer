@@ -108,18 +108,6 @@ properties:
       pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
     minItems: 1
     uniqueItems: true
-  methods:
-    description: >
-      Methods (associated fns) belonging to this item. Permitted only on
-      `impl` and `trait` items. Each entry is a sub-item the items diff
-      matches hierarchically — the parent matches on (kind, name), then its
-      methods match by name within that parent. Optional: an `impl`/`trait`
-      with no `methods` array means "methods not tracked," which keeps
-      pre-existing specs valid. Methods are NOT top-level items — they reach
-      the spec only through their parent.
-    type: array
-    items:
-      $ref: "#/$defs/method"
 
 # Kind-discriminated extras via oneOf. Each branch enforces the kind tag
 # and adds kind-specific required/optional fields. The `re_export` branch
@@ -157,7 +145,6 @@ oneOf:
       anyOf:
         - required: [verifies]
         - required: [test_kind]
-        - required: [methods]
 
   - title: impl
     properties:
@@ -195,30 +182,11 @@ oneOf:
         - required: [trait_ref]
         - required: [visibility]
         - required: [alias]
-        - required: [methods]
-
-  # Traits, like impls, may carry a `methods[]` sub-array. Split out of the
-  # data branch so `methods` is permitted here but forbidden on the plain
-  # data kinds below.
-  - title: trait
-    properties:
-      kind: { const: trait }
-      test: { const: false }
-    required: [satisfies]
-    not:
-      anyOf:
-        - required: [verifies]
-        - required: [test_kind]
-        - required: [target]
-        - required: [target_type]
-        - required: [trait_ref]
-        - required: [visibility]
-        - required: [alias]
 
   - title: function-like-or-data
     properties:
       kind:
-        enum: [fn, struct, enum, union, type, const, static, macro, extern_block]
+        enum: [fn, struct, enum, union, trait, type, const, static, macro, extern_block]
       test: { const: false }
     required: [satisfies]
     not:
@@ -230,7 +198,6 @@ oneOf:
         - required: [trait_ref]
         - required: [visibility]
         - required: [alias]
-        - required: [methods]
 
 # When satisfies is required (every branch except re_export and test-fn),
 # it must have at least one entry. Test items carry `verifies` (with its
@@ -244,42 +211,3 @@ allOf:
       properties:
         satisfies:
           minItems: 1
-
-$defs:
-  method:
-    description: >
-      A method (associated fn) belonging to an `impl` or `trait` item.
-      Methods are sub-items of their parent, not top-level items, so the
-      items diff matches them hierarchically (parent on (kind, name), then
-      methods by name within the matched parent).
-    type: object
-    required: [name]
-    additionalProperties: false
-    properties:
-      name:
-        description: >
-          The method identifier, unique within its parent's `methods` array.
-        type: string
-        minLength: 1
-      signature:
-        description: >
-          Optional signature shape, e.g.
-          `fn try_acquire(&mut self, n: u32) -> Result<(), RateLimited>`.
-          When present, the diff compares it against the extracted source
-          signature to surface in-impl signature drift; when absent, only
-          the method's presence is tracked.
-        type: string
-      description:
-        description: >
-          One-or-two-sentence prose summary of the method's contract.
-        type: string
-      satisfies:
-        description: >
-          Optional requirement ids this method satisfies. Lets a rename or
-          reconcile preserve a method's requirement trace independently of
-          its parent item.
-        type: array
-        items:
-          type: string
-          pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
-        uniqueItems: true

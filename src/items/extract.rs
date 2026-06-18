@@ -120,7 +120,6 @@ fn build_named(
         signature: None,
         attributes,
         span,
-        methods: Vec::new(),
     })
 }
 
@@ -140,7 +139,6 @@ fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedIt
         signature: None,
         attributes,
         span,
-        methods: Vec::new(),
     })
 }
 
@@ -161,7 +159,6 @@ fn build_re_export(query: &Query, m: &QueryMatch, source: &str) -> Option<Extrac
         signature: None,
         attributes,
         span,
-        methods: Vec::new(),
     })
 }
 
@@ -193,7 +190,6 @@ fn build_extern_block(query: &Query, m: &QueryMatch, source: &str) -> Option<Ext
         signature: None,
         attributes,
         span,
-        methods: Vec::new(),
     })
 }
 
