@@ -258,6 +258,61 @@ satisfies = ["DEMO-1"]
 }
 
 #[test]
+fn items_diff_pairs_base_impl_spec_with_generic_source_impl() {
+    // F-010: spec names an impl by its base type (`impl RateLimiter`, the
+    // authoring convention), while the source impl is generic
+    // (`impl<C> RateLimiter<C>`). The two must pair in both[] rather than
+    // splitting into in_spec_only + in_source_only.
+    let target = tmp_dir("generic-impl");
+    bootstrap_lib(&target);
+
+    std::fs::write(
+        target.join("specs/modules/Foo.toml"),
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "RateLimiter"
+kind = "struct"
+description = "Token-bucket limiter."
+satisfies = ["DEMO-1"]
+
+[[items]]
+name = "RateLimiter"
+kind = "impl"
+description = "Inherent methods on the limiter."
+satisfies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub struct RateLimiter<C> { _c: core::marker::PhantomData<C> }\n\
+         impl<C> RateLimiter<C> { pub fn new() -> Self { Self { _c: core::marker::PhantomData } } }\n",
+    )
+    .unwrap();
+
+    let r = run_items_diff(&target, "Foo");
+    assert!(
+        r.success,
+        "expected exit 0 (generic impl paired); exit={:?} stdout=\n{}\nstderr={}",
+        r.exit_code, r.stdout, r.stderr
+    );
+    assert!(
+        r.stdout.contains("in_spec_only: []"),
+        "impl should not fall into in_spec_only; stdout=\n{}",
+        r.stdout
+    );
+    assert!(
+        r.stdout.contains("in_source_only: []"),
+        "generic impl should not fall into in_source_only; stdout=\n{}",
+        r.stdout
+    );
+}
+
+#[test]
 fn items_diff_missing_module_errors_with_item_101() {
     let target = tmp_dir("missing");
     bootstrap_lib(&target);

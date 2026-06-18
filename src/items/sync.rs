@@ -102,6 +102,41 @@ fn parse_kind(s: &str) -> Option<ItemKind> {
     })
 }
 
+/// Comparable identity for join purposes. For most kinds this is the name
+/// verbatim. For `impl` items the synthesized name carries the target type
+/// (and, for trait impls, the trait), either of which may be generic in the
+/// source while the spec — following the authoring convention — names the
+/// base only (`impl RateLimiter` vs source `impl RateLimiter<C>`). Stripping
+/// the generic argument lists makes the two compare equal without mutating the
+/// stored name, so the displayed source form keeps its `<C>` while the join
+/// still pairs them. (F-010.)
+fn identity_key(kind: ItemKind, name: &str) -> String {
+    if kind == ItemKind::Impl {
+        strip_generics(name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// Drop every balanced `<…>` group (and the angle brackets themselves) from an
+/// impl identity, collapsing the whitespace left behind. Handles trait impls
+/// and nested generics: `Clock for RateLimiter<C>` → `Clock for RateLimiter`,
+/// `From<Vec<u8>> for Foo` → `From for Foo`. Impl headers are the only place a
+/// `<` appears in a synthesized name, so a depth counter is sufficient.
+fn strip_generics(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut depth: usize = 0;
+    for ch in name.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Walk a module spec's `items` array and produce typed `SpecItem`
 /// entries. Unknown kinds become a parse error (`ITEM-102`).
 pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Result<Vec<SpecItem>> {
@@ -282,9 +317,10 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
 
     for spec in spec_items {
         let kind = parse_kind(&spec.kind).expect("validated in parse_spec_items");
+        let spec_key = identity_key(kind, &spec.name);
         let pos = source_remaining
             .iter()
-            .position(|s| s.kind == kind && s.name == spec.name);
+            .position(|s| s.kind == kind && identity_key(s.kind, &s.name) == spec_key);
         match pos {
             Some(idx) => {
                 let source = source_remaining.remove(idx);
@@ -347,6 +383,26 @@ mod tests {
         // Hint vs. nothing → drift.
         let d = signature_drift("fn foo()", &item);
         assert!(d.is_some(), "expected drift; got {d:?}");
+    }
+
+    #[test]
+    fn strip_generics_removes_balanced_groups() {
+        assert_eq!(strip_generics("RateLimiter<C>"), "RateLimiter");
+        assert_eq!(strip_generics("RateLimiter"), "RateLimiter");
+        assert_eq!(strip_generics("Clock for RateLimiter<C>"), "Clock for RateLimiter");
+        assert_eq!(strip_generics("From<u32> for Foo"), "From for Foo");
+        assert_eq!(strip_generics("From<Vec<u8>> for Foo"), "From for Foo");
+    }
+
+    #[test]
+    fn identity_key_normalizes_only_impl_generics() {
+        // impl: spec base form pairs with generic source form.
+        assert_eq!(
+            identity_key(ItemKind::Impl, "RateLimiter"),
+            identity_key(ItemKind::Impl, "RateLimiter<C>"),
+        );
+        // non-impl: generics (if any) are part of identity, untouched.
+        assert_eq!(identity_key(ItemKind::Fn, "make<C>"), "make<C>");
     }
 
     #[test]
