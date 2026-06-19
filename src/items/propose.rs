@@ -100,8 +100,8 @@ pub struct ProposalEntry {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Recommendation {
     /// `pending` (initial) | `skip` | `add-to-spec` | `remove-from-spec`
-    /// | `update-spec`. `items apply` rejects any entry still on
-    /// `pending` when `approved: true`.
+    /// | `update-spec` | `rename`. `items apply` rejects any entry still
+    /// on `pending` when `approved: true`.
     pub action: String,
     /// Free-form prose from the skill / human. Empty on initial scaffold.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -113,6 +113,17 @@ pub struct Recommendation {
     /// without round-tripping TOML inside YAML inside TOML.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposed_spec: Option<serde_yaml::Value>,
+    /// For `rename` only: the new name to write onto the existing spec
+    /// item identified by this entry's `(kind, name)`. Every other field
+    /// of the matched item — `satisfies`, `verifies`, `description`,
+    /// kind-discriminated extras — is preserved untouched, which is the
+    /// whole point: a rename keeps the requirement/verification trace
+    /// that a remove + add would force the author to re-author by hand.
+    /// Set this on the `in_spec_only` entry carrying the old name; mark
+    /// the paired `in_source_only` entry (the new name) `skip` — the
+    /// rename makes the next diff pair them with no further action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<String>,
 }
 
 /// Default on-disk path for a module's proposal file.
@@ -160,6 +171,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
                 action: "pending".into(),
                 rationale: String::new(),
                 proposed_spec: None,
+                rename_to: None,
             },
         });
     }
@@ -178,6 +190,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
                 action: "pending".into(),
                 rationale: String::new(),
                 proposed_spec: None,
+                rename_to: None,
             },
         });
     }
@@ -198,6 +211,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
                     action: "pending".into(),
                     rationale: String::new(),
                     proposed_spec: None,
+                rename_to: None,
                 },
             });
             drift_idx += 1;

@@ -27,6 +27,7 @@
 //! - `ITEM-312` module spec write failure
 //! - `ITEM-313` audit log rename failure
 //! - `ITEM-314` unknown action
+//! - `ITEM-315` rename without `rename_to`
 
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,7 @@ pub struct ApplyReport {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub updated: Vec<String>,
+    pub renamed: Vec<String>,
     pub skipped: Vec<String>,
 }
 
@@ -63,6 +65,7 @@ impl ApplyReport {
         s.push_str(&line("added", &self.added));
         s.push_str(&line("removed", &self.removed));
         s.push_str(&line("updated", &self.updated));
+        s.push_str(&line("renamed", &self.renamed));
         s.push_str(&line("skipped", &self.skipped));
         s
     }
@@ -129,6 +132,21 @@ pub fn apply_proposal(
     for entry in &doc.entries {
         match entry.recommendation.action.as_str() {
             "skip" | "remove-from-spec" => {}
+            "rename" => {
+                let to = entry
+                    .recommendation
+                    .rename_to
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("");
+                if to.is_empty() {
+                    return Err(anyhow!(
+                        "[ITEM-315] entry {} has action `rename` but no (non-empty) \
+                         `rename_to`; add `rename_to: <new-name>` to the recommendation",
+                        entry.id
+                    ));
+                }
+            }
             "add-to-spec" | "update-spec" => {
                 let ps = entry
                     .recommendation
@@ -162,14 +180,14 @@ pub fn apply_proposal(
             "pending" => {
                 return Err(anyhow!(
                     "[ITEM-305] entry {} still has action `pending`; resolve it (skip / \
-                     add-to-spec / remove-from-spec / update-spec) before applying",
+                     add-to-spec / remove-from-spec / update-spec / rename) before applying",
                     entry.id
                 ));
             }
             other => {
                 return Err(anyhow!(
                     "[ITEM-314] entry {}: unknown action `{}` (expected one of \
-                     skip / add-to-spec / remove-from-spec / update-spec)",
+                     skip / add-to-spec / remove-from-spec / update-spec / rename)",
                     entry.id,
                     other
                 ));
@@ -189,6 +207,7 @@ pub fn apply_proposal(
     let mut added: Vec<String> = Vec::new();
     let mut removed: Vec<String> = Vec::new();
     let mut updated: Vec<String> = Vec::new();
+    let mut renamed: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
 
     for entry in &doc.entries {
@@ -228,6 +247,22 @@ pub fn apply_proposal(
                     ));
                 }
             }
+            "rename" => {
+                // Validated non-empty above.
+                let new_name = entry.recommendation.rename_to.as_deref().unwrap().trim();
+                if rename_item(&mut spec_doc, &entry.kind, &entry.name, new_name)? {
+                    renamed.push(entry.id.clone());
+                } else {
+                    return Err(anyhow!(
+                        "[ITEM-309] entry {}: cannot rename (kind={}, name={}) — not present \
+                         in {}",
+                        entry.id,
+                        entry.kind,
+                        entry.name,
+                        module_path.display()
+                    ));
+                }
+            }
             _ => unreachable!("validated above"),
         }
     }
@@ -249,6 +284,7 @@ pub fn apply_proposal(
             added: added.len(),
             removed: removed.len(),
             updated: updated.len(),
+            renamed: renamed.len(),
             skipped: skipped.len(),
         },
     })
@@ -279,6 +315,7 @@ pub fn apply_proposal(
         added,
         removed,
         updated,
+        renamed,
         skipped,
     })
 }
@@ -298,6 +335,7 @@ struct ApplySummary {
     added: usize,
     removed: usize,
     updated: usize,
+    renamed: usize,
     skipped: usize,
 }
 
@@ -371,6 +409,35 @@ fn update_item(
             // intended shape — keeps semantics simple.
             if let Some(t) = arr.get_mut(idx) {
                 *t = new_table;
+            }
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+/// Rename an existing `[[items]]` entry in place: find it by its current
+/// `(kind, name)` and rewrite *only* the `name` value to `new_name`. Every
+/// other key — `satisfies`, `verifies`, `description`, kind-discriminated
+/// extras — is left untouched, which is the whole point of a distinct
+/// `rename` action: it preserves the requirement/verification trace that a
+/// remove + add would force the author to re-author by hand. Returns `false`
+/// if no item matches (caller maps that to `ITEM-309`).
+fn rename_item(
+    doc: &mut toml_edit::DocumentMut,
+    kind: &str,
+    name: &str,
+    new_name: &str,
+) -> Result<bool> {
+    let arr = items_array_mut(doc)?;
+    let pos = arr.iter().position(|t| {
+        t.get("kind").and_then(|v| v.as_str()) == Some(kind)
+            && t.get("name").and_then(|v| v.as_str()) == Some(name)
+    });
+    match pos {
+        Some(idx) => {
+            if let Some(t) = arr.get_mut(idx) {
+                t["name"] = toml_edit::value(new_name);
             }
             Ok(true)
         }
@@ -472,6 +539,44 @@ mod tests {
         let t = yaml_to_toml_table(&v).unwrap();
         let keys: Vec<&str> = t.iter().map(|(k, _)| k).collect();
         assert_eq!(keys, vec!["kind", "name", "description", "zzz_extra"]);
+    }
+
+    #[test]
+    fn rename_item_rewrites_name_in_place_preserving_other_keys() {
+        let mut doc: toml_edit::DocumentMut = r#"name = "Foo"
+
+[[items]]
+kind = "fn"
+name = "refill"
+description = "Refill the bucket."
+satisfies = ["DEMO-1"]
+"#
+        .parse()
+        .unwrap();
+        let ok = rename_item(&mut doc, "fn", "refill", "apply_refill").unwrap();
+        assert!(ok);
+        let out = doc.to_string();
+        assert!(out.contains("name = \"apply_refill\""), "name not rewritten:\n{out}");
+        assert!(!out.contains("name = \"refill\""), "old name lingers:\n{out}");
+        // Trace and description ride through untouched.
+        assert!(out.contains("satisfies = [\"DEMO-1\"]"), "satisfies lost:\n{out}");
+        assert!(out.contains("description = \"Refill the bucket.\""), "description lost:\n{out}");
+    }
+
+    #[test]
+    fn rename_item_returns_false_when_no_match() {
+        let mut doc: toml_edit::DocumentMut = r#"name = "Foo"
+
+[[items]]
+kind = "fn"
+name = "refill"
+"#
+        .parse()
+        .unwrap();
+        // Wrong kind → no match.
+        assert!(!rename_item(&mut doc, "struct", "refill", "x").unwrap());
+        // Wrong name → no match.
+        assert!(!rename_item(&mut doc, "fn", "nope", "x").unwrap());
     }
 
     #[test]
