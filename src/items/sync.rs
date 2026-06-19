@@ -104,18 +104,43 @@ fn parse_kind(s: &str) -> Option<ItemKind> {
 
 /// Comparable identity for join purposes. For most kinds this is the name
 /// verbatim. For `impl` items the synthesized name carries the target type
-/// (and, for trait impls, the trait), either of which may be generic in the
-/// source while the spec — following the authoring convention — names the
-/// base only (`impl RateLimiter` vs source `impl RateLimiter<C>`). Stripping
-/// the generic argument lists makes the two compare equal without mutating the
-/// stored name, so the displayed source form keeps its `<C>` while the join
-/// still pairs them. (F-010.)
+/// (and, for trait impls, the trait), which can diverge between spec and source
+/// in two purely-syntactic ways the author shouldn't have to track:
+///   - **generics** (F-010): spec `impl RateLimiter` vs source `RateLimiter<C>`.
+///   - **path qualifiers** (F-013): spec `Display for RateLimited` vs source
+///     `fmt::Display for RateLimited` (or `core::fmt::Display …`).
+/// Normalizing both out of the *key* makes the two compare equal without
+/// mutating the stored name, so the displayed source form keeps its `<C>` /
+/// `fmt::` while the join still pairs them.
 fn identity_key(kind: ItemKind, name: &str) -> String {
     if kind == ItemKind::Impl {
-        strip_generics(name)
+        normalize_impl_name(name)
     } else {
         name.to_string()
     }
+}
+
+/// Normalize an impl identity: strip generic argument lists (F-010), then
+/// reduce each path-qualified trait/type to its final `::` segment (F-013).
+/// `core::fmt::Display for RateLimiter<C>` → `Display for RateLimiter`;
+/// `From<Vec<u8>> for crate::Foo` → `From for Foo`. The ` for ` separator only
+/// appears in trait impls; inherent impls (`RateLimiter`) have a single path.
+fn normalize_impl_name(name: &str) -> String {
+    let degeneric = strip_generics(name);
+    match degeneric.split_once(" for ") {
+        Some((trait_ref, target)) => {
+            format!("{} for {}", last_segment(trait_ref), last_segment(target))
+        }
+        None => last_segment(&degeneric).to_string(),
+    }
+}
+
+/// Last `::`-delimited segment of a path, trimmed. `core::fmt::Display` →
+/// `Display`; `RateLimited` → `RateLimited`. Two distinct paths sharing a final
+/// segment (`a::Display` vs `b::Display`) collapse together — an accepted edge,
+/// the same class as F-010's distinct generic instantiations.
+fn last_segment(path: &str) -> &str {
+    path.trim().rsplit("::").next().unwrap_or(path).trim()
 }
 
 /// Drop every balanced `<…>` group (and the angle brackets themselves) from an
@@ -403,6 +428,36 @@ mod tests {
         );
         // non-impl: generics (if any) are part of identity, untouched.
         assert_eq!(identity_key(ItemKind::Fn, "make<C>"), "make<C>");
+    }
+
+    #[test]
+    fn normalize_impl_name_strips_trait_and_target_paths() {
+        // F-013: path-qualified trait reduces to its last segment.
+        assert_eq!(normalize_impl_name("fmt::Display for RateLimited"), "Display for RateLimited");
+        assert_eq!(
+            normalize_impl_name("core::fmt::Display for RateLimited"),
+            "Display for RateLimited"
+        );
+        assert_eq!(
+            normalize_impl_name("std::error::Error for ConfigError"),
+            "Error for ConfigError"
+        );
+        // Target path is normalized too.
+        assert_eq!(normalize_impl_name("Display for crate::Foo"), "Display for Foo");
+        // Generics + paths compose (F-010 + F-013).
+        assert_eq!(normalize_impl_name("core::convert::From<u32> for Foo"), "From for Foo");
+        // Bare names are unchanged.
+        assert_eq!(normalize_impl_name("Display for RateLimited"), "Display for RateLimited");
+        assert_eq!(normalize_impl_name("RateLimiter"), "RateLimiter");
+    }
+
+    #[test]
+    fn identity_key_pairs_bare_and_qualified_trait_impl() {
+        // The dogfood case: spec `Display for X` ≡ source `fmt::Display for X`.
+        assert_eq!(
+            identity_key(ItemKind::Impl, "Display for RateLimited"),
+            identity_key(ItemKind::Impl, "fmt::Display for RateLimited"),
+        );
     }
 
     #[test]

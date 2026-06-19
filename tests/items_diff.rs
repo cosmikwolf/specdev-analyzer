@@ -313,6 +313,65 @@ satisfies = ["DEMO-1"]
 }
 
 #[test]
+fn items_diff_pairs_bare_spec_trait_with_qualified_source_impl() {
+    // F-013: the spec names a trait impl with the bare trait
+    // (`Display for Foo`, the authoring convention), while the source writes
+    // it path-qualified (`core::fmt::Display for Foo`). They must pair in
+    // both[], not split into in_spec_only + in_source_only.
+    let target = tmp_dir("qualified-trait");
+    bootstrap_lib(&target);
+
+    std::fs::write(
+        target.join("specs/modules/Foo.toml"),
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "Foo"
+kind = "struct"
+description = "A unit type."
+satisfies = ["DEMO-1"]
+
+[[items]]
+name = "Display for Foo"
+kind = "impl"
+description = "Human-readable formatting."
+satisfies = ["DEMO-1"]
+target_type = "Foo"
+trait_ref = "core::fmt::Display"
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub struct Foo;\n\
+         impl core::fmt::Display for Foo {\n\
+         \x20   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, \"Foo\") }\n\
+         }\n",
+    )
+    .unwrap();
+
+    let r = run_items_diff(&target, "Foo");
+    assert!(
+        r.success,
+        "expected exit 0 (qualified trait paired); exit={:?} stdout=\n{}\nstderr={}",
+        r.exit_code, r.stdout, r.stderr
+    );
+    assert!(
+        r.stdout.contains("in_spec_only: []"),
+        "spec impl should not fall into in_spec_only; stdout=\n{}",
+        r.stdout
+    );
+    assert!(
+        r.stdout.contains("in_source_only: []"),
+        "qualified source impl should not fall into in_source_only; stdout=\n{}",
+        r.stdout
+    );
+}
+
+#[test]
 fn items_diff_missing_module_errors_with_item_101() {
     let target = tmp_dir("missing");
     bootstrap_lib(&target);
