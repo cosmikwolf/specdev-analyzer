@@ -81,6 +81,35 @@ fn match_to_item(query: &Query, m: &QueryMatch, source: &str) -> Option<Extracte
     if names.contains(&"impl.def") {
         return build_impl(query, m, source);
     }
+    // Inherent-impl associated items: each public member is an item named
+    // `<Type>::<member>`. The inherent impl block itself is not an item.
+    if names.contains(&"inherent_fn.def") {
+        return build_inherent_assoc(
+            query, m, source, ItemKind::Fn, "inherent_fn.def", "inherent_fn.name", "inherent_fn.vis",
+        );
+    }
+    if names.contains(&"inherent_const.def") {
+        return build_inherent_assoc(
+            query,
+            m,
+            source,
+            ItemKind::Const,
+            "inherent_const.def",
+            "inherent_const.name",
+            "inherent_const.vis",
+        );
+    }
+    if names.contains(&"inherent_type.def") {
+        return build_inherent_assoc(
+            query,
+            m,
+            source,
+            ItemKind::Type,
+            "inherent_type.def",
+            "inherent_type.name",
+            "inherent_type.vis",
+        );
+    }
     if names.contains(&"type.def") {
         return build_named(query, m, source, ItemKind::Type, "type.def", "type.name");
     }
@@ -135,6 +164,41 @@ fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedIt
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
         kind: ItemKind::Impl,
+        name,
+        signature: None,
+        attributes,
+        span,
+    })
+}
+
+/// Build an item for a public associated member of an **inherent** impl.
+/// The item is named `<TypeBase>::<member>` (generics + path qualifiers
+/// stripped from the host type so the name matches what an author writes).
+/// Returns `None` for non-`pub` members — private associated items are not
+/// contract surface and must not surface as `in_source_only` drift.
+fn build_inherent_assoc(
+    query: &Query,
+    m: &QueryMatch,
+    source: &str,
+    kind: ItemKind,
+    def_capture: &str,
+    name_capture: &str,
+    vis_capture: &str,
+) -> Option<ExtractedItem> {
+    // Contract surface is `pub` only (mirrors the top-level "helpers are
+    // bare" rule). `pub(crate)`/`pub(super)` are not public API.
+    let vis = capture_text(query, m, source, vis_capture).map(str::trim);
+    if vis != Some("pub") {
+        return None;
+    }
+    let def_node = capture_node(query, m, def_capture)?;
+    let host = capture_text(query, m, source, "inherent.host")?;
+    let member = capture_text(query, m, source, name_capture)?;
+    let name = format!("{}::{member}", super::sync::type_base(host));
+    let span = node_span(def_node);
+    let attributes = preceding_attributes(def_node, source);
+    Some(ExtractedItem {
+        kind,
         name,
         signature: None,
         attributes,
@@ -290,25 +354,61 @@ mod tests {
         assert!(kinds.contains(&ItemKind::Const));
     }
 
+    // Inherent impl dissolves into per-method items; a trait impl stays one
+    // item whose methods are codegen-derived (not surfaced).
     #[test]
-    fn extracts_trait_impl_inherent_and_trait() {
+    fn inherent_impl_dissolves_trait_impl_stays_one_item() {
         let source = "\
 struct T;
-impl T { fn one(&self) {} }
+impl T { pub fn one(&self) {} fn helper(&self) {} }
 trait Show {}
-impl Show for T {}
+impl Show for T { fn show(&self) {} }
 ";
         let items = extract(source);
-        assert_eq!(items.iter().filter(|i| i.kind == ItemKind::Struct).count(), 1);
-        assert_eq!(items.iter().filter(|i| i.kind == ItemKind::Trait).count(), 1);
-        let impls: Vec<_> = items
-            .iter()
-            .filter(|i| i.kind == ItemKind::Impl)
-            .collect();
-        assert_eq!(impls.len(), 2);
-        let names: Vec<&str> = impls.iter().map(|i| i.name.as_str()).collect();
-        assert!(names.iter().any(|n| n.starts_with("Show for")));
-        assert!(names.iter().any(|n| *n == "T"));
+        // The inherent impl produces no impl item; its public fn is `T::one`,
+        // its private `helper` is not an item.
+        assert!(
+            !items.iter().any(|i| i.kind == ItemKind::Impl && i.name == "T"),
+            "inherent impl block must not be an item"
+        );
+        assert!(
+            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == "T::one"),
+            "public inherent method must extract as `T::one`"
+        );
+        assert!(
+            !items.iter().any(|i| i.name == "T::helper"),
+            "private inherent method must not be an item"
+        );
+        // The trait impl stays exactly one item; its method is not surfaced.
+        let impls: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Impl).collect();
+        assert_eq!(impls.len(), 1);
+        assert_eq!(impls[0].name, "Show for T");
+        assert!(
+            !items.iter().any(|i| i.name.contains("show")),
+            "trait-impl method bodies are codegen-derived, not items"
+        );
+    }
+
+    // Generics on the host type are normalized out of the qualified name
+    // (no `RateLimiter` vs `RateLimiter<C>` split).
+    #[test]
+    fn inherent_method_name_normalizes_host_generics() {
+        let source = "impl RateLimiter<C> { pub fn try_consume(&self, n: u32) -> bool { true } }\n";
+        let items = extract(source);
+        assert!(
+            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == "RateLimiter::try_consume"),
+            "expected `RateLimiter::try_consume`, got {:?}",
+            items.iter().map(|i| &i.name).collect::<Vec<_>>()
+        );
+    }
+
+    // Public associated const / type in an inherent impl are items.
+    #[test]
+    fn inherent_assoc_const_and_type() {
+        let source = "impl Widget { pub const MAX: u32 = 8; pub type Out = u16; fn p() {} }\n";
+        let items = extract(source);
+        assert!(items.iter().any(|i| i.kind == ItemKind::Const && i.name == "Widget::MAX"));
+        assert!(items.iter().any(|i| i.kind == ItemKind::Type && i.name == "Widget::Out"));
     }
 
     #[test]
@@ -352,19 +452,17 @@ impl Show for T {}
     }
 
     #[test]
-    fn skips_nested_items() {
-        // tree-sitter Query without anchors matches every descendant — but
-        // the items.scm patterns are unanchored. A function inside an impl
-        // SHOULD still surface as a separate fn item per items[] design
-        // (impls and their inherent fns are both top-level-significant).
-        // What we MUST exclude: items inside other functions (locals).
+    fn skips_function_body_locals() {
+        // Patterns are anchored to `source_file` (top level) plus inherent
+        // `impl` bodies. A fn nested inside another fn's body is neither, so
+        // only `outer` is extracted — `inner` is a local.
         let source = "fn outer() { fn inner() {} let _x = 1; }\n";
         let items = extract(source);
-        // Tree-sitter will match `inner` because the query isn't anchored;
-        // this test documents current behaviour. Filtering local-fn items
-        // is an items-sync concern (items diff against module spec carries
-        // the right context).
         let fns: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Fn).collect();
         assert!(fns.iter().any(|i| i.name == "outer"));
+        assert!(
+            !fns.iter().any(|i| i.name == "inner"),
+            "function-body locals must not be items"
+        );
     }
 }

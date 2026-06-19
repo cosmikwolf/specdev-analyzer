@@ -116,7 +116,7 @@ For trivial constants (single named values, small enums-as-numbers),
 keep them inline as `pub const NAME: T = ...;` — `build.rs` is for
 *tables*, not all constants.
 
-## Item emission (Phase 14)
+## Item emission
 
 `module.items[]` is an OPTIONAL surface in firmware-layered (firmware
 modules' contractual surface lives mostly in `actions[]`, `ports[]`,
@@ -141,6 +141,14 @@ firmware-layered, items[] is most useful for:
 - `kind = "fn"` ISR handlers whose timing budget is a requirement.
 - `kind = "impl"` trait impls that satisfy a contractual interface
   required by upper-layer code.
+
+An item is identified by its **fully-qualified path**, prose-first, never
+a signature. A method is a function: if you do author a public inherent
+method, it is a `kind = "fn"` item named `<Type>::<method>` (generics
+normalized out of the prefix) — the inherent `impl` block itself is not an
+item. A trait impl stays one `kind = "impl"` item (`<Trait> for <Type>`);
+its method bodies are codegen-derived, not separate items. (Most firmware
+methods come from `actions[]` below, not items[].)
 
 When firmware module specs are content-rich in actions/ports/state
 machines, items[] often stays empty — that's correct. items[] is a
@@ -282,14 +290,14 @@ uses shared state).
 Do **not** emit a global `Project` struct or context object. Each
 module is independent; cross-module wiring is per-block.
 
-## Project-wide infrastructure (Phase 6.7+)
+## Project-wide infrastructure
 
-The spec is the source of truth for every Cargo dependency. Phase 8's
-`gen` reads `architecture.toml`'s `[platform]`, `[runtime]`, `[logger]`,
-and `[[external_deps]]` sections (plus `spec.toml`'s `[project]`) and
-emits the complete Cargo project, not just module bodies. **Do not add
-deps to Cargo.toml that aren't declared in the spec; do not omit deps
-that are declared.**
+The spec is the source of truth for every Cargo dependency. `gen` reads
+`architecture.toml`'s `[platform]`, `[runtime]`, `[logger]`, and
+`[[external_deps]]` sections (plus `spec.toml`'s `[project]`) and emits
+the complete Cargo project, not just module bodies. **Do not add deps
+to Cargo.toml that aren't declared in the spec; do not omit deps that
+are declared.**
 
 ### `[platform]` drives target + ARM core scaffolding
 

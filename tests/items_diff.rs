@@ -258,10 +258,12 @@ satisfies = ["DEMO-1"]
 }
 
 #[test]
-fn items_diff_pairs_base_impl_spec_with_generic_source_impl() {
-    // F-010: spec names an impl by its base type (`impl RateLimiter`, the
+fn items_diff_normalizes_generic_host_in_inherent_method_name() {
+    // An inherent impl dissolves into per-method items named `<Type>::<m>`.
+    // The spec names the method by the base type (`RateLimiter::new`, the
     // authoring convention), while the source impl is generic
-    // (`impl<C> RateLimiter<C>`). The two must pair in both[] rather than
+    // (`impl<C> RateLimiter<C>`). The host generics are normalized out of
+    // the extracted method name, so the two pair in both[] rather than
     // splitting into in_spec_only + in_source_only.
     let target = tmp_dir("generic-impl");
     bootstrap_lib(&target);
@@ -278,9 +280,9 @@ description = "Token-bucket limiter."
 satisfies = ["DEMO-1"]
 
 [[items]]
-name = "RateLimiter"
-kind = "impl"
-description = "Inherent methods on the limiter."
+name = "RateLimiter::new"
+kind = "fn"
+description = "Construct a limiter."
 satisfies = ["DEMO-1"]
 "#,
     )
@@ -297,17 +299,17 @@ satisfies = ["DEMO-1"]
     let r = run_items_diff(&target, "Foo");
     assert!(
         r.success,
-        "expected exit 0 (generic impl paired); exit={:?} stdout=\n{}\nstderr={}",
+        "expected exit 0 (generic-host method paired); exit={:?} stdout=\n{}\nstderr={}",
         r.exit_code, r.stdout, r.stderr
     );
     assert!(
         r.stdout.contains("in_spec_only: []"),
-        "impl should not fall into in_spec_only; stdout=\n{}",
+        "method should not fall into in_spec_only; stdout=\n{}",
         r.stdout
     );
     assert!(
         r.stdout.contains("in_source_only: []"),
-        "generic impl should not fall into in_source_only; stdout=\n{}",
+        "generic-host method should not fall into in_source_only; stdout=\n{}",
         r.stdout
     );
 }

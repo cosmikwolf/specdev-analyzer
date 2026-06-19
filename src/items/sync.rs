@@ -143,6 +143,15 @@ fn last_segment(path: &str) -> &str {
     path.trim().rsplit("::").next().unwrap_or(path).trim()
 }
 
+/// Canonical base of a type expression: generics stripped (F-010), then the
+/// final `::` segment. `RateLimiter<C>` → `RateLimiter`; `crate::Foo` → `Foo`.
+/// Used by extraction to build inherent-method qualified names
+/// (`<base>::<m>`) so the emitted name matches what an author writes — `Fn`
+/// identity keys are compared verbatim (no normalize step), unlike `impl` keys.
+pub(crate) fn type_base(type_expr: &str) -> String {
+    last_segment(&strip_generics(type_expr)).to_string()
+}
+
 /// Drop every balanced `<…>` group (and the angle brackets themselves) from an
 /// impl identity, collapsing the whitespace left behind. Handles trait impls
 /// and nested generics: `Clock for RateLimiter<C>` → `Clock for RateLimiter`,

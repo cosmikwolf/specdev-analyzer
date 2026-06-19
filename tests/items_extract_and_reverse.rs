@@ -98,13 +98,12 @@ extern \"C\" {
 }
 
 #[test]
-fn extract_excludes_impl_and_trait_methods() {
-    // Methods inside impl/trait bodies are NOT items — the impl/trait is the
-    // item; its methods are codegen-derived from the impl's prose. The
-    // items.scm query is anchored to top-level (direct `source_file`
-    // children), so associated fns never surface as phantom top-level items.
-    // Regression guard for the F-008 phantom-method storm that made every
-    // module with an impl report drift against a (correct) method-free spec.
+fn extract_dissolves_inherent_methods_keeps_trait_impl_whole() {
+    // A method is a function: public inherent methods are items named
+    // `<Type>::<member>`; the inherent impl block itself is not an item.
+    // A trait impl stays ONE item (the conformance is the contract); its
+    // method bodies are codegen-derived from the trait, never items.
+    // Private associated members are not contract surface.
     let source = "\
 pub struct Counter { n: u32 }
 
@@ -112,6 +111,7 @@ impl Counter {
     pub fn new() -> Self { Self { n: 0 } }
     pub fn incr(&mut self) { self.n += 1; }
     pub fn get(&self) -> u32 { self.n }
+    fn private_helper(&self) {}
 }
 
 pub trait Resettable {
@@ -131,39 +131,52 @@ pub fn free_function() {}
         .map(|i| (i.kind, i.name.clone()))
         .collect();
 
-    // Top-level items ARE extracted: the struct, the trait, both impls.
+    // Top-level type + trait still extracted.
     assert!(items
         .iter()
         .any(|i| i.kind == ItemKind::Struct && i.name == "Counter"));
     assert!(items
         .iter()
         .any(|i| i.kind == ItemKind::Trait && i.name == "Resettable"));
-    assert_eq!(
-        items.iter().filter(|i| i.kind == ItemKind::Impl).count(),
-        2,
-        "both impl blocks are items; got: {names:?}"
+
+    // The inherent impl dissolves into per-method items; the block is not an item.
+    assert!(
+        !items.iter().any(|i| i.kind == ItemKind::Impl && i.name == "Counter"),
+        "inherent impl block must not be an item; got: {names:?}"
+    );
+    for method in ["Counter::new", "Counter::incr", "Counter::get"] {
+        assert!(
+            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == method),
+            "public inherent method `{method}` must be an item; got: {names:?}"
+        );
+    }
+    assert!(
+        !items.iter().any(|i| i.name == "Counter::private_helper"),
+        "private inherent method must not be an item; got: {names:?}"
     );
 
-    // Methods inside impl/trait bodies are NOT items.
-    for method in ["new", "incr", "get", "reset", "is_reset"] {
+    // The trait impl stays exactly one item; its methods are not surfaced.
+    let impls: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Impl).collect();
+    assert_eq!(impls.len(), 1, "only the trait impl is an impl item; got: {names:?}");
+    assert_eq!(impls[0].name, "Resettable for Counter");
+    for method in ["reset", "is_reset"] {
         assert!(
-            !items
-                .iter()
-                .any(|i| i.kind == ItemKind::Fn && i.name == method),
-            "method `{method}` must NOT be a top-level item (F-008); got: {names:?}"
+            !items.iter().any(|i| i.name.ends_with(method) && i.kind == ItemKind::Fn),
+            "trait-impl method `{method}` must not be an item; got: {names:?}"
         );
     }
 
-    // The only `fn` item is the top-level free function.
-    let fns: Vec<_> = items
+    // `fn` items: the three public inherent methods + the free function.
+    let mut fns: Vec<&str> = items
         .iter()
         .filter(|i| i.kind == ItemKind::Fn)
         .map(|i| i.name.as_str())
         .collect();
+    fns.sort();
     assert_eq!(
         fns,
-        vec!["free_function"],
-        "only the top-level free fn is an item; got: {names:?}"
+        vec!["Counter::get", "Counter::incr", "Counter::new", "free_function"],
+        "got: {names:?}"
     );
 }
 
