@@ -83,6 +83,24 @@ fn run_apply(project: &Path, module: &str) -> CliResult {
     }
 }
 
+fn run_diff(project: &Path, module: &str) -> CliResult {
+    let out = Command::new(analyzer_bin())
+        .arg("items")
+        .arg("diff")
+        .arg("--project")
+        .arg(project)
+        .arg("--module")
+        .arg(module)
+        .output()
+        .expect("invoke items diff");
+    CliResult {
+        success: out.status.success(),
+        exit_code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+    }
+}
+
 fn run_propose(project: &Path, module: &str) -> CliResult {
     let out = Command::new(analyzer_bin())
         .arg("items")
@@ -165,6 +183,40 @@ fn approve_and_set_actions(
                     rec.insert("proposed_spec".into(), p.clone());
                 }
             }
+        }
+    }
+    std::fs::write(path, serde_yaml::to_string(&doc).unwrap()).unwrap();
+}
+
+/// Set `recommendation.rename_to` on the entry with `entry_id`. The
+/// `rename` action carries the new name here; `approve_and_set_actions`
+/// (which only knows action/rationale/proposed_spec) doesn't model it.
+fn set_rename_to(path: &Path, entry_id: &str, new_name: &str) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+    let entries = doc
+        .as_mapping_mut()
+        .unwrap()
+        .get_mut(&serde_yaml::Value::String("entries".into()))
+        .unwrap()
+        .as_sequence_mut()
+        .unwrap();
+    for entry in entries.iter_mut() {
+        let em = entry.as_mapping_mut().unwrap();
+        let id = em
+            .get(&serde_yaml::Value::String("id".into()))
+            .and_then(|v| v.as_str())
+            .unwrap();
+        if id == entry_id {
+            let rec = em
+                .get_mut(&serde_yaml::Value::String("recommendation".into()))
+                .unwrap()
+                .as_mapping_mut()
+                .unwrap();
+            rec.insert(
+                "rename_to".into(),
+                serde_yaml::Value::String(new_name.into()),
+            );
         }
     }
     std::fs::write(path, serde_yaml::to_string(&doc).unwrap()).unwrap();
@@ -413,6 +465,136 @@ signature_hint = "fn render(x: u64) -> u32"
     assert!(new_text.contains("Render the frame."));
     assert!(!new_text.contains("Old description."));
     assert!(new_text.contains("fn render(x: u32) -> u32"));
+}
+
+#[test]
+fn apply_rename_preserves_trace_and_reconciles() {
+    // F-011: `refill` was renamed to `apply_refill` in code. A `rename`
+    // action rewrites only the spec item's name, preserving its DEMO-1
+    // `satisfies` trace + description — and the next diff then pairs the
+    // renamed item with the source symbol, no durable skip needed.
+    let target = tmp_dir("rename");
+    bootstrap_lib(&target);
+    let module_path = target.join("specs/modules/Foo.toml");
+    std::fs::write(
+        &module_path,
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "refill"
+kind = "fn"
+description = "Refill the bucket against the clock."
+satisfies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub fn apply_refill() -> u32 { 0 }\n",
+    )
+    .unwrap();
+
+    run_propose(&target, "Foo");
+    let path = proposal_path(&target, "Foo");
+    // spec-only-0 = old name `refill`; source-only-0 = new name `apply_refill`.
+    approve_and_set_actions(
+        &path,
+        &[
+            (
+                "spec-only-0",
+                "rename",
+                Some("Renamed refill -> apply_refill in code; preserving DEMO-1 trace."),
+                None,
+            ),
+            (
+                "source-only-0",
+                "skip",
+                Some("Accounted for by the paired rename."),
+                None,
+            ),
+        ],
+    );
+    set_rename_to(&path, "spec-only-0", "apply_refill");
+
+    let r = run_apply(&target, "Foo");
+    assert!(
+        r.success,
+        "apply failed; stderr={}\nstdout={}",
+        r.stderr, r.stdout
+    );
+    assert!(
+        r.stdout.contains("renamed: 1"),
+        "expected renamed count in report; stdout=\n{}",
+        r.stdout
+    );
+
+    let new_text = std::fs::read_to_string(&module_path).unwrap();
+    assert!(
+        new_text.contains("name = \"apply_refill\""),
+        "new name missing:\n{new_text}"
+    );
+    assert!(
+        !new_text.contains("name = \"refill\""),
+        "old name still present:\n{new_text}"
+    );
+    // The trace and description survive the rename — the whole point of F-011.
+    assert!(new_text.contains("DEMO-1"), "satisfies trace lost:\n{new_text}");
+    assert!(
+        new_text.contains("Refill the bucket against the clock."),
+        "description lost:\n{new_text}"
+    );
+
+    // The rename reconciles without a durable skip: re-diffing now pairs the
+    // renamed spec item with the source `apply_refill` → clean exit 0.
+    let d = run_diff(&target, "Foo");
+    assert!(
+        d.success,
+        "expected clean diff after rename; exit={:?} stdout=\n{}",
+        d.exit_code, d.stdout
+    );
+}
+
+#[test]
+fn apply_rename_without_rename_to_errors_item_315() {
+    let target = tmp_dir("rename-missing");
+    bootstrap_lib(&target);
+    let module_path = target.join("specs/modules/Foo.toml");
+    std::fs::write(
+        &module_path,
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "refill"
+kind = "fn"
+description = "x."
+satisfies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub fn apply_refill() -> u32 { 0 }\n",
+    )
+    .unwrap();
+
+    run_propose(&target, "Foo");
+    let path = proposal_path(&target, "Foo");
+    // rename action but no `rename_to` set → ITEM-315.
+    approve_and_set_actions(
+        &path,
+        &[
+            ("spec-only-0", "rename", Some("oops, forgot the new name"), None),
+            ("source-only-0", "skip", Some("paired"), None),
+        ],
+    );
+
+    let r = run_apply(&target, "Foo");
+    assert_eq!(r.exit_code, Some(1), "expected refusal; stderr={}", r.stderr);
+    assert!(r.stderr.contains("ITEM-315"), "stderr={}", r.stderr);
 }
 
 #[test]
