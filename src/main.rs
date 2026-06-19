@@ -249,19 +249,37 @@ enum Command {
         #[command(subcommand)]
         action: ReportAction,
     },
-    /// Spec→codegen handoff. Orchestrated by the `/spec-gen` skill
-    /// (Claude reads `prompt --module` then emits source); the analyzer
-    /// assembles the codegen prompt deterministically.
+    /// Spec→codegen handoff. Orchestrated by the `/spec-gen` skill, which
+    /// reads the shared preamble once (`--preamble`) then each module's
+    /// tail (`--module <N> --tail`) and emits source; the analyzer
+    /// assembles the codegen prompt deterministically. `--module <N>`
+    /// alone still writes the whole single-module prompt (back-compat).
     Gen {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// F-018: write the assembled codegen prompt for the named
-        /// module to stdout (equivalent to `prompt --module <Name>`).
-        /// Lets `/spec-gen` invoke a single subcommand instead of
-        /// routing through a hint message.
+        /// Module(s) to assemble for. Repeatable. With `--preamble`, an
+        /// empty list unions over every module under `specs/modules/`;
+        /// otherwise the named set is unioned. With `--tail` (or default
+        /// whole-prompt mode), exactly one module is required. Default
+        /// whole-prompt mode writes the assembled codegen prompt for one
+        /// module to stdout (equivalent to `prompt --module <Name>`, plus
+        /// the codegen gate).
         #[arg(long)]
-        module: Option<String>,
+        module: Vec<String>,
+        /// F-006: emit only the shared, project-invariant preamble
+        /// (Tier 1 conventions + architecture; Tier 2 block/bridge prose
+        /// unioned across `--module` or all modules). Gate-free — pure
+        /// shared prose. `/spec-gen` emits this once per run, then loops
+        /// `--module <N> --tail` per module. Mutually exclusive with `--tail`.
+        #[arg(long, conflicts_with = "tail")]
+        preamble: bool,
+        /// F-006: emit only the per-module tail (Tier 3: decisions/OQ,
+        /// project context, test items, module spec) for the single
+        /// `--module`. Enforces the codegen gate. Mutually exclusive with
+        /// `--preamble`.
+        #[arg(long)]
+        tail: bool,
     },
     /// Record SHA-256 hashes of generated files in
     /// `specs/specdev/gen-lineage.toml`. Invoked by the `/spec-gen`
@@ -445,7 +463,12 @@ fn main() -> ExitCode {
             run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run)
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
-        Command::Gen { project, module } => run_gen(project, spec_path.as_deref(), module),
+        Command::Gen {
+            project,
+            module,
+            preamble,
+            tail,
+        } => run_gen(project, spec_path.as_deref(), module, preamble, tail),
         Command::GenRecord {
             project,
             module,
@@ -1366,7 +1389,9 @@ fn run_drift(
 fn run_gen(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
-    module: Option<String>,
+    module: Vec<String>,
+    preamble: bool,
+    tail: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1375,12 +1400,46 @@ fn run_gen(
             return ExitCode::from(2);
         }
     };
-    if let Some(name) = module {
-        // Codegen gate. Refuse if the target module
-        // is reachable through any open OpenQuestion. Validate also
-        // surfaces this as a `codegen_unblocked` warning, but gen is
-        // the hard refusal — strict-gen produces no source until the
-        // question is resolved, defaulted, or marked moot.
+
+    // F-006 `--preamble`: shared Tier 1 + Tier 2 prose, gate-free. An empty
+    // `--module` set unions over every module under specs/modules/; a named
+    // set scopes the union (the single-module and fan-out-subset cases).
+    if preamble {
+        let modules = if module.is_empty() {
+            match specdev_analyzer::prompt::list_module_names(&layout) {
+                Ok(m) => m,
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
+        } else {
+            module
+        };
+        return match specdev_analyzer::prompt::assemble_preamble(&layout, &modules) {
+            Ok(s) => {
+                print!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    // F-006 `--tail`: per-module Tier 3, gate enforced. Exactly one module.
+    if tail {
+        let name = match module.as_slice() {
+            [one] => one.clone(),
+            _ => {
+                eprintln!(
+                    "`gen --tail` requires exactly one `--module <Name>`; got {}.",
+                    module.len()
+                );
+                return ExitCode::from(2);
+            }
+        };
         match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
             Ok(Some(refusal)) => {
                 eprint!("{}", refusal.message);
@@ -1392,7 +1451,7 @@ fn run_gen(
                 return ExitCode::from(1);
             }
         }
-        return match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
+        return match specdev_analyzer::prompt::assemble_tail(&layout, &name) {
             Ok(s) => {
                 print!("{s}");
                 ExitCode::SUCCESS
@@ -1403,14 +1462,55 @@ fn run_gen(
             }
         };
     }
-    eprintln!(
-        "codegen is orchestrated by the `/spec-gen` skill — the analyzer assembles\n\
-         the codegen prompt deterministically; Claude emits source. Pass `--module\n\
-         <Name>` to write the assembled prompt for one module to stdout, or run\n\
-         `specdev-analyzer prompt --module <Name>` directly and pipe the output\n\
-         to /spec-gen.",
-    );
-    ExitCode::from(2)
+
+    // Default whole-prompt mode (back-compat single-module). Requires
+    // exactly one module. The codegen gate refuses if the module is
+    // reachable through any open OpenQuestion (validate also surfaces this
+    // as a `codegen_unblocked` warning, but gen is the hard refusal).
+    match module.as_slice() {
+        [name] => {
+            let name = name.clone();
+            match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
+                Ok(Some(refusal)) => {
+                    eprint!("{}", refusal.message);
+                    return ExitCode::from(1);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
+            match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
+                Ok(s) => {
+                    print!("{s}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    report_error(&e);
+                    ExitCode::from(1)
+                }
+            }
+        }
+        [] => {
+            eprintln!(
+                "codegen is orchestrated by the `/spec-gen` skill — the analyzer assembles\n\
+                 the codegen prompt deterministically; Claude emits source. Pass `--module\n\
+                 <Name>` for one module's whole prompt, `--preamble` for the shared preamble\n\
+                 once, or `--module <Name> --tail` for one module's tail. Or run\n\
+                 `specdev-analyzer prompt --module <Name>` directly and pipe to /spec-gen.",
+            );
+            ExitCode::from(2)
+        }
+        _ => {
+            eprintln!(
+                "`gen --module` (whole-prompt mode) takes exactly one module; got {}. \
+                 Use `--preamble` to union multiple modules into the shared preamble.",
+                module.len()
+            );
+            ExitCode::from(2)
+        }
+    }
 }
 
 fn run_gen_record(
