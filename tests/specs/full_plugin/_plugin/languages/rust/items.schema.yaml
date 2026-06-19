@@ -25,9 +25,16 @@ required: [name, kind, description]
 properties:
   name:
     description: >
-      The Rust identifier (or, for `kind = "impl"`, a synthesized name of
-      the form `<TraitRef> for <TargetType>` for trait impls or
-      `<TargetType>` for inherent impls). Must be unique within the
+      The item's fully-qualified path. For a top-level construct this is
+      the Rust identifier (`render`, `Style`). For a public associated
+      member of an inherent impl it is `<Type>::<member>` — a method is a
+      function, so `RateLimiter::try_consume` is a `kind = "fn"` item the
+      same way a free function is (generics are normalized out of the
+      `<Type>` prefix: author `RateLimiter::new`, not `RateLimiter<C>::new`).
+      `kind = "impl"` is reserved for a TRAIT impl, named `<TraitRef> for
+      <TargetType>` — the conformance is the contract; its method bodies
+      are codegen-derived from the trait, not separate items. An inherent
+      impl block is never itself an item. Must be unique within the
       module's items[] array.
     type: string
     minLength: 1
