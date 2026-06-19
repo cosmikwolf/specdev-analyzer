@@ -127,42 +127,73 @@ pub fn detect_relevance(layout: &LayoutContext, module_name: &str) -> Result<Rel
     Ok(Relevance { blocks, bridges })
 }
 
-/// Assemble the codegen prompt for a single module.
+/// List module names (file stems of `specs/modules/*.toml`), lex-sorted.
+/// A missing modules dir yields an empty list — a valid cold-start
+/// project (conventions + architecture authored, no modules yet).
+pub fn list_module_names(layout: &LayoutContext) -> Result<Vec<String>> {
+    let mut names: Vec<String> = Vec::new();
+    if !layout.modules_dir.is_dir() {
+        return Ok(names);
+    }
+    for entry in std::fs::read_dir(&layout.modules_dir)
+        .with_context(|| format!("reading {}", layout.modules_dir.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                names.push(stem.to_string());
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Assemble the project-invariant codegen **preamble** (Tier 1 + Tier 2),
+/// shared across a set of modules. `/spec-gen` emits this **once** per
+/// run; the per-module tail ([`assemble_tail`]) carries everything that
+/// varies module-to-module. This is the F-006 fix: the ~400-line
+/// conventions prose is no longer re-pasted into every per-module prompt.
 ///
 /// Sections, in fixed order:
 ///
-/// 1. Profile module conventions (`codegen/<lang>/module.conventions.md`).
-/// 2. Per relevant block (lex-sorted): `codegen/<lang>/blocks/<name>/README.md`.
-/// 3. Per relevant bridge (lex-sorted): `codegen/<lang>/bridges/<name>/README.md`.
-/// 4. Architecture (`specs/architecture.toml`), TOML-fenced.
-/// 5. Module spec (`specs/modules/<Module>.toml`), TOML-fenced.
+/// 1. Profile module conventions (`codegen/<lang>/module.conventions.md`) — T1.
+/// 2. Per block in the union (lex-sorted): `codegen/<lang>/blocks/<name>/README.md` — T2.
+/// 3. Per bridge in the union (lex-sorted): `codegen/<lang>/bridges/<name>/README.md` — T2.
+/// 4. Architecture (`specs/architecture.toml`), TOML-fenced — T1.
 ///
-/// Missing files appear as a parenthetical "(no … found)" note rather
-/// than an error — partial projects (e.g., a block whose codegen prose
-/// hasn't been authored) still get a usable prompt; the gap is visible
-/// in the output.
-pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Result<String> {
-    let relevance = detect_relevance(layout, module_name)?;
-
-    let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
-    let module_text = std::fs::read_to_string(&module_path)
-        .with_context(|| format!("reading {}", module_path.display()))?;
-    let module_toml: toml::Value = toml::from_str(&module_text)
-        .with_context(|| format!("parsing {}", module_path.display()))?;
-    let context_files = parse_context_files(&module_toml);
+/// `modules` is the set whose block/bridge relevance is unioned: pass one
+/// module for the single-module case, the full module list for `--all`,
+/// or any subset (the shape a parallel codegen fan-out hands each
+/// worker). An empty set yields conventions + architecture only (valid
+/// cold-start).
+///
+/// The preamble carries **no per-module codegen gate** — it is pure
+/// shared prose. The gate (`check_codegen_gate`) lives on the per-module
+/// tail path. Missing files appear as a parenthetical "(no … found)"
+/// note rather than an error, so partial projects still get usable output.
+pub fn assemble_preamble(layout: &LayoutContext, modules: &[String]) -> Result<String> {
+    // Union of relevant blocks/bridges across the named modules.
+    // BTreeSet keeps both lex-ordered and deduped.
+    let mut blocks: BTreeSet<String> = BTreeSet::new();
+    let mut bridges: BTreeSet<String> = BTreeSet::new();
+    for module_name in modules {
+        let rel = detect_relevance(layout, module_name)?;
+        blocks.extend(rel.blocks);
+        bridges.extend(rel.bridges);
+    }
 
     let codegen_dir: PathBuf = layout.codegen_dir.clone();
     let profile_md = codegen_dir.join("module.conventions.md");
     let arch_path = layout.architecture_toml_path.clone();
 
     let mut out = String::new();
-    out.push_str(&format!("# Codegen prompt for module `{module_name}`\n\n"));
 
     section_header(&mut out, "Profile module conventions");
     push_file_or_note(&mut out, &profile_md, "no profile module.conventions.md");
     out.push('\n');
 
-    for block_name in &relevance.blocks {
+    for block_name in &blocks {
         section_header(&mut out, &format!("Block: `{block_name}`"));
         let block_md = codegen_dir.join(format!("blocks/{block_name}/README.md"));
         push_file_or_note(
@@ -173,7 +204,7 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         out.push('\n');
     }
 
-    for bridge_name in &relevance.bridges {
+    for bridge_name in &bridges {
         section_header(&mut out, &format!("Bridge: `{bridge_name}`"));
         let bridge_md = codegen_dir.join(format!("bridges/{bridge_name}/README.md"));
         push_file_or_note(
@@ -181,20 +212,6 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
             &bridge_md,
             &format!("no codegen README for bridge `{bridge_name}`"),
         );
-        out.push('\n');
-    }
-
-    // Decisions + default-committed OQs in scope.
-    // Walks `specs/decisions.toml` + `specs/open_questions.toml` per-tier,
-    // dedupes across (a) module's local guided_by, (b) module's
-    // requirements' decided_by, (c) workspace-tier decisions when the
-    // module sits inside a workspace member crate. OQs in scope are the
-    // ones reachable via Module.satisfies → Requirement →
-    // OpenQuestion.affects^-1.
-    let decision_oq = collect_decision_oq_context(layout, module_name, &module_toml)?;
-    if !decision_oq.is_empty() {
-        section_header(&mut out, "Decisions and known unknowns");
-        out.push_str(&decision_oq);
         out.push('\n');
     }
 
@@ -210,6 +227,52 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
         out.push_str("```\n\n");
     } else {
         out.push_str("(no architecture.toml)\n\n");
+    }
+
+    Ok(out)
+}
+
+/// Assemble the per-module codegen **tail** (Tier 3): everything that
+/// varies module-to-module. Pairs with [`assemble_preamble`]; the
+/// concatenation `assemble_preamble(&[m]) + assemble_tail(m)` is the full
+/// single-module prompt produced by [`assemble_module_prompt`].
+///
+/// Sections, in fixed order:
+///
+/// 1. Module header.
+/// 2. Decisions + default-committed OQ context in scope.
+/// 3. Project context (`module.context_files`).
+/// 4. Test-item verification context.
+/// 5. Module spec (`specs/modules/<Module>.toml`), TOML-fenced.
+pub fn assemble_tail(layout: &LayoutContext, module_name: &str) -> Result<String> {
+    let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
+    if !module_path.is_file() {
+        return Err(anyhow!(
+            "module `{module_name}` not found at {}",
+            module_path.display(),
+        ));
+    }
+    let module_text = std::fs::read_to_string(&module_path)
+        .with_context(|| format!("reading {}", module_path.display()))?;
+    let module_toml: toml::Value = toml::from_str(&module_text)
+        .with_context(|| format!("parsing {}", module_path.display()))?;
+    let context_files = parse_context_files(&module_toml);
+
+    let mut out = String::new();
+    out.push_str(&format!("# Codegen prompt for module `{module_name}`\n\n"));
+
+    // Decisions + default-committed OQs in scope.
+    // Walks `specs/decisions.toml` + `specs/open_questions.toml` per-tier,
+    // dedupes across (a) module's local guided_by, (b) module's
+    // requirements' decided_by, (c) workspace-tier decisions when the
+    // module sits inside a workspace member crate. OQs in scope are the
+    // ones reachable via Module.satisfies → Requirement →
+    // OpenQuestion.affects^-1.
+    let decision_oq = collect_decision_oq_context(layout, module_name, &module_toml)?;
+    if !decision_oq.is_empty() {
+        section_header(&mut out, "Decisions and known unknowns");
+        out.push_str(&decision_oq);
+        out.push('\n');
     }
 
     if !context_files.is_empty() {
@@ -258,8 +321,25 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     }
     out.push_str("```\n");
 
-    warn_if_over_budget(module_name, out.len());
+    Ok(out)
+}
 
+/// Assemble the full codegen prompt for a single module: the project
+/// preamble scoped to this one module, followed by its per-module tail.
+/// Equals `assemble_preamble(&[m]) + assemble_tail(m)` by construction.
+///
+/// Retained as the byte-stable single-module entry point for direct /
+/// manual piping. `/spec-gen` uses the split surface instead
+/// (`gen --preamble` once + `gen --module <N> --tail` per module) so the
+/// preamble prose is emitted once across a multi-module run.
+pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Result<String> {
+    let modules = [module_name.to_string()];
+    let mut out = assemble_preamble(layout, &modules)?;
+    out.push_str(&assemble_tail(layout, module_name)?);
+    // Budget warning measures the effective single-module consumer context
+    // (preamble + tail). The split CLI path (`--preamble` / `--tail`)
+    // skips this; the skill owns the combined budget there.
+    warn_if_over_budget(module_name, out.len());
     Ok(out)
 }
 
