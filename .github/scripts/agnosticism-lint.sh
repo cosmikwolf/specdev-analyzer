@@ -232,10 +232,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Plugin-tree planning-references check (parallel to D66 for the analyzer).
+#
+# The shipped plugin tree is what a user installing specdev sees; internal
+# planning nomenclature there is a dangling pointer into a workspace they
+# cannot read. Same ban as above, over the plugin tree's doc/config surface
+# (`.md`/`.yaml`/`.yml`/`.json`). Same `PLANNING-OK` per-line escape. This is
+# the guard the plugin side lacked while the analyzer side had D66 — its
+# absence let ~34 refs accrete across schemas/reductions/conventions/skills
+# before a manual audit caught them.
+plugin_planning_count=0
+plugin_planning_hits=$(grep -rnE \
+  --include='*.md' --include='*.yaml' --include='*.yml' --include='*.json' \
+  --exclude-dir='.git' \
+  "$PLANNING_RE" "$plugin_tree" 2>/dev/null \
+  | grep -vE 'PLANNING-OK' || true)
+
+if [ -n "$plugin_planning_hits" ]; then
+  echo "plugin-tree planning-reference violation(s) — the shipped plugin surface"
+  echo "must carry no phase/decision/doc/specdev-next pointers (restate the rationale"
+  echo "inline, or escape a genuine keeper with a trailing \` # PLANNING-OK: <reason>\`):"
+  echo "$plugin_planning_hits" | sed 's/^/  /'
+  plugin_planning_count=$(printf '%s\n' "$plugin_planning_hits" | grep -c .)
+  echo
+else
+  echo "agnosticism-lint: plugin-tree planning-references clean."
+fi
+
+# ---------------------------------------------------------------------------
 # Combined verdict.
-total=$((violation_count + planning_count))
+total=$((violation_count + planning_count + plugin_planning_count))
 if [ "$total" -eq 0 ]; then
   exit 0
 fi
-echo "agnosticism-lint: $violation_count name violation(s), $planning_count planning-reference violation(s)." >&2
+echo "agnosticism-lint: $violation_count name violation(s), $planning_count analyzer planning-reference violation(s), $plugin_planning_count plugin-tree planning-reference violation(s)." >&2
 exit 1
