@@ -193,6 +193,102 @@ satisfies = ["DEMO-1"]
     );
 }
 
+// R-001: a module that declares test items (`test = true`) reaches exit-0.
+// Test items are verified through `verifies` + `cargo test`, not public-surface
+// extraction — and the substrate can't see them (unit tests nest under
+// `#[cfg(test)] mod tests`; integration tests live in `tests/<name>.rs`).
+#[test]
+fn items_diff_excludes_test_items_from_drift() {
+    let target = tmp_dir("test-items");
+    bootstrap_lib(&target);
+
+    std::fs::write(
+        target.join("specs/modules/Foo.toml"),
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "render"
+kind = "fn"
+description = "Render the frame."
+satisfies = ["DEMO-1"]
+
+[[items]]
+name = "render_is_idempotent"
+kind = "fn"
+description = "Unit test for render."
+test = true
+test_kind = "unit"
+verifies = ["DEMO-1"]
+
+[[items]]
+name = "end_to_end"
+kind = "fn"
+description = "Integration test."
+test = true
+test_kind = "integration"
+verifies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    // Source carries only the public method; the unit test sits in a nested
+    // `#[cfg(test)] mod tests` (never top-level-extracted), the integration
+    // test would live outside this module's source_file entirely.
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub fn render() -> u32 { 0 }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn render_is_idempotent() {}\n}\n",
+    )
+    .unwrap();
+
+    let r = run_items_diff(&target, "Foo");
+    assert!(
+        r.success,
+        "test items must not count as drift; exit={:?} stderr={}\nstdout=\n{}",
+        r.exit_code, r.stderr, r.stdout
+    );
+    assert!(r.stdout.contains("in_spec_only: []"), "stdout=\n{}", r.stdout);
+    assert!(r.stdout.contains("in_source_only: []"), "stdout=\n{}", r.stdout);
+}
+
+// R-002: a private (non-`pub`) top-level free fn helper is module-private,
+// not contract surface, so it must not surface as in_source_only drift.
+#[test]
+fn items_diff_clean_with_private_free_fn_helper() {
+    let target = tmp_dir("private-free-fn");
+    bootstrap_lib(&target);
+
+    std::fs::write(
+        target.join("specs/modules/Foo.toml"),
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "render"
+kind = "fn"
+description = "Render the frame."
+satisfies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub fn render() -> u32 { make_bucket() }\nfn make_bucket() -> u32 { 0 }\n",
+    )
+    .unwrap();
+
+    let r = run_items_diff(&target, "Foo");
+    assert!(
+        r.success,
+        "private free fn must not count as drift; exit={:?} stderr={}\nstdout=\n{}",
+        r.exit_code, r.stderr, r.stdout
+    );
+    assert!(r.stdout.contains("in_source_only: []"), "stdout=\n{}", r.stdout);
+}
+
 #[test]
 fn items_diff_signature_hint_divergence_flags_drift() {
     let target = tmp_dir("sig-drift");
