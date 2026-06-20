@@ -260,6 +260,17 @@ pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Resul
     Ok(out)
 }
 
+/// True when a spec item is marked `test = true`. Test items ride the
+/// `test` flag through `extras` (it's not one of the canonical keys), so
+/// the boolean is read from there. Used to exclude tests from the
+/// public-surface diff (R-001).
+fn is_test_item(item: &SpecItem) -> bool {
+    item.extras
+        .get("test")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 /// Best-effort `toml::Value::Table` → `serde_json::Map` conversion.
 /// Preserves nested arrays/tables; loses the original TOML formatting
 /// (callers that need round-trip fidelity should re-read the file).
@@ -321,7 +332,18 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
         .with_context(|| format!("reading {}", module_path.display()))?;
     let value: toml::Value = toml::from_str(&toml_text)
         .with_context(|| format!("[ITEM-102] {label}: TOML parse failed"))?;
-    let spec_items = parse_spec_items(&value, &label)?;
+    // Test items (`test = true`) are out of scope for public-surface
+    // comparison (R-001). They're verified through `verifies` + `cargo test`,
+    // not tree-sitter extraction — and the substrate can't see them anyway
+    // (unit tests live in nested `#[cfg(test)] mod tests`; integration tests
+    // live in `tests/<name>.rs`, not the module's own source_file). Excluding
+    // them here keeps test-bearing modules from reading as permanent
+    // `in_spec_only` drift, aligning the diff with the items-model
+    // verification-graph boundary.
+    let spec_items: Vec<SpecItem> = parse_spec_items(&value, &label)?
+        .into_iter()
+        .filter(|item| !is_test_item(item))
+        .collect();
 
     // Resolve source file via the language adapter.
     let language = &layout.spec.project.language;
@@ -488,6 +510,31 @@ visibility = "pub"
         assert!(it.extras.contains_key("target"));
         assert!(it.extras.contains_key("visibility"));
         assert!(!it.extras.contains_key("kind"));
+    }
+
+    #[test]
+    fn is_test_item_reads_test_flag_from_extras() {
+        let toml_text = r#"
+[[items]]
+name = "drained_bucket_refuses_until_refill"
+kind = "fn"
+description = "unit test"
+test = true
+test_kind = "unit"
+verifies = ["REQ-BUCKET-001"]
+
+[[items]]
+name = "TokenBucket::try_take"
+kind = "fn"
+description = "public method"
+satisfies = ["REQ-BUCKET-001"]
+"#;
+        let v: toml::Value = toml::from_str(toml_text).unwrap();
+        let items = parse_spec_items(&v, "test").unwrap();
+        let test_item = items.iter().find(|i| i.extras.contains_key("test")).unwrap();
+        assert!(is_test_item(test_item), "test = true item must be a test item");
+        let method = items.iter().find(|i| i.name == "TokenBucket::try_take").unwrap();
+        assert!(!is_test_item(method), "non-test item must not be a test item");
     }
 
     #[test]

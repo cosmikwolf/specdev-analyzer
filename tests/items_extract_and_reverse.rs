@@ -55,7 +55,7 @@ fn analyzer_bin() -> PathBuf {
 fn extract_items_from_source_round_trip_rust() {
     let source = "\
 #[test]
-fn test_one() {}
+pub fn test_one() {}
 
 pub struct Foo;
 pub enum Color { R, G, B }
@@ -362,9 +362,11 @@ description = "Foo module."
     )
     .unwrap();
     std::fs::create_dir_all(target.join("src")).unwrap();
+    // `make_bucket` is a private (non-`pub`) free helper: per R-002 it is
+    // module-private, not contract surface, so extraction must filter it.
     std::fs::write(
         target.join("src/foo.rs"),
-        "pub fn one() -> u32 { 1 }\npub struct S;\n#[test]\nfn t() {}\n",
+        "pub fn one() -> u32 { 1 }\npub struct S;\nfn make_bucket() -> u32 { 2 }\n",
     )
     .unwrap();
 
@@ -385,8 +387,11 @@ description = "Foo module."
     assert!(stdout.contains("name: one"), "stdout: {stdout}");
     assert!(stdout.contains("kind: struct"), "stdout: {stdout}");
     assert!(stdout.contains("name: S"), "stdout: {stdout}");
-    assert!(stdout.contains("name: t"), "stdout: {stdout}");
-    assert!(stdout.contains("'#[test]'"), "stdout: {stdout}");
+    // The private free fn must NOT surface (R-002).
+    assert!(
+        !stdout.contains("name: make_bucket"),
+        "private free fn must be filtered; stdout: {stdout}"
+    );
 }
 
 #[test]

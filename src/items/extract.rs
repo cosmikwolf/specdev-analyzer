@@ -64,7 +64,7 @@ fn match_to_item(query: &Query, m: &QueryMatch, source: &str) -> Option<Extracte
     let names = capture_names(query, m);
 
     if names.contains(&"fn.def") {
-        return build_named(query, m, source, ItemKind::Fn, "fn.def", "fn.name");
+        return build_free_fn(query, m, source);
     }
     if names.contains(&"struct.def") {
         return build_named(query, m, source, ItemKind::Struct, "struct.def", "struct.name");
@@ -129,6 +129,20 @@ fn match_to_item(query: &Query, m: &QueryMatch, source: &str) -> Option<Extracte
         return build_extern_block(query, m, source);
     }
     None
+}
+
+/// Build an item for a top-level free function, filtered to `pub`.
+/// A non-`pub` (or `pub(crate)`/`pub(super)`) free fn is a module-private
+/// helper, not public contract surface, so it must not surface as
+/// `in_source_only` drift — the conventions say private/helper members
+/// aren't items. Mirrors the inherent-method visibility filter in
+/// [`build_inherent_assoc`].
+fn build_free_fn(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
+    let vis = capture_text(query, m, source, "fn.vis").map(str::trim);
+    if vis != Some("pub") {
+        return None;
+    }
+    build_named(query, m, source, ItemKind::Fn, "fn.def", "fn.name")
 }
 
 fn build_named(
@@ -326,16 +340,44 @@ mod tests {
 
     #[test]
     fn extracts_top_level_fn() {
-        let source = "fn foo(x: u32) -> u32 { x + 1 }\n";
+        let source = "pub fn foo(x: u32) -> u32 { x + 1 }\n";
         let items = extract(source);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].kind, ItemKind::Fn);
         assert_eq!(items[0].name, "foo");
     }
 
+    // A non-`pub` top-level free fn is a module-private helper, not
+    // contract surface, so it is filtered out (R-002).
+    #[test]
+    fn private_top_level_free_fn_is_not_an_item() {
+        let source = "fn make_bucket() -> u32 { 0 }\npub fn render() -> u32 { 1 }\n";
+        let items = extract(source);
+        let fns: Vec<&str> = items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Fn)
+            .map(|i| i.name.as_str())
+            .collect();
+        assert_eq!(fns, vec!["render"], "private free fn must be filtered");
+    }
+
+    // `pub(crate)` / `pub(super)` are not public API either.
+    #[test]
+    fn pub_crate_free_fn_is_not_an_item() {
+        let source = "pub(crate) fn internal() {}\npub(super) fn up() {}\n";
+        let items = extract(source);
+        assert!(
+            !items.iter().any(|i| i.kind == ItemKind::Fn),
+            "restricted-visibility free fns must be filtered"
+        );
+    }
+
     #[test]
     fn extracts_test_attribute_on_fn() {
-        let source = "#[test]\nfn it_works() {}\n";
+        // Attribute capture is visibility-independent; use a `pub` fn so the
+        // R-002 free-fn filter keeps it (the capture mechanism is what's
+        // under test, not realistic test-fn placement).
+        let source = "#[test]\npub fn it_works() {}\n";
         let items = extract(source);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].kind, ItemKind::Fn);
@@ -456,7 +498,7 @@ impl Show for T { fn show(&self) {} }
         // Patterns are anchored to `source_file` (top level) plus inherent
         // `impl` bodies. A fn nested inside another fn's body is neither, so
         // only `outer` is extracted — `inner` is a local.
-        let source = "fn outer() { fn inner() {} let _x = 1; }\n";
+        let source = "pub fn outer() { fn inner() {} let _x = 1; }\n";
         let items = extract(source);
         let fns: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Fn).collect();
         assert!(fns.iter().any(|i| i.name == "outer"));
