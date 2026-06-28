@@ -237,26 +237,32 @@ impl GenDriftReport {
     }
 }
 
+/// Classify a single recorded file against its current bytes on disk.
+/// Shared by the gen-drift report and the gen-plan classifier.
+fn classify_recorded_file(
+    project_root: &Path,
+    rel: &str,
+    recorded_hash: &str,
+) -> Result<GenFileCategory> {
+    let abs = project_root.join(rel);
+    match std::fs::read(&abs) {
+        Ok(bytes) => Ok(if content_hash(&bytes) == recorded_hash {
+            GenFileCategory::Clean
+        } else {
+            GenFileCategory::Edited
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(GenFileCategory::Missing),
+        Err(e) => Err(anyhow!("reading {}: {e}", abs.display())),
+    }
+}
+
 /// Classify every recorded file against its current bytes. Pure reporter:
 /// never modifies files or the record.
 pub fn run_gen_drift(layout: &LayoutContext) -> Result<GenDriftReport> {
     let lineage = GenLineage::load(&layout.specdev_root)?;
     let mut report = GenDriftReport::default();
     for (path, entry) in &lineage.files {
-        let abs = layout.project_root.join(path);
-        let category = match std::fs::read(&abs) {
-            Ok(bytes) => {
-                if content_hash(&bytes) == entry.content_hash {
-                    GenFileCategory::Clean
-                } else {
-                    GenFileCategory::Edited
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => GenFileCategory::Missing,
-            Err(e) => {
-                return Err(anyhow!("reading {}: {e}", abs.display()));
-            }
-        };
+        let category = classify_recorded_file(&layout.project_root, path, &entry.content_hash)?;
         report.files.push(GenFileDrift {
             path: path.clone(),
             category,
@@ -264,6 +270,146 @@ pub fn run_gen_drift(layout: &LayoutContext) -> Result<GenDriftReport> {
             generated_at: entry.generated_at.clone(),
         });
     }
+    Ok(report)
+}
+
+/// Per-module verdict for incremental `/spec-gen --all`: whether a module's
+/// generation can be skipped or must be regenerated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenPlanCategory {
+    /// No gen-lineage entry for the module — never generated. Regenerate.
+    New,
+    /// Output clean AND the recorded `input_hash` matches the freshly
+    /// assembled prompt. Inputs unchanged → skip.
+    Unchanged,
+    /// Output clean but the generation inputs moved (the recorded
+    /// `input_hash` differs from the current prompt, or was never
+    /// recorded). Regenerate.
+    Stale,
+    /// At least one recorded output file was hand-edited. Skip + warn —
+    /// never clobber a hand-edit; the user reconciles via gen-drift.
+    Edited,
+    /// At least one recorded output file is gone from disk. Regenerate.
+    Missing,
+}
+
+impl GenPlanCategory {
+    /// Whether `/spec-gen --all` regenerates this module. `unchanged` and
+    /// `edited` are skipped (the latter to protect hand-edits); the rest
+    /// regenerate.
+    pub fn regenerates(self) -> bool {
+        matches!(
+            self,
+            GenPlanCategory::New | GenPlanCategory::Stale | GenPlanCategory::Missing
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GenPlanModule {
+    pub module: String,
+    pub category: GenPlanCategory,
+    /// Affected output files — populated only for `edited` / `missing` so
+    /// the skill can name them when it surfaces the module. Sorted; empty
+    /// for the other categories.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct GenPlanReport {
+    /// One verdict per module under `specs/modules/`, sorted by module name.
+    pub modules: Vec<GenPlanModule>,
+}
+
+impl GenPlanReport {
+    /// Render as canonical YAML for the skill + snapshot tests.
+    pub fn to_yaml(&self) -> Result<String> {
+        serde_yaml::to_string(self).context("serializing gen-plan report")
+    }
+}
+
+/// Classify every module under `specs/modules/` for incremental
+/// regeneration. Deterministic — no Claude judgment: a module is `new`
+/// (no lineage), `edited` (a recorded output was hand-edited), `missing`
+/// (a recorded output is gone), `stale` (clean output, inputs moved), or
+/// `unchanged` (clean output, inputs match). The `/spec-gen --all` skill
+/// consumes this to skip `unchanged` + `edited` and regenerate the rest.
+///
+/// Category precedence when a module's files disagree: `edited` outranks
+/// `missing` — any hand-edit means "don't auto-regenerate this module,"
+/// since regeneration would clobber the edit (a still-missing file is the
+/// lesser harm and is surfaced for reconciliation). Both outrank the
+/// clean-output `stale`/`unchanged` split.
+///
+/// Project-level files (no module, e.g. Cargo.toml) are out of scope —
+/// Cargo.toml emission is whole-project and fast, not per-module skippable.
+pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
+    let lineage = GenLineage::load(&layout.specdev_root)?;
+    let module_names = crate::prompt::list_module_names(layout)?;
+    let mut report = GenPlanReport::default();
+
+    for name in &module_names {
+        // Files recorded for this module (project-level entries excluded).
+        let entries: Vec<(&String, &GenEntry)> = lineage
+            .files
+            .iter()
+            .filter(|(_, e)| e.module.as_deref() == Some(name.as_str()))
+            .collect();
+
+        if entries.is_empty() {
+            report.modules.push(GenPlanModule {
+                module: name.clone(),
+                category: GenPlanCategory::New,
+                files: Vec::new(),
+            });
+            continue;
+        }
+
+        let mut edited: Vec<String> = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
+        for (path, entry) in &entries {
+            match classify_recorded_file(&layout.project_root, path, &entry.content_hash)? {
+                GenFileCategory::Clean => {}
+                GenFileCategory::Edited => edited.push((*path).clone()),
+                GenFileCategory::Missing => missing.push((*path).clone()),
+            }
+        }
+
+        let (category, files) = if !edited.is_empty() {
+            edited.sort();
+            (GenPlanCategory::Edited, edited)
+        } else if !missing.is_empty() {
+            missing.sort();
+            (GenPlanCategory::Missing, missing)
+        } else {
+            // All outputs clean — decide on the input side. The recorded
+            // input_hash is uniform across a module's entries (one prompt →
+            // one hash); require that uniformity, a recorded value, and a
+            // match against the freshly assembled prompt. Any gap (no
+            // recorded hash, non-uniform, or assembly failure → None) is
+            // fail-safe `stale`: a module that cannot be proven unchanged
+            // regenerates rather than being wrongly skipped.
+            let first = entries[0].1.input_hash.clone();
+            let uniform = entries.iter().all(|(_, e)| e.input_hash == first);
+            let current = crate::prompt::module_input_hash(layout, name).ok();
+            let unchanged = uniform && first.is_some() && first == current;
+            let category = if unchanged {
+                GenPlanCategory::Unchanged
+            } else {
+                GenPlanCategory::Stale
+            };
+            (category, Vec::new())
+        };
+
+        report.modules.push(GenPlanModule {
+            module: name.clone(),
+            category,
+            files,
+        });
+    }
+
     Ok(report)
 }
 

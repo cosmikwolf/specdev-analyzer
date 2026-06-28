@@ -332,6 +332,17 @@ enum ReportAction {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Classify every module under `specs/modules/` for incremental
+    /// `/spec-gen --all`: `new` (no lineage), `unchanged` (clean output +
+    /// matching input hash → skip), `stale` (clean output, inputs moved →
+    /// regenerate), `edited` (output hand-edited → skip + warn), or
+    /// `missing` (output gone → regenerate). Deterministic; no judgment.
+    /// YAML to stdout. Exit 0 on success, 2 on hard error.
+    GenPlan {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -482,6 +493,9 @@ fn main() -> ExitCode {
             } => run_report_coverage(project, spec_path.as_deref(), &format, output),
             ReportAction::GenDrift { project } => {
                 run_report_gen_drift(project, spec_path.as_deref())
+            }
+            ReportAction::GenPlan { project } => {
+                run_report_gen_plan(project, spec_path.as_deref())
             }
         },
         Command::Items { action } => match action {
@@ -1565,6 +1579,35 @@ fn run_report_gen_drift(project: PathBuf, spec_path: Option<&std::path::Path>) -
                     // without parsing the YAML.
                     ExitCode::from(1)
                 }
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        },
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_gen_plan(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // gen-plan is multi-valued (one verdict per module); the skill parses
+    // the YAML to drive skip/regen. Exit reflects success/failure only, not
+    // the plan's contents (cf. gen-drift's 0/1 clean/drift split).
+    match specdev_analyzer::gen_lineage::run_gen_plan(&layout) {
+        Ok(report) => match report.to_yaml() {
+            Ok(yaml) => {
+                print!("{yaml}");
+                ExitCode::SUCCESS
             }
             Err(e) => {
                 report_error(&e);

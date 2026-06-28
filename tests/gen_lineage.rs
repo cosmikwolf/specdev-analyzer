@@ -1,12 +1,14 @@
 //! Integration tests for the gen-lineage tripwire: `gen-record` machinery
 //! (`gen_lineage::record_files`) + the `report gen-drift` classifier
-//! (`gen_lineage::run_gen_drift`).
+//! (`gen_lineage::run_gen_drift`) + the `report gen-plan` incremental
+//! classifier (`gen_lineage::run_gen_plan`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::gen_lineage::{
-    gen_lineage_path, record_files, run_gen_drift, GenFileCategory, GenLineage,
+    gen_lineage_path, record_files, run_gen_drift, run_gen_plan, GenFileCategory,
+    GenLineage, GenPlanCategory,
 };
 use specdev_analyzer::layout::LayoutContext;
 
@@ -317,4 +319,151 @@ fn record_file_round_trips_through_load() {
     assert_eq!(entry.module.as_deref(), Some("Widget"));
     assert_eq!(entry.generated_at, TS);
     assert!(entry.content_hash.starts_with("sha256:"));
+}
+
+// ---------------------------------------------------------------------------
+// gen-plan: per-module incremental classification.
+// ---------------------------------------------------------------------------
+
+/// Look up one module's verdict in the plan.
+fn category_of(layout: &LayoutContext, module: &str) -> GenPlanCategory {
+    run_gen_plan(layout)
+        .unwrap()
+        .modules
+        .into_iter()
+        .find(|m| m.module == module)
+        .unwrap_or_else(|| panic!("module `{module}` not in plan"))
+        .category
+}
+
+#[test]
+fn plan_module_with_no_lineage_is_new() {
+    let root = tmp("plan-new");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    // Spec authored, never generated → new.
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::New);
+}
+
+#[test]
+fn plan_clean_output_matching_input_is_unchanged() {
+    let root = tmp("plan-unchanged");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+
+    // Output untouched + spec untouched → skippable.
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Unchanged);
+}
+
+#[test]
+fn plan_clean_output_changed_input_is_stale() {
+    let root = tmp("plan-stale");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+
+    // Edit the spec (the input) without regenerating → inputs moved.
+    write_module(&root, "Widget", "description = \"now documented\"\n");
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Stale);
+}
+
+#[test]
+fn plan_missing_recorded_input_hash_is_stale() {
+    // A lineage recorded before input_hash existed (or via the fail-safe
+    // path) has a clean output but no input_hash → cannot prove unchanged →
+    // stale, never wrongly skipped.
+    let root = tmp("plan-noinput");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+    // Record with module=None semantics for input by recording before the
+    // spec exists is awkward; instead hand-build a lineage entry with no
+    // input_hash by recording, then stripping it.
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+    let mut lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    lineage.files.get_mut("src/widget.rs").unwrap().input_hash = None;
+    lineage.save(&layout.specdev_root).unwrap();
+
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Stale);
+}
+
+#[test]
+fn plan_hand_edited_output_is_edited() {
+    let root = tmp("plan-edited");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+
+    fs::write(&src, "pub fn widget() { /* hand edit */ }\n").unwrap();
+    let plan = run_gen_plan(&layout).unwrap();
+    let m = plan.modules.iter().find(|m| m.module == "Widget").unwrap();
+    assert_eq!(m.category, GenPlanCategory::Edited);
+    assert_eq!(m.files, vec!["src/widget.rs".to_string()]);
+    assert!(!m.category.regenerates(), "edited modules are skipped");
+}
+
+#[test]
+fn plan_deleted_output_is_missing() {
+    let root = tmp("plan-missing");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+
+    fs::remove_file(&src).unwrap();
+    let plan = run_gen_plan(&layout).unwrap();
+    let m = plan.modules.iter().find(|m| m.module == "Widget").unwrap();
+    assert_eq!(m.category, GenPlanCategory::Missing);
+    assert_eq!(m.files, vec!["src/widget.rs".to_string()]);
+    assert!(m.category.regenerates());
+}
+
+#[test]
+fn plan_edited_outranks_missing() {
+    // A module whose outputs include both a hand-edited file and a deleted
+    // file classifies as `edited` (no-clobber wins): regenerating would
+    // overwrite the hand-edit.
+    let root = tmp("plan-precedence");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let a = root.join("src/a.rs");
+    let b = root.join("src/b.rs");
+    fs::write(&a, "pub fn a() {}\n").unwrap();
+    fs::write(&b, "pub fn b() {}\n").unwrap();
+    record_files(&layout, Some("Widget"), &[a.clone(), b.clone()], TS).unwrap();
+
+    fs::write(&a, "pub fn a() { /* edit */ }\n").unwrap(); // edited
+    fs::remove_file(&b).unwrap(); // missing
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Edited);
+}
+
+#[test]
+fn plan_covers_every_module_and_is_yaml_stable() {
+    let root = tmp("plan-multi");
+    let layout = minimal_project(&root);
+    write_module(&root, "Alpha", "");
+    write_module(&root, "Beta", "");
+    let alpha = root.join("src/alpha.rs");
+    fs::write(&alpha, "pub fn alpha() {}\n").unwrap();
+    record_files(&layout, Some("Alpha"), &[alpha], TS).unwrap();
+    // Beta has a spec but was never generated.
+
+    let plan = run_gen_plan(&layout).unwrap();
+    let names: Vec<&str> = plan.modules.iter().map(|m| m.module.as_str()).collect();
+    assert_eq!(names, ["Alpha", "Beta"], "sorted, one verdict per module");
+    assert_eq!(plan.modules[0].category, GenPlanCategory::Unchanged);
+    assert_eq!(plan.modules[1].category, GenPlanCategory::New);
+
+    let y1 = plan.to_yaml().unwrap();
+    let y2 = run_gen_plan(&layout).unwrap().to_yaml().unwrap();
+    assert_eq!(y1, y2);
 }
