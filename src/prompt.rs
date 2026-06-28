@@ -343,6 +343,20 @@ pub fn assemble_module_prompt(layout: &LayoutContext, module_name: &str) -> Resu
     Ok(out)
 }
 
+/// SHA-256 of a module's whole assembled codegen prompt — the *input* side
+/// of the gen tripwire, paired with the *output* `content_hash` recorded by
+/// `gen-record`. Hashes exactly [`assemble_module_prompt`] (preamble + tail)
+/// so any change to the conventions, architecture, block/bridge prose,
+/// in-scope decisions/OQs, context files, or the module spec itself moves the
+/// digest. A later run compares this against a freshly-assembled prompt to
+/// decide, deterministically, whether the module's generation inputs are
+/// unchanged (skippable) or stale (must regenerate). Opaque digest, never
+/// source syntax.
+pub fn module_input_hash(layout: &LayoutContext, module_name: &str) -> Result<String> {
+    let prompt = assemble_module_prompt(layout, module_name)?;
+    Ok(crate::hash::content_hash(prompt.as_bytes()))
+}
+
 /// Build the test-item verification context block.
 ///
 /// Walks the module's `items[]` for entries with `test = true`, and for
