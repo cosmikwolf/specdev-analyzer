@@ -15,12 +15,21 @@
 //! [files."src/dsp.rs"]
 //! module       = "Dsp"            # absent for project-level files (Cargo.toml)
 //! generated_at = "2026-06-12T10:00:00Z"
-//! content_hash = "sha256:..."
+//! content_hash = "sha256:..."     # of the emitted file's bytes (output side)
+//! input_hash   = "sha256:..."     # of the module's whole assembled prompt (input side)
 //! ```
 //!
 //! Keys are project-root-relative paths with forward slashes. Re-recording
 //! a path replaces its entry — the file always reflects the latest gen run.
 //! Byte-stability via `BTreeMap`, same discipline as [`crate::lineage`].
+//!
+//! The `content_hash` witnesses the *output* (did the emitted file change?);
+//! the `input_hash` witnesses the *input* (did the generation prompt change?).
+//! Together they let a later run skip a module whose inputs are unchanged and
+//! whose output is still clean — incremental `/spec-gen --all` regeneration.
+//! `input_hash` is absent for project-level files (no module) and whenever the
+//! module's prompt could not be assembled at record time (fail-safe: a module
+//! with no recorded `input_hash` cannot be proven unchanged, so it regenerates).
 //!
 //! Scope fence: this is a hash-level tripwire only. It detects THAT
 //! a generated file changed, not WHAT changed or whether the change is
@@ -54,7 +63,14 @@ pub struct GenEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module: Option<String>,
     pub generated_at: String,
+    /// SHA-256 of the emitted file's bytes — the output side of the tripwire.
     pub content_hash: String,
+    /// SHA-256 of the module's whole assembled codegen prompt — the input
+    /// side. Same value across every file recorded for one module. Absent
+    /// for project-level files (no module) and when the prompt could not be
+    /// assembled at record time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_hash: Option<String>,
 }
 
 impl GenLineage {
@@ -118,6 +134,28 @@ pub fn record_files(
         .canonicalize()
         .with_context(|| format!("canonicalizing {}", layout.project_root.display()))?;
 
+    // Compute the input-side hash once per module — it is the same whole
+    // assembled prompt for every file this module emitted. Best-effort: a
+    // module that can no longer assemble a prompt (e.g. its spec was removed
+    // between gen and record) still records its output hashes, but with no
+    // input_hash, so the next incremental run treats it as stale rather than
+    // skipping it on a hash it could not compute.
+    let input_hash = match module {
+        Some(name) => match crate::prompt::module_input_hash(layout, name) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(
+                    target: "specdev_analyzer::gen_lineage",
+                    "could not assemble the prompt for module `{name}` to record its \
+                     input_hash ({e:#}); it will be treated as stale on the next \
+                     incremental `/spec-gen --all`"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+
     let mut lineage = GenLineage::load(&layout.specdev_root)?;
     let mut recorded = Vec::with_capacity(files.len());
     for file in files {
@@ -140,6 +178,7 @@ pub fn record_files(
                 module: module.map(str::to_string),
                 generated_at: generated_at.to_string(),
                 content_hash: content_hash(&bytes),
+                input_hash: input_hash.clone(),
             },
         );
         recorded.push(key);
@@ -259,6 +298,7 @@ mod tests {
                 module: Some("Dsp".into()),
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:abc123".into(),
+                input_hash: Some("sha256:in123".into()),
             },
         );
         l.files.insert(
@@ -267,6 +307,7 @@ mod tests {
                 module: None,
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:def456".into(),
+                input_hash: None,
             },
         );
         l.save(&dir).unwrap();
@@ -286,6 +327,7 @@ mod tests {
                         module: None,
                         generated_at: "2026-06-12T10:00:00Z".into(),
                         content_hash: (*hash).into(),
+                        input_hash: None,
                     },
                 );
             }
@@ -306,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn module_field_omitted_when_none() {
+    fn module_and_input_hash_omitted_when_none() {
         let mut l = GenLineage::default();
         l.files.insert(
             "Cargo.toml".into(),
@@ -314,9 +356,27 @@ mod tests {
                 module: None,
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:abc".into(),
+                input_hash: None,
             },
         );
         let text = l.to_toml_string().unwrap();
         assert!(!text.contains("module"), "{text}");
+        assert!(!text.contains("input_hash"), "{text}");
+    }
+
+    #[test]
+    fn input_hash_serializes_when_present() {
+        let mut l = GenLineage::default();
+        l.files.insert(
+            "src/dsp.rs".into(),
+            GenEntry {
+                module: Some("Dsp".into()),
+                generated_at: "2026-06-12T10:00:00Z".into(),
+                content_hash: "sha256:abc".into(),
+                input_hash: Some("sha256:in".into()),
+            },
+        );
+        let text = l.to_toml_string().unwrap();
+        assert!(text.contains("input_hash = \"sha256:in\""), "{text}");
     }
 }

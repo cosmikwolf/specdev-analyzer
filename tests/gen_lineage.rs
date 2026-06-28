@@ -45,6 +45,116 @@ source = "src"
 
 const TS: &str = "2026-06-12T10:00:00Z";
 
+/// Author a bare module spec so `record_files` can assemble its prompt and
+/// compute an `input_hash`. A name + layer is enough — the prompt assembler
+/// fills missing conventions/architecture with `(no ...)` notes.
+fn write_module(root: &Path, name: &str, body: &str) {
+    fs::create_dir_all(root.join("specs/modules")).unwrap();
+    fs::write(
+        root.join(format!("specs/modules/{name}.toml")),
+        format!("name = \"{name}\"\nlayer = \"driver\"\n{body}"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn records_input_hash_for_a_real_module() {
+    let root = tmp("input-hash");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    let entry = lineage.files.get("src/widget.rs").expect("entry");
+    let hash = entry.input_hash.as_deref().expect("input_hash recorded");
+    assert!(hash.starts_with("sha256:"), "{hash}");
+}
+
+#[test]
+fn input_hash_is_stable_and_moves_with_the_spec() {
+    let root = tmp("input-hash-sensitivity");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+
+    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    let h1 = GenLineage::load(&layout.specdev_root)
+        .unwrap()
+        .files
+        .get("src/widget.rs")
+        .unwrap()
+        .input_hash
+        .clone()
+        .unwrap();
+
+    // Re-recording an unchanged spec yields the same input_hash.
+    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    let h2 = GenLineage::load(&layout.specdev_root)
+        .unwrap()
+        .files
+        .get("src/widget.rs")
+        .unwrap()
+        .input_hash
+        .clone()
+        .unwrap();
+    assert_eq!(h1, h2, "unchanged spec must keep the same input_hash");
+
+    // Editing the module spec changes the assembled prompt → the hash moves.
+    write_module(&root, "Widget", "description = \"now documented\"\n");
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+    let h3 = GenLineage::load(&layout.specdev_root)
+        .unwrap()
+        .files
+        .get("src/widget.rs")
+        .unwrap()
+        .input_hash
+        .clone()
+        .unwrap();
+    assert_ne!(h1, h3, "an edited spec must move the input_hash");
+}
+
+#[test]
+fn project_level_file_has_no_input_hash() {
+    let root = tmp("input-hash-none");
+    let layout = minimal_project(&root);
+    let cargo = root.join("Cargo.toml");
+    fs::write(&cargo, "[package]\nname = \"x\"\n").unwrap();
+
+    record_files(&layout, None, &[cargo], TS).unwrap();
+    let entry = GenLineage::load(&layout.specdev_root)
+        .unwrap()
+        .files
+        .get("Cargo.toml")
+        .cloned()
+        .unwrap();
+    assert_eq!(entry.input_hash, None);
+}
+
+#[test]
+fn missing_module_spec_records_output_but_no_input_hash() {
+    // Fail-safe: a module whose spec can't be assembled still records its
+    // output hash, but with input_hash = None so it never skips on a hash it
+    // could not compute. (Widget has no specs/modules/Widget.toml here.)
+    let root = tmp("input-hash-failsafe");
+    let layout = minimal_project(&root);
+    let src = root.join("src/widget.rs");
+    fs::write(&src, "pub fn widget() {}\n").unwrap();
+
+    record_files(&layout, Some("Widget"), &[src], TS).unwrap();
+    let entry = GenLineage::load(&layout.specdev_root)
+        .unwrap()
+        .files
+        .get("src/widget.rs")
+        .cloned()
+        .unwrap();
+    assert_eq!(entry.module.as_deref(), Some("Widget"));
+    assert!(entry.content_hash.starts_with("sha256:"));
+    assert_eq!(entry.input_hash, None, "unassemblable module → no input_hash");
+}
+
 #[test]
 fn record_then_report_is_clean() {
     let root = tmp("clean");
