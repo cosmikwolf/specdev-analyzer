@@ -95,6 +95,46 @@ bind_interrupts!(struct Irqs {
 });
 ```
 
+### Async I²C — worked entry-point example
+
+An async I²C master mirrors the USART pattern, with three I²C-specific points: `I2c::new`
+returns `Self` (NOT `Result` — no `.unwrap()`); the bus frequency and pull-ups live in
+`Config`, not constructor arguments; and the chosen GPDMA channels' interrupts must be
+bound alongside `I2C<n>_EV` / `I2C<n>_ER`:
+
+```rust
+use embassy_stm32::{bind_interrupts, dma, i2c, peripherals};
+
+bind_interrupts!(struct Irqs {
+    I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
+    I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
+    GPDMA1_CHANNEL0 => dma::InterruptHandler<peripherals::GPDMA1_CH0>;
+    GPDMA1_CHANNEL1 => dma::InterruptHandler<peripherals::GPDMA1_CH1>;
+});
+
+// in main, after `let p = embassy_stm32::init(...)`:
+// i2c::Config is #[non_exhaustive] — build via Default + field assignment,
+// not a struct literal. Default frequency is 100 kHz.
+let mut cfg = i2c::Config::default();
+cfg.sda_pullup = true;   // enable the MCU's internal pull-ups when the bus
+cfg.scl_pullup = true;   // has no external ones (harmless if it does).
+let i2c = i2c::I2c::new(
+    p.I2C1,
+    p.PB8,        // SCL — raw Peri singleton, NOT gpio::Output::new
+    p.PB9,        // SDA — raw Peri singleton
+    p.GPDMA1_CH0, // tx dma
+    p.GPDMA1_CH1, // rx dma
+    Irqs,
+    cfg,
+);                // returns I2c<'static, Async, Master> — no .unwrap()
+sensor_app::init(&spawner, i2c);
+```
+
+`I2c::new`'s argument order is `(peri, scl, sda, tx_dma, rx_dma, irq, config)` — the DMA
+channels come **before** the interrupt bindings, and there is **no positional frequency
+argument** (it is `config.frequency`). This is the `embassy-stm32` 0.6 shape; confirm
+against the pinned version if it differs.
+
 ## When to emit
 
 Each `bindings."embassy+stm32h5-rs".peripheral_tasks[]` entry on a
@@ -105,19 +145,29 @@ an `embassy.tasks[]` on the same module; the `peripheral` field names a
 
 The peripheral type follows embassy-stm32's instance-erased handles:
 
-| stm32h5 `kind` | embassy-stm32 type (task-side)                     |
+| stm32h5 `kind` | embassy-stm32 type (task-side)                      |
 |----------------|-----------------------------------------------------|
 | USART / UART   | `usart::Uart<'static, Async>`                       |
-| SPI            | `spi::Spi<'static, Async>`                          |
-| I2C            | `i2c::I2c<'static, Async>`                          |
+| SPI            | `spi::Spi<'static, Async, Master>`                  |
+| I2C            | `i2c::I2c<'static, Async, Master>`                  |
 | GPIO (pin out) | `gpio::Output<'static>`                             |
 | GPIO (pin in)  | `gpio::Input<'static>` / `exti::ExtiInput<'static>` |
 | TIM            | `timer::simple_pwm::SimplePwm<'static, T>`          |
 | ADC            | `adc::Adc<'static, T>`                              |
 
-`stm32h5.pins[]` entries on a bound module map to `gpio::Output` /
-`gpio::Input` handles constructed from the pin's `port`+`pin` peripheral
-(e.g. `PB0`) at the entry point and passed into the module's init.
+**Generic arity matters.** `Uart` is `Uart<'d, Mode>` (two params), but `I2c` is
+`I2c<'d, Mode, MasterMode>` and `Spi` is `Spi<'d, PeriMode, CommunicationMode>` —
+**three** params. For a normal bus master the third is `Master`, imported from the
+peripheral's own module (`i2c::Master`, `spi::Master`). Omitting it is a compile error
+(`struct takes 2 generic arguments but 1 was supplied`).
+
+`stm32h5.pins[]` entries with `mode = "output"` / `"input"` map to `gpio::Output` /
+`gpio::Input` handles constructed from the pin's `port`+`pin` peripheral (e.g. `PB0`)
+at the entry point and passed into the module's init. **Alternate-function bus pins**
+(`mode = "alternate"` — I2C SCL/SDA, USART TX/RX, SPI SCK/MISO/MOSI) are NOT
+pre-constructed as `Output`/`Input`: they pass as **raw `Peri` singletons** (e.g.
+`p.PB8`, `p.PB9`) straight into the bus constructor, which selects the alternate
+function internally. Never wrap a bus pin in `Output::new`.
 
 ## Pattern 1 — `handoff = "owned"` (typical)
 
@@ -209,12 +259,12 @@ handoff = "shared"
 Emits (module file):
 
 ```rust
-use embassy_stm32::i2c::I2c;
+use embassy_stm32::i2c::{I2c, Master};
 use embassy_stm32::mode::Async;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 
-static I2C_DEV: Mutex<CriticalSectionRawMutex, Option<I2c<'static, Async>>> =
+static I2C_DEV: Mutex<CriticalSectionRawMutex, Option<I2c<'static, Async, Master>>> =
     Mutex::new(None);
 
 #[embassy_executor::task]
@@ -231,7 +281,7 @@ async fn write_actuator() {
     // user code uses i2c
 }
 
-pub fn init(spawner: &embassy_executor::Spawner, i2c_dev: I2c<'static, Async>) {
+pub fn init(spawner: &embassy_executor::Spawner, i2c_dev: I2c<'static, Async, Master>) {
     {
         let mut g = I2C_DEV.try_lock().unwrap();
         *g = Some(i2c_dev);
@@ -261,6 +311,16 @@ forbid holding a non-`Send` borrow across `.await`. embassy_sync's
   module). Cross-module wiring (sharing a peripheral across modules)
   is not in scope; if needed, model it as a higher-level
   `architecture.toml` connection or a future bridge variant.
+
+- **Module-boundary consequence of co-location.** Because `task` and
+  `peripheral` must share a module, a peripheral-*owning* module also owns
+  the task that drives it — so a bus-owning **driver** cannot also be a
+  separate poll-loop **application** module. The idiomatic split: the module
+  that owns the embassy task owns the peripheral + pins + binding (typically
+  the application/orchestration layer), and a reusable **driver** stays pure
+  logic that *borrows* the constructed bus handle as a method parameter
+  (e.g. `&mut I2c<'static, Async, Master>`). Author the
+  peripheral/pins/task/binding on the task-owning module, not on the driver.
 
 - **Interrupt binding lives at the entry point.** Async peripherals
   require `bind_interrupts!` (see "Entry-point integration"); the
