@@ -25,6 +25,11 @@ target_triple = "thumbv8m.main-none-eabihf"
 [platform.mcu_core]
 crate = "cortex-m"
 version = "^0.7"
+# If you inline an async runtime that needs a critical-section impl (e.g.
+# embassy), uncomment the line below: single-core Cortex-M uses cortex-m's
+# own impl, which is NOT on by default. Without it the link fails late with
+# `undefined symbol: _critical_section_1_0_acquire`.
+# features = ["critical-section-single-core"]
 
 [platform.mcu_runtime]
 crate = "cortex-m-rt"
