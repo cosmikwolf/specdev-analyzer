@@ -104,6 +104,7 @@ pub mod path;
 pub mod plugin_root;
 pub mod prompt;
 pub mod reduction;
+pub mod reference_lint;
 pub mod upstream;
 pub mod reductions;
 pub mod report;
