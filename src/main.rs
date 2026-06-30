@@ -10,7 +10,7 @@ use specdev_analyzer::{
     layout::LayoutContext,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    prompt, reduction, resolve, validate,
+    prompt, reduction, reference_lint, resolve, validate,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -1695,6 +1695,15 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Reference-crate coverage + arity checks. Opt-in per unit by the presence
+    // of `reference/<lang>/reference_cases.yaml`.
+    let reference_offenders = match reference_lint::lint_reference_crates(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
 
     // Bridge offenders are name-only strings (single finding code is
     // implicit — `BRIDGE-LEX-001`); we prefix at print time.
@@ -1707,16 +1716,21 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &block_offenders {
         eprintln!("{o}");
     }
+    // Reference offenders carry their own `REF-*-NNN` code (like block lines).
+    for o in &reference_offenders {
+        eprintln!("{o}");
+    }
 
-    let total = bridge_offenders.len() + block_offenders.len();
+    let total = bridge_offenders.len() + block_offenders.len() + reference_offenders.len();
     if total == 0 {
         eprintln!("plugin lint OK at {}", plugin.display());
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference)",
             bridge_offenders.len(),
-            block_offenders.len()
+            block_offenders.len(),
+            reference_offenders.len()
         );
         ExitCode::from(1)
     }
