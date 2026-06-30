@@ -177,7 +177,11 @@ fn generic_arities(src: &str, adapter: &dyn LanguageAdapter) -> Vec<(String, usi
 }
 
 fn collect_generic_types(node: Node, src: &str, out: &mut Vec<(String, usize)>) {
-    if node.kind() == "generic_type" {
+    // Skip generic types that parse with errors. Prose uses placeholder
+    // shorthand inside generics (`Arc<Mutex<...>>`, `Arc<Atomic*>`) that is not
+    // valid Rust; tree-sitter flags it, and its arity can't be trusted — so do
+    // not compare it (keeps the check at zero false positives).
+    if node.kind() == "generic_type" && !node.has_error() {
         if let (Some(ty), Some(args)) = (
             node.child_by_field_name("type"),
             node.child_by_field_name("type_arguments"),
@@ -391,6 +395,25 @@ mod tests {
                 && o.contains("arity 3")),
             "{offenders:?}"
         );
+    }
+
+    #[test]
+    fn arity_ignores_placeholder_shorthand_in_prose() {
+        let root = scratch();
+        // Reference uses Arc<T> (arity 1). Prose uses placeholder shorthand
+        // inside generics (`Arc<Mutex<...>>`, `Arc<Atomic*>`) that is not valid
+        // Rust — the parser flags it; must NOT miscount as arity 2 and flag.
+        write_bridge(
+            &root,
+            "a+b",
+            &["editor"],
+            &[("editor.rs", "fn t(x: std::sync::Arc<Foo>) {}")],
+            "captures `Arc<MyParams>`, engine lives behind `Arc<Mutex<...>>`, \
+             reads `Arc<Atomic*>` cells.",
+        );
+        let offenders = lint_reference_crates(&root).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        assert!(offenders.is_empty(), "{offenders:?}");
     }
 
     #[test]
