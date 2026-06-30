@@ -103,6 +103,7 @@ pub mod migrate;
 pub mod path;
 pub mod plugin_root;
 pub mod prompt;
+pub mod prose_lint;
 pub mod reduction;
 pub mod reference_lint;
 pub mod upstream;

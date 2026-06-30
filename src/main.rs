@@ -10,7 +10,7 @@ use specdev_analyzer::{
     layout::LayoutContext,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    prompt, reduction, reference_lint, resolve, validate,
+    prompt, prose_lint, reduction, reference_lint, resolve, validate,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -1704,6 +1704,15 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Inlined codegen prose must be profile-agnostic (`PROSE-PROFILE-001`):
+    // a block/bridge `codegen/<lang>/README.md` must not name a profile.
+    let prose_offenders = match prose_lint::lint_codegen_prose_profiles(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
 
     // Bridge offenders are name-only strings (single finding code is
     // implicit — `BRIDGE-LEX-001`); we prefix at print time.
@@ -1720,17 +1729,25 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &reference_offenders {
         eprintln!("{o}");
     }
+    // Prose offenders carry their own `PROSE-PROFILE-NNN` code.
+    for o in &prose_offenders {
+        eprintln!("{o}");
+    }
 
-    let total = bridge_offenders.len() + block_offenders.len() + reference_offenders.len();
+    let total = bridge_offenders.len()
+        + block_offenders.len()
+        + reference_offenders.len()
+        + prose_offenders.len();
     if total == 0 {
         eprintln!("plugin lint OK at {}", plugin.display());
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} prose)",
             bridge_offenders.len(),
             block_offenders.len(),
-            reference_offenders.len()
+            reference_offenders.len(),
+            prose_offenders.len()
         );
         ExitCode::from(1)
     }
