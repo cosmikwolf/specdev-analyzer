@@ -10,29 +10,30 @@ ship a custom UI.
 
 Inline `egui` when your project:
 
-- Ships an audio plugin whose shell module uses egui as the UI
-  toolkit. (Pair with the `nih-plug` block + `egui+nih-plug` bridge
-  for the full plugin-shell + parameter-widget surface.)
 - Has a deterministic editor structure — known panels, known regions
   inside them, known purposes (parameter controls, metering, preset
   selector). egui suits both immediate-mode UIs and dashboard-style
   editors.
+- Ships that editor as a plugin UI. The block targets egui via
+  `nih_plug_egui` today, so its current home is an audio-plugin shell
+  module. (Pair with the `nih-plug` block + `egui+nih-plug` bridge for
+  the full plugin-shell + parameter-widget surface.)
 
 Don't use this block if:
 
 - Your editor is hand-rolled with no panel/region structure (a single
   `CentralPanel` with hand-coded layout). The block adds no value
-  there; an `[egui] enabled = true` flag would be lighter, but doc
-  15 §3.1 leg 2 says blocks must contribute concrete shapes.
+  there; an `[egui] enabled = true` flag would be lighter, but the
+  sharp-test rule says blocks must contribute concrete shapes.
 - You're targeting a different UI toolkit (iced, vizia, nih-plug-vizia,
   raw skia). Those would land as separate blocks; the topology
   vocabulary would likely differ enough to justify it.
 
-## Why topology only (D47)
+## Why topology only (EGUI-TOPOLOGY-ONLY)
 
 The egui block models topology — WHERE controls live — but NOT WHICH
 widgets render WHICH parameters. That cross-cutting concern lives in
-the `egui+nih-plug` bridge (Phase 15-E). Three reasons:
+the `egui+nih-plug` bridge. Three reasons:
 
 1. **egui is a UI library, not a widget catalog.** Panel + region
    layout is the right abstraction for a block. Widget content is
@@ -88,8 +89,7 @@ Reduction kinds (after inline):
   Qualified name is `<ModuleName>.<region_id>`.
 
 Reduction relation (intra-block — this is the first block in the arc
-to declare its own relation; precedent recorded in
-`18-authoring-recipes.md`):
+to declare its own relation):
 
 - `egui.region_in_panel` (extends `depends_on`) — Region → Panel.
   Materialized from each region's `panel` field. The reducer's
@@ -103,7 +103,7 @@ scaffolding follows a `purpose`-driven pattern (parameter_controls
 leaves a placeholder for the bridge to fill; metering, preset_selector,
 free_form, label_block each have their own scaffold pattern).
 
-## Sharp-test rationale (doc 15 §3.1)
+## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific UI toolkit (`egui` via
   `nih_plug_egui`). Doesn't try to abstract over "any UI library."
@@ -117,7 +117,7 @@ free_form, label_block each have their own scaffold pattern).
   block's prose mentions "the bridge owns this" without naming
   specific parameters or widgets.
 
-## Deferred (revisit triggers per §12 + spike §7)
+## Deferred (revisit triggers per §12)
 
 - **Themed styling** — `[egui.style]` for color palettes, font
   choices, knob skins. Promote when a real plugin shows a need
