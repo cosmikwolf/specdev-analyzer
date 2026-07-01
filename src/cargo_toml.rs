@@ -30,7 +30,12 @@ use crate::manifest::{BinGate, BinSection, BlockDeps, PairedStub, Profile, Shape
 pub(crate) struct CrateRef {
     #[serde(rename = "crate")]
     crate_name: String,
-    version: String,
+    /// Cargo version requirement. Optional ONLY when `source` is a local
+    /// path dep — a path dep needs no registry version (F12-23), and the
+    /// schema (`crate_reference.schema.yaml`) enforces that version is
+    /// required for every other source. `None` renders a versionless dep.
+    #[serde(default)]
+    version: Option<String>,
     #[serde(default)]
     source: Option<CrateSource>,
     #[serde(default)]
@@ -313,7 +318,7 @@ fn collect_inlined_bridge_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>> 
 fn block_crate_entry_to_crate_ref(entry: &bd_module::CrateEntry) -> CrateRef {
     CrateRef {
         crate_name: entry.name.clone(),
-        version: entry.version.clone(),
+        version: Some(entry.version.clone()),
         source: entry.source.as_ref().map(translate_block_source),
         features: if entry.features.is_empty() {
             None
@@ -557,10 +562,22 @@ fn render_firmware(
     write_package_section(&mut text, project, /* rust_version */ None, workspace);
     text.push('\n');
 
-    // [[bin]] for firmware-layered (binary projects).
-    text.push_str("[[bin]]\n");
-    text.push_str(&format!("name = {}\n", quote_str(&project.name)));
-    text.push_str("path = \"src/main.rs\"\n");
+    // Crate target. A binary-shaped profile (firmware-layered) renders
+    // `[[bin]]` by default; a per-package `crate_shape = "library"` override
+    // (F12-22) renders `[lib]` instead — for a driver/HAL-shim library member
+    // of a firmware workspace. Dependencies are identical either way.
+    match project.crate_shape {
+        Some(crate::config::CrateShape::Library) => {
+            text.push_str("[lib]\n");
+            text.push_str(&format!("name = {}\n", quote_str(&crate_ident(&project.name))));
+            text.push_str("path = \"src/lib.rs\"\n");
+        }
+        _ => {
+            text.push_str("[[bin]]\n");
+            text.push_str(&format!("name = {}\n", quote_str(&project.name)));
+            text.push_str("path = \"src/main.rs\"\n");
+        }
+    }
     text.push('\n');
 
     write_dependencies_section(&mut text, &deps);
@@ -1019,9 +1036,13 @@ fn merge_dep(deps: &mut BTreeMap<String, CrateRef>, c: CrateRef, warnings: &mut 
             // exact duplicate; ignore.
         }
         Some(existing) if existing.version != c.version => {
+            let show = |v: &Option<String>| v.clone().unwrap_or_else(|| "<none>".to_string());
             warnings.push(format!(
                 "crate `{}` declared with conflicting versions ({} vs {}); using {}",
-                c.crate_name, existing.version, c.version, existing.version,
+                c.crate_name,
+                show(&existing.version),
+                show(&c.version),
+                show(&existing.version),
             ));
         }
         Some(existing) => {
@@ -1268,11 +1289,18 @@ fn render_dep_value(c: &CrateRef) -> String {
         || c.features.as_ref().map(|f| !f.is_empty()).unwrap_or(false)
         || c.default_features.is_some()
         || c.optional == Some(true);
+    // Bare `version = "x"` form only when there are no extras AND a version
+    // is present. A versionless path dep always carries a `path` extra, so it
+    // never reaches the bare form; it renders as `{ path = "..." }`.
     if !has_extras {
-        return quote_str(&c.version);
+        if let Some(v) = &c.version {
+            return quote_str(v);
+        }
     }
     let mut parts: Vec<String> = Vec::new();
-    parts.push(format!("version = {}", quote_str(&c.version)));
+    if let Some(v) = &c.version {
+        parts.push(format!("version = {}", quote_str(v)));
+    }
     if let Some(features) = &c.features {
         if !features.is_empty() {
             let mut sorted = features.clone();
@@ -1294,6 +1322,13 @@ fn render_dep_value(c: &CrateRef) -> String {
     }
     parts.extend(source_parts);
     format!("{{ {} }}", parts.join(", "))
+}
+
+/// A crate package name (`sensor-driver`) as a Rust crate identifier
+/// (`sensor_driver`) — Cargo `[lib] name` and `use` paths require the
+/// hyphen→underscore form.
+fn crate_ident(name: &str) -> String {
+    name.replace('-', "_")
 }
 
 /// Quote a string with double quotes, escaping `"` and `\`. Cargo.toml

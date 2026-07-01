@@ -16,7 +16,22 @@ $defs:
   CrateReference:
     type: object
     additionalProperties: false
-    required: [crate, version]
+    required: [crate]
+    # `version` is required for every source EXCEPT a local path dep. A
+    # workspace-internal path dep needs no registry version (F12-23) — a
+    # stated version would only be checked against the path crate's own
+    # `[package] version` and is pure friction. Registry (crates.io default /
+    # "crates-io"), git, and workspace deps stay version-pinned.
+    allOf:
+      - if:
+          required: [source]
+          properties:
+            source:
+              type: object
+              required: [path]
+        then: true
+        else:
+          required: [version]
     properties:
       crate:
         description: |
@@ -30,6 +45,8 @@ $defs:
           ("0.3.2"), caret ("^0.3.2"), tilde ("~0.3.2"), wildcards
           ("0.3.*"), comparisons (">=0.3, <0.4"), and "*". Passed
           through to Cargo.toml unchanged; Cargo validates downstream.
+          Optional ONLY when `source` is a local `{ path = "..." }` dep;
+          required for every other source.
         type: string
         minLength: 1
       source:
