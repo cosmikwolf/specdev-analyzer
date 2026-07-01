@@ -17,6 +17,36 @@ populated `<layer>` as a `mod` and re-exports public items per the
 project's idiom. Do **not** emit a `mod.rs` unless multiple modules
 share the same parent layer.
 
+**Crate root — binary vs library member.** The crate root form follows
+`spec.toml`'s `[project].crate_shape`:
+
+- Default / `crate_shape = "binary"` → the crate is an embedded binary. The
+  entry point is `src/main.rs` (`#![no_std]` + `#![no_main]`, the runtime's
+  entry attribute, and any `bind_interrupts!` the architecture/bridge prose
+  prescribes). This is the app package of a workspace.
+- `crate_shape = "library"` → the crate is a `no_std` **library** member
+  (a driver / HAL-shim borrowed by a sibling crate). The crate root is
+  `src/lib.rs`: `#![no_std]`, `mod <layer>;` for each populated layer, and
+  `pub use` re-exports of the public items other crates consume. Emit **no**
+  `#![no_main]`, no entry attribute, no `bind_interrupts!`, and no panic
+  handler — those belong to the binary that links this library. The
+  Cargo.toml `[lib]` target is rendered automatically from `crate_shape`.
+
+**Cross-package coupling — Cargo path dep, never `depends_on`.** When a
+module depends on a module that lives in a *different* package of the
+workspace (e.g. the app package borrowing a driver from a `crate_shape =
+"library"` member), express the coupling at the **Cargo layer only**: add
+the producing crate to the *consuming* package's `architecture.toml` as
+`[[external_deps]]` with `source = { path = "../<crate>" }`, and name the
+imported symbol in the consuming module's item/action prose (e.g.
+"constructs the `sensor_driver::Dps310` driver"; crate name
+`sensor-driver` → import path `sensor_driver`). Do **not** reach for
+`depends_on` here — `depends_on` is **intra-package** (it resolves only
+against the same package's `specs/modules/` set), so a cross-package
+`depends_on` dangles. Each package has its own independent
+`specs/specdev/`; there is no workspace-level spec state, and cross-crate
+wiring belongs to Cargo, not to a spec relation.
+
 ```text
 src/
   lib.rs              # mod hal; mod drivers; mod application;
@@ -281,6 +311,12 @@ instance of the dependency) or an `&'static` reference (when the
 dependency is a singleton). The choice is driven by
 `metadata.MemoryModel.allocation`: `static_alloc` → `&'static`,
 `heap_alloc` or unset → owned field.
+
+`depends_on[]` is **intra-package only** — every entry resolves against
+this package's own `specs/modules/`. For a dependency that lives in
+*another* workspace package, do not use `depends_on` (it will dangle);
+see "Crate root — binary vs library member" above for the Cargo
+path-dep-plus-name-the-symbol rule.
 
 `architecture.toml` `[[connections]]` entries do **not** emit code by
 themselves — they're verified at validate time but the per-block
