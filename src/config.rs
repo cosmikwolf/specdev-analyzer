@@ -56,6 +56,23 @@ pub struct ProjectSection {
     /// workspace's canonical value.
     #[serde(default)]
     pub repository: Option<String>,
+    /// Per-package Cargo crate-target override (F12-22). Absent = the
+    /// profile's own `cargo_toml.shape`. A `binary`-shaped profile
+    /// (firmware-layered) renders `[[bin]]` by default; a workspace member
+    /// that is a driver/HAL-shim *library* sets `crate_shape = "library"` so
+    /// its Cargo.toml gets `[lib]` + `src/lib.rs` instead — keeping all the
+    /// same block/bridge/architecture dependencies.
+    #[serde(default)]
+    pub crate_shape: Option<CrateShape>,
+}
+
+/// Per-package Cargo crate-target override. Generic Cargo concepts, not
+/// profile/block/bridge names — a firmware workspace mixes both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CrateShape {
+    Binary,
+    Library,
 }
 
 /// `[workspace]` table on a workspace-root `spec.toml`. Presence signals

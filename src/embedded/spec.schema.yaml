@@ -63,6 +63,18 @@ properties:
           value via `[workspace_package].repository` and members emit
           `repository.workspace = true`.
         minLength: 1
+      crate_shape:
+        type: string
+        enum: [binary, library]
+        description: |
+          Per-package Cargo crate-target override (F12-22). Optional;
+          absent = the profile's own `cargo_toml.shape`. A `binary`-shaped
+          profile (firmware-layered) renders `[[bin]]`/`src/main.rs` by
+          default; set `crate_shape = "library"` on a workspace member that
+          is a driver/HAL-shim *library* so its Cargo.toml renders
+          `[lib]`/`src/lib.rs` instead — keeping the same block, bridge, and
+          architecture dependencies. Generic Cargo concept, not a profile or
+          block name.
   paths:
     type: object
     additionalProperties: false
