@@ -10,8 +10,8 @@ description: >
   concern (e.g. `mod_item` is excluded — modules are spec entities, not
   items).
 
-  v1 covers the 12 kinds named in `000-items-design-conversation-2026-05-01.md`
-  §9. Sparseness rule: every `Item` carries `satisfies` (≥1 entry) except
+  v1 covers 12 item kinds (the `kind` enum below). Sparseness rule: every
+  `Item` carries `satisfies` (≥1 entry) except
   `kind = "re_export"`, where the inherently-contractual nature of a `pub
   use` makes `satisfies` optional.
 
@@ -88,12 +88,12 @@ properties:
       When true, this fn is emitted under `#[test]` (or the language's
       test attribute) and verifies requirement(s) via `verifies` rather
       than satisfying them via `satisfies`. Only `kind = "fn"` items may
-      be tests. Mutually exclusive with `satisfies` (D60).
+      be tests. Mutually exclusive with `satisfies`.
     type: boolean
     default: false
   test_kind:
     description: >
-      Test categorization driving codegen emit location (D61). `unit` →
+      Test categorization driving codegen emit location. `unit` →
       `#[cfg(test)] mod tests` co-located with the declaring module;
       `integration` → `tests/<name>.rs` at the crate root; `doc` → a
       doc-comment example on the hosting item. `bench` / `fuzz` reserve
@@ -108,7 +108,7 @@ properties:
       Required with ≥1 entry when `test = true`; forbidden otherwise.
       Reduced into `test_verifies` edges; the
       `test_requirements_have_verifiers` graph check walks them to
-      confirm every `nature = "test"` requirement has a verifier (D60).
+      confirm every `nature = "test"` requirement has a verifier.
     type: array
     items:
       type: string
@@ -121,7 +121,7 @@ properties:
 # relaxes the satisfies requirement; all other non-test branches require
 # `satisfies` with minItems: 1. The `test-fn` branch is the only one that
 # permits `test = true` — and it requires `verifies` and forbids
-# `satisfies` (the D60 mutual exclusion). The other branches pin
+# `satisfies` (the mutual exclusion). The other branches pin
 # `test: false` (absent is fine) and forbid `verifies` / `test_kind`,
 # keeping the test surface confined to `kind = "fn"` items.
 oneOf:
@@ -175,7 +175,7 @@ oneOf:
         - required: [test_kind]
 
   # Test functions: kind = "fn", test = true. Use `verifies` instead of
-  # `satisfies`; codegen dispatches on `test_kind` (D60/D61).
+  # `satisfies`; codegen dispatches on `test_kind`.
   - title: test-fn
     properties:
       kind: { const: fn }
