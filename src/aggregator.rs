@@ -466,10 +466,15 @@ pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Va
             }
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            let value: Value = match serde_yaml::from_str(&text) {
-                Ok(v) => v,
-                Err(_) => continue, // surfaced elsewhere
-            };
+            // A malformed shipped/inlined schema must be a loud, located error
+            // (file + yaml line:col) — never a silent skip. Dropping it here
+            // masks the whole bug class: the schema never registers, and the
+            // failure only resurfaces downstream as an inscrutable
+            // "resource not present in registry" at aggregator compile. Mirror
+            // the blocks/bridges and languages loops below, which already
+            // surface parse errors via `from_yaml_error`.
+            let value: Value = serde_yaml::from_str(&text)
+                .map_err(|e| anyhow::Error::new(LocatedError::from_yaml_error(&path, &e)))?;
             if let Some(id) = value.get("$id").and_then(Value::as_str) {
                 docs.insert(id.to_string(), value.clone());
             }
