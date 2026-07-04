@@ -513,3 +513,49 @@ feature_gates = ["nonexistent"]
         "expected one REDUCE_UNRESOLVED error naming Feature/nonexistent; got {errs:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// N — `parameters_have_bindings` must stay silent on non-Parameter entities
+// when the nih-plug block (which defines the `nih-plug.Parameter` kind) is
+// not inlined. Regression for the zx7 dogfood flood: with the Parameter kind
+// absent from the effective set, the entity-scope filter used to fail OPEN
+// (keep the whole graph), so the orphan check flagged every Source /
+// requirement / decision / open-question as missing an inbound
+// `parameter_binding` — dozens of nonsensical warnings during requirements
+// authoring, before any parameter exists.
+// ---------------------------------------------------------------------------
+#[test]
+fn parameters_have_bindings_silent_when_parameter_kind_absent() {
+    let (target, _) = fresh_plugin("no-param-kind");
+    write_arch(&target, ARCH_DEFAULT);
+    // Requirements + sources, no modules, no nih-plug block inlined: the
+    // `nih-plug.Parameter` kind never enters the effective kind set.
+    std::fs::write(
+        target.join("specs/requirements.toml"),
+        r#"[[source]]
+id = "user-stories"
+kind = "user"
+title = "stories"
+
+[[requirement]]
+id = "ZX7-001"
+text = "Synth renders FM voices."
+source = ["user-stories"]
+
+[[requirement]]
+id = "ZX7-002"
+text = "SysEx import loads voices."
+"#,
+    )
+    .unwrap();
+
+    let report = validate::run_project(&target, None).unwrap();
+    let flood = warnings_for(&report, "parameters_have_bindings");
+    assert!(
+        flood.is_empty(),
+        "parameters_have_bindings must not fire when the Parameter kind is not \
+         inlined; got {} finding(s): {:#?}",
+        flood.len(),
+        flood
+    );
+}
