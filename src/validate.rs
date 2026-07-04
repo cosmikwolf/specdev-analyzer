@@ -918,16 +918,42 @@ fn execute_graph_checks(
             "entity_has_inbound_relation" => {
                 match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
                     (Some(es), Some(rs)) => {
-                        let view =
-                            filter_for_layer_dependency(&graph_json, es, rs, kindset);
-                        graph_checks::entity_has_inbound_relation(
-                            &view,
-                            rs,
-                            check.entity_attr.as_deref(),
-                            check.entity_attr_value.as_deref(),
-                            rule,
-                            severity,
-                        )
+                        // Fail closed when `entity_scope` names a kind that
+                        // isn't in the effective set — e.g. `nih-plug.Parameter`
+                        // before the nih-plug block is inlined. `entity_scope`
+                        // here is contractually an entity kind, so an
+                        // unresolvable one means there are no in-scope
+                        // entities to check. Without this guard,
+                        // `filter_for_layer_dependency` fails OPEN for an
+                        // unknown kind (it skips entity filtering and keeps the
+                        // full graph), and the orphan primitive then flags
+                        // every unrelated entity — Sources, requirements,
+                        // decisions, open questions — as missing an inbound
+                        // relation. (The filter's fail-open is intentional for
+                        // checks whose scope is deliberately not a kind, so the
+                        // guard lives here, not in the shared filter.)
+                        let entity_scope_known = kinds::parse(es)
+                            .ok()
+                            .map(|p| {
+                                let key = p.to_string();
+                                kindset.canonical_roots.contains(&key)
+                                    || kindset.entity(&key).is_some()
+                            })
+                            .unwrap_or(false);
+                        if !entity_scope_known {
+                            Vec::new()
+                        } else {
+                            let view =
+                                filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                            graph_checks::entity_has_inbound_relation(
+                                &view,
+                                rs,
+                                check.entity_attr.as_deref(),
+                                check.entity_attr_value.as_deref(),
+                                rule,
+                                severity,
+                            )
+                        }
                     }
                     _ => Vec::new(),
                 }
