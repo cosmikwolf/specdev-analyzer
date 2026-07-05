@@ -492,3 +492,72 @@ input = true
         "expected no errors during reduction execution; got {errs:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 12 — A `[nih_plug.midi.sysex]` subtable validates clean.
+//      SysEx support is delivered at MidiConfig::Basic (input = true);
+//      the subtable carries the buffer size codegen needs.
+// ---------------------------------------------------------------------------
+#[test]
+fn sysex_subtable_validates_clean() {
+    let (target, layout) = fresh_audio_project("sysex-clean");
+    run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
+
+    write_module(
+        &target,
+        "MyPlugin",
+        r#"name = "MyPlugin"
+layer = "plugin_shell"
+
+[nih_plug.midi]
+input = true
+
+[nih_plug.midi.sysex]
+max_message_len = 4104
+message_type = "Dx7Dump"
+"#,
+    );
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(
+        errs.is_empty(),
+        "expected no errors for a valid sysex subtable; got {errs:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 13 — `[nih_plug.midi.sysex]` without `max_message_len` is rejected.
+//      The buffer size is a required field — codegen can't emit a
+//      `type Buffer = [u8; N]` array length without it.
+// ---------------------------------------------------------------------------
+#[test]
+fn sysex_subtable_missing_max_message_len_rejected() {
+    let (target, layout) = fresh_audio_project("sysex-no-len");
+    run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
+
+    write_module(
+        &target,
+        "MyPlugin",
+        r#"name = "MyPlugin"
+layer = "plugin_shell"
+
+[nih_plug.midi]
+input = true
+
+[nih_plug.midi.sysex]
+message_type = "Dx7Dump"
+"#,
+    );
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs = errors_for(&report, "SCHEMA");
+    assert!(
+        !errs.is_empty(),
+        "expected SCHEMA error for sysex subtable missing max_message_len; got {report:#?}"
+    );
+}
