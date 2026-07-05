@@ -47,9 +47,7 @@ entities:
     for_each: "nih_plug.midi"
     name: "${root.name}.midi"
     attrs:
-      input:       ".input"
-      output:      ".output"
-      note_events: ".note_events"
-      cc_events:   ".cc_events"
+      input_level:  ".input_level"
+      output_level: ".output_level"
 
 relations: []
