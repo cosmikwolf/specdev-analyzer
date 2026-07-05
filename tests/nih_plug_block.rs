@@ -203,10 +203,8 @@ channel_count = 2
 kind = "main"
 
 [nih_plug.midi]
-input = true
-output = false
-note_events = true
-cc_events = false
+input_level = "midi_ccs"
+output_level = "none"
 
 [nih_plug.process]
 mode = "realtime"
@@ -477,7 +475,7 @@ direction = "input"
 channel_count = 2
 
 [nih_plug.midi]
-input = true
+input_level = "basic"
 "#,
     );
 
@@ -510,7 +508,7 @@ fn sysex_subtable_validates_clean() {
 layer = "plugin_shell"
 
 [nih_plug.midi]
-input = true
+input_level = "basic"
 
 [nih_plug.midi.sysex]
 max_message_len = 4104
@@ -547,7 +545,7 @@ fn sysex_subtable_missing_max_message_len_rejected() {
 layer = "plugin_shell"
 
 [nih_plug.midi]
-input = true
+input_level = "basic"
 
 [nih_plug.midi.sysex]
 message_type = "Dx7Dump"
@@ -559,5 +557,98 @@ message_type = "Dx7Dump"
     assert!(
         !errs.is_empty(),
         "expected SCHEMA error for sysex subtable missing max_message_len; got {report:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 14 — input_level = "midi_ccs" validates clean (the MidiConfig::MidiCCs
+//      level that delivers CC + pitch-bend events).
+// ---------------------------------------------------------------------------
+#[test]
+fn midi_ccs_level_validates_clean() {
+    let (target, layout) = fresh_audio_project("midi-ccs");
+    run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
+
+    write_module(
+        &target,
+        "MyPlugin",
+        r#"name = "MyPlugin"
+layer = "plugin_shell"
+
+[nih_plug.midi]
+input_level = "midi_ccs"
+output_level = "none"
+"#,
+    );
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(
+        errs.is_empty(),
+        "expected no errors for input_level = midi_ccs; got {errs:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 15 — Unknown MidiLevel value is rejected (closed enum none/basic/midi_ccs).
+// ---------------------------------------------------------------------------
+#[test]
+fn schema_rejects_unknown_midi_level() {
+    let (target, layout) = fresh_audio_project("bad-midi-level");
+    run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
+
+    write_module(
+        &target,
+        "MyPlugin",
+        r#"name = "MyPlugin"
+layer = "plugin_shell"
+
+[nih_plug.midi]
+input_level = "midi_and_mpe"
+"#,
+    );
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs = errors_for(&report, "SCHEMA");
+    assert!(
+        !errs.is_empty(),
+        "expected SCHEMA error for unknown MIDI level; got {report:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 16 — SysEx with no MIDI direction at basic+ is rejected: codegen would
+//      emit a SysExMessage type no event ever reaches (the if/then guard).
+//      Both levels omitted (default none) must fail — the vacuous-truth case
+//      the `required` branches guard against.
+// ---------------------------------------------------------------------------
+#[test]
+fn sysex_without_basic_direction_rejected() {
+    let (target, layout) = fresh_audio_project("sysex-no-direction");
+    run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
+
+    write_module(
+        &target,
+        "MyPlugin",
+        r#"name = "MyPlugin"
+layer = "plugin_shell"
+
+[nih_plug.midi]
+input_level = "none"
+
+[nih_plug.midi.sysex]
+max_message_len = 4104
+"#,
+    );
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs = errors_for(&report, "SCHEMA");
+    assert!(
+        !errs.is_empty(),
+        "expected SCHEMA error for sysex with no basic+ MIDI direction; got {report:#?}"
     );
 }

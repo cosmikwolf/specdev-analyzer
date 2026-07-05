@@ -213,52 +213,71 @@ $defs:
         enum: [main, aux, sidechain]
         default: main
 
+  MidiLevel:
+    description: >
+      MIDI capability level, mapping 1:1 to nih-plug's `MidiConfig`
+      enum (there are exactly three levels — no `MidiAndMpe` /
+      `MidiSysEx` variant):
+        - `none`     → `MidiConfig::None` (no MIDI on this direction).
+        - `basic`    → `MidiConfig::Basic` (note on/off/choke, pressure;
+                       also the level required to send/receive SysEx).
+        - `midi_ccs` → `MidiConfig::MidiCCs` (everything in `basic` plus
+                       full MIDI CC + pitch-bend events; on VST3 this
+                       binds 130×16 CC parameters).
+    type: string
+    enum: [none, basic, midi_ccs]
+
   MidiConfig:
     description: >
-      MIDI handling singleton. nih-plug's `MIDI_INPUT` /
-      `MIDI_OUTPUT` constants come from `input` / `output`; the
-      event-shape constants (note + CC stream availability) come
-      from `note_events` / `cc_events`. SysEx (system-exclusive)
-      support is declared by the optional `sysex` subtable.
+      MIDI handling singleton. `input_level` / `output_level` select
+      nih-plug's `MIDI_INPUT` / `MIDI_OUTPUT` constants (see MidiLevel).
+      SysEx (system-exclusive) support is declared by the optional
+      `sysex` subtable, which requires at least `basic` on one
+      direction.
     type: object
     additionalProperties: false
     properties:
-      input:
+      input_level:
         description: >
-          When true, the plugin declares MIDI_INPUT = MidiConfig::Basic
-          — the level nih-plug documents as sufficient to receive note
-          events and SysEx. (`MidiConfig::MidiCCs`, which additionally
-          binds all 128 MIDI CCs as parameters, is a bounded follow-up;
-          there is no `MidiAndMpe` / `MidiSysEx` variant.)
-        type: boolean
-        default: false
-      output:
+          MIDI input level (drives `MIDI_INPUT`). `midi_ccs` is the
+          level that delivers MIDI CC + pitch-bend events to
+          `process()` via `context.next_event()`; `basic` delivers
+          notes only. Defaults to `none`.
+        $ref: "#/$defs/MidiLevel"
+        default: none
+      output_level:
         description: >
-          When true, the plugin declares MIDI_OUTPUT = MidiConfig::Basic.
-        type: boolean
-        default: false
-      note_events:
-        description: >
-          When true, the plugin emits / consumes note-on / note-off /
-          velocity events in the `process()` event stream.
-        type: boolean
-        default: false
-      cc_events:
-        description: >
-          When true, the plugin emits / consumes CC events in the
-          process event stream.
-        type: boolean
-        default: false
+          MIDI output level (drives `MIDI_OUTPUT`), same scale as
+          `input_level`. `basic` is the minimum needed to send SysEx.
+          Defaults to `none`.
+        $ref: "#/$defs/MidiLevel"
+        default: none
       sysex:
         description: >
           Optional SysEx (system-exclusive) support. Omit when the
           plugin doesn't handle SysEx — the default is
           `type SysExMessage = ()` (no SysEx). When present, codegen
           emits a real `SysExMessage` type sized by `max_message_len`
-          and drains `NoteEvent::MidiSysEx` in `process()`. Receiving
-          SysEx also requires `input = true`; sending requires
-          `output = true` (both surface at `MidiConfig::Basic`).
+          and drains `NoteEvent::MidiSysEx` in `process()`. At least one
+          of `input_level` / `output_level` must be `basic` or higher
+          (SysEx surfaces at `MidiConfig::Basic`) — enforced below.
         $ref: "#/$defs/SysExConfig"
+    # SysEx needs a MIDI direction at `basic` or higher, else codegen
+    # would emit a `SysExMessage` type no event ever reaches. `required`
+    # in each branch is load-bearing: without it an absent `*_level`
+    # makes the `enum` constraint vacuously true (JSON Schema does not
+    # apply the `none` default during validation), so both-absent would
+    # wrongly pass.
+    if:
+      required: [sysex]
+    then:
+      anyOf:
+        - required: [input_level]
+          properties:
+            input_level: { enum: [basic, midi_ccs] }
+        - required: [output_level]
+          properties:
+            output_level: { enum: [basic, midi_ccs] }
 
   SysExConfig:
     description: >
