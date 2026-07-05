@@ -7,6 +7,11 @@ metaschema_version: "v1"
 # attributes only) and no graph check needs to reach into it; codegen
 # prose reads it directly from the module's TOML.
 #
+# The optional `[nih_plug.midi.sysex]` subtable is likewise NOT
+# surfaced as graph attributes for the same reason: it's a nameless
+# config singleton that only codegen prose consumes (to size the
+# generated `SysExMessage` buffer). No graph check reaches into it.
+#
 # Qualified entity names combine parent module name with the local
 # name (e.g. "MyPlugin.gain" for module=MyPlugin, parameter=gain).
 # This keeps namespaces clean across multi-module specs (rare in v1

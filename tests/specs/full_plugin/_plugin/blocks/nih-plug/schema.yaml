@@ -218,14 +218,18 @@ $defs:
       MIDI handling singleton. nih-plug's `MIDI_INPUT` /
       `MIDI_OUTPUT` constants come from `input` / `output`; the
       event-shape constants (note + CC stream availability) come
-      from `note_events` / `cc_events`.
+      from `note_events` / `cc_events`. SysEx (system-exclusive)
+      support is declared by the optional `sysex` subtable.
     type: object
     additionalProperties: false
     properties:
       input:
         description: >
           When true, the plugin declares MIDI_INPUT = MidiConfig::Basic
-          (or MidiAndMpe / MidiSysEx as the plugin extends; basic in v1).
+          — the level nih-plug documents as sufficient to receive note
+          events and SysEx. (`MidiConfig::MidiCCs`, which additionally
+          binds all 128 MIDI CCs as parameters, is a bounded follow-up;
+          there is no `MidiAndMpe` / `MidiSysEx` variant.)
         type: boolean
         default: false
       output:
@@ -245,6 +249,47 @@ $defs:
           process event stream.
         type: boolean
         default: false
+      sysex:
+        description: >
+          Optional SysEx (system-exclusive) support. Omit when the
+          plugin doesn't handle SysEx — the default is
+          `type SysExMessage = ()` (no SysEx). When present, codegen
+          emits a real `SysExMessage` type sized by `max_message_len`
+          and drains `NoteEvent::MidiSysEx` in `process()`. Receiving
+          SysEx also requires `input = true`; sending requires
+          `output = true` (both surface at `MidiConfig::Basic`).
+        $ref: "#/$defs/SysExConfig"
+
+  SysExConfig:
+    description: >
+      SysEx (system-exclusive) message support singleton, nested under
+      `[nih_plug.midi]`. Presence declares that the plugin sends and/or
+      receives raw MIDI SysEx (e.g. synth patch dumps). nih-plug
+      delivers/accepts SysEx at the `MidiConfig::Basic` level, so no
+      MIDI level beyond `input`/`output = true` is required. Codegen
+      emits a `SysExMessage`-trait impl whose `type Buffer` is
+      `[u8; max_message_len]`; the byte-level parsing of the message
+      body is user/engine code, not generated here.
+    type: object
+    additionalProperties: false
+    required: [max_message_len]
+    properties:
+      max_message_len:
+        description: >
+          Maximum SysEx message length in bytes, INCLUDING the `0xF0`
+          start and `0xF7` end bytes. Drives the generated
+          `type Buffer = [u8; N]` associated type — an array length must
+          be a compile-time constant, so the spec carries it rather than
+          leaving a codegen placeholder. Size it to the largest message
+          the plugin accepts (e.g. a Yamaha DX7 32-voice bank dump is
+          4104 bytes).
+        type: integer
+        minimum: 1
+      message_type:
+        description: >
+          Optional Rust type name (PascalCase) for the generated SysEx
+          message type. Defaults to `<PluginType>SysEx` when omitted.
+        $ref: "#/$defs/Identifier"
 
   ProcessConfig:
     description: >
