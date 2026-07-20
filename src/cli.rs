@@ -1,0 +1,1778 @@
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Args, Parser, Subcommand};
+use crate::{
+    bootstrap::{self, BootstrapInputs},
+    context as context_mod,
+    diagnostics::report_error,
+    cargo_toml as cargo_toml_mod, drift, extract, inline,
+    layout::LayoutContext,
+    merge, migrate,
+    plugin_root::{self, PluginRootInputs},
+    prompt, prose_lint, reduction, reference_lint, resolve, validate,
+};
+use tracing_subscriber::EnvFilter;
+
+// This module was lifted verbatim out of the former `main.rs`, where it
+// referred to the crate by its external name. Alias the crate root so those
+// fully-qualified `specdev_analyzer::…` paths keep resolving now that the
+// code lives inside the crate.
+use crate as specdev_analyzer;
+
+/// Global flags shared by every subcommand. Flattened into the analyzer's
+/// own [`Cli`] and re-flattenable by downstream binaries (e.g. the
+/// visualizer) that compose the analyzer's subcommands with their own.
+#[derive(Args)]
+pub struct GlobalArgs {
+    /// Explicit path to the project's spec.toml. Overrides CWD-walking
+    /// discovery. Shared by every subcommand that reads project state.
+    #[arg(long, global = true)]
+    pub spec_path: Option<PathBuf>,
+    /// Explicit plugin root override for `bootstrap`, `inline`, and
+    /// `inline-bridge`. Highest precedence in the resolution chain (see
+    /// [`plugin_root`]).
+    #[arg(long, global = true)]
+    pub plugin_root: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+#[command(
+    name = "specdev-analyzer",
+    version,
+    about = "Domain-agnostic analyzer for TOML specs (blocks + bridges + profiles arc)."
+)]
+pub struct Cli {
+    #[command(flatten)]
+    pub globals: GlobalArgs,
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Validate the project layout, kind resolution, and module structure.
+    Validate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Treat missing layout entries as errors, not warnings.
+        #[arg(long)]
+        strict: bool,
+        /// Suppress ANSI colors.
+        #[arg(long)]
+        no_color: bool,
+        /// Suppress info-severity lines from the rendered output (F-006).
+        /// Errors, warnings, and the summary/counts tail still print.
+        #[arg(long, short = 'q')]
+        quiet: bool,
+        /// Scope checks to the consumer named here.
+        /// Accepts `schema`, `strict-gen`, or `cargo-toml`.
+        /// Schema-tagged checks always run regardless. Without the flag,
+        /// every check fires (legacy behavior).
+        #[arg(long = "for")]
+        scope_for: Option<String>,
+    },
+    /// Emit canonical YAML extraction for codegen.
+    Extract {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Output directory for canonical YAML files.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Extract structured items (top-level Rust constructs) from each module's
+    /// source file. Output is the substrate the items[] sync diffs run
+    /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
+    /// skill.
+    ExtractItems {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Only extract one module (exact name match). Without this flag,
+        /// every module under `specs/modules/` is processed.
+        #[arg(long)]
+        module: Option<String>,
+    },
+    /// Pre-flight surface for the Claude-mediated `/spec-reverse` skill.
+    /// Reports the blocks currently inlined in the project, validates the
+    /// `--into` arg if provided, and emits coarse ambiguity warnings when
+    /// multiple blocks are inlined without scoping. Pre-flight surface only —
+    /// actual TOML emission is Claude's job in the skill.
+    Reverse {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Comma-separated list of block names to scope reverse output to.
+        /// e.g. `--into embassy,stm32h5-rs`. If absent and 2+ blocks are
+        /// inlined, the pre-flight emits an ambiguity warning suggesting
+        /// the user pass `--into`.
+        #[arg(long)]
+        into: Option<String>,
+    },
+    /// Three-stage agentic sync. `items diff <module>` is
+    /// stage 1: deterministic detection of drift between spec items[]
+    /// and tree-sitter-extracted source items. `items propose`
+    /// and `items apply` layer on top.
+    Items {
+        #[command(subcommand)]
+        action: ItemsAction,
+    },
+    /// Execute the reduction and emit a universal entity/relation graph.
+    Reduce {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write the graph YAML to this path. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Print the resolved project layout for skill consumers.
+    Resolve {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Scaffold a new project from a plugin profile.
+    Bootstrap {
+        /// Profile name (e.g. `firmware-layered`, `library-api`).
+        #[arg(long)]
+        profile: String,
+        /// Target language for codegen (`rust`, `c`).
+        #[arg(long)]
+        language: String,
+        /// Project name (lowercase, hyphens). Becomes `[project].name` in
+        /// the generated `spec.toml`.
+        #[arg(long)]
+        name: String,
+        /// Directory to bootstrap into. Created if it doesn't exist;
+        /// fails if `<target>/specs/specdev/` is already present.
+        target: PathBuf,
+    },
+    /// Inline a canonical block from the plugin into the project.
+    Inline {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Block name (e.g. `embassy`, `lvgl`).
+        block: String,
+        /// 3-way merge from the recorded upstream snapshot to the current
+        /// plugin version. Required to update an already-inlined block;
+        /// without it, re-inline is refused.
+        #[arg(long)]
+        merge: bool,
+    },
+    /// Inline a canonical bridge between two already-inlined blocks.
+    InlineBridge {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Bridge owner name (`<a>+<b>`, lex-ordered: `a < b`).
+        bridge: String,
+        /// 3-way merge from the recorded upstream snapshot to the current
+        /// plugin version. Required to update an already-inlined bridge.
+        #[arg(long)]
+        merge: bool,
+    },
+    /// Plugin-author lint: walk a plugin tree and check structural rules
+    /// (currently: bridge directory names are lex-ordered).
+    PluginLint {
+        /// Plugin root directory (must contain `.claude-plugin/plugin.json`).
+        #[arg(long)]
+        plugin: PathBuf,
+    },
+    /// Emit a deterministic Cargo.toml derived from the project's
+    /// spec.toml + architecture.toml + module-level external_deps.
+    /// Every Cargo dep is captured in the spec;
+    /// this subcommand renders the OUTPUT half. Lex-sorted deps;
+    /// stable across runs. Conflict warnings on stderr.
+    CargoToml {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write Cargo.toml here. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Assemble the codegen prompt for one module. Reads the inlined
+    /// blocks/bridges' codegen prose plus architecture + module specs
+    /// and concatenates them deterministically. Plugin's `spec-gen`
+    /// skill pipes this to Claude. Output is byte-stable across runs.
+    Prompt {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<Module>.toml`).
+        #[arg(long)]
+        module: String,
+    },
+    /// Focused dependency cone for one module. Emits the
+    /// schema files, plugin-tree READMEs, target module path, and the
+    /// one-hop set of related sibling modules. Skill consumers
+    /// (`/spec-design`, `/spec-edit`, `/spec-reverse`) read only the
+    /// listed files instead of every module under `specs/modules/`.
+    /// Read-only graph projection over the existing reduction; no new
+    /// schema or graph primitives.
+    Context {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<Name>.toml`). When the
+        /// name doesn't resolve (cold-start `/spec-design`), the
+        /// subcommand still emits schema + READMEs; sibling-module
+        /// cone is empty and `status: module-not-found` is set.
+        #[arg(long)]
+        module: String,
+        /// Write the YAML report here. Without it, prints to stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Populate manifests for projects bootstrapped before the manifest
+    /// formats shipped. Walks the project's lineage,
+    /// resolves which profile / blocks / bridges it has, and byte-copies
+    /// the missing manifests (`profile.yaml`, `templates/*`, per-block
+    /// `deps.yaml`, per-bridge `contract.yaml`) from the plugin tree's
+    /// HEAD. Lineage `content_hash` is updated to the new rolled-up hash;
+    /// `origin` / `origin_version` / `inlined_at` stay frozen — they
+    /// record the original inline, not the migration. No-op when the
+    /// manifests are already present (true byte-stable idempotency).
+    /// Backward-compat aid; deletion gated on the future `default-fallback
+    /// removal` trigger.
+    Migrate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Print the per-unit migration plan + total file-write count
+        /// without touching disk.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Observational drift report — classify each inlined file as
+    /// clean / plugin-moved / locally-edited / both. Pure reporter.
+    Drift {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Reports over the validated spec. `report coverage` emits the
+    /// requirements → modules matrix that the retired `gen --skeleton`
+    /// HANDOFF.md used to carry as one of its sections; the subcommand
+    /// reads `requirements.toml` + `specs/modules/*.toml` and emits a
+    /// machine-readable matrix without source-tree emission.
+    Report {
+        #[command(subcommand)]
+        action: ReportAction,
+    },
+    /// Spec→codegen handoff. Orchestrated by the `/spec-gen` skill, which
+    /// reads the shared preamble once (`--preamble`) then each module's
+    /// tail (`--module <N> --tail`) and emits source; the analyzer
+    /// assembles the codegen prompt deterministically. `--module <N>`
+    /// alone still writes the whole single-module prompt (back-compat).
+    Gen {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module(s) to assemble for. Repeatable. With `--preamble`, an
+        /// empty list unions over every module under `specs/modules/`;
+        /// otherwise the named set is unioned. With `--tail` (or default
+        /// whole-prompt mode), exactly one module is required. Default
+        /// whole-prompt mode writes the assembled codegen prompt for one
+        /// module to stdout (equivalent to `prompt --module <Name>`, plus
+        /// the codegen gate).
+        #[arg(long)]
+        module: Vec<String>,
+        /// F-006: emit only the shared, project-invariant preamble
+        /// (Tier 1 conventions + architecture; Tier 2 block/bridge prose
+        /// unioned across `--module` or all modules). Gate-free — pure
+        /// shared prose. `/spec-gen` emits this once per run, then loops
+        /// `--module <N> --tail` per module. Mutually exclusive with `--tail`.
+        #[arg(long, conflicts_with = "tail")]
+        preamble: bool,
+        /// F-006: emit only the per-module tail (Tier 3: decisions/OQ,
+        /// project context, test items, module spec) for the single
+        /// `--module`. Enforces the codegen gate. Mutually exclusive with
+        /// `--preamble`.
+        #[arg(long)]
+        tail: bool,
+    },
+    /// Record SHA-256 hashes of generated files in
+    /// `specs/specdev/gen-lineage.toml`. Invoked by the `/spec-gen`
+    /// skill after emission — the analyzer cannot know which files the
+    /// codegen prose prescribed, so the skill passes them explicitly.
+    /// Re-recording a path replaces its entry. `report gen-drift`
+    /// classifies recorded files later.
+    GenRecord {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module the files were generated for. Omit for project-level
+        /// emissions (Cargo.toml).
+        #[arg(long)]
+        module: Option<String>,
+        /// Emitted file paths (absolute, or relative to cwd). Each must
+        /// resolve inside the project root.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ReportAction {
+    /// Emit the requirements → modules coverage matrix. Reads
+    /// `specs/requirements.toml` for requirement ids and walks
+    /// `specs/modules/*.toml` for module-level and items[]-level
+    /// `satisfies` entries. Output: structured matrix plus an
+    /// `orphans` list of unsatisfied requirements. Default format
+    /// is YAML; `--format markdown` opts into a human-readable
+    /// table.
+    Coverage {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Output format: `yaml` (default) or `markdown` / `md`.
+        #[arg(long, default_value = "yaml")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Classify every file recorded in `gen-lineage.toml` as clean
+    /// (bytes match the recorded hash), edited (generated then
+    /// hand-edited), or missing (recorded but gone). Pure reporter;
+    /// hash-level only — it detects THAT a file changed, not what.
+    /// Exit 0 when clean, 1 on drift, 2 on hard error.
+    GenDrift {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+    /// Classify every module under `specs/modules/` for incremental
+    /// `/spec-gen --all`: `new` (no lineage), `unchanged` (clean output +
+    /// matching input hash → skip), `stale` (clean output, inputs moved →
+    /// regenerate), `edited` (output hand-edited → skip + warn), or
+    /// `missing` (output gone → regenerate). Deterministic; no judgment.
+    /// YAML to stdout. Exit 0 on success, 2 on hard error.
+    GenPlan {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ItemsAction {
+    /// Stage 1 — deterministic detection. Walks `specs/modules/<module>.toml`
+    /// items[] and the resolved source file, joins on `(kind, name)`,
+    /// and emits a structured drift report (in_spec_only / in_source_only /
+    /// both with optional signature_drift). No AI involvement. YAML to
+    /// stdout. Exit 0 when clean, 1 on drift, 2 on hard error.
+    Diff {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+    },
+    /// Stage 2 scaffold — wraps `items diff` in a structured proposal
+    /// document persisted under `specs/specdev/upstream/items-sync/`.
+    /// The analyzer writes the deterministic skeleton (drift entries +
+    /// source snippets + spec mappings); rationale + action fields are
+    /// filled by the `/spec-sync-items` skill (or a human) and then
+    /// signed off via `approved: true` for `items apply` to consume.
+    /// No AI involvement at this stage either — the analyzer never
+    /// shells to a model.
+    Propose {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+        /// Override the output path. Defaults to
+        /// `<specdev_root>/upstream/items-sync/<module>.proposal.yaml`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Overwrite an existing proposal file. Without this flag,
+        /// `items propose` refuses to clobber rationales the user (or
+        /// Claude) has already written.
+        #[arg(long)]
+        clobber: bool,
+    },
+    /// Stage 3 — apply an approved proposal to `specs/modules/<module>.toml`.
+    /// Validates the approval gate (top-level `approved: true` plus
+    /// `approver` + `approved_at`); refuses any entry still on
+    /// `pending`. Mutates the spec via `toml_edit` so comments and
+    /// formatting outside `[[items]]` round-trip. On success, the
+    /// proposal file is renamed to `<module>.applied.yaml` (with
+    /// `status: applied`) and remains under
+    /// `specs/specdev/upstream/items-sync/` as the audit trail.
+    Apply {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module name (matches `specs/modules/<module>.toml`).
+        #[arg(long)]
+        module: String,
+        /// Override the proposal path. Defaults to
+        /// `<specdev_root>/upstream/items-sync/<module>.proposal.yaml`.
+        #[arg(long)]
+        proposal: Option<PathBuf>,
+    },
+}
+
+pub fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
+/// Parse the process arguments and run the analyzer CLI end-to-end.
+/// This is the analyzer bin's entry point and the standalone-run path.
+pub fn run() -> ExitCode {
+    init_tracing();
+    let cli = Cli::parse();
+    dispatch(cli.command, cli.globals)
+}
+
+/// Dispatch an already-parsed [`Command`] with its [`GlobalArgs`]. Downstream
+/// binaries that compose the analyzer's subcommands call this directly after
+/// routing their own subcommands.
+pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
+    let spec_path = globals.spec_path;
+    let plugin_flag = globals.plugin_root;
+    match command {
+        Command::Validate {
+            project,
+            strict,
+            no_color,
+            quiet,
+            scope_for,
+        } => run_validate(
+            project,
+            spec_path.as_deref(),
+            strict,
+            no_color,
+            quiet,
+            scope_for,
+        ),
+        Command::Extract { project, output } => run_extract(project, spec_path.as_deref(), output),
+        Command::ExtractItems { project, module } => {
+            run_extract_items(project, spec_path.as_deref(), module.as_deref())
+        }
+        Command::Reverse { project, into } => {
+            run_reverse(project, spec_path.as_deref(), into.as_deref())
+        }
+        Command::Reduce { project, output } => run_reduce(project, spec_path.as_deref(), output),
+        Command::Resolve { project } => run_resolve(project, spec_path.as_deref()),
+        Command::Bootstrap {
+            profile,
+            language,
+            name,
+            target,
+        } => run_bootstrap(plugin_flag, profile, language, name, target),
+        Command::Inline {
+            project,
+            block,
+            merge,
+        } => run_inline(project, spec_path.as_deref(), plugin_flag, block, merge),
+        Command::InlineBridge {
+            project,
+            bridge,
+            merge,
+        } => run_inline_bridge(project, spec_path.as_deref(), plugin_flag, bridge, merge),
+        Command::PluginLint { plugin } => run_plugin_lint(plugin),
+        Command::Prompt { project, module } => run_prompt(project, spec_path.as_deref(), module),
+        Command::CargoToml { project, output } => {
+            run_cargo_toml(project, spec_path.as_deref(), output)
+        }
+        Command::Context {
+            project,
+            module,
+            output,
+        } => run_context(project, spec_path.as_deref(), module, output),
+        Command::Migrate { project, dry_run } => {
+            run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run)
+        }
+        Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+        Command::Gen {
+            project,
+            module,
+            preamble,
+            tail,
+        } => run_gen(project, spec_path.as_deref(), module, preamble, tail),
+        Command::GenRecord {
+            project,
+            module,
+            files,
+        } => run_gen_record(project, spec_path.as_deref(), module, files),
+        Command::Report { action } => match action {
+            ReportAction::Coverage {
+                project,
+                format,
+                output,
+            } => run_report_coverage(project, spec_path.as_deref(), &format, output),
+            ReportAction::GenDrift { project } => {
+                run_report_gen_drift(project, spec_path.as_deref())
+            }
+            ReportAction::GenPlan { project } => {
+                run_report_gen_plan(project, spec_path.as_deref())
+            }
+        },
+        Command::Items { action } => match action {
+            ItemsAction::Diff { project, module } => {
+                run_items_diff(project, spec_path.as_deref(), module)
+            }
+            ItemsAction::Propose {
+                project,
+                module,
+                output,
+                clobber,
+            } => run_items_propose(project, spec_path.as_deref(), module, output, clobber),
+            ItemsAction::Apply {
+                project,
+                module,
+                proposal,
+            } => run_items_apply(project, spec_path.as_deref(), module, proposal),
+        },
+    }
+}
+
+fn run_cargo_toml(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match cargo_toml_mod::render(&layout) {
+        Ok(rendered) => {
+            for w in &rendered.warnings {
+                eprintln!("warning: {w}");
+            }
+            match output {
+                Some(path) => match std::fs::write(&path, &rendered.text) {
+                    Ok(()) => {
+                        eprintln!("wrote Cargo.toml to {}", path.display());
+                        // F-016: pair `[[bin]]` rows with their stub source
+                        // files. Skip writes when the path already exists —
+                        // hand-edited bins are never overwritten.
+                        let project_root = layout.project_root.as_path();
+                        for (rel, body) in &rendered.extra_files {
+                            let dst = project_root.join(rel);
+                            if dst.exists() {
+                                continue;
+                            }
+                            if let Some(parent) = dst.parent() {
+                                if let Err(e) = std::fs::create_dir_all(parent) {
+                                    eprintln!(
+                                        "failed to create {}: {e}",
+                                        parent.display()
+                                    );
+                                    return ExitCode::from(2);
+                                }
+                            }
+                            if let Err(e) = std::fs::write(&dst, body) {
+                                eprintln!("failed to write {}: {e}", dst.display());
+                                return ExitCode::from(2);
+                            }
+                            eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("failed to write {}: {e}", path.display());
+                        ExitCode::from(2)
+                    }
+                },
+                None => {
+                    print!("{}", rendered.text);
+                    ExitCode::SUCCESS
+                }
+            }
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_prompt(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match prompt::assemble_module_prompt(&layout, &module) {
+        Ok(s) => {
+            print!("{s}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_validate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    strict: bool,
+    no_color: bool,
+    quiet: bool,
+    scope_for: Option<String>,
+) -> ExitCode {
+    // Discover layout once so we can both run the pipeline and produce
+    // the positive-confirmation summary against the same project state.
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let filter = match scope_for {
+        None => None,
+        Some(s) => match s.parse::<validate::Capability>() {
+            Ok(cap) => Some(cap),
+            Err(e) => {
+                eprintln!("error: --for: {e}");
+                return ExitCode::from(2);
+            }
+        },
+    };
+    let report = match validate::run_for(&layout, filter) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let (errors, warnings, infos) = report.counts();
+    let rendered = if no_color {
+        report.render_plain_filtered(quiet)
+    } else {
+        report.render_colored_filtered(quiet)
+    };
+    print!("{rendered}");
+    // Positive-confirmation tail (F-005): surface per-category counts so
+    // the user can sanity-check that newly authored files were picked
+    // up, even when `validate` finds nothing wrong. Printed before the
+    // findings count so the eye lands on it next to the summary block.
+    let summary = validate::summarize(&layout);
+    eprintln!("{}", summary.render());
+    eprintln!("{errors} error(s), {warnings} warning(s), {infos} info(s)");
+    let strict_warns = strict && warnings > 0;
+    if errors > 0 || strict_warns {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_extract(project: PathBuf, spec_path: Option<&std::path::Path>, output: PathBuf) -> ExitCode {
+    let result = match extract::run_project(&project, spec_path) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match extract::write(&result, &output) {
+        Ok(written) => {
+            eprintln!("wrote {} file(s) to {}", written.len(), output.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_extract_items(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module_filter: Option<&str>,
+) -> ExitCode {
+    use specdev_analyzer::items::{extract, source_map, ExtractionReport, ModuleItems};
+    use specdev_analyzer::lang;
+
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    let language = &layout.spec.project.language;
+    let adapter = match lang::adapter_for(language) {
+        Some(a) => a,
+        None => {
+            eprintln!(
+                "[ITEMS-001] no language adapter for `{language}`; supported: rust. \
+                 v1 ships Rust only; C support is planned."
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let source_root = layout.spec.paths.source.as_str();
+
+    let mut modules_out: Vec<ModuleItems> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    let inventory = layout.enumerate();
+    for module_path in &inventory.modules {
+        // Module filename stem is the spec module name (inventory
+        // convention: `specs/modules/<Name>.toml`).
+        let name: String = match module_path.file_stem().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if let Some(f) = module_filter {
+            if name != f {
+                continue;
+            }
+        }
+
+        let source_file =
+            source_map::resolve_source_path(&name, adapter.as_ref(), &project, source_root);
+        let items = match &source_file {
+            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref()) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{name}: {e}"));
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
+        };
+
+        modules_out.push(ModuleItems {
+            module_name: name,
+            source_file,
+            items,
+        });
+    }
+
+    let report = ExtractionReport {
+        modules: modules_out,
+    };
+
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[ITEMS-002] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("[ITEMS-003] {e}");
+        }
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_reverse(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    into: Option<&str>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    // Enumerate inlined block names: each immediate subdirectory of
+    // <specs_dir>/schemas/inlined/blocks/ whose name maps to a block.
+    let mut inlined_blocks: Vec<String> = Vec::new();
+    if layout.inlined_blocks_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&layout.inlined_blocks_dir) {
+            for e in entries.flatten() {
+                if let Ok(ft) = e.file_type() {
+                    if ft.is_dir() {
+                        if let Some(name) = e.file_name().to_str() {
+                            inlined_blocks.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    inlined_blocks.sort();
+
+    // Parse --into.
+    let into_blocks: Vec<String> = into
+        .map(|s| {
+            s.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate --into entries against inlined blocks.
+    let mut errors: Vec<String> = Vec::new();
+    for b in &into_blocks {
+        if !inlined_blocks.contains(b) {
+            errors.push(format!(
+                "[REVERSE-001] --into block `{b}` is not inlined; \
+                 inlined blocks: {:?}. Run `specdev-analyzer inline {b}` \
+                 first, or remove the entry.",
+                inlined_blocks
+            ));
+        }
+    }
+
+    // Pre-flight gating:
+    // - 0 inlined blocks AND no --into → fatal: caller can't reverse.
+    // - 0 inlined blocks AND --into present → also fatal (--into validation already errored).
+    // - 1 inlined block, no --into → fine; coarse warning skipped.
+    // - 2+ inlined blocks, no --into → coarse ambiguity warning.
+    let mut warnings: Vec<String> = Vec::new();
+    if inlined_blocks.is_empty() && into_blocks.is_empty() {
+        errors.push(
+            "[REVERSE-002] no blocks inlined and no --into specified; \
+             reverse engineering requires a chosen vocabulary. Either run \
+             `specdev-analyzer inline <block>` first, or pass --into \
+             <block,...> naming the blocks whose vocabulary should govern \
+             the output."
+                .to_string(),
+        );
+    } else if inlined_blocks.len() >= 2 && into_blocks.is_empty() {
+        warnings.push(format!(
+            "[REVERSE-003] {} blocks inlined ({:?}) and --into not \
+             specified; source constructs may map ambiguously across \
+             blocks. Pass --into <block,...> to scope, or accept that the \
+             /spec-reverse skill will use READMEs from all inlined blocks \
+             as prompt context.",
+            inlined_blocks.len(),
+            inlined_blocks
+        ));
+    }
+
+    // Effective vocabulary: --into if specified, else all inlined.
+    let vocab: Vec<String> = if !into_blocks.is_empty() {
+        into_blocks
+    } else {
+        inlined_blocks.clone()
+    };
+
+    #[derive(serde::Serialize)]
+    struct ReverseReport<'a> {
+        inlined_blocks: &'a [String],
+        vocabulary: &'a [String],
+        warnings: &'a [String],
+        errors: &'a [String],
+    }
+    let report = ReverseReport {
+        inlined_blocks: &inlined_blocks,
+        vocabulary: &vocab,
+        warnings: &warnings,
+        errors: &errors,
+    };
+
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[REVERSE-099] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("{e}");
+        }
+        return ExitCode::from(1);
+    }
+    if !warnings.is_empty() {
+        for w in &warnings {
+            eprintln!("{w}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_items_diff(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+) -> ExitCode {
+    use specdev_analyzer::items::sync;
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match sync::diff_module(&layout, &module) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let clean = report.is_clean();
+    match serde_yaml::to_string(&report) {
+        Ok(yaml) => print!("{yaml}"),
+        Err(e) => {
+            eprintln!("[ITEM-103] serialization error: {e}");
+            return ExitCode::from(2);
+        }
+    }
+    if clean {
+        ExitCode::SUCCESS
+    } else {
+        // Drift is informational, not an error — exit 1 so the caller
+        // (skill or shell pipeline) can branch on it without parsing
+        // YAML, but keep stderr empty so the structured output remains
+        // the load-bearing signal.
+        ExitCode::from(1)
+    }
+}
+
+fn run_items_propose(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    output: Option<PathBuf>,
+    clobber: bool,
+) -> ExitCode {
+    use specdev_analyzer::items::propose;
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let doc = match propose::build_proposal(&layout, &module) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e:#}");
+            return ExitCode::from(2);
+        }
+    };
+    let path = output.unwrap_or_else(|| propose::proposal_path(&layout, &module));
+    if let Err(e) = propose::write_proposal(&doc, &path, clobber) {
+        eprintln!("{e:#}");
+        return ExitCode::from(1);
+    }
+    let needs = doc
+        .entries
+        .iter()
+        .filter(|e| e.recommendation.action == "pending")
+        .count();
+    eprintln!(
+        "wrote proposal to {} (status={}, {} entr{} pending rationale)",
+        path.display(),
+        doc.status,
+        needs,
+        if needs == 1 { "y" } else { "ies" }
+    );
+    if doc.entries.is_empty() {
+        // No drift → exit 0; the file still exists so the skill has a
+        // stable artifact to read for "yes I checked, nothing to do."
+        ExitCode::SUCCESS
+    } else {
+        // Drift present → exit 1 so the skill can branch without
+        // re-parsing the YAML.
+        ExitCode::from(1)
+    }
+}
+
+fn run_items_apply(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    proposal: Option<PathBuf>,
+) -> ExitCode {
+    use specdev_analyzer::items::{apply, propose};
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let proposal_path = proposal.unwrap_or_else(|| propose::proposal_path(&layout, &module));
+    if !proposal_path.exists() {
+        eprintln!(
+            "[ITEM-310] proposal not found at {}; run `specdev-analyzer items propose --module {}` first",
+            proposal_path.display(),
+            module
+        );
+        return ExitCode::from(2);
+    }
+    match apply::apply_proposal(&layout, &module, &proposal_path) {
+        Ok(rep) => {
+            print!("{}", rep.render());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_reduce(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let (graph, _report) = match reduction::run_project(&project, spec_path) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let yaml = match serde_yaml::to_string(&graph) {
+        Ok(y) => y,
+        Err(e) => {
+            eprintln!("failed to serialize graph: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match output {
+        Some(path) => match std::fs::write(&path, yaml) {
+            Ok(()) => {
+                eprintln!("wrote graph to {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => {
+            print!("{yaml}");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_resolve(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    match resolve::run(&project, spec_path) {
+        Ok(yaml) => {
+            print!("{yaml}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_bootstrap(
+    plugin_flag: Option<PathBuf>,
+    profile: String,
+    language: String,
+    name: String,
+    target: PathBuf,
+) -> ExitCode {
+    // Bootstrap has no spec.toml yet (it's writing one), so the
+    // [paths].plugin_root step in the resolution chain is bypassed.
+    // The flag and env vars still apply.
+    let inputs = PluginRootInputs {
+        flag: plugin_flag,
+    };
+    let plugin = match plugin_root::resolve_for_bootstrap(&inputs) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let bootstrap_inputs = BootstrapInputs {
+        profile,
+        language,
+        project_name: name,
+        target_dir: target,
+    };
+    match bootstrap::run_bootstrap(&plugin, &bootstrap_inputs) {
+        Ok(()) => {
+            eprintln!(
+                "bootstrapped {} from profile {} ({}) at {}",
+                bootstrap_inputs.project_name,
+                bootstrap_inputs.profile,
+                bootstrap_inputs.language,
+                bootstrap_inputs.target_dir.display(),
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn resolve_plugin_for_project(
+    layout: &LayoutContext,
+    flag: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
+    let inputs = PluginRootInputs { flag };
+    plugin_root::resolve(&inputs, &layout.spec_toml_path, &layout.spec)
+}
+
+fn run_inline(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    block: String,
+    merge_flag: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let plugin = match resolve_plugin_for_project(&layout, plugin_flag) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    if merge_flag {
+        match merge::run_merge_block(&layout, &plugin, &block) {
+            Ok(out) => {
+                eprintln!(
+                    "merged block {} (advanced to {}); re-run `specdev validate` before committing",
+                    out.unit_name,
+                    out.advanced_to_version.as_deref().unwrap_or("unknown"),
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        match inline::run_inline_block(&layout, &plugin, &block) {
+            Ok(()) => {
+                eprintln!("inlined block {block}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        }
+    }
+}
+
+fn run_inline_bridge(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    bridge: String,
+    merge_flag: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let plugin = match resolve_plugin_for_project(&layout, plugin_flag) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    if merge_flag {
+        match merge::run_merge_bridge(&layout, &plugin, &bridge) {
+            Ok(out) => {
+                eprintln!(
+                    "merged bridge {} (advanced to {}); re-run `specdev validate` before committing",
+                    out.unit_name,
+                    out.advanced_to_version.as_deref().unwrap_or("unknown"),
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        match inline::run_inline_bridge(&layout, &plugin, &bridge) {
+            Ok(()) => {
+                eprintln!("inlined bridge {bridge}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        }
+    }
+}
+
+fn run_context(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: String,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match context_mod::run_context(&layout, &module) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(e) = context_mod::emit(&report, output.as_ref()) {
+        report_error(&e);
+        return ExitCode::from(2);
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_migrate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    dry_run: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let plugin = match resolve_plugin_for_project(&layout, plugin_flag) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match migrate::run_migrate(&layout, &plugin, dry_run) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let prefix = if dry_run { "would migrate" } else { "migrated" };
+    let skip_phrase = "already migrated (no-op)";
+
+    if !report.profile_files_written.is_empty() {
+        for rel in &report.profile_files_written {
+            eprintln!("profile shell: {prefix} {}", rel.display());
+        }
+    } else if report.profile_skipped {
+        eprintln!("profile shell: {skip_phrase}");
+    }
+
+    for m in &report.migrated {
+        let kind_label = match m.kind {
+            specdev_analyzer::upstream::UnitKind::Block => "block",
+            specdev_analyzer::upstream::UnitKind::Bridge => "bridge",
+        };
+        let mut detail = format!(
+            "{kind_label} {}: {prefix} (hash {}…→{}…; +{} file)",
+            m.name,
+            short_hash(&m.before_hash),
+            short_hash(&m.after_hash),
+            m.files_written.len(),
+        );
+        if m.files_written.len() != 1 {
+            detail = detail.replace("file)", "files)");
+        }
+        eprintln!("{detail}");
+        for f in &m.files_written {
+            eprintln!("  - {}", f.display());
+        }
+    }
+    for s in &report.skipped {
+        let kind_label = match s.kind {
+            specdev_analyzer::upstream::UnitKind::Block => "block",
+            specdev_analyzer::upstream::UnitKind::Bridge => "bridge",
+        };
+        eprintln!("{kind_label} {}: {skip_phrase}", s.name);
+    }
+
+    let total = report.total_files_written();
+    if !report.missing_in_plugin.is_empty() {
+        for line in &report.missing_in_plugin {
+            eprintln!("{line}");
+        }
+        let skipped = report.skipped.len();
+        eprintln!(
+            "migrate: {} file(s) {} ({} skipped, {} missing in plugin tree)",
+            total,
+            if dry_run { "planned" } else { "written" },
+            skipped,
+            report.missing_in_plugin.len(),
+        );
+        return ExitCode::from(1);
+    }
+
+    if total == 0 && report.migrated.is_empty() {
+        eprintln!("migrate: no-op (manifests already present)");
+    } else {
+        eprintln!(
+            "migrate: {} file(s) {}",
+            total,
+            if dry_run { "planned" } else { "written" }
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn short_hash(h: &str) -> String {
+    // Trim a `sha256:` prefix and clip to 8 hex chars when possible. Hash
+    // strings are operator-readable; `sha256:abcdef…` prefix is noise.
+    let stripped = h.strip_prefix("sha256:").unwrap_or(h);
+    let take = stripped.chars().take(8).collect::<String>();
+    if take.is_empty() {
+        "<empty>".to_string()
+    } else {
+        take
+    }
+}
+
+fn run_drift(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let plugin = match resolve_plugin_for_project(&layout, plugin_flag) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match drift::run_drift(&layout, &plugin) {
+        Ok(report) => {
+            match report.to_yaml() {
+                Ok(y) => print!("{y}"),
+                Err(e) => {
+                    eprintln!("failed to render drift report: {e}");
+                    return ExitCode::from(2);
+                }
+            }
+            if !report.invariants.is_empty() {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `/spec-gen` orchestration entry point. The analyzer assembles the
+/// codegen prompt deterministically; Claude consumes it and emits
+/// source. With `--module <Name>`, writes the assembled prompt to
+/// stdout (equivalent to `prompt --module <Name>`); without it, prints
+/// a routing hint pointing at the right invocation.
+fn run_gen(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: Vec<String>,
+    preamble: bool,
+    tail: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    // F-006 `--preamble`: shared Tier 1 + Tier 2 prose, gate-free. An empty
+    // `--module` set unions over every module under specs/modules/; a named
+    // set scopes the union (the single-module and fan-out-subset cases).
+    if preamble {
+        let modules = if module.is_empty() {
+            match specdev_analyzer::prompt::list_module_names(&layout) {
+                Ok(m) => m,
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
+        } else {
+            module
+        };
+        return match specdev_analyzer::prompt::assemble_preamble(&layout, &modules) {
+            Ok(s) => {
+                print!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    // F-006 `--tail`: per-module Tier 3, gate enforced. Exactly one module.
+    if tail {
+        let name = match module.as_slice() {
+            [one] => one.clone(),
+            _ => {
+                eprintln!(
+                    "`gen --tail` requires exactly one `--module <Name>`; got {}.",
+                    module.len()
+                );
+                return ExitCode::from(2);
+            }
+        };
+        match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
+            Ok(Some(refusal)) => {
+                eprint!("{}", refusal.message);
+                return ExitCode::from(1);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
+            }
+        }
+        return match specdev_analyzer::prompt::assemble_tail(&layout, &name) {
+            Ok(s) => {
+                print!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    // Default whole-prompt mode (back-compat single-module). Requires
+    // exactly one module. The codegen gate refuses if the module is
+    // reachable through any open OpenQuestion (validate also surfaces this
+    // as a `codegen_unblocked` warning, but gen is the hard refusal).
+    match module.as_slice() {
+        [name] => {
+            let name = name.clone();
+            match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
+                Ok(Some(refusal)) => {
+                    eprint!("{}", refusal.message);
+                    return ExitCode::from(1);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
+            match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
+                Ok(s) => {
+                    print!("{s}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    report_error(&e);
+                    ExitCode::from(1)
+                }
+            }
+        }
+        [] => {
+            eprintln!(
+                "codegen is orchestrated by the `/spec-gen` skill — the analyzer assembles\n\
+                 the codegen prompt deterministically; Claude emits source. Pass `--module\n\
+                 <Name>` for one module's whole prompt, `--preamble` for the shared preamble\n\
+                 once, or `--module <Name> --tail` for one module's tail. Or run\n\
+                 `specdev-analyzer prompt --module <Name>` directly and pipe to /spec-gen.",
+            );
+            ExitCode::from(2)
+        }
+        _ => {
+            eprintln!(
+                "`gen --module` (whole-prompt mode) takes exactly one module; got {}. \
+                 Use `--preamble` to union multiple modules into the shared preamble.",
+                module.len()
+            );
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_gen_record(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: Option<String>,
+    files: Vec<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    match specdev_analyzer::gen_lineage::record_files(
+        &layout,
+        module.as_deref(),
+        &files,
+        &generated_at,
+    ) {
+        Ok(recorded) => {
+            for path in &recorded {
+                println!("recorded {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_gen_drift(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match specdev_analyzer::gen_lineage::run_gen_drift(&layout) {
+        Ok(report) => match report.to_yaml() {
+            Ok(yaml) => {
+                print!("{yaml}");
+                if report.is_clean() {
+                    ExitCode::SUCCESS
+                } else {
+                    // Drift present → exit 1 so the skill can branch
+                    // without parsing the YAML.
+                    ExitCode::from(1)
+                }
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        },
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_gen_plan(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // gen-plan is multi-valued (one verdict per module); the skill parses
+    // the YAML to drive skip/regen. Exit reflects success/failure only, not
+    // the plan's contents (cf. gen-drift's 0/1 clean/drift split).
+    match specdev_analyzer::gen_lineage::run_gen_plan(&layout) {
+        Ok(report) => match report.to_yaml() {
+            Ok(yaml) => {
+                print!("{yaml}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        },
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_coverage(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    format: &str,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let format = match specdev_analyzer::coverage::CoverageFormat::parse(format) {
+        Ok(f) => f,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match specdev_analyzer::coverage::build(&layout) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let body = match format {
+        specdev_analyzer::coverage::CoverageFormat::Yaml => {
+            match specdev_analyzer::coverage::render_yaml(&report) {
+                Ok(s) => s,
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        specdev_analyzer::coverage::CoverageFormat::Markdown => {
+            specdev_analyzer::coverage::render_markdown(&report)
+        }
+    };
+    match output {
+        Some(path) => match std::fs::write(&path, &body) {
+            Ok(()) => {
+                eprintln!("wrote coverage report to {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => {
+            print!("{body}");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
+    let bridge_offenders = match inline::lint_plugin_bridges(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let block_offenders = match inline::lint_plugin_blocks(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // Reference-crate coverage + arity checks. Opt-in per unit by the presence
+    // of `reference/<lang>/reference_cases.yaml`.
+    let reference_offenders = match reference_lint::lint_reference_crates(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // Inlined codegen prose must be profile-agnostic (`PROSE-PROFILE-001`):
+    // a block/bridge `codegen/<lang>/README.md` must not name a profile.
+    let prose_offenders = match prose_lint::lint_codegen_prose_profiles(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+
+    // Bridge offenders are name-only strings (single finding code is
+    // implicit — `BRIDGE-LEX-001`); we prefix at print time.
+    for o in &bridge_offenders {
+        eprintln!("[BRIDGE-LEX-001] {o}");
+    }
+    // Block offenders are pre-prefixed with their `BLOCK-LINT-NNN` code
+    // (different convention because there are 7 block codes vs 1 bridge
+    // code — per-line code visibility matters more for blocks).
+    for o in &block_offenders {
+        eprintln!("{o}");
+    }
+    // Reference offenders carry their own `REF-*-NNN` code (like block lines).
+    for o in &reference_offenders {
+        eprintln!("{o}");
+    }
+    // Prose offenders carry their own `PROSE-PROFILE-NNN` code.
+    for o in &prose_offenders {
+        eprintln!("{o}");
+    }
+
+    let total = bridge_offenders.len()
+        + block_offenders.len()
+        + reference_offenders.len()
+        + prose_offenders.len();
+    if total == 0 {
+        eprintln!("plugin lint OK at {}", plugin.display());
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} prose)",
+            bridge_offenders.len(),
+            block_offenders.len(),
+            reference_offenders.len(),
+            prose_offenders.len()
+        );
+        ExitCode::from(1)
+    }
+}

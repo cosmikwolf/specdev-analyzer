@@ -80,6 +80,7 @@ pub mod aggregator;
 pub mod bootstrap;
 pub mod canonical;
 pub mod cargo_toml;
+pub mod cli;
 pub mod config;
 pub mod context;
 pub mod coverage;
