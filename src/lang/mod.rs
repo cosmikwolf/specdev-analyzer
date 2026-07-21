@@ -7,6 +7,7 @@
 
 pub mod c;
 pub mod cpp;
+pub mod dart;
 pub mod rust;
 
 use tree_sitter::{Language, Node};
@@ -25,6 +26,14 @@ pub trait LanguageAdapter: Send + Sync {
 
     /// Source file extension used when resolving modules to files.
     fn file_extension(&self) -> &'static str;
+
+    /// Segment separator for qualified paths in this language
+    /// (`::` for Rust/C++, `.` for Dart). Anything that splits or joins
+    /// qualified identifiers must take the separator from here rather
+    /// than assuming `::`.
+    fn path_separator(&self) -> &'static str {
+        "::"
+    }
 
     /// Tree-sitter grammar for this language.
     fn tree_sitter_language(&self) -> Language;
@@ -62,6 +71,7 @@ pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
         "rust" => Some(Box::new(rust::RustAdapter)),
         "c" => Some(Box::new(c::CAdapter)),
         "cpp" | "c++" => Some(Box::new(cpp::CppAdapter)),
+        "dart" => Some(Box::new(dart::DartAdapter)),
         _ => None,
     }
 }

@@ -3,7 +3,8 @@
 //! Two opt-in, deterministic checks over a unit's `reference/<lang>/`:
 //!
 //! - **`REF-COVERAGE-001`** — every name in `reference/<lang>/reference_cases.yaml`
-//!   has a `reference/<lang>/src/<name>.rs`. Pure `{string → file-presence}`.
+//!   has a `reference/<lang>/src/<name>.<ext>`, with `<ext>` from the language
+//!   adapter. Pure `{string → file-presence}`.
 //! - **`REF-ARITY-001`** — every generic type the unit's codegen README names is
 //!   used at the same generic arity as in the compiled reference source. The
 //!   reference-source arities are the ground truth (they type-check); only base
@@ -77,12 +78,19 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
         if !manifest.is_file() {
             continue; // opt-in: no manifest, no checks
         }
+        // Both checks need the language adapter (file extension for coverage,
+        // grammar + path separator for arity). A reference dir for a language
+        // without an adapter is skipped, matching the opt-in posture.
+        let Some(adapter) = adapter_for(&lang) else {
+            continue;
+        };
         let cases = read_cases(&manifest)
             .with_context(|| format!("reading {}", manifest.display()))?;
 
         // --- REF-COVERAGE-001: each declared case has a reference source ---
+        let ext = adapter.file_extension();
         for case in &cases {
-            let src = lang_dir.join("src").join(format!("{case}.rs"));
+            let src = lang_dir.join("src").join(format!("{case}.{ext}"));
             if !src.is_file() {
                 offenders.push(format!(
                     "{unit_name}: [REF-COVERAGE-001] reference_cases lists {case:?} \
@@ -96,7 +104,7 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
         // The wrap-parse used for prose fragments is Rust-shaped; for other
         // languages it simply yields nothing (no false flags), so the check is
         // Rust-effective today and degrades silently elsewhere.
-        if let Some(adapter) = adapter_for(&lang) {
+        {
             let ref_arity = reference_arity_map(&lang_dir, adapter.as_ref())?;
             let readme = unit.join("codegen").join(&lang).join("README.md");
             if ref_arity.is_empty() || !readme.is_file() {
@@ -172,11 +180,11 @@ fn generic_arities(src: &str, adapter: &dyn LanguageAdapter) -> Vec<(String, usi
         return Vec::new();
     };
     let mut out = Vec::new();
-    collect_generic_types(tree.root_node(), src, &mut out);
+    collect_generic_types(tree.root_node(), src, adapter.path_separator(), &mut out);
     out
 }
 
-fn collect_generic_types(node: Node, src: &str, out: &mut Vec<(String, usize)>) {
+fn collect_generic_types(node: Node, src: &str, separator: &str, out: &mut Vec<(String, usize)>) {
     // Skip generic types that parse with errors. Prose uses placeholder
     // shorthand inside generics (`Arc<Mutex<...>>`, `Arc<Atomic*>`) that is not
     // valid Rust; tree-sitter flags it, and its arity can't be trusted — so do
@@ -188,7 +196,7 @@ fn collect_generic_types(node: Node, src: &str, out: &mut Vec<(String, usize)>) 
         ) {
             if let Ok(text) = ty.utf8_text(src.as_bytes()) {
                 // terminal segment of a possibly path-scoped name
-                let base = text.rsplit("::").next().unwrap_or(text).trim();
+                let base = text.rsplit(separator).next().unwrap_or(text).trim();
                 if !base.is_empty() {
                     out.push((base.to_string(), args.named_child_count()));
                 }
@@ -197,7 +205,7 @@ fn collect_generic_types(node: Node, src: &str, out: &mut Vec<(String, usize)>) 
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_generic_types(child, src, out);
+        collect_generic_types(child, src, separator, out);
     }
 }
 
@@ -429,6 +437,74 @@ mod tests {
             "returns `Result<Uart, ConfigError>`; held in a \
              `Mutex<CriticalSectionRawMutex, Option<Foo>>`. Uses `Output<'static>`.",
         );
+        let offenders = lint_reference_crates(&root).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        assert!(offenders.is_empty(), "{offenders:?}");
+    }
+
+    /// Build a block unit with a reference dir for an arbitrary language.
+    fn write_block_lang(
+        root: &Path,
+        name: &str,
+        lang: &str,
+        cases: &[&str],
+        src_files: &[(&str, &str)],
+    ) {
+        let unit = root.join("blocks").join(name);
+        let reflang = unit.join("reference").join(lang);
+        std::fs::create_dir_all(reflang.join("src")).unwrap();
+        let list: String = cases.iter().map(|c| format!("  - {c}\n")).collect();
+        std::fs::write(
+            reflang.join("reference_cases.yaml"),
+            format!("reference_cases:\n{list}"),
+        )
+        .unwrap();
+        for (fname, body) in src_files {
+            std::fs::write(reflang.join("src").join(fname), body).unwrap();
+        }
+    }
+
+    #[test]
+    fn coverage_extension_comes_from_the_adapter_dart_green() {
+        let root = scratch();
+        write_block_lang(
+            &root,
+            "universal-ble",
+            "dart",
+            &["scan"],
+            &[("scan.dart", "class Scanner {}\n")],
+        );
+        let offenders = lint_reference_crates(&root).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        assert!(offenders.is_empty(), "{offenders:?}");
+    }
+
+    #[test]
+    fn coverage_flags_missing_dart_source_even_when_rs_present() {
+        let root = scratch();
+        // A stray `.rs` must not satisfy a dart-language case — the
+        // extension is the adapter's, not a hardcode.
+        write_block_lang(
+            &root,
+            "universal-ble",
+            "dart",
+            &["scan"],
+            &[("scan.rs", "fn scan() {}\n")],
+        );
+        let offenders = lint_reference_crates(&root).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        assert!(
+            offenders.iter().any(|o| o.contains("REF-COVERAGE-001")
+                && o.contains("\"scan\"")
+                && o.contains("scan.dart")),
+            "{offenders:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_language_reference_dir_is_skipped() {
+        let root = scratch();
+        write_block_lang(&root, "some-block", "cobol", &["case1"], &[]);
         let offenders = lint_reference_crates(&root).unwrap();
         std::fs::remove_dir_all(&root).ok();
         assert!(offenders.is_empty(), "{offenders:?}");

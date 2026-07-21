@@ -30,8 +30,11 @@ properties:
         pattern: "^[a-z][a-z0-9_-]*$"
       language:
         type: string
-        description: Target language for codegen. Widens in Phase 9 when C lands.
-        enum: [rust, c]
+        description: |
+          Target language for codegen. Must stay in lockstep with the
+          profile schema's `language` enum — a language is admitted to
+          both enums in the same change, alongside its adapter.
+        enum: [rust, c, cpp, dart]
       edition:
         type: string
         description: |
