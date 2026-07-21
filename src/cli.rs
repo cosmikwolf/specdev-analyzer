@@ -727,8 +727,8 @@ fn run_extract_items(
         Some(a) => a,
         None => {
             eprintln!(
-                "[ITEMS-001] no language adapter for `{language}`; supported: rust. \
-                 v1 ships Rust only; C support is planned."
+                "[ITEMS-001] no language adapter for `{language}`; the spec's \
+                 `project.language` must name a language with a tree-sitter adapter."
             );
             return ExitCode::from(2);
         }

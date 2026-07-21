@@ -21,9 +21,12 @@ properties:
 
   language:
     description: |
-      Target language. References the `languages/<lang>/` tier.
+      Target language. References the `languages/<lang>/` tier. Must stay
+      in lockstep with the spec schema's `project.language` enum — a
+      language is admitted to both enums in the same change, alongside
+      its adapter.
     type: string
-    enum: [rust, c, cpp, python]
+    enum: [rust, c, cpp, dart]
 
   cargo_toml:
     description: |
