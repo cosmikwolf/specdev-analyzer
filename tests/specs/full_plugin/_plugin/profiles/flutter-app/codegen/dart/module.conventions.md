@@ -326,3 +326,11 @@ modify, or record files in the externally-owned set — platform-side
 channel handlers, launcher icons, and manifest permissions are authored
 in the platform dirs by hand (or by their own tooling) and referenced
 from spec prose only.
+
+One scaffold file is neither gen-owned nor kept: **delete
+`test/widget_test.dart` after running `flutter create`**. It is the
+scaffold's template test and references template symbols (`MyApp`) that
+don't exist in a spec-generated app, so it breaks both `flutter
+analyze` and `flutter test`; the spec's own test items supersede it.
+(`flutter create` on an existing project fills in missing files only —
+it does not touch the gen-owned set.)
