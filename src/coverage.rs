@@ -157,6 +157,9 @@ fn load_modules(layout: &LayoutContext) -> Result<Vec<ModuleView>> {
         module_paths.sort();
     }
 
+    // Loaded once; only required for modules that actually declare items[]
+    // (parse_spec_items surfaces the load error per-module in that case).
+    let kind_vocab = crate::items::load_item_kinds(layout);
     let mut modules: Vec<ModuleView> = Vec::with_capacity(module_paths.len());
     for path in &module_paths {
         let text = std::fs::read_to_string(path)
@@ -174,7 +177,7 @@ fn load_modules(layout: &LayoutContext) -> Result<Vec<ModuleView>> {
             })?
             .to_string();
         let label = path.display().to_string();
-        let items = parse_spec_items(&value, &label)?;
+        let items = parse_spec_items(&value, &label, &kind_vocab)?;
         let satisfies = value
             .get("satisfies")
             .and_then(|v| v.as_array())

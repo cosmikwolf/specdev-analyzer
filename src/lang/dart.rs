@@ -7,6 +7,7 @@ use super::{LanguageAdapter, ParsedParameter};
 pub struct DartAdapter;
 
 const QUERY: &str = include_str!("../../../specdev/languages/dart/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/dart/items.scm");
 
 impl LanguageAdapter for DartAdapter {
     fn name(&self) -> &'static str {
@@ -27,6 +28,18 @@ impl LanguageAdapter for DartAdapter {
 
     fn embedded_query(&self) -> &'static str {
         QUERY
+    }
+
+    fn items_query(&self) -> Option<&'static str> {
+        Some(ITEMS_QUERY)
+    }
+
+    fn item_is_public_name(&self, name: &str) -> bool {
+        // Dart privacy is lexical: a `_`-prefixed identifier is
+        // library-private. Qualified names (`Device.connect`) are private
+        // when ANY segment is — a public member of a private class is
+        // not reachable API.
+        name.split('.').all(|seg| !seg.starts_with('_'))
     }
 
     fn parameter_node_kind(&self) -> &'static str {

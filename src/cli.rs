@@ -82,7 +82,7 @@ pub enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Extract structured items (top-level Rust constructs) from each module's
+    /// Extract structured items (top-level language constructs) from each module's
     /// source file. Output is the substrate the items[] sync diffs run
     /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
     /// skill.

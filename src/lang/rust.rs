@@ -7,6 +7,7 @@ use super::{LanguageAdapter, ParsedParameter};
 pub struct RustAdapter;
 
 const QUERY: &str = include_str!("../../../specdev/languages/rust/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/rust/items.scm");
 
 impl LanguageAdapter for RustAdapter {
     fn name(&self) -> &'static str {
@@ -23,6 +24,24 @@ impl LanguageAdapter for RustAdapter {
 
     fn embedded_query(&self) -> &'static str {
         QUERY
+    }
+
+    fn items_query(&self) -> Option<&'static str> {
+        Some(ITEMS_QUERY)
+    }
+
+    fn item_identity_key(&self, kind: &str, name: &str) -> String {
+        // Trait-impl names carry generics and path qualifiers the author
+        // shouldn't have to track; normalize them out of the join key.
+        if kind == "impl" {
+            crate::items::sync::normalize_impl_name(name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn is_test_function(&self, item: &crate::items::ExtractedItem) -> bool {
+        item.kind == "fn" && item.attributes.iter().any(|a| a.contains("test"))
     }
 
     fn parameter_node_kind(&self) -> &'static str {

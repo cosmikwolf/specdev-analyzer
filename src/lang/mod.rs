@@ -43,6 +43,44 @@ pub trait LanguageAdapter: Send + Sync {
     /// by supplying their own query via `queries_dir`.
     fn embedded_query(&self) -> &'static str;
 
+    /// The built-in `items.scm` query source for `extract-items`, if the
+    /// language tier ships one. The item-kind vocabulary itself is data —
+    /// loaded at runtime from the project's inlined
+    /// `languages/<lang>/items.schema.yaml` — and the query's capture
+    /// prefixes must use the same kind strings (`<kind>.def` /
+    /// `<kind>.name`, plus `inherent_<kind>.*` + `inherent.host` for
+    /// qualified members).
+    fn items_query(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Comparable identity for joining a spec item against an extracted
+    /// source item. Default: the name verbatim. Languages whose
+    /// synthesized names carry purely-syntactic variance an author
+    /// shouldn't have to track (Rust trait-impl generics and path
+    /// qualifiers) override this to normalize the join key without
+    /// mutating the displayed name.
+    fn item_identity_key(&self, _kind: &str, name: &str) -> String {
+        name.to_string()
+    }
+
+    /// Whether an extracted item name is public contract surface under
+    /// this language's naming rules. Languages with lexical privacy
+    /// (Dart's `_` prefix) override this; languages with visibility
+    /// modifiers express the filter through `.vis` captures in their
+    /// items query instead.
+    fn item_is_public_name(&self, _name: &str) -> bool {
+        true
+    }
+
+    /// Whether an extracted item is a test function for bare-name
+    /// `verified_by` resolution. Default: no (languages whose tests are
+    /// not attribute-marked in module source cannot resolve bare names —
+    /// use `Module::name`-style qualified entries there).
+    fn is_test_function(&self, _item: &crate::items::ExtractedItem) -> bool {
+        false
+    }
+
     /// Parse a single parameter node from this language's grammar, if the
     /// adapter recognizes its kind.
     fn parse_parameter(&self, node: Node<'_>, source: &str) -> Option<ParsedParameter>;

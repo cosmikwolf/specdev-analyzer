@@ -180,7 +180,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
         entries.push(ProposalEntry {
             id: format!("source-only-{i}"),
             category: "in_source_only".into(),
-            kind: src.kind.as_str().into(),
+            kind: src.kind.clone(),
             name: src.name.clone(),
             source_snippet: slice_snippet(&source_lines, src.span),
             source_signature: src.signature.clone(),

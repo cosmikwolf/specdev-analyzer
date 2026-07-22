@@ -1,0 +1,163 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/languages/dart/items.v1"
+title: "Dart items schema (v1)"
+description: >
+  Per-language schema fragment defining the `Item` shape for Dart source.
+  Each `Item` is a top-level Dart declaration — or a public member of a
+  class, mixin, extension, or extension type — that carries spec
+  significance (typically because it `satisfies` a requirement).
+
+  Privacy is lexical in Dart: any identifier whose name (or whose
+  enclosing declaration's name) starts with `_` is library-private and is
+  never an item. There is no visibility field — the `_` prefix IS the
+  visibility.
+
+  v1 covers 10 item kinds (the `kind` enum below). Not items in v1:
+  constructors (spec the class item instead — its description covers
+  construction), top-level `final`/`var` variables (public API constants
+  should be `const`), fields (state is the enclosing declaration's
+  concern), and `export` directives. Each of these can be admitted later
+  by widening this file plus the sibling `items.scm` — the analyzer takes
+  its vocabulary from here at runtime.
+
+  Sparseness rule: every `Item` carries `satisfies` (≥1 entry) unless it
+  is a test (`test = true`, which carries `verifies` instead). Helper
+  declarations that don't satisfy a requirement do not appear in
+  `items[]`.
+
+  This schema is meant to be `$ref`'d from each profile's
+  `module.schema.yaml` `items[]` field via the `{{language}}` placeholder.
+  It also ships standalone for use by the analyzer's `extract-items`
+  subcommand.
+
+type: object
+required: [name, kind, description]
+properties:
+  name:
+    description: >
+      The item's qualified name. For a top-level declaration this is the
+      Dart identifier (`connectDevice`, `Device`). For a public member of
+      a class, mixin, extension, or extension type it is
+      `<Declaration>.<member>` — a method is a function, so
+      `Device.connect` is a `kind = "function"` item the same way a
+      top-level function is; `Device.state` with `kind = "getter"` is the
+      property surface. Type parameters never appear in the name (author
+      `Box.put`, not `Box<T>.put`). Must be unique within the module's
+      items[] array.
+    type: string
+    minLength: 1
+  kind:
+    description: >
+      Dart declaration kinds, tracking the tree-sitter Dart grammar's
+      top-level and member declarations. `function` covers top-level
+      functions, methods, and static methods (qualified names for
+      members); `getter`/`setter` cover property surface at both top
+      level and member position; `const` covers top-level `const`
+      declarations only.
+    type: string
+    enum:
+      - class
+      - mixin
+      - enum
+      - extension
+      - extension_type
+      - function
+      - getter
+      - setter
+      - typedef
+      - const
+  description:
+    description: >
+      One-or-two-sentence prose summary of the item's contractual
+      semantics. Prose-first — describe what the item does, not its
+      signature (signatures live in the source; the optional
+      `signature_hint` is the escape hatch).
+    type: string
+    minLength: 1
+  satisfies:
+    description: >
+      Requirement ids this item satisfies. Required (with `minItems: 1`)
+      for every non-test item.
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    uniqueItems: true
+  signature_hint:
+    description: >
+      Optional signature shape, used as an escape hatch for cases where
+      prose alone is insufficient: non-obvious generics, function-typed
+      parameters, FFI-facing declarations. Default is to omit; the items
+      model is prose-first.
+    type: string
+  test:
+    description: >
+      When true, this function is emitted as a Dart test (in `test/` per
+      its `test_kind`) and verifies requirement(s) via `verifies` rather
+      than satisfying them via `satisfies`. Only `kind = "function"`
+      items may be tests. Mutually exclusive with `satisfies`.
+    type: boolean
+    default: false
+  test_kind:
+    description: >
+      Test categorization driving emit location and harness. `unit` → a
+      `test()` case in `test/<module>_test.dart`; `widget` → a
+      `testWidgets()` case (flutter_test); `integration` → an
+      `integration_test/` entry driven on a device or emulator; `golden`
+      → a widget test asserting against a golden file
+      (`matchesGoldenFile`). Only meaningful when `test = true`; defaults
+      to `unit`.
+    type: string
+    enum: [unit, widget, integration, golden]
+    default: unit
+  verifies:
+    description: >
+      Requirement ids this test verifies (the inverse of `satisfies`).
+      Required with ≥1 entry when `test = true`; forbidden otherwise.
+      Reduced into `test_verifies` edges; the
+      `test_requirements_have_verifiers` graph check walks them to
+      confirm every `nature = "test"` requirement has a verifier.
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    minItems: 1
+    uniqueItems: true
+
+# Two branches: test functions (verifies instead of satisfies) and
+# everything else (satisfies required). Dart has no kind-discriminated
+# extras in v1 — no re_export/impl analogs.
+oneOf:
+  - title: test-function
+    properties:
+      kind: { const: function }
+      test: { const: true }
+    required: [test, verifies]
+    not:
+      required: [satisfies]
+
+  - title: declaration
+    properties:
+      kind:
+        enum:
+          - class
+          - mixin
+          - enum
+          - extension
+          - extension_type
+          - function
+          - getter
+          - setter
+          - typedef
+          - const
+      test: { const: false }
+    required: [satisfies]
+    not:
+      anyOf:
+        - required: [verifies]
+        - required: [test_kind]
+
+allOf:
+  - properties:
+      satisfies:
+        minItems: 1

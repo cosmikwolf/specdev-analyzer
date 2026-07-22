@@ -1,4 +1,15 @@
 //! Tree-sitter-backed item extraction.
+//!
+//! Dispatch is capture-name-driven: each language's `items.scm` names its
+//! captures `<kind>.def` / `<kind>.name` (with `<kind>.vis` where the
+//! grammar has visibility modifiers), and the capture prefix becomes the
+//! extracted item's `kind` string verbatim — the kind vocabulary lives in
+//! the language tier, not here. Members of a type use the
+//! `inherent_<kind>.def` / `inherent_<kind>.name` + `inherent.host`
+//! convention and extract as `<host><sep><member>` with the adapter's
+//! path separator. Three capture prefixes keep dedicated builders for
+//! their synthesized names (`impl`, `re_export`, `extern_block` — Rust
+//! conventions; a language that doesn't declare them never hits them).
 
 use std::path::Path;
 
@@ -7,9 +18,7 @@ use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterato
 
 use crate::lang::LanguageAdapter;
 
-use super::{ExtractedItem, ItemKind, Span};
-
-const RUST_QUERY: &str = include_str!("../../../specdev/languages/rust/items.scm");
+use super::{ExtractedItem, Span};
 
 /// Parse `source` with the language adapter, run the per-language items
 /// query, and produce one `ExtractedItem` per top-level item capture.
@@ -27,13 +36,13 @@ pub fn extract_items_from_source(
         .parse(source, None)
         .ok_or_else(|| anyhow::anyhow!("tree-sitter parser returned None"))?;
 
-    let query_text = match adapter.name() {
-        "rust" => RUST_QUERY,
-        // Other languages add their items.scm + match arm here. v1 ships Rust only.
-        other => anyhow::bail!(
-            "extract-items: no items.scm query for language `{other}`; v1 ships Rust only"
-        ),
-    };
+    let query_text = adapter.items_query().ok_or_else(|| {
+        anyhow::anyhow!(
+            "extract-items: no items.scm query for language `{}`; the language \
+             tier does not ship an items vocabulary",
+            adapter.name()
+        )
+    })?;
 
     let query = Query::new(&ts_language, query_text)
         .map_err(|e| anyhow::anyhow!("items.scm query compile: {e}"))?;
@@ -43,7 +52,7 @@ pub fn extract_items_from_source(
 
     let mut items = Vec::new();
     while let Some(m) = matches.next() {
-        if let Some(item) = match_to_item(&query, m, source) {
+        if let Some(item) = match_to_item(&query, m, source, adapter) {
             items.push(item);
         }
     }
@@ -60,105 +69,65 @@ pub fn extract_items_from_path(
     extract_items_from_source(&source, adapter)
 }
 
-fn match_to_item(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
+fn match_to_item(
+    query: &Query,
+    m: &QueryMatch,
+    source: &str,
+    adapter: &dyn LanguageAdapter,
+) -> Option<ExtractedItem> {
+    // Each query pattern carries exactly one `.def` capture; its prefix is
+    // the kind (or `inherent_<kind>` for member items).
     let names = capture_names(query, m);
+    let def = names.iter().find(|n| n.ends_with(".def"))?;
+    let prefix = def.strip_suffix(".def").expect("checked ends_with");
 
-    if names.contains(&"fn.def") {
-        return build_free_fn(query, m, source);
+    match prefix {
+        "impl" => build_impl(query, m, source),
+        "re_export" => build_re_export(query, m, source),
+        "extern_block" => build_extern_block(query, m, source),
+        p if p.starts_with("inherent_") => build_member(query, m, source, adapter, p),
+        p => build_named(query, m, source, adapter, p),
     }
-    if names.contains(&"struct.def") {
-        return build_named(query, m, source, ItemKind::Struct, "struct.def", "struct.name");
-    }
-    if names.contains(&"enum.def") {
-        return build_named(query, m, source, ItemKind::Enum, "enum.def", "enum.name");
-    }
-    if names.contains(&"union.def") {
-        return build_named(query, m, source, ItemKind::Union, "union.def", "union.name");
-    }
-    if names.contains(&"trait.def") {
-        return build_named(query, m, source, ItemKind::Trait, "trait.def", "trait.name");
-    }
-    if names.contains(&"impl.def") {
-        return build_impl(query, m, source);
-    }
-    // Inherent-impl associated items: each public member is an item named
-    // `<Type>::<member>`. The inherent impl block itself is not an item.
-    if names.contains(&"inherent_fn.def") {
-        return build_inherent_assoc(
-            query, m, source, ItemKind::Fn, "inherent_fn.def", "inherent_fn.name", "inherent_fn.vis",
-        );
-    }
-    if names.contains(&"inherent_const.def") {
-        return build_inherent_assoc(
-            query,
-            m,
-            source,
-            ItemKind::Const,
-            "inherent_const.def",
-            "inherent_const.name",
-            "inherent_const.vis",
-        );
-    }
-    if names.contains(&"inherent_type.def") {
-        return build_inherent_assoc(
-            query,
-            m,
-            source,
-            ItemKind::Type,
-            "inherent_type.def",
-            "inherent_type.name",
-            "inherent_type.vis",
-        );
-    }
-    if names.contains(&"type.def") {
-        return build_named(query, m, source, ItemKind::Type, "type.def", "type.name");
-    }
-    if names.contains(&"const.def") {
-        return build_named(query, m, source, ItemKind::Const, "const.def", "const.name");
-    }
-    if names.contains(&"static.def") {
-        return build_named(query, m, source, ItemKind::Static, "static.def", "static.name");
-    }
-    if names.contains(&"re_export.def") {
-        return build_re_export(query, m, source);
-    }
-    if names.contains(&"macro.def") {
-        return build_named(query, m, source, ItemKind::Macro, "macro.def", "macro.name");
-    }
-    if names.contains(&"extern_block.def") {
-        return build_extern_block(query, m, source);
-    }
-    None
 }
 
-/// Build an item for a top-level free function, filtered to `pub`.
-/// A non-`pub` (or `pub(crate)`/`pub(super)`) free fn is a module-private
-/// helper, not public contract surface, so it must not surface as
-/// `in_source_only` drift — the conventions say private/helper members
-/// aren't items. Mirrors the inherent-method visibility filter in
-/// [`build_inherent_assoc`].
-fn build_free_fn(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
-    let vis = capture_text(query, m, source, "fn.vis").map(str::trim);
-    if vis != Some("pub") {
-        return None;
+/// True when the query itself declares a `<prefix>.vis` capture. A
+/// declared-but-absent visibility on a match means the construct has no
+/// visibility modifier — private in languages (Rust) whose queries opt
+/// into visibility filtering. Queries that declare no `.vis` capture for
+/// a kind (Rust structs; every Dart kind) get no visibility gate here —
+/// their filter, if any, is the adapter's name-based rule.
+fn vis_gate_passes(query: &Query, m: &QueryMatch, source: &str, prefix: &str) -> bool {
+    let vis_capture = format!("{prefix}.vis");
+    if !query.capture_names().iter().any(|n| *n == vis_capture) {
+        return true;
     }
-    build_named(query, m, source, ItemKind::Fn, "fn.def", "fn.name")
+    capture_text(query, m, source, &vis_capture).map(str::trim) == Some("pub")
 }
 
+/// Build an item for a plain `<kind>.def` / `<kind>.name` capture pair.
+/// The capture prefix is the kind string. Visibility filtering applies
+/// only when the query declares `<kind>.vis` (see [`vis_gate_passes`]);
+/// lexical-privacy languages filter by name via
+/// [`LanguageAdapter::item_is_public_name`].
 fn build_named(
     query: &Query,
     m: &QueryMatch,
     source: &str,
-    kind: ItemKind,
-    def_capture: &str,
-    name_capture: &str,
+    adapter: &dyn LanguageAdapter,
+    prefix: &str,
 ) -> Option<ExtractedItem> {
-    let def_node = capture_node(query, m, def_capture)?;
-    let name = capture_text(query, m, source, name_capture)?.to_string();
+    if !vis_gate_passes(query, m, source, prefix) {
+        return None;
+    }
+    let def_node = capture_node(query, m, &format!("{prefix}.def"))?;
+    let name = capture_text(query, m, source, &format!("{prefix}.name"))?.to_string();
+    if !adapter.item_is_public_name(&name) {
+        return None;
+    }
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
-        kind,
+        kind: prefix.to_string(),
         name,
         signature: None,
         attributes,
@@ -177,7 +146,7 @@ fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedIt
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
-        kind: ItemKind::Impl,
+        kind: "impl".to_string(),
         name,
         signature: None,
         attributes,
@@ -185,34 +154,38 @@ fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedIt
     })
 }
 
-/// Build an item for a public associated member of an **inherent** impl.
-/// The item is named `<TypeBase>::<member>` (generics + path qualifiers
-/// stripped from the host type so the name matches what an author writes).
-/// Returns `None` for non-`pub` members — private associated items are not
-/// contract surface and must not surface as `in_source_only` drift.
-fn build_inherent_assoc(
+/// Build an item for a member of a type (`inherent_<kind>.*` captures):
+/// Rust inherent-impl associated items, Dart class/mixin/extension
+/// members. The item is named `<HostBase><sep><member>` with the
+/// adapter's path separator (generics + path qualifiers stripped from the
+/// host so the name matches what an author writes). Visibility filtering
+/// per [`vis_gate_passes`] plus the adapter's name rule.
+fn build_member(
     query: &Query,
     m: &QueryMatch,
     source: &str,
-    kind: ItemKind,
-    def_capture: &str,
-    name_capture: &str,
-    vis_capture: &str,
+    adapter: &dyn LanguageAdapter,
+    prefix: &str,
 ) -> Option<ExtractedItem> {
-    // Contract surface is `pub` only (mirrors the top-level "helpers are
-    // bare" rule). `pub(crate)`/`pub(super)` are not public API.
-    let vis = capture_text(query, m, source, vis_capture).map(str::trim);
-    if vis != Some("pub") {
+    let kind = prefix.strip_prefix("inherent_").expect("checked starts_with");
+    if !vis_gate_passes(query, m, source, prefix) {
         return None;
     }
-    let def_node = capture_node(query, m, def_capture)?;
+    let def_node = capture_node(query, m, &format!("{prefix}.def"))?;
     let host = capture_text(query, m, source, "inherent.host")?;
-    let member = capture_text(query, m, source, name_capture)?;
-    let name = format!("{}::{member}", super::sync::type_base(host));
+    let member = capture_text(query, m, source, &format!("{prefix}.name"))?;
+    let name = format!(
+        "{}{}{member}",
+        super::sync::type_base(host),
+        adapter.path_separator()
+    );
+    if !adapter.item_is_public_name(&name) {
+        return None;
+    }
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
-        kind,
+        kind: kind.to_string(),
         name,
         signature: None,
         attributes,
@@ -232,7 +205,7 @@ fn build_re_export(query: &Query, m: &QueryMatch, source: &str) -> Option<Extrac
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
-        kind: ItemKind::ReExport,
+        kind: "re_export".to_string(),
         name,
         signature: None,
         attributes,
@@ -263,7 +236,7 @@ fn build_extern_block(query: &Query, m: &QueryMatch, source: &str) -> Option<Ext
     let abi = extern_abi(def_node, source).unwrap_or_else(|| "C".to_string());
     let name = format!("extern_{abi}_at_{}", span.start_line);
     Some(ExtractedItem {
-        kind: ItemKind::ExternBlock,
+        kind: "extern_block".to_string(),
         name,
         signature: None,
         attributes,
@@ -343,7 +316,7 @@ mod tests {
         let source = "pub fn foo(x: u32) -> u32 { x + 1 }\n";
         let items = extract(source);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].kind, ItemKind::Fn);
+        assert_eq!(items[0].kind, "fn");
         assert_eq!(items[0].name, "foo");
     }
 
@@ -355,7 +328,7 @@ mod tests {
         let items = extract(source);
         let fns: Vec<&str> = items
             .iter()
-            .filter(|i| i.kind == ItemKind::Fn)
+            .filter(|i| i.kind == "fn")
             .map(|i| i.name.as_str())
             .collect();
         assert_eq!(fns, vec!["render"], "private free fn must be filtered");
@@ -367,7 +340,7 @@ mod tests {
         let source = "pub(crate) fn internal() {}\npub(super) fn up() {}\n";
         let items = extract(source);
         assert!(
-            !items.iter().any(|i| i.kind == ItemKind::Fn),
+            !items.iter().any(|i| i.kind == "fn"),
             "restricted-visibility free fns must be filtered"
         );
     }
@@ -380,7 +353,7 @@ mod tests {
         let source = "#[test]\npub fn it_works() {}\n";
         let items = extract(source);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].kind, ItemKind::Fn);
+        assert_eq!(items[0].kind, "fn");
         assert_eq!(items[0].name, "it_works");
         assert_eq!(items[0].attributes, vec!["#[test]"]);
     }
@@ -390,10 +363,10 @@ mod tests {
         let source = "pub struct S;\npub enum E { A, B }\npub const N: u32 = 4;\n";
         let items = extract(source);
         assert_eq!(items.len(), 3);
-        let kinds: Vec<_> = items.iter().map(|i| i.kind).collect();
-        assert!(kinds.contains(&ItemKind::Struct));
-        assert!(kinds.contains(&ItemKind::Enum));
-        assert!(kinds.contains(&ItemKind::Const));
+        let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
+        assert!(kinds.contains(&"struct"));
+        assert!(kinds.contains(&"enum"));
+        assert!(kinds.contains(&"const"));
     }
 
     // Inherent impl dissolves into per-method items; a trait impl stays one
@@ -410,11 +383,11 @@ impl Show for T { fn show(&self) {} }
         // The inherent impl produces no impl item; its public fn is `T::one`,
         // its private `helper` is not an item.
         assert!(
-            !items.iter().any(|i| i.kind == ItemKind::Impl && i.name == "T"),
+            !items.iter().any(|i| i.kind == "impl" && i.name == "T"),
             "inherent impl block must not be an item"
         );
         assert!(
-            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == "T::one"),
+            items.iter().any(|i| i.kind == "fn" && i.name == "T::one"),
             "public inherent method must extract as `T::one`"
         );
         assert!(
@@ -422,7 +395,7 @@ impl Show for T { fn show(&self) {} }
             "private inherent method must not be an item"
         );
         // The trait impl stays exactly one item; its method is not surfaced.
-        let impls: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Impl).collect();
+        let impls: Vec<_> = items.iter().filter(|i| i.kind == "impl").collect();
         assert_eq!(impls.len(), 1);
         assert_eq!(impls[0].name, "Show for T");
         assert!(
@@ -438,7 +411,7 @@ impl Show for T { fn show(&self) {} }
         let source = "impl RateLimiter<C> { pub fn try_consume(&self, n: u32) -> bool { true } }\n";
         let items = extract(source);
         assert!(
-            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == "RateLimiter::try_consume"),
+            items.iter().any(|i| i.kind == "fn" && i.name == "RateLimiter::try_consume"),
             "expected `RateLimiter::try_consume`, got {:?}",
             items.iter().map(|i| &i.name).collect::<Vec<_>>()
         );
@@ -449,8 +422,8 @@ impl Show for T { fn show(&self) {} }
     fn inherent_assoc_const_and_type() {
         let source = "impl Widget { pub const MAX: u32 = 8; pub type Out = u16; fn p() {} }\n";
         let items = extract(source);
-        assert!(items.iter().any(|i| i.kind == ItemKind::Const && i.name == "Widget::MAX"));
-        assert!(items.iter().any(|i| i.kind == ItemKind::Type && i.name == "Widget::Out"));
+        assert!(items.iter().any(|i| i.kind == "const" && i.name == "Widget::MAX"));
+        assert!(items.iter().any(|i| i.kind == "type" && i.name == "Widget::Out"));
     }
 
     #[test]
@@ -466,7 +439,7 @@ impl Show for T { fn show(&self) {} }
         let items = extract(source);
         let re_exports: Vec<_> = items
             .iter()
-            .filter(|i| i.kind == ItemKind::ReExport)
+            .filter(|i| i.kind == "re_export")
             .collect();
         assert_eq!(re_exports.len(), 1);
         assert_eq!(re_exports[0].name, "PublicName");
@@ -476,9 +449,9 @@ impl Show for T { fn show(&self) {} }
     fn extracts_static_and_type() {
         let source = "pub static N: u32 = 0;\npub type Alias = u32;\n";
         let items = extract(source);
-        let kinds: Vec<_> = items.iter().map(|i| i.kind).collect();
-        assert!(kinds.contains(&ItemKind::Static));
-        assert!(kinds.contains(&ItemKind::Type));
+        let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
+        assert!(kinds.contains(&"static"));
+        assert!(kinds.contains(&"type"));
     }
 
     #[test]
@@ -487,7 +460,7 @@ impl Show for T { fn show(&self) {} }
         let items = extract(source);
         let externs: Vec<_> = items
             .iter()
-            .filter(|i| i.kind == ItemKind::ExternBlock)
+            .filter(|i| i.kind == "extern_block")
             .collect();
         assert_eq!(externs.len(), 1);
         assert!(externs[0].name.starts_with("extern_C_at_"));
@@ -500,7 +473,7 @@ impl Show for T { fn show(&self) {} }
         // only `outer` is extracted — `inner` is a local.
         let source = "pub fn outer() { fn inner() {} let _x = 1; }\n";
         let items = extract(source);
-        let fns: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Fn).collect();
+        let fns: Vec<_> = items.iter().filter(|i| i.kind == "fn").collect();
         assert!(fns.iter().any(|i| i.name == "outer"));
         assert!(
             !fns.iter().any(|i| i.name == "inner"),
