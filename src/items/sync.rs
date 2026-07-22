@@ -23,13 +23,15 @@
 //! `verified_by_resolves` and downstream test runs.
 //!
 //! Error codes: `ITEM-101` (module spec missing), `ITEM-102`
-//! (module spec parse fails), `ITEM-103` (serialization).
+//! (module spec parse fails), `ITEM-103` (serialization), `ITEM-104`
+//! (language tier's item-kind vocabulary not inlined while the module
+//! declares items).
 
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::path::PathBuf;
 
-use crate::items::{extract, source_map, ExtractedItem, ItemKind};
+use crate::items::{extract, source_map, ExtractedItem};
 use crate::layout::LayoutContext;
 
 /// One spec-side item as parsed from `[[items]]` TOML. Mirrors the
@@ -83,49 +85,16 @@ impl DiffReport {
     }
 }
 
-/// Parse `module.kind` enum from its schema-facing string form.
-fn parse_kind(s: &str) -> Option<ItemKind> {
-    Some(match s {
-        "fn" => ItemKind::Fn,
-        "struct" => ItemKind::Struct,
-        "enum" => ItemKind::Enum,
-        "union" => ItemKind::Union,
-        "trait" => ItemKind::Trait,
-        "impl" => ItemKind::Impl,
-        "type" => ItemKind::Type,
-        "const" => ItemKind::Const,
-        "static" => ItemKind::Static,
-        "re_export" => ItemKind::ReExport,
-        "macro" => ItemKind::Macro,
-        "extern_block" => ItemKind::ExternBlock,
-        _ => return None,
-    })
-}
-
-/// Comparable identity for join purposes. For most kinds this is the name
-/// verbatim. For `impl` items the synthesized name carries the target type
-/// (and, for trait impls, the trait), which can diverge between spec and source
-/// in two purely-syntactic ways the author shouldn't have to track:
-///   - **generics** (F-010): spec `impl RateLimiter` vs source `RateLimiter<C>`.
-///   - **path qualifiers** (F-013): spec `Display for RateLimited` vs source
-///     `fmt::Display for RateLimited` (or `core::fmt::Display …`).
-/// Normalizing both out of the *key* makes the two compare equal without
-/// mutating the stored name, so the displayed source form keeps its `<C>` /
-/// `fmt::` while the join still pairs them.
-fn identity_key(kind: ItemKind, name: &str) -> String {
-    if kind == ItemKind::Impl {
-        normalize_impl_name(name)
-    } else {
-        name.to_string()
-    }
-}
-
 /// Normalize an impl identity: strip generic argument lists (F-010), then
 /// reduce each path-qualified trait/type to its final `::` segment (F-013).
 /// `core::fmt::Display for RateLimiter<C>` → `Display for RateLimiter`;
 /// `From<Vec<u8>> for crate::Foo` → `From for Foo`. The ` for ` separator only
 /// appears in trait impls; inherent impls (`RateLimiter`) have a single path.
-fn normalize_impl_name(name: &str) -> String {
+///
+/// This is Rust identity vocabulary — the Rust adapter's
+/// `item_identity_key` applies it to `impl` items; the diff join itself is
+/// language-neutral and takes its keys from the adapter.
+pub(crate) fn normalize_impl_name(name: &str) -> String {
     let degeneric = strip_generics(name);
     match degeneric.split_once(" for ") {
         Some((trait_ref, target)) => {
@@ -172,8 +141,17 @@ fn strip_generics(name: &str) -> String {
 }
 
 /// Walk a module spec's `items` array and produce typed `SpecItem`
-/// entries. Unknown kinds become a parse error (`ITEM-102`).
-pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Result<Vec<SpecItem>> {
+/// entries. Unknown kinds become a parse error (`ITEM-102`), checked
+/// against the language tier's runtime-loaded kind vocabulary
+/// (`kind_vocab`, from [`super::load_item_kinds`]). The vocabulary is
+/// only *required* when the module actually declares items — a project
+/// whose language ships no items tier parses cleanly as long as its
+/// modules carry no `[[items]]` (`ITEM-104` otherwise).
+pub(crate) fn parse_spec_items(
+    value: &toml::Value,
+    module_label: &str,
+    kind_vocab: &Result<Vec<String>>,
+) -> Result<Vec<SpecItem>> {
     let items = match value.get("items") {
         Some(toml::Value::Array(arr)) => arr,
         Some(other) => {
@@ -200,11 +178,14 @@ pub(crate) fn parse_spec_items(value: &toml::Value, module_label: &str) -> Resul
                 anyhow!("[ITEM-102] {module_label}: items[{i}] missing required `kind`")
             })?
             .to_string();
-        if parse_kind(&kind).is_none() {
+        let allowed = kind_vocab
+            .as_ref()
+            .map_err(|e| anyhow!("[ITEM-104] {module_label}: {e}"))?;
+        if !allowed.iter().any(|k| k == &kind) {
             return Err(anyhow!(
                 "[ITEM-102] {module_label}: items[{i}] unknown kind {kind:?}; \
-                 expected one of fn/struct/enum/union/trait/impl/type/const/static/\
-                 re_export/macro/extern_block"
+                 expected one of {}",
+                allowed.join("/")
             ));
         }
         let name = table
@@ -340,7 +321,8 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
     // them here keeps test-bearing modules from reading as permanent
     // `in_spec_only` drift, aligning the diff with the items-model
     // verification-graph boundary.
-    let spec_items: Vec<SpecItem> = parse_spec_items(&value, &label)?
+    let kind_vocab = super::load_item_kinds(layout);
+    let spec_items: Vec<SpecItem> = parse_spec_items(&value, &label, &kind_vocab)?
         .into_iter()
         .filter(|item| !is_test_item(item))
         .collect();
@@ -372,11 +354,10 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
     let mut both: Vec<DiffPair> = Vec::new();
 
     for spec in spec_items {
-        let kind = parse_kind(&spec.kind).expect("validated in parse_spec_items");
-        let spec_key = identity_key(kind, &spec.name);
+        let spec_key = adapter.item_identity_key(&spec.kind, &spec.name);
         let pos = source_remaining
             .iter()
-            .position(|s| s.kind == kind && identity_key(s.kind, &s.name) == spec_key);
+            .position(|s| s.kind == spec.kind && adapter.item_identity_key(&s.kind, &s.name) == spec_key);
         match pos {
             Some(idx) => {
                 let source = source_remaining.remove(idx);
@@ -414,10 +395,29 @@ mod tests {
         }
     }
 
+    /// Rust's 12-kind vocabulary, as the runtime loader would produce it
+    /// from the language tier — unit tests here exercise the parse logic
+    /// without a bootstrapped project on disk.
+    fn rust_kinds() -> Result<Vec<String>> {
+        Ok([
+            "fn", "struct", "enum", "union", "trait", "impl", "type", "const", "static",
+            "re_export", "macro", "extern_block",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect())
+    }
+
+    /// The Rust adapter's identity key — shorthand for the join-key tests.
+    fn identity_key(kind: &str, name: &str) -> String {
+        use crate::lang::LanguageAdapter;
+        crate::lang::rust::RustAdapter.item_identity_key(kind, name)
+    }
+
     #[test]
     fn signature_drift_normalizes_whitespace() {
         let item = ExtractedItem {
-            kind: ItemKind::Fn,
+            kind: "fn".into(),
             name: "foo".into(),
             signature: Some("fn  foo(x:  u32)  ->  u32".into()),
             attributes: vec![],
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn signature_drift_empty_extracted_signature_treats_as_drift() {
         let item = ExtractedItem {
-            kind: ItemKind::Fn,
+            kind: "fn".into(),
             name: "foo".into(),
             signature: None,
             attributes: vec![],
@@ -454,11 +454,11 @@ mod tests {
     fn identity_key_normalizes_only_impl_generics() {
         // impl: spec base form pairs with generic source form.
         assert_eq!(
-            identity_key(ItemKind::Impl, "RateLimiter"),
-            identity_key(ItemKind::Impl, "RateLimiter<C>"),
+            identity_key("impl", "RateLimiter"),
+            identity_key("impl", "RateLimiter<C>"),
         );
         // non-impl: generics (if any) are part of identity, untouched.
-        assert_eq!(identity_key(ItemKind::Fn, "make<C>"), "make<C>");
+        assert_eq!(identity_key("fn", "make<C>"), "make<C>");
     }
 
     #[test]
@@ -486,8 +486,8 @@ mod tests {
     fn identity_key_pairs_bare_and_qualified_trait_impl() {
         // The dogfood case: spec `Display for X` ≡ source `fmt::Display for X`.
         assert_eq!(
-            identity_key(ItemKind::Impl, "Display for RateLimited"),
-            identity_key(ItemKind::Impl, "fmt::Display for RateLimited"),
+            identity_key("impl", "Display for RateLimited"),
+            identity_key("impl", "fmt::Display for RateLimited"),
         );
     }
 
@@ -502,7 +502,7 @@ target = "inner::T"
 visibility = "pub"
 "#;
         let v: toml::Value = toml::from_str(toml_text).unwrap();
-        let items = parse_spec_items(&v, "test").unwrap();
+        let items = parse_spec_items(&v, "test", &rust_kinds()).unwrap();
         assert_eq!(items.len(), 1);
         let it = &items[0];
         assert_eq!(it.kind, "re_export");
@@ -530,7 +530,7 @@ description = "public method"
 satisfies = ["REQ-BUCKET-001"]
 "#;
         let v: toml::Value = toml::from_str(toml_text).unwrap();
-        let items = parse_spec_items(&v, "test").unwrap();
+        let items = parse_spec_items(&v, "test", &rust_kinds()).unwrap();
         let test_item = items.iter().find(|i| i.extras.contains_key("test")).unwrap();
         assert!(is_test_item(test_item), "test = true item must be a test item");
         let method = items.iter().find(|i| i.name == "TokenBucket::try_take").unwrap();
@@ -546,7 +546,7 @@ kind = "lambda"
 description = "x"
 "#;
         let v: toml::Value = toml::from_str(toml_text).unwrap();
-        let err = parse_spec_items(&v, "test").unwrap_err();
+        let err = parse_spec_items(&v, "test", &rust_kinds()).unwrap_err();
         assert!(format!("{err:#}").contains("ITEM-102"));
         assert!(format!("{err:#}").contains("lambda"));
     }

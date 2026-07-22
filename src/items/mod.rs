@@ -17,12 +17,13 @@
 //!    `ExtractedItem` per capture name (`<kind>.def` + `<kind>.name`).
 //! 5. Emit YAML.
 //!
-//! The 12 Rust kinds (`fn` / `struct` / `enum` / `union` / `trait` /
-//! `impl` / `type` / `const` / `static` / `re_export` / `macro` /
-//! `extern_block`) are 1:1 with the items.schema.yaml kind enum and
-//! tree-sitter Rust grammar nodes. See
-//! `specdev/languages/rust/items.schema.yaml` and
-//! `specdev/languages/rust/items.scm` for authoritative definitions.
+//! The item-kind vocabulary is per-language DATA, not analyzer code: the
+//! authoritative list is the `kind` enum in the project's inlined
+//! `languages/<lang>/items.schema.yaml` (loaded at runtime by
+//! [`load_item_kinds`]), and the language's `items.scm` capture prefixes
+//! carry the same strings — the extractor derives each item's `kind`
+//! from its capture prefix. Adding a language (or a kind) is a
+//! language-tier content change; no enum here to widen.
 
 pub mod apply;
 pub mod extract;
@@ -31,15 +32,22 @@ pub mod source_map;
 pub mod sync;
 pub mod util;
 
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::layout::LayoutContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedItem {
-    /// Item kind — matches the items.schema.yaml kind enum.
-    pub kind: ItemKind,
+    /// Item kind — a string from the language tier's items.schema.yaml
+    /// kind enum (equal to the items.scm capture prefix that produced
+    /// this item).
+    pub kind: String,
     /// Item name (identifier as written in source). For `impl` items,
-    /// synthesized as `<TraitRef> for <TargetType>` (trait impl) or
-    /// `<TargetType>` (inherent impl).
+    /// synthesized as `<TraitRef> for <TargetType>` (trait impl). For
+    /// members of a type (inherent impl members, Dart class members),
+    /// qualified as `<Type><sep><member>` with the language's path
+    /// separator.
     pub name: String,
     /// Optional signature shape, populated when the items.scm query
     /// surfaces it (functions: `fn foo(...) -> Bar`; consts:
@@ -54,43 +62,6 @@ pub struct ExtractedItem {
     pub attributes: Vec<String>,
     /// Source span (1-based line numbers) where the item is defined.
     pub span: Span,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ItemKind {
-    Fn,
-    Struct,
-    Enum,
-    Union,
-    Trait,
-    Impl,
-    Type,
-    Const,
-    Static,
-    ReExport,
-    Macro,
-    ExternBlock,
-}
-
-impl ItemKind {
-    /// Schema-facing string form (matches items.schema.yaml enum).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ItemKind::Fn => "fn",
-            ItemKind::Struct => "struct",
-            ItemKind::Enum => "enum",
-            ItemKind::Union => "union",
-            ItemKind::Trait => "trait",
-            ItemKind::Impl => "impl",
-            ItemKind::Type => "type",
-            ItemKind::Const => "const",
-            ItemKind::Static => "static",
-            ItemKind::ReExport => "re_export",
-            ItemKind::Macro => "macro",
-            ItemKind::ExternBlock => "extern_block",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -111,4 +82,51 @@ pub struct ModuleItems {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionReport {
     pub modules: Vec<ModuleItems>,
+}
+
+/// Load the project language's item-kind vocabulary from the inlined
+/// language tier (`specs/specdev/schemas/inlined/languages/<lang>/
+/// items.schema.yaml` → `properties.kind.enum`). This is the same file
+/// that schema-validates spec `[[items]]` via the profile `$ref`, so the
+/// two gates cannot drift.
+///
+/// Errors when the tier file is missing or carries no kind enum —
+/// callers surface this only for modules that actually declare items
+/// (languages without an items vocabulary still bootstrap and validate;
+/// they just have no items substrate).
+pub fn load_item_kinds(layout: &LayoutContext) -> Result<Vec<String>> {
+    let lang = &layout.spec.project.language;
+    let path = layout
+        .inlined_languages_dir
+        .join(lang)
+        .join("items.schema.yaml");
+    let text = std::fs::read_to_string(&path).map_err(|_| {
+        anyhow!(
+            "item-kind vocabulary not found at {} — the `{lang}` language tier \
+             (languages/{lang}/items.schema.yaml) is not inlined in this project; \
+             re-bootstrap or run `specdev migrate`",
+            path.display()
+        )
+    })?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let kinds: Vec<String> = doc
+        .get("properties")
+        .and_then(|p| p.get("kind"))
+        .and_then(|k| k.get("enum"))
+        .and_then(|e| e.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if kinds.is_empty() {
+        return Err(anyhow!(
+            "{} declares no `properties.kind.enum` — the language tier's kind \
+             vocabulary is empty or malformed",
+            path.display()
+        ));
+    }
+    Ok(kinds)
 }

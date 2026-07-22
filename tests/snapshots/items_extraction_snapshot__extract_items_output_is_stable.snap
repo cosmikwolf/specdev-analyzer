@@ -1,0 +1,102 @@
+---
+source: tests/items_extraction_snapshot.rs
+expression: rendered
+---
+exit: Some(0)
+--- stdout ---
+modules:
+- module_name: Kitchen
+  source_file: <root>/src/kitchen.rs
+  items:
+  - kind: fn
+    name: render
+    span:
+      start_line: 1
+      end_line: 1
+  - kind: fn
+    name: uncovered
+    span:
+      start_line: 5
+      end_line: 5
+  - kind: fn
+    name: drifted
+    span:
+      start_line: 7
+      end_line: 7
+  - kind: struct
+    name: Widget
+    span:
+      start_line: 9
+      end_line: 9
+  - kind: enum
+    name: Color
+    span:
+      start_line: 11
+      end_line: 11
+  - kind: union
+    name: Packed
+    span:
+      start_line: 13
+      end_line: 13
+  - kind: trait
+    name: Show
+    span:
+      start_line: 15
+      end_line: 15
+  - kind: impl
+    name: core::fmt::Display for Widget
+    span:
+      start_line: 17
+      end_line: 21
+  - kind: fn
+    name: Widget::grow
+    span:
+      start_line: 24
+      end_line: 24
+  - kind: const
+    name: Widget::MAX
+    span:
+      start_line: 26
+      end_line: 26
+  - kind: type
+    name: Widget::Out
+    span:
+      start_line: 27
+      end_line: 27
+  - kind: type
+    name: Alias
+    span:
+      start_line: 30
+      end_line: 30
+  - kind: const
+    name: LIMIT
+    span:
+      start_line: 32
+      end_line: 32
+  - kind: static
+    name: COUNTER
+    span:
+      start_line: 34
+      end_line: 34
+  - kind: re_export
+    name: Public
+    span:
+      start_line: 36
+      end_line: 36
+  - kind: re_export
+    name: Hidden
+    span:
+      start_line: 38
+      end_line: 38
+  - kind: macro
+    name: make_widget
+    span:
+      start_line: 40
+      end_line: 42
+  - kind: extern_block
+    name: extern_C_at_44
+    span:
+      start_line: 44
+      end_line: 46
+
+--- stderr ---

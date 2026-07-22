@@ -102,6 +102,12 @@ properties:
     type: string
     enum: [unit, integration, doc, bench, fuzz]
     default: unit
+    # Enum slots accepted by the schema but with no codegen emission yet.
+    # The analyzer reads this list at validate time to warn (TEST-KIND-001)
+    # when a test item declares one; the advice names the remaining
+    # (emittable) enum entries. Promote a kind by deleting it from this
+    # list once emission ships.
+    x-specdev-reserved: [bench, fuzz]
   verifies:
     description: >
       Requirement ids this test verifies (the inverse of `satisfies`).

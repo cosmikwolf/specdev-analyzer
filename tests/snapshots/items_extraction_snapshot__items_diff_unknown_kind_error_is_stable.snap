@@ -1,0 +1,9 @@
+---
+source: tests/items_extraction_snapshot.rs
+expression: rendered
+---
+exit: Some(2)
+--- stdout ---
+
+--- stderr ---
+[ITEM-102] /private<root>/specs/modules/Kitchen.toml: items[0] unknown kind "gadget"; expected one of fn/struct/enum/union/trait/impl/type/const/static/re_export/macro/extern_block

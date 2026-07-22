@@ -1129,7 +1129,7 @@ fn verified_by_resolves_dispatch(
     rule: &str,
     severity: Severity,
 ) -> Vec<Finding> {
-    use crate::items::{extract as items_extract, source_map, ExtractedItem, ItemKind};
+    use crate::items::{extract as items_extract, source_map, ExtractedItem};
     use crate::lang;
 
     let language = &layout.spec.project.language;
@@ -1215,8 +1215,10 @@ fn verified_by_resolves_dispatch(
                 }
                 items.iter().any(|i| i.name == name)
             } else {
-                // Bare name: search for a #[test]-attributed fn across all
-                // modules. If no module has source yet, skip (silent).
+                // Bare name: search for a test function across all modules
+                // (what counts as one is the adapter's rule — Rust: a fn
+                // carrying a test attribute). If no module has source yet,
+                // skip (silent).
                 let mut any_source = false;
                 let mut found = false;
                 for m in &all_module_names {
@@ -1224,11 +1226,10 @@ fn verified_by_resolves_dispatch(
                     if !items.is_empty() {
                         any_source = true;
                     }
-                    if items.iter().any(|i| {
-                        i.kind == ItemKind::Fn
-                            && i.name == s
-                            && i.attributes.iter().any(|a| a.contains("test"))
-                    }) {
+                    if items
+                        .iter()
+                        .any(|i| i.name == s && adapter.is_test_function(i))
+                    {
                         found = true;
                         break;
                     }
@@ -1665,10 +1666,15 @@ pub fn validate_items_present(
 }
 
 /// Warns when a test item declares a `test_kind` whose
-/// emission is reserved-but-not-shipped in v1 (`bench` / `fuzz`). The
-/// schema accepts the enum slot so post-v1 promotion needs no spec
-/// migration, but `gen` emits nothing for it — surfacing the gap at
-/// validate time keeps authors from being surprised at codegen.
+/// emission is reserved-but-not-shipped. The reserved list is language
+/// data, not analyzer code: the language tier's `items.schema.yaml`
+/// declares it as `properties.test_kind.x-specdev-reserved` next to the
+/// `test_kind` enum (the schema accepts the enum slot so later promotion
+/// needs no spec migration, but `gen` emits nothing for it — surfacing
+/// the gap at validate time keeps authors from being surprised at
+/// codegen). A language tier without the annotation reserves nothing;
+/// a project without an inlined items tier has no test items to check
+/// (the module-schema `$ref` would already have failed validation).
 ///
 /// Tag: [`Capability::StrictGen`] — the gap only matters when codegen
 /// actually runs.
@@ -1681,7 +1687,17 @@ pub fn validate_reserved_test_kinds(
     if !capability_matches(tags, filter) {
         return;
     }
-    const RESERVED: &[&str] = &["bench", "fuzz"];
+    let Some((reserved, emittable)) = load_test_kind_vocab(layout) else {
+        return;
+    };
+    if reserved.is_empty() {
+        return;
+    }
+    let advice = emittable
+        .iter()
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(" / ");
     let inv = layout.enumerate();
     for module_path in &inv.modules {
         let Ok(text) = std::fs::read_to_string(module_path) else {
@@ -1700,7 +1716,7 @@ pub fn validate_reserved_test_kinds(
             let Some(kind) = item.get("test_kind").and_then(toml::Value::as_str) else {
                 continue;
             };
-            if RESERVED.contains(&kind) {
+            if reserved.iter().any(|r| r == kind) {
                 let name = item
                     .get("name")
                     .and_then(toml::Value::as_str)
@@ -1712,7 +1728,7 @@ pub fn validate_reserved_test_kinds(
                         format!(
                             "test item `{name}` has test_kind = \"{kind}\", which reserves \
                              the enum slot but emits no body in v1 — `gen` will skip it. \
-                             Use `unit` / `integration` / `doc`, or hand-author the \
+                             Use {advice}, or hand-author the \
                              {kind} harness until v1.x ships emission."
                         ),
                     )
@@ -1721,6 +1737,38 @@ pub fn validate_reserved_test_kinds(
             }
         }
     }
+}
+
+/// Read the language tier's `test_kind` vocabulary from the project's
+/// inlined `languages/<lang>/items.schema.yaml`: the reserved list
+/// (`x-specdev-reserved`, defaulting to empty) and the emittable
+/// remainder of the enum (schema order), for the TEST-KIND-001 advice
+/// text. `None` when the tier file is absent or unparsable — there is
+/// then no test_kind vocabulary to lint against (and a project actually
+/// using items[] surfaces the missing tier through schema resolution).
+fn load_test_kind_vocab(layout: &LayoutContext) -> Option<(Vec<String>, Vec<String>)> {
+    let path = layout
+        .inlined_languages_dir
+        .join(&layout.spec.project.language)
+        .join("items.schema.yaml");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let test_kind = doc.get("properties")?.get("test_kind")?;
+    let as_strings = |v: Option<&serde_yaml::Value>| -> Vec<String> {
+        v.and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let reserved = as_strings(test_kind.get("x-specdev-reserved"));
+    let emittable: Vec<String> = as_strings(test_kind.get("enum"))
+        .into_iter()
+        .filter(|k| !reserved.iter().any(|r| r == k))
+        .collect();
+    Some((reserved, emittable))
 }
 
 /// F-015 (zfm dogfood): warns when a module has no `context_files`

@@ -1,0 +1,227 @@
+---
+source: tests/items_extraction_snapshot.rs
+expression: rendered
+---
+exit: Some(1)
+--- stdout ---
+module: Kitchen
+source_file: /private<root>/src/kitchen.rs
+in_spec_only:
+- kind: extern_block
+  name: extern_C_at_40
+  description: FFI surface.
+  satisfies:
+  - DEMO-1
+- kind: fn
+  name: ghost
+  description: Spec-only item, missing from source.
+  satisfies:
+  - DEMO-1
+in_source_only:
+- kind: fn
+  name: uncovered
+  span:
+    start_line: 5
+    end_line: 5
+- kind: re_export
+  name: Hidden
+  span:
+    start_line: 38
+    end_line: 38
+- kind: extern_block
+  name: extern_C_at_44
+  span:
+    start_line: 44
+    end_line: 46
+both:
+- spec:
+    kind: fn
+    name: render
+    description: Render the frame.
+    satisfies:
+    - DEMO-1
+    signature_hint: fn render() -> u32
+  source:
+    kind: fn
+    name: render
+    span:
+      start_line: 1
+      end_line: 1
+  signature_drift: spec.signature_hint = "fn render() -> u32"; source signature = ""
+- spec:
+    kind: struct
+    name: Widget
+    description: A widget.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: struct
+    name: Widget
+    span:
+      start_line: 9
+      end_line: 9
+- spec:
+    kind: enum
+    name: Color
+    description: A color.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: enum
+    name: Color
+    span:
+      start_line: 11
+      end_line: 11
+- spec:
+    kind: union
+    name: Packed
+    description: A packed union.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: union
+    name: Packed
+    span:
+      start_line: 13
+      end_line: 13
+- spec:
+    kind: trait
+    name: Show
+    description: Display-ish trait.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: trait
+    name: Show
+    span:
+      start_line: 15
+      end_line: 15
+- spec:
+    kind: impl
+    name: Display for Widget
+    description: Widget renders as text.
+    satisfies:
+    - DEMO-1
+    extras:
+      target_type: Widget
+      trait_ref: core::fmt::Display
+  source:
+    kind: impl
+    name: core::fmt::Display for Widget
+    span:
+      start_line: 17
+      end_line: 21
+- spec:
+    kind: fn
+    name: Widget::grow
+    description: Grow the widget.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: fn
+    name: Widget::grow
+    span:
+      start_line: 24
+      end_line: 24
+- spec:
+    kind: const
+    name: Widget::MAX
+    description: Maximum widget size.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: const
+    name: Widget::MAX
+    span:
+      start_line: 26
+      end_line: 26
+- spec:
+    kind: type
+    name: Widget::Out
+    description: Widget output type.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: type
+    name: Widget::Out
+    span:
+      start_line: 27
+      end_line: 27
+- spec:
+    kind: type
+    name: Alias
+    description: A type alias.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: type
+    name: Alias
+    span:
+      start_line: 30
+      end_line: 30
+- spec:
+    kind: const
+    name: LIMIT
+    description: A const.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: const
+    name: LIMIT
+    span:
+      start_line: 32
+      end_line: 32
+- spec:
+    kind: static
+    name: COUNTER
+    description: A static.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: static
+    name: COUNTER
+    span:
+      start_line: 34
+      end_line: 34
+- spec:
+    kind: re_export
+    name: Public
+    description: Re-exported inner item.
+    extras:
+      alias: Public
+      target: inner::Item
+      visibility: pub
+  source:
+    kind: re_export
+    name: Public
+    span:
+      start_line: 36
+      end_line: 36
+- spec:
+    kind: macro
+    name: make_widget
+    description: Widget construction macro.
+    satisfies:
+    - DEMO-1
+  source:
+    kind: macro
+    name: make_widget
+    span:
+      start_line: 40
+      end_line: 42
+- spec:
+    kind: fn
+    name: drifted
+    description: Signature hint diverges from source.
+    satisfies:
+    - DEMO-1
+    signature_hint: 'fn drifted(x: u8) -> u8'
+  source:
+    kind: fn
+    name: drifted
+    span:
+      start_line: 7
+      end_line: 7
+  signature_drift: 'spec.signature_hint = "fn drifted(x: u8) -> u8"; source signature = ""'
+
+--- stderr ---

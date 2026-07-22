@@ -14,7 +14,7 @@ use std::process::Command;
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    items::{extract::extract_items_from_source, ItemKind},
+    items::extract::extract_items_from_source,
     lang::rust::RustAdapter,
 };
 
@@ -70,30 +70,30 @@ extern \"C\" {
 }
 ";
     let items = extract_items_from_source(source, &RustAdapter).unwrap();
-    let kinds: Vec<_> = items.iter().map(|i| i.kind).collect();
+    let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
 
     // 11 of the 12 kinds covered by this fixture (no union, no macro).
-    assert!(kinds.contains(&ItemKind::Fn));
-    assert!(kinds.contains(&ItemKind::Struct));
-    assert!(kinds.contains(&ItemKind::Enum));
-    assert!(kinds.contains(&ItemKind::Const));
-    assert!(kinds.contains(&ItemKind::Static));
-    assert!(kinds.contains(&ItemKind::Type));
-    assert!(kinds.contains(&ItemKind::Trait));
-    assert!(kinds.contains(&ItemKind::Impl));
-    assert!(kinds.contains(&ItemKind::ReExport));
-    assert!(kinds.contains(&ItemKind::ExternBlock));
+    assert!(kinds.contains(&"fn"));
+    assert!(kinds.contains(&"struct"));
+    assert!(kinds.contains(&"enum"));
+    assert!(kinds.contains(&"const"));
+    assert!(kinds.contains(&"static"));
+    assert!(kinds.contains(&"type"));
+    assert!(kinds.contains(&"trait"));
+    assert!(kinds.contains(&"impl"));
+    assert!(kinds.contains(&"re_export"));
+    assert!(kinds.contains(&"extern_block"));
 
     let test_fn = items
         .iter()
-        .find(|i| i.kind == ItemKind::Fn && i.name == "test_one")
+        .find(|i| i.kind == "fn" && i.name == "test_one")
         .expect("test_one fn");
     assert!(test_fn.attributes.iter().any(|a| a == "#[test]"));
 
-    let re_export = items.iter().find(|i| i.kind == ItemKind::ReExport).unwrap();
+    let re_export = items.iter().find(|i| i.kind == "re_export").unwrap();
     assert_eq!(re_export.name, "Public");
 
-    let impl_item = items.iter().find(|i| i.kind == ItemKind::Impl).unwrap();
+    let impl_item = items.iter().find(|i| i.kind == "impl").unwrap();
     assert!(impl_item.name.starts_with("Show for"));
 }
 
@@ -128,25 +128,25 @@ pub fn free_function() {}
     let items = extract_items_from_source(source, &RustAdapter).unwrap();
     let names: Vec<_> = items
         .iter()
-        .map(|i| (i.kind, i.name.clone()))
+        .map(|i| (i.kind.clone(), i.name.clone()))
         .collect();
 
     // Top-level type + trait still extracted.
     assert!(items
         .iter()
-        .any(|i| i.kind == ItemKind::Struct && i.name == "Counter"));
+        .any(|i| i.kind == "struct" && i.name == "Counter"));
     assert!(items
         .iter()
-        .any(|i| i.kind == ItemKind::Trait && i.name == "Resettable"));
+        .any(|i| i.kind == "trait" && i.name == "Resettable"));
 
     // The inherent impl dissolves into per-method items; the block is not an item.
     assert!(
-        !items.iter().any(|i| i.kind == ItemKind::Impl && i.name == "Counter"),
+        !items.iter().any(|i| i.kind == "impl" && i.name == "Counter"),
         "inherent impl block must not be an item; got: {names:?}"
     );
     for method in ["Counter::new", "Counter::incr", "Counter::get"] {
         assert!(
-            items.iter().any(|i| i.kind == ItemKind::Fn && i.name == method),
+            items.iter().any(|i| i.kind == "fn" && i.name == method),
             "public inherent method `{method}` must be an item; got: {names:?}"
         );
     }
@@ -156,12 +156,12 @@ pub fn free_function() {}
     );
 
     // The trait impl stays exactly one item; its methods are not surfaced.
-    let impls: Vec<_> = items.iter().filter(|i| i.kind == ItemKind::Impl).collect();
+    let impls: Vec<_> = items.iter().filter(|i| i.kind == "impl").collect();
     assert_eq!(impls.len(), 1, "only the trait impl is an impl item; got: {names:?}");
     assert_eq!(impls[0].name, "Resettable for Counter");
     for method in ["reset", "is_reset"] {
         assert!(
-            !items.iter().any(|i| i.name.ends_with(method) && i.kind == ItemKind::Fn),
+            !items.iter().any(|i| i.name.ends_with(method) && i.kind == "fn"),
             "trait-impl method `{method}` must not be an item; got: {names:?}"
         );
     }
@@ -169,7 +169,7 @@ pub fn free_function() {}
     // `fn` items: the three public inherent methods + the free function.
     let mut fns: Vec<&str> = items
         .iter()
-        .filter(|i| i.kind == ItemKind::Fn)
+        .filter(|i| i.kind == "fn")
         .map(|i| i.name.as_str())
         .collect();
     fns.sort();
