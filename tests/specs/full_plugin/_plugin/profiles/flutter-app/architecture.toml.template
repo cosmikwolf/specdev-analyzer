@@ -54,9 +54,12 @@ uses_material_design = true
 #   { package = "flutter", sdk = "flutter" }
 # `test_only = true` routes an entry to dev_dependencies.
 #
-# The Flutter SDK dependency itself and the flutter_test harness are
-# seeded here — every Flutter app needs both; remove flutter_test only
-# if the project genuinely ships no tests.
+# The Flutter SDK dependency, the flutter_test harness, and the
+# standard flutter_lints set are seeded here — every Flutter app needs
+# the first two, and the `analysis_options.yaml` that `flutter create`
+# scaffolds includes flutter_lints, so the analyze gate resolves (and
+# enforces the standard lints on generated code). Remove flutter_test
+# only if the project genuinely ships no tests.
 # ---------------------------------------------------------------------------
 [[external_deps]]
 package = "flutter"
@@ -65,6 +68,11 @@ sdk = "flutter"
 [[external_deps]]
 package = "flutter_test"
 sdk = "flutter"
+test_only = true
+
+[[external_deps]]
+package = "flutter_lints"
+version = "^6.0.0"
 test_only = true
 
 # ---------------------------------------------------------------------------
