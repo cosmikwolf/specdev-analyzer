@@ -23,12 +23,15 @@ pub mod block_deps;
 pub mod bridge_contract;
 pub mod profile;
 
-pub use block_deps::{BlockDeps, CrateEntry, CrateSource, CrateSourceTag, RecommendedDep};
+pub use block_deps::{
+    BlockDeps, CrateEntry, CrateSource, CrateSourceTag, PubEntry, PubGit, PubSource,
+    RecommendedDep,
+};
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
     BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection,
     ContextExtra, ContextSection, FeaturesSection, PairedStub,
-    Profile, ShapeKind, SurfaceSection,
+    Profile, PubEnvironment, PubShapeKind, PubspecYamlSection, ShapeKind, SurfaceSection,
 };
 
 use anyhow::{anyhow, Context, Result};

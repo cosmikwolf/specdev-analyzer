@@ -3,8 +3,11 @@ $id: "https://specdev.dev/schema/meta/v1/block_deps.schema.yaml"
 title: "block deps manifest (Phase 16, D52 / doc 21 §4)"
 description: |
   Validates `blocks/<block-name>/codegen/<language>/deps.yaml`. Optional
-  per (block, language) pair; when present, the analyzer drains crate
-  refs from `crates[]` into the project's Cargo.toml at render time.
+  per (block, language) pair; when present, the analyzer drains dep
+  entries into the project's manifest at render time — `crates[]` into
+  Cargo.toml, `pub[]` into pubspec.yaml (each key models its
+  ecosystem's closed set of dep shapes; a deps.yaml carries whichever
+  keys its language directory implies).
   `recommended_external_deps[]` is a non-injecting suggestion list
   surfaced by /spec-design (preserves spec-is-source-of-truth, D35).
   Inlined alongside the block's README; participates in the block's
@@ -19,6 +22,16 @@ properties:
     type: array
     items:
       $ref: "#/$defs/CrateEntry"
+
+  pub:
+    description: |
+      pub package dependencies the block contributes to pubspec.yaml when
+      inlined. Contributions are runtime `dependencies:` — dev-dep
+      routing (`test_only`) is a spec-side external_deps concern,
+      mirroring the crates[] rule.
+    type: array
+    items:
+      $ref: "#/$defs/PubEntry"
 
   recommended_external_deps:
     description: |
@@ -101,3 +114,79 @@ $defs:
                 type: string
           - type: string
             enum: [workspace, crates-io]
+
+  PubEntry:
+    description: |
+      One pubspec dep entry. Mirrors the PubReference shape the pubspec
+      emitter parses from spec-side external_deps, minus `test_only`
+      (block/bridge contributions are runtime deps). Closed set of
+      source shapes — exactly one of the source keys may appear:
+        (none)                                  — hosted, default registry
+        hosted: "https://..." [+ version]       — hosted, custom URL
+        git: { url, ref?, path?, tag_pattern? } — git dep
+        path: "..."                             — path dep
+        sdk: "flutter"                          — SDK-vendored (e.g. flutter)
+      `version` is required for registry-hosted deps (default or custom
+      URL) and forbidden-by-convention elsewhere (git/path/sdk deps take
+      their version from the source; pub ignores a constraint there).
+    type: object
+    additionalProperties: false
+    required: [package]
+    properties:
+      package:
+        description: pub package name (lower_snake_case identifier).
+        type: string
+        minLength: 1
+      version:
+        description: |
+          pub semver constraint (e.g. "^1.2.0", ">=2.0.0 <3.0.0", "any").
+        type: string
+        minLength: 1
+      hosted:
+        description: Custom package-repository URL (modern short form).
+        type: string
+        minLength: 1
+      git:
+        type: object
+        additionalProperties: false
+        required: [url]
+        properties:
+          url:
+            type: string
+            minLength: 1
+          ref:
+            type: string
+          path:
+            description: Sub-path inside the git repo holding the package.
+            type: string
+          tag_pattern:
+            description: |
+              pub 3.x version-resolution pattern over git tags
+              (e.g. "v{{version}}").
+            type: string
+      path:
+        description: Local path dep, relative to the pubspec's directory.
+        type: string
+        minLength: 1
+      sdk:
+        description: SDK source — `flutter` is the only commonly-used value.
+        type: string
+        minLength: 1
+    allOf:
+      # At most one source key.
+      - not:
+          anyOf:
+            - required: [hosted, git]
+            - required: [hosted, path]
+            - required: [hosted, sdk]
+            - required: [git, path]
+            - required: [git, sdk]
+            - required: [path, sdk]
+      # Registry-hosted deps (no git/path/sdk key) must carry a version —
+      # each branch requires the discriminating key, so absence cannot
+      # vacuously satisfy it.
+      - anyOf:
+          - required: [git]
+          - required: [path]
+          - required: [sdk]
+          - required: [version]

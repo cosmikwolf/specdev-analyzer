@@ -6,7 +6,7 @@ use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
     diagnostics::report_error,
-    cargo_toml as cargo_toml_mod, drift, extract, inline,
+    cargo_toml as cargo_toml_mod, drift, extract, inline, pubspec_yaml as pubspec_yaml_mod,
     layout::LayoutContext,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
@@ -182,11 +182,25 @@ pub enum Command {
         #[arg(long)]
         plugin: PathBuf,
     },
-    /// Emit a deterministic Cargo.toml derived from the project's
-    /// spec.toml + architecture.toml + module-level external_deps.
-    /// Every Cargo dep is captured in the spec;
-    /// this subcommand renders the OUTPUT half. Lex-sorted deps;
-    /// stable across runs. Conflict warnings on stderr.
+    /// Emit the project's build manifest, dispatching on
+    /// `[project].language`: Cargo.toml for rust, pubspec.yaml for dart.
+    /// Every dep is captured in the spec; this subcommand renders the
+    /// OUTPUT half. Lex-sorted deps; stable across runs. Conflict
+    /// warnings on stderr.
+    Manifest {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write the manifest here. Without it (or --write), prints to stdout.
+        #[arg(short, long, conflicts_with = "write")]
+        output: Option<PathBuf>,
+        /// Write to the language's canonical filename in the project root
+        /// (Cargo.toml / pubspec.yaml) — lets callers stay language-neutral.
+        #[arg(long)]
+        write: bool,
+    },
+    /// Thin alias of `manifest` for rust-language projects (Cargo.toml
+    /// emission). Errors on non-rust projects — use `manifest` there.
     CargoToml {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -486,8 +500,13 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
         } => run_inline_bridge(project, spec_path.as_deref(), plugin_flag, bridge, merge),
         Command::PluginLint { plugin } => run_plugin_lint(plugin),
         Command::Prompt { project, module } => run_prompt(project, spec_path.as_deref(), module),
+        Command::Manifest {
+            project,
+            output,
+            write,
+        } => run_manifest(project, spec_path.as_deref(), output, write, false),
         Command::CargoToml { project, output } => {
-            run_cargo_toml(project, spec_path.as_deref(), output)
+            run_manifest(project, spec_path.as_deref(), output, false, true)
         }
         Command::Context {
             project,
@@ -541,10 +560,19 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
     }
 }
 
-fn run_cargo_toml(
+/// Shared `manifest` / `cargo-toml` runner. Dispatches on
+/// `[project].language` — language dispatch is in-code by design
+/// (languages are universal infrastructure; everything profile-shaped
+/// flows through the runtime manifests instead).
+/// `require_rust` is the `cargo-toml` alias's guard:
+/// the legacy name only ever emitted Cargo.toml, so a non-rust project
+/// gets a pointer to `manifest` instead of a surprising pubspec.
+fn run_manifest(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
     output: Option<PathBuf>,
+    write: bool,
+    require_rust: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -553,55 +581,80 @@ fn run_cargo_toml(
             return ExitCode::from(2);
         }
     };
-    match cargo_toml_mod::render(&layout) {
-        Ok(rendered) => {
-            for w in &rendered.warnings {
-                eprintln!("warning: {w}");
+    let language = layout.spec.project.language.clone();
+    if require_rust && language != "rust" {
+        eprintln!(
+            "error: this project's language is `{language}`; `cargo-toml` emits \
+             Cargo.toml for rust projects only — use `specdev-analyzer manifest`"
+        );
+        return ExitCode::from(2);
+    }
+
+    // (rendered manifest text, warnings, paired extra files, canonical filename)
+    let (text, warnings, extra_files, default_filename) = match language.as_str() {
+        "rust" => match cargo_toml_mod::render(&layout) {
+            Ok(r) => (r.text, r.warnings, r.extra_files, "Cargo.toml"),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
             }
-            match output {
-                Some(path) => match std::fs::write(&path, &rendered.text) {
-                    Ok(()) => {
-                        eprintln!("wrote Cargo.toml to {}", path.display());
-                        // F-016: pair `[[bin]]` rows with their stub source
-                        // files. Skip writes when the path already exists —
-                        // hand-edited bins are never overwritten.
-                        let project_root = layout.project_root.as_path();
-                        for (rel, body) in &rendered.extra_files {
-                            let dst = project_root.join(rel);
-                            if dst.exists() {
-                                continue;
-                            }
-                            if let Some(parent) = dst.parent() {
-                                if let Err(e) = std::fs::create_dir_all(parent) {
-                                    eprintln!(
-                                        "failed to create {}: {e}",
-                                        parent.display()
-                                    );
-                                    return ExitCode::from(2);
-                                }
-                            }
-                            if let Err(e) = std::fs::write(&dst, body) {
-                                eprintln!("failed to write {}: {e}", dst.display());
-                                return ExitCode::from(2);
-                            }
-                            eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
-                        }
-                        ExitCode::SUCCESS
-                    }
-                    Err(e) => {
-                        eprintln!("failed to write {}: {e}", path.display());
-                        ExitCode::from(2)
-                    }
-                },
-                None => {
-                    print!("{}", rendered.text);
-                    ExitCode::SUCCESS
-                }
+        },
+        "dart" => match pubspec_yaml_mod::render(&layout) {
+            Ok(r) => (r.text, r.warnings, Vec::new(), "pubspec.yaml"),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
             }
+        },
+        other => {
+            eprintln!(
+                "error: manifest emission for language `{other}` is not \
+                 implemented; supported: rust, dart"
+            );
+            return ExitCode::from(1);
         }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(1)
+    };
+
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+
+    let target = output.or_else(|| write.then(|| layout.project_root.join(default_filename)));
+    match target {
+        Some(path) => match std::fs::write(&path, &text) {
+            Ok(()) => {
+                eprintln!("wrote {default_filename} to {}", path.display());
+                // F-016: pair `[[bin]]` rows with their stub source
+                // files. Skip writes when the path already exists —
+                // hand-edited bins are never overwritten.
+                let project_root = layout.project_root.as_path();
+                for (rel, body) in &extra_files {
+                    let dst = project_root.join(rel);
+                    if dst.exists() {
+                        continue;
+                    }
+                    if let Some(parent) = dst.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            eprintln!("failed to create {}: {e}", parent.display());
+                            return ExitCode::from(2);
+                        }
+                    }
+                    if let Err(e) = std::fs::write(&dst, body) {
+                        eprintln!("failed to write {}: {e}", dst.display());
+                        return ExitCode::from(2);
+                    }
+                    eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => {
+            print!("{text}");
+            ExitCode::SUCCESS
         }
     }
 }

@@ -12,8 +12,58 @@ const SCHEMA_LABEL: &str = "block_deps.schema.yaml";
 pub struct BlockDeps {
     #[serde(default)]
     pub crates: Vec<CrateEntry>,
+    /// pub package contributions to pubspec.yaml (`pub:` key — renamed
+    /// because `pub` is a Rust keyword). Runtime `dependencies:` only;
+    /// dev-dep routing is a spec-side external_deps concern, mirroring
+    /// the crates[] rule.
+    #[serde(rename = "pub", default)]
+    pub pub_packages: Vec<PubEntry>,
     #[serde(default)]
     pub recommended_external_deps: Vec<RecommendedDep>,
+}
+
+/// One pubspec dep entry. The closed set of source shapes matches the
+/// embedded schema; the emitter dispatches on the variant — no silent
+/// drops.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PubEntry {
+    pub package: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(flatten, default)]
+    pub source: Option<PubSource>,
+}
+
+/// pubspec dep source. Untagged over structurally disjoint required
+/// keys (`hosted` / `git` / `path` / `sdk`), so declaration order is
+/// not load-bearing.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum PubSource {
+    Hosted {
+        /// Custom package-repository URL (modern short form).
+        hosted: String,
+    },
+    Git {
+        git: PubGit,
+    },
+    Path {
+        path: String,
+    },
+    Sdk {
+        sdk: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PubGit {
+    pub url: String,
+    #[serde(default)]
+    pub r#ref: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub tag_pattern: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
