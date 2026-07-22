@@ -170,6 +170,42 @@ properties:
             items:
               type: string
 
+  pubspec_yaml:
+    description: |
+      pubspec.yaml render dispatch. Required for `language: dart`. May be
+      omitted for non-Dart profiles. Sibling of `cargo_toml` — the
+      `manifest` subcommand dispatches on the project language to
+      whichever section applies.
+    type: object
+    additionalProperties: false
+    required: [shape]
+    properties:
+      shape:
+        description: |
+          PubShapeKind (closed enum): `app` emits `publish_to: none`
+          (a Flutter/Dart application, never published); `package` emits
+          a publishable library shape; `workspace` is descriptive
+          metadata only — the `[workspace]` table presence in spec.toml
+          is the actual dispatch signal, mirroring the cargo path.
+        type: string
+        enum: [app, package, workspace]
+      environment:
+        description: |
+          Default `environment:` constraints emitted when
+          architecture.toml's `[environment]` table doesn't override
+          them. `sdk` is the Dart SDK constraint (pubspec requires one);
+          `flutter` is optional.
+        type: object
+        additionalProperties: false
+        required: [sdk]
+        properties:
+          sdk:
+            type: string
+            minLength: 1
+          flutter:
+            type: string
+            minLength: 1
+
   bootstrap:
     description: |
       Bootstrap-time pipeline. Today, only `rust-workspace` populates

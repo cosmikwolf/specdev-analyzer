@@ -403,7 +403,7 @@ impl WorkspaceContext {
     /// carrying `[workspace]` whose `members[].path` references the
     /// member's directory (relative to the workspace root). Returns
     /// `Ok(None)` if no workspace ancestor is found (standalone project).
-    fn find_for(layout: &LayoutContext) -> Result<Option<Self>> {
+    pub(crate) fn find_for(layout: &LayoutContext) -> Result<Option<Self>> {
         let member_dir = layout.project_root.as_path();
         // Start one directory above the member: a workspace's spec.toml
         // is by definition outside the member's tree.

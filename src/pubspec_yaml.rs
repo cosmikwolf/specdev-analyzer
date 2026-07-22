@@ -1,0 +1,691 @@
+//! Deterministic pubspec.yaml emission from spec metadata.
+//!
+//! The Dart sibling of `cargo_toml.rs` (deliberately a concrete sibling
+//! emitter, not a shared rendering abstraction — the two share merge
+//! *discipline*, not code; revisit if a third language emitter lands).
+//! Reads `spec.toml` `[project]` + `architecture.toml` (`[environment]`,
+//! `[[external_deps]]`, `[[dependency_overrides]]`) + module-level
+//! `external_deps[]` + inlined block/bridge `deps.yaml` `pub:`
+//! contributions, and emits a pubspec.yaml whose content is a
+//! deterministic projection of the spec.
+//!
+//! Every pub dep is in the spec; pubspec.yaml is OUTPUT — same shape as
+//! the Cargo path. Merge order: user (architecture + modules) > blocks >
+//! bridges; first insert wins, conflicts warn.
+//!
+//! Not emitted in v1 (named, not silently dropped): `version:` (app
+//! build-number conventions land with the Flutter profile's
+//! architecture schema) and the `flutter:` config block
+//! (uses-material-design / assets / fonts — profile-owned app content,
+//! same home). `dart pub get` requires neither.
+
+use std::collections::BTreeMap;
+
+use anyhow::{anyhow, Context, Result};
+
+use crate::cargo_toml::WorkspaceContext;
+use crate::layout::LayoutContext;
+use crate::manifest::block_deps as bd_module;
+use crate::manifest::{BlockDeps, Profile, PubShapeKind, PubSource};
+
+/// One pubspec dependency entry, normalized. Spec-side twin of the
+/// manifest loader's `PubEntry` (which lacks `test_only` — block/bridge
+/// contributions are runtime deps by rule).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PubRef {
+    package: String,
+    version: Option<String>,
+    source: Option<PubSource>,
+    test_only: bool,
+}
+
+/// Result of a pubspec.yaml render: the rendered text plus any
+/// non-fatal warnings (e.g., version conflicts across contributors).
+#[derive(Debug, Clone)]
+pub struct RenderedPubspec {
+    pub text: String,
+    pub warnings: Vec<String>,
+}
+
+/// Render pubspec.yaml for the project at `layout`. Dispatches across
+/// three cases, mirroring the cargo path:
+///
+/// * **Workspace root** (`[workspace]` table set in spec.toml) → emits
+///   the root pubspec with a `workspace:` member-path list.
+/// * **Workspace member** (an ancestor spec.toml's `[workspace]`
+///   includes this directory) → per-shape body plus
+///   `resolution: workspace`.
+/// * **Standalone** → per-shape body from the inlined profile.yaml's
+///   `pubspec_yaml` section. The section is required — a Dart project
+///   without it is a configuration error, not a fallback case.
+pub fn render(layout: &LayoutContext) -> Result<RenderedPubspec> {
+    let manifest = load_inlined_profile(layout)?;
+    let pubspec = manifest.pubspec_yaml.as_ref().ok_or_else(|| {
+        anyhow!(
+            "profile.yaml at {} has no `pubspec_yaml` section; cannot dispatch \
+             pubspec render (the profile must declare shape + environment for \
+             its language)",
+            layout.specdev_root.join("profile.yaml").display(),
+        )
+    })?;
+
+    if layout.spec.workspace.is_some() {
+        return render_workspace_root(layout, pubspec);
+    }
+    // Ancestor-workspace detection is language-neutral (spec.toml
+    // `[workspace].members[].path` inclusion); reuse the cargo path's
+    // walker. Its Cargo-specific context (workspace_package fields,
+    // hoisted deps) is simply unused here.
+    let is_member = WorkspaceContext::find_for(layout)?.is_some();
+    render_package(layout, pubspec, is_member)
+}
+
+fn load_inlined_profile(layout: &LayoutContext) -> Result<Profile> {
+    let path = layout.specdev_root.join("profile.yaml");
+    if !path.is_file() {
+        return Err(anyhow!(
+            "no profile.yaml at {} — pubspec emission is manifest-driven and \
+             has no pre-manifest fallback; re-bootstrap or run `specdev migrate`",
+            path.display(),
+        ));
+    }
+    Profile::load(&path)
+}
+
+/// Resolve the `environment:` block: architecture.toml's `[environment]`
+/// table (keys `sdk`, `flutter`) overrides the profile manifest's
+/// `pubspec_yaml.environment` defaults, key by key. An sdk constraint
+/// must come from one of the two — pubspec requires it.
+fn resolve_environment(
+    layout: &LayoutContext,
+    pubspec: &crate::manifest::PubspecYamlSection,
+    arch: &toml::value::Table,
+) -> Result<(String, Option<String>)> {
+    let arch_env = arch.get("environment").and_then(toml::Value::as_table);
+    let arch_sdk = arch_env
+        .and_then(|t| t.get("sdk"))
+        .and_then(toml::Value::as_str)
+        .map(String::from);
+    let arch_flutter = arch_env
+        .and_then(|t| t.get("flutter"))
+        .and_then(toml::Value::as_str)
+        .map(String::from);
+
+    let sdk = arch_sdk
+        .or_else(|| pubspec.environment.as_ref().map(|e| e.sdk.clone()))
+        .ok_or_else(|| {
+            anyhow!(
+                "no Dart SDK constraint available: add `[environment] sdk = \"...\"` \
+                 to {} or an `environment.sdk` default to the profile's \
+                 pubspec_yaml section",
+                layout.architecture_toml_path.display(),
+            )
+        })?;
+    let flutter = arch_flutter.or_else(|| {
+        pubspec
+            .environment
+            .as_ref()
+            .and_then(|e| e.flutter.clone())
+    });
+    Ok((sdk, flutter))
+}
+
+fn render_package(
+    layout: &LayoutContext,
+    pubspec: &crate::manifest::PubspecYamlSection,
+    workspace_member: bool,
+) -> Result<RenderedPubspec> {
+    let project = &layout.spec.project;
+    let arch = read_architecture(layout)?;
+    let (sdk, flutter) = resolve_environment(layout, pubspec, &arch)?;
+
+    let mut deps: BTreeMap<String, PubRef> = BTreeMap::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // User-authored deps first (their versions win on conflict):
+    // architecture-level [[external_deps]], then per-module external_deps[].
+    for r in extract_pub_ref_array(arch.get("external_deps"))? {
+        merge_dep(&mut deps, r, &mut warnings);
+    }
+    for r in collect_module_external_deps(layout)? {
+        merge_dep(&mut deps, r, &mut warnings);
+    }
+    // Block-contributed deps, then bridge join-product deps
+    // (user > blocks > bridges; first insert wins, conflicts warn).
+    for r in collect_inlined_unit_deps(layout, &layout.inlined_blocks_dir, "blocks")? {
+        merge_dep(&mut deps, r, &mut warnings);
+    }
+    for r in collect_inlined_unit_deps(layout, &layout.inlined_bridges_dir, "bridges")? {
+        merge_dep(&mut deps, r, &mut warnings);
+    }
+
+    let mut text = String::new();
+    write_header(&mut text, project, matches!(pubspec.shape, PubShapeKind::App));
+    write_environment(&mut text, &sdk, flutter.as_deref());
+    if workspace_member {
+        text.push_str("resolution: workspace\n");
+    }
+    write_dependency_sections(&mut text, &deps);
+    write_overrides_section(&mut text, &arch)?;
+
+    Ok(RenderedPubspec { text, warnings })
+}
+
+/// Render the workspace-root pubspec: `workspace:` member-path list
+/// (declaration order, matching the cargo members convention) plus the
+/// root package header. Pub workspace roots are never published.
+fn render_workspace_root(
+    layout: &LayoutContext,
+    pubspec: &crate::manifest::PubspecYamlSection,
+) -> Result<RenderedPubspec> {
+    let workspace_section = layout
+        .spec
+        .workspace
+        .as_ref()
+        .expect("render_workspace_root only called when [workspace] is set");
+    let project = &layout.spec.project;
+    let arch = read_architecture(layout)?;
+    let (sdk, flutter) = resolve_environment(layout, pubspec, &arch)?;
+
+    let mut text = String::new();
+    write_header(&mut text, project, /* publish_to_none */ true);
+    write_environment(&mut text, &sdk, flutter.as_deref());
+    text.push_str("workspace:\n");
+    for member in &workspace_section.members {
+        text.push_str(&format!("  - {}\n", quote_str(&member.path)));
+    }
+
+    Ok(RenderedPubspec {
+        text,
+        warnings: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Input gathering
+// ---------------------------------------------------------------------------
+
+fn read_architecture(layout: &LayoutContext) -> Result<toml::value::Table> {
+    let path = &layout.architecture_toml_path;
+    if !path.is_file() {
+        return Ok(toml::value::Table::new());
+    }
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&text)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    match value {
+        toml::Value::Table(t) => Ok(t),
+        _ => Err(anyhow!("{} did not parse as a TOML table", path.display())),
+    }
+}
+
+/// Parse one spec-side PubReference table. Hand-rolled (not serde) so
+/// the closed key set is enforced with named errors — a typo'd source
+/// key must fail loudly, never silently downgrade to a registry dep
+/// (the pass-through-silent-drop lesson).
+fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
+    let t = value
+        .as_table()
+        .ok_or_else(|| anyhow!("PubReference must be a table; got {}", value.type_str()))?;
+
+    const KNOWN: &[&str] = &[
+        "package", "version", "hosted", "git", "path", "sdk", "test_only",
+    ];
+    for k in t.keys() {
+        if !KNOWN.contains(&k.as_str()) {
+            return Err(anyhow!(
+                "PubReference has unknown key `{k}`; expected one of {}",
+                KNOWN.join("/"),
+            ));
+        }
+    }
+
+    let package = t
+        .get("package")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| anyhow!("PubReference missing required `package` (string)"))?
+        .to_string();
+    let version = t
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .map(String::from);
+    let test_only = t
+        .get("test_only")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
+
+    let source_keys: Vec<&str> = ["hosted", "git", "path", "sdk"]
+        .into_iter()
+        .filter(|k| t.contains_key(*k))
+        .collect();
+    if source_keys.len() > 1 {
+        return Err(anyhow!(
+            "PubReference `{package}` declares multiple sources ({}); at most \
+             one of hosted/git/path/sdk is allowed",
+            source_keys.join(", "),
+        ));
+    }
+
+    let source = match source_keys.first().copied() {
+        None => None,
+        Some("hosted") => Some(PubSource::Hosted {
+            hosted: t
+                .get("hosted")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| {
+                    anyhow!("PubReference `{package}`: `hosted` must be a URL string")
+                })?
+                .to_string(),
+        }),
+        Some("path") => Some(PubSource::Path {
+            path: t
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow!("PubReference `{package}`: `path` must be a string"))?
+                .to_string(),
+        }),
+        Some("sdk") => Some(PubSource::Sdk {
+            sdk: t
+                .get("sdk")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| anyhow!("PubReference `{package}`: `sdk` must be a string"))?
+                .to_string(),
+        }),
+        Some("git") => {
+            let g = t.get("git").and_then(toml::Value::as_table).ok_or_else(|| {
+                anyhow!(
+                    "PubReference `{package}`: `git` must be a table with `url` \
+                     (+ optional ref/path/tag_pattern)"
+                )
+            })?;
+            for k in g.keys() {
+                if !["url", "ref", "path", "tag_pattern"].contains(&k.as_str()) {
+                    return Err(anyhow!(
+                        "PubReference `{package}`: unknown `git` key `{k}`; expected \
+                         url/ref/path/tag_pattern"
+                    ));
+                }
+            }
+            Some(PubSource::Git {
+                git: bd_module::PubGit {
+                    url: g
+                        .get("url")
+                        .and_then(toml::Value::as_str)
+                        .ok_or_else(|| {
+                            anyhow!("PubReference `{package}`: `git.url` is required")
+                        })?
+                        .to_string(),
+                    r#ref: g.get("ref").and_then(toml::Value::as_str).map(String::from),
+                    path: g.get("path").and_then(toml::Value::as_str).map(String::from),
+                    tag_pattern: g
+                        .get("tag_pattern")
+                        .and_then(toml::Value::as_str)
+                        .map(String::from),
+                },
+            })
+        }
+        Some(_) => unreachable!("source_keys drawn from the closed list"),
+    };
+
+    // Registry-hosted deps (default or custom URL) need a version; the
+    // other sources carry their version in the source itself.
+    if version.is_none() && matches!(source, None | Some(PubSource::Hosted { .. })) {
+        return Err(anyhow!(
+            "PubReference `{package}` is registry-hosted but has no `version` \
+             constraint; add one (e.g. version = \"^1.0.0\")"
+        ));
+    }
+
+    Ok(PubRef {
+        package,
+        version,
+        source,
+        test_only,
+    })
+}
+
+fn extract_pub_ref_array(value: Option<&toml::Value>) -> Result<Vec<PubRef>> {
+    let Some(v) = value else { return Ok(Vec::new()) };
+    let Some(arr) = v.as_array() else {
+        return Ok(Vec::new());
+    };
+    arr.iter().map(parse_pub_ref).collect()
+}
+
+fn collect_module_external_deps(layout: &LayoutContext) -> Result<Vec<PubRef>> {
+    let mut out: Vec<PubRef> = Vec::new();
+    if !layout.modules_dir.is_dir() {
+        return Ok(out);
+    }
+    let mut paths: Vec<_> = std::fs::read_dir(&layout.modules_dir)
+        .with_context(|| format!("reading {}", layout.modules_dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().map(|s| s == "toml").unwrap_or(false))
+        .collect();
+    paths.sort();
+    for path in &paths {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let value: toml::Value = toml::from_str(&text)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        for r in extract_pub_ref_array(value.get("external_deps"))
+            .with_context(|| format!("in {}", path.display()))?
+        {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
+/// Collect `pub:` contributions from every inlined block or bridge
+/// `deps.yaml` (same discovery walk as the cargo path: unit names from
+/// `<inlined dir>/*.schema.yaml`, deps at `<codegen>/<kind>/<unit>/deps.yaml`).
+fn collect_inlined_unit_deps(
+    layout: &LayoutContext,
+    inlined_dir: &std::path::Path,
+    kind_dir: &str,
+) -> Result<Vec<PubRef>> {
+    let mut out: Vec<PubRef> = Vec::new();
+    if !inlined_dir.is_dir() {
+        return Ok(out);
+    }
+    let mut unit_names: Vec<String> = std::fs::read_dir(inlined_dir)
+        .with_context(|| format!("reading {}", inlined_dir.display()))?
+        .filter_map(|r| r.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name().and_then(|s| s.to_str())?;
+            name.strip_suffix(".schema.yaml").map(String::from)
+        })
+        .collect();
+    unit_names.sort();
+    for unit in unit_names {
+        let deps_path = layout
+            .codegen_dir
+            .join(kind_dir)
+            .join(&unit)
+            .join("deps.yaml");
+        let deps = BlockDeps::load(&deps_path).with_context(|| {
+            format!(
+                "loading {kind_dir} deps.yaml for `{unit}` at {}",
+                deps_path.display()
+            )
+        })?;
+        for entry in &deps.pub_packages {
+            out.push(PubRef {
+                package: entry.package.clone(),
+                version: entry.version.clone(),
+                source: entry.source.clone(),
+                test_only: false,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Insert `r` into `deps` under the cargo-path merge discipline: first
+/// insert wins; exact duplicates are ignored; version or source
+/// conflicts warn and keep the existing entry.
+fn merge_dep(deps: &mut BTreeMap<String, PubRef>, r: PubRef, warnings: &mut Vec<String>) {
+    match deps.get(&r.package) {
+        None => {
+            deps.insert(r.package.clone(), r);
+        }
+        Some(existing) if existing == &r => {}
+        Some(existing) if existing.version != r.version => {
+            let show = |v: &Option<String>| v.clone().unwrap_or_else(|| "<none>".to_string());
+            warnings.push(format!(
+                "package `{}` declared with conflicting versions ({} vs {}); using {}",
+                r.package,
+                show(&existing.version),
+                show(&r.version),
+                show(&existing.version),
+            ));
+        }
+        Some(_) => {
+            warnings.push(format!(
+                "package `{}` declared with conflicting sources; keeping the \
+                 first-declared entry",
+                r.package,
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+fn write_header(text: &mut String, project: &crate::config::ProjectSection, publish_to_none: bool) {
+    text.push_str(&format!("name: {}\n", pub_package_name(&project.name)));
+    if let Some(desc) = &project.description {
+        text.push_str(&format!("description: {}\n", quote_str(desc)));
+    }
+    if publish_to_none {
+        text.push_str("publish_to: none\n");
+    }
+}
+
+fn write_environment(text: &mut String, sdk: &str, flutter: Option<&str>) {
+    text.push_str("environment:\n");
+    text.push_str(&format!("  sdk: {}\n", quote_str(sdk)));
+    if let Some(f) = flutter {
+        text.push_str(&format!("  flutter: {}\n", quote_str(f)));
+    }
+}
+
+fn write_dependency_sections(text: &mut String, deps: &BTreeMap<String, PubRef>) {
+    text.push_str("dependencies:\n");
+    for (name, r) in deps.iter().filter(|(_, r)| !r.test_only) {
+        write_dep_entry(text, name, r);
+    }
+    let dev: Vec<(&String, &PubRef)> = deps.iter().filter(|(_, r)| r.test_only).collect();
+    if !dev.is_empty() {
+        text.push_str("dev_dependencies:\n");
+        for (name, r) in dev {
+            write_dep_entry(text, name, r);
+        }
+    }
+}
+
+fn write_overrides_section(text: &mut String, arch: &toml::value::Table) -> Result<()> {
+    let overrides = extract_pub_ref_array(arch.get("dependency_overrides"))?;
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    let mut sorted: BTreeMap<String, PubRef> = BTreeMap::new();
+    for r in overrides {
+        sorted.insert(r.package.clone(), r);
+    }
+    text.push_str("dependency_overrides:\n");
+    for (name, r) in &sorted {
+        write_dep_entry(text, name, r);
+    }
+    Ok(())
+}
+
+/// Render one dep entry (two-space indented under its section). Source
+/// dispatch is exhaustive — no silent drops:
+///   * no source        → `name: "<version>"` (default registry)
+///   * hosted           → nested `hosted:` URL + `version:`
+///   * git              → nested `git:` block with url + optional keys
+///   * path             → nested `path:`
+///   * sdk              → nested `sdk:` (e.g. `flutter: { sdk: flutter }`)
+fn write_dep_entry(text: &mut String, name: &str, r: &PubRef) {
+    match &r.source {
+        None => {
+            let v = r.version.as_deref().expect("checked at parse time");
+            text.push_str(&format!("  {}: {}\n", name, quote_str(v)));
+        }
+        Some(PubSource::Hosted { hosted }) => {
+            text.push_str(&format!("  {}:\n", name));
+            text.push_str(&format!("    hosted: {}\n", quote_str(hosted)));
+            if let Some(v) = &r.version {
+                text.push_str(&format!("    version: {}\n", quote_str(v)));
+            }
+        }
+        Some(PubSource::Git { git }) => {
+            text.push_str(&format!("  {}:\n", name));
+            text.push_str("    git:\n");
+            text.push_str(&format!("      url: {}\n", quote_str(&git.url)));
+            if let Some(re) = &git.r#ref {
+                text.push_str(&format!("      ref: {}\n", quote_str(re)));
+            }
+            if let Some(p) = &git.path {
+                text.push_str(&format!("      path: {}\n", quote_str(p)));
+            }
+            if let Some(tp) = &git.tag_pattern {
+                text.push_str(&format!("      tag_pattern: {}\n", quote_str(tp)));
+            }
+        }
+        Some(PubSource::Path { path }) => {
+            text.push_str(&format!("  {}:\n", name));
+            text.push_str(&format!("    path: {}\n", quote_str(path)));
+        }
+        Some(PubSource::Sdk { sdk }) => {
+            text.push_str(&format!("  {}:\n", name));
+            text.push_str(&format!("    sdk: {}\n", sdk));
+        }
+    }
+}
+
+/// A project name as a pub package identifier: pub requires
+/// lower_snake_case, so hyphens become underscores (the analog of the
+/// cargo path's `crate_ident`).
+fn pub_package_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+/// Double-quote a YAML scalar, escaping the double-quoted-style special
+/// characters. Version constraints (`^1.2.0`, `>=2.0.0 <3.0.0`) and
+/// URLs are always emitted quoted — uniformly valid regardless of YAML
+/// plain-scalar edge cases.
+fn quote_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn toml_value(s: &str) -> toml::Value {
+        toml::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn parse_pub_ref_hosted_default_requires_version() {
+        let ok = parse_pub_ref(&toml_value("package = \"http\"\nversion = \"^1.2.0\"")).unwrap();
+        assert_eq!(ok.package, "http");
+        assert!(ok.source.is_none());
+
+        let err = parse_pub_ref(&toml_value("package = \"http\"")).unwrap_err();
+        assert!(format!("{err:#}").contains("no `version`"), "{err:#}");
+    }
+
+    #[test]
+    fn parse_pub_ref_rejects_unknown_and_multi_source_keys() {
+        let err = parse_pub_ref(&toml_value("package = \"x\"\npth = \"../x\"")).unwrap_err();
+        assert!(format!("{err:#}").contains("unknown key `pth`"), "{err:#}");
+
+        let err = parse_pub_ref(&toml_value(
+            "package = \"x\"\npath = \"../x\"\nsdk = \"flutter\"",
+        ))
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("multiple sources"), "{err:#}");
+    }
+
+    #[test]
+    fn parse_pub_ref_source_shapes() {
+        let sdk = parse_pub_ref(&toml_value("package = \"flutter\"\nsdk = \"flutter\"")).unwrap();
+        assert!(matches!(sdk.source, Some(PubSource::Sdk { .. })));
+        assert!(sdk.version.is_none());
+
+        let path = parse_pub_ref(&toml_value("package = \"local\"\npath = \"../local\"")).unwrap();
+        assert!(matches!(path.source, Some(PubSource::Path { .. })));
+
+        let git = parse_pub_ref(&toml_value(
+            "package = \"foo\"\ngit = { url = \"https://g.example/foo\", ref = \"v1\" }",
+        ))
+        .unwrap();
+        match git.source {
+            Some(PubSource::Git { git }) => {
+                assert_eq!(git.url, "https://g.example/foo");
+                assert_eq!(git.r#ref.as_deref(), Some("v1"));
+            }
+            other => panic!("expected git source, got {other:?}"),
+        }
+
+        let err = parse_pub_ref(&toml_value(
+            "package = \"foo\"\ngit = { url = \"u\", rev = \"abc\" }",
+        ))
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("unknown `git` key `rev`"), "{err:#}");
+    }
+
+    #[test]
+    fn merge_keeps_first_and_warns_on_version_conflict() {
+        let mut deps = BTreeMap::new();
+        let mut warnings = Vec::new();
+        let a = parse_pub_ref(&toml_value("package = \"http\"\nversion = \"^1.2.0\"")).unwrap();
+        let b = parse_pub_ref(&toml_value("package = \"http\"\nversion = \"^1.3.0\"")).unwrap();
+        merge_dep(&mut deps, a, &mut warnings);
+        merge_dep(&mut deps, b, &mut warnings);
+        assert_eq!(deps["http"].version.as_deref(), Some("^1.2.0"));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("conflicting versions"));
+    }
+
+    #[test]
+    fn dep_entry_rendering_covers_every_source_shape() {
+        let mut text = String::new();
+        for spec in [
+            "package = \"http\"\nversion = \"^1.2.0\"",
+            "package = \"corp\"\nhosted = \"https://pub.corp.example\"\nversion = \"^2.0.0\"",
+            "package = \"foo\"\ngit = { url = \"https://g.example/foo\", ref = \"v1\", path = \"pkgs/foo\", tag_pattern = \"v{{version}}\" }",
+            "package = \"local\"\npath = \"../local\"",
+            "package = \"flutter\"\nsdk = \"flutter\"",
+        ] {
+            let r = parse_pub_ref(&toml_value(spec)).unwrap();
+            write_dep_entry(&mut text, &r.package.clone(), &r);
+        }
+        let expected = "  http: \"^1.2.0\"
+  corp:
+    hosted: \"https://pub.corp.example\"
+    version: \"^2.0.0\"
+  foo:
+    git:
+      url: \"https://g.example/foo\"
+      ref: \"v1\"
+      path: \"pkgs/foo\"
+      tag_pattern: \"v{{version}}\"
+  local:
+    path: \"../local\"
+  flutter:
+    sdk: flutter
+";
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn pub_package_name_snakes_hyphens() {
+        assert_eq!(pub_package_name("ble-scanner"), "ble_scanner");
+        assert_eq!(pub_package_name("blescan"), "blescan");
+    }
+}

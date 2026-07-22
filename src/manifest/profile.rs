@@ -15,6 +15,8 @@ pub struct Profile {
     #[serde(default)]
     pub cargo_toml: Option<CargoTomlSection>,
     #[serde(default)]
+    pub pubspec_yaml: Option<PubspecYamlSection>,
+    #[serde(default)]
     pub bootstrap: Option<BootstrapSection>,
     #[serde(default)]
     pub context: Option<ContextSection>,
@@ -44,6 +46,37 @@ pub enum ShapeKind {
     Binary,
     Workspace,
     Plugin,
+}
+
+/// pubspec.yaml render dispatch — sibling of [`CargoTomlSection`]; the
+/// `manifest` subcommand routes on the project language to whichever
+/// section applies.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PubspecYamlSection {
+    pub shape: PubShapeKind,
+    /// Default `environment:` constraints, overridable by
+    /// architecture.toml's `[environment]` table.
+    #[serde(default)]
+    pub environment: Option<PubEnvironment>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PubShapeKind {
+    /// An application: emits `publish_to: none`.
+    App,
+    /// A publishable library package.
+    Package,
+    /// Descriptive only — the `[workspace]` table in spec.toml is the
+    /// actual dispatch signal, mirroring the cargo path.
+    Workspace,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PubEnvironment {
+    pub sdk: String,
+    #[serde(default)]
+    pub flutter: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
