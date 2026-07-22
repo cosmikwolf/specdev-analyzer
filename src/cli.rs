@@ -139,7 +139,8 @@ pub enum Command {
         /// Profile name (e.g. `firmware-layered`, `library-api`).
         #[arg(long)]
         profile: String,
-        /// Target language for codegen (`rust`, `c`).
+        /// Target language for codegen (e.g. `rust`, `c`, `dart` — any
+        /// language the schema enums admit).
         #[arg(long)]
         language: String,
         /// Project name (lowercase, hyphens). Becomes `[project].name` in

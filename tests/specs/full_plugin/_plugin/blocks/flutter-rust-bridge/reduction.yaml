@@ -1,0 +1,16 @@
+metaschema_version: "v1"
+
+# flutter-rust-bridge block reduction. Deliberately empty: the
+# [flutter_rust_bridge] table is a nameless configuration singleton that
+# only codegen prose consumes (the same posture as other config
+# singletons that no graph check reaches into). The table's rust_root
+# crosses project boundaries by design — build-layer config, not a spec
+# relation — so there is nothing for the graph to resolve or check; the
+# drift tripwire is the FRB codegen run itself. Materializing a config
+# entity here would add a synthetic name nothing consumes. If a future
+# check needs to see the FFI seam (e.g. at-most-one such module per
+# app), adding an entity then is an additive change.
+
+entities: []
+
+relations: []
