@@ -55,7 +55,15 @@ const PROFILES: &[&str] = &[
     "flutter-app",
 ];
 
-const BLOCKS: &[&str] = &["nih-plug", "egui", "embassy", "stm32h5-rs"];
+// (name, codegen language) — the deps manifest lives at
+// blocks/<name>/codegen/<lang>/deps.yaml, so language is part of the row.
+const BLOCKS: &[(&str, &str)] = &[
+    ("nih-plug", "rust"),
+    ("egui", "rust"),
+    ("embassy", "rust"),
+    ("stm32h5-rs", "rust"),
+    ("flutter-rust-bridge", "dart"),
+];
 
 const BRIDGES: &[&str] = &["egui+nih-plug", "embassy+stm32h5-rs"];
 
@@ -84,12 +92,12 @@ fn fixture_profiles_load_cleanly() {
 #[test]
 fn fixture_block_deps_load_cleanly() {
     let root = full_plugin();
-    for name in BLOCKS {
+    for (name, lang) in BLOCKS {
         let p = root
             .join("blocks")
             .join(name)
             .join("codegen")
-            .join("rust")
+            .join(lang)
             .join("deps.yaml");
         let m = BlockDeps::load(&p)
             .unwrap_or_else(|e| panic!("deps for block {name} failed to load: {e:#}"));
@@ -97,16 +105,20 @@ fn fixture_block_deps_load_cleanly() {
         // STM32H5 HAL has no usable crates.io release yet, and the
         // production path (`embassy-stm32`) is the embassy+stm32h5-rs
         // bridge's join-product dep, never the block's. Every other block
-        // contributes at least one crate.
+        // contributes at least one dep in its language's vocabulary.
         if *name == "stm32h5-rs" {
             assert!(
                 m.crates.is_empty(),
                 "stm32h5-rs is topology-only and must declare no crates (embassy-stm32 is bridge-owned)"
             );
         } else {
+            let contributes = match *lang {
+                "dart" => !m.pub_packages.is_empty(),
+                _ => !m.crates.is_empty(),
+            };
             assert!(
-                !m.crates.is_empty(),
-                "block {name} should declare at least one crate (recommended_external_deps is suggestion-only)"
+                contributes,
+                "block {name} should declare at least one {lang} dep (recommended_external_deps is suggestion-only)"
             );
         }
     }
@@ -145,12 +157,12 @@ fn live_plugin_tree_profiles_load_cleanly() {
 #[test]
 fn live_plugin_tree_block_deps_load_cleanly() {
     let root = live_plugin();
-    for name in BLOCKS {
+    for (name, lang) in BLOCKS {
         let p = root
             .join("blocks")
             .join(name)
             .join("codegen")
-            .join("rust")
+            .join(lang)
             .join("deps.yaml");
         BlockDeps::load(&p).unwrap_or_else(|e| panic!("live deps for {name} failed: {e:#}"));
     }
@@ -197,8 +209,8 @@ fn fixture_matches_live_plugin_tree_byte_for_byte() {
         let rel = format!("profiles/{name}/profile.yaml");
         pairs.push((live_root.join(&rel), fixture_root.join(&rel), "profile"));
     }
-    for name in BLOCKS {
-        let rel = format!("blocks/{name}/codegen/rust/deps.yaml");
+    for (name, lang) in BLOCKS {
+        let rel = format!("blocks/{name}/codegen/{lang}/deps.yaml");
         pairs.push((live_root.join(&rel), fixture_root.join(&rel), "deps"));
     }
     for name in BRIDGES {

@@ -1,0 +1,86 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/flutter-rust-bridge.v1"
+title: "flutter-rust-bridge block (v1)"
+description: >
+  Schema fragment contributed by the `flutter-rust-bridge` block. Adds a
+  namespaced `[flutter_rust_bridge]` table to `Module` carrying the
+  flutter_rust_bridge (FRB) codegen configuration for a Flutter app that
+  consumes a companion Rust crate over FFI.
+
+  The table models FRB's config INPUTS only — where the companion crate
+  lives, which of its modules FRB scans, whether the web (wasm) target is
+  on — never an item-level mirror of the exposed Rust API. The API
+  surface is owned by the companion crate's own spec; the drift tripwire
+  between the two projects is the FRB codegen run itself
+  (`flutter_rust_bridge_codegen generate` failing or regenerating
+  differently), not this spec.
+
+  Expected on exactly one module per app in v1 — the module that owns the
+  FFI seam (typically the service that wraps the generated bindings for
+  the rest of the app). Multi-crate FFI is deferred.
+
+  This schema is self-contained: patterns are inlined rather than $ref'd
+  against a profile's enums.schema.yaml, so the block composes against
+  any profile that exposes `Module`.
+
+  Validation note: a schema error INSIDE this table also cascades to a
+  module-level "Unevaluated properties are not allowed
+  ('flutter_rust_bridge' was unexpected)" error — that second message is
+  the cascade, not a missing-inline problem. Fix the inner error first.
+type: object
+properties:
+  flutter_rust_bridge:
+    type: object
+    additionalProperties: false
+    required: [rust_root, rust_input, web]
+    properties:
+      rust_root:
+        description: >
+          Path from the app project root (the directory holding spec.toml
+          / pubspec.yaml) to the companion Rust crate directory — the one
+          whose Cargo.toml FRB builds. Typically climbs out of the app
+          root (e.g. "../rust/my_lib"). This is build-layer configuration
+          crossing project boundaries: nothing validates it at spec time;
+          a wrong path fails at `flutter_rust_bridge_codegen generate`.
+        type: string
+        minLength: 1
+      rust_input:
+        description: >
+          Rust module path(s) within the companion crate that FRB scans
+          for the exposed API (e.g. "crate::api"). This selects WHICH
+          MODULES FRB reads — never list symbols here; the symbol surface
+          lives in the companion crate's own spec. Entries are joined
+          comma-separated into the generated FRB config file.
+          Third-party-crate scanning is out of scope in v1.
+        type: array
+        items: { $ref: "#/$defs/RustModulePath" }
+        minItems: 1
+        uniqueItems: true
+      web:
+        description: >
+          Whether the web (wasm) target is enabled. Required — the choice
+          carries obligations beyond this file: `true` keeps FRB's web
+          codegen on and commits the companion crate to wasm-purity (no
+          platform-bound I/O, no std::thread::spawn, tokio rt only, and
+          it must compile for wasm32-unknown-unknown); `false` emits
+          `no_web: true` and drops the web legs from the build sequence.
+          Align with the project's platform matrix where the profile
+          declares one.
+        type: boolean
+      dart_output:
+        description: >
+          App-root-relative directory where FRB writes generated Dart.
+          Defaults to "lib/src/rust" (applied by codegen prose — JSON
+          Schema defaults are not applied at validation time). Everything
+          under it is generator-owned output — never gen-recorded, never
+          hand-edited.
+        type: string
+        minLength: 1
+
+$defs:
+  RustModulePath:
+    description: >
+      Rust module path rooted at the companion crate ("crate::api",
+      "crate::api::types").
+    type: string
+    pattern: "^crate(::[A-Za-z_][A-Za-z0-9_]*)+$"

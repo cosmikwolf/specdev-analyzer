@@ -1,0 +1,15 @@
+# Manifest — pub deps the flutter-rust-bridge block contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# The pin is EXACT ("2.12.0", no caret): flutter_rust_bridge requires the
+# runtime package version to equal the codegen CLI version, and the
+# generated files in a project are produced by that exact CLI. Bumping the
+# version is a coordinated change: bump here, update the version literal in
+# ./README.md's `cargo install` line, reinstall the CLI, regenerate the
+# committed bindings in ../../reference/, and re-run
+# `flutter_rust_bridge_codegen generate` in every consuming project.
+pub:
+  - package: flutter_rust_bridge
+    version: "2.12.0"
+
+recommended_external_deps: []
