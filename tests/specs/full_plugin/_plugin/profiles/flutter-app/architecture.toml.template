@@ -1,0 +1,83 @@
+# Architecture-level decisions for a flutter-app project.
+#
+# This file declares the platform matrix the app targets, the app
+# version, the pubspec `flutter:` config block, SDK constraints, and
+# project-wide pub dependencies. Module-level external_deps live in each
+# specs/modules/*.toml; the union (plus block/bridge contributions)
+# determines the app's full dep set, emitted to pubspec.yaml by
+# `specdev-analyzer manifest --write` (which /spec-gen runs as its
+# manifest step).
+
+# ---------------------------------------------------------------------------
+# Platform matrix (required). The platforms this app ships to. Modules
+# omitting their own `platforms` field support all of these; a module
+# declaring `platforms = [...]` must stay within this set (validate
+# fails on an out-of-matrix entry).
+# ---------------------------------------------------------------------------
+platforms = ["android", "ios", "web"]
+
+# ---------------------------------------------------------------------------
+# App version (optional). Emitted as pubspec.yaml's `version:` field.
+# semver plus optional build number after `+` — Android versionCode /
+# iOS build number derive from the part after `+`.
+# ---------------------------------------------------------------------------
+# version = "0.1.0+1"
+
+# ---------------------------------------------------------------------------
+# Environment constraints (optional). Overrides the profile's defaults
+# key-by-key.
+# ---------------------------------------------------------------------------
+# [environment]
+# sdk = "^3.9.0"
+# flutter = ">=3.35.0"
+
+# ---------------------------------------------------------------------------
+# pubspec `flutter:` config block. `uses_material_design` must be true
+# for Material icon fonts to be bundled. `assets` entries are files or
+# directories (trailing `/` includes the directory's files), relative to
+# the package root.
+# ---------------------------------------------------------------------------
+[flutter]
+uses_material_design = true
+# assets = ["assets/images/"]
+
+# ---------------------------------------------------------------------------
+# Project-wide pub dependencies — infrastructure packages every module
+# may assume. Module-scoped packages belong in each module's
+# `external_deps` instead.
+#
+# Accepted shapes (exactly one source key; registry deps need `version`):
+#   { package = "http", version = "^1.2.0" }                    — pub.dev
+#   { package = "corp_ui", hosted = "https://pub.corp.example", version = "^2.0.0" }
+#   { package = "foo", git = { url = "https://...", ref = "v1" } }
+#   { package = "local_pkg", path = "../local_pkg" }
+#   { package = "flutter", sdk = "flutter" }
+# `test_only = true` routes an entry to dev_dependencies.
+#
+# The Flutter SDK dependency itself and the flutter_test harness are
+# seeded here — every Flutter app needs both; remove flutter_test only
+# if the project genuinely ships no tests.
+# ---------------------------------------------------------------------------
+[[external_deps]]
+package = "flutter"
+sdk = "flutter"
+
+[[external_deps]]
+package = "flutter_test"
+sdk = "flutter"
+test_only = true
+
+# ---------------------------------------------------------------------------
+# Dependency overrides (optional) — pub's escape hatch forcing a
+# package's source/version for the whole resolution. Use sparingly.
+# ---------------------------------------------------------------------------
+# [[dependency_overrides]]
+# package = "some_pkg"
+# path = "../forks/some_pkg"
+
+# ---------------------------------------------------------------------------
+# Project-shape decisions (optional). Decision ids that shape the
+# project as a whole (platform matrix rationale, state-management
+# approach, navigation architecture).
+# ---------------------------------------------------------------------------
+# project_decisions = ["DEC-001"]

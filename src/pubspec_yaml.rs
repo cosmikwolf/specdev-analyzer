@@ -13,11 +13,12 @@
 //! the Cargo path. Merge order: user (architecture + modules) > blocks >
 //! bridges; first insert wins, conflicts warn.
 //!
-//! Not emitted in v1 (named, not silently dropped): `version:` (app
-//! build-number conventions land with the Flutter profile's
-//! architecture schema) and the `flutter:` config block
-//! (uses-material-design / assets / fonts — profile-owned app content,
-//! same home). `dart pub get` requires neither.
+//! architecture.toml also carries `version` (emitted as the pubspec
+//! `version:` field) and the `[flutter]` table (`uses_material_design`
+//! → `uses-material-design`, `assets` → `flutter: assets:`); both are
+//! optional and package-shape only (the workspace root is a pure
+//! aggregator). Custom font declarations are not modeled — named, not
+//! silently dropped: an unknown `[flutter]` key is a hard error.
 
 use std::collections::BTreeMap;
 
@@ -209,14 +210,18 @@ fn render_package(
         ));
     }
 
+    let version = extract_app_version(&arch)?;
+    let flutter_config = extract_flutter_config(&arch)?;
+
     let mut text = String::new();
-    write_header(&mut text, project, matches!(pubspec.shape, PubShapeKind::App));
+    write_header(&mut text, project, version.as_deref(), matches!(pubspec.shape, PubShapeKind::App));
     write_environment(&mut text, &sdk, flutter.as_deref());
     if workspace_member {
         text.push_str("resolution: workspace\n");
     }
     write_dependency_sections(&mut text, &deps);
     write_overrides_section(&mut text, &arch)?;
+    write_flutter_section(&mut text, &flutter_config);
 
     Ok(RenderedPubspec { text, warnings })
 }
@@ -272,6 +277,93 @@ fn read_architecture(layout: &LayoutContext) -> Result<toml::value::Table> {
     }
 }
 
+/// The architecture `[flutter]` table, hand-parsed with a closed key
+/// set (same discipline as PubReference — an unknown key must fail
+/// loudly, never silently drop; custom fonts are deliberately not
+/// modeled yet and fail as unknown keys).
+#[derive(Debug, Clone, Default)]
+struct FlutterConfig {
+    uses_material_design: Option<bool>,
+    assets: Vec<String>,
+}
+
+impl FlutterConfig {
+    fn is_empty(&self) -> bool {
+        self.uses_material_design.is_none() && self.assets.is_empty()
+    }
+}
+
+/// Read architecture.toml's optional top-level `version` (the pubspec
+/// `version:` field — semver plus optional `+build`). Type errors are
+/// hard failures; absence is fine.
+fn extract_app_version(arch: &toml::value::Table) -> Result<Option<String>> {
+    match arch.get("version") {
+        None => Ok(None),
+        Some(toml::Value::String(s)) => Ok(Some(s.clone())),
+        Some(other) => Err(anyhow!(
+            "architecture.toml `version` must be a string (e.g. \"1.2.3+45\"); \
+             got {}",
+            other.type_str(),
+        )),
+    }
+}
+
+/// Read architecture.toml's optional `[flutter]` table.
+fn extract_flutter_config(arch: &toml::value::Table) -> Result<FlutterConfig> {
+    let Some(value) = arch.get("flutter") else {
+        return Ok(FlutterConfig::default());
+    };
+    let t = value.as_table().ok_or_else(|| {
+        anyhow!(
+            "architecture.toml `flutter` must be a table; got {}",
+            value.type_str()
+        )
+    })?;
+    const KNOWN: &[&str] = &["uses_material_design", "assets"];
+    for k in t.keys() {
+        if !KNOWN.contains(&k.as_str()) {
+            return Err(anyhow!(
+                "[flutter] has unknown key `{k}`; expected one of {}",
+                KNOWN.join("/"),
+            ));
+        }
+    }
+    let uses_material_design = match t.get("uses_material_design") {
+        None => None,
+        Some(toml::Value::Boolean(b)) => Some(*b),
+        Some(other) => {
+            return Err(anyhow!(
+                "[flutter] `uses_material_design` must be a boolean; got {}",
+                other.type_str(),
+            ))
+        }
+    };
+    let assets = match t.get("assets") {
+        None => Vec::new(),
+        Some(toml::Value::Array(a)) => a
+            .iter()
+            .map(|v| {
+                v.as_str().map(String::from).ok_or_else(|| {
+                    anyhow!(
+                        "[flutter] `assets` entries must be strings; got {}",
+                        v.type_str()
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+        Some(other) => {
+            return Err(anyhow!(
+                "[flutter] `assets` must be an array of strings; got {}",
+                other.type_str(),
+            ))
+        }
+    };
+    Ok(FlutterConfig {
+        uses_material_design,
+        assets,
+    })
+}
+
 /// Parse one spec-side PubReference table. Hand-rolled (not serde) so
 /// the closed key set is enforced with named errors — a typo'd source
 /// key must fail loudly, never silently downgrade to a registry dep
@@ -293,19 +385,36 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
         }
     }
 
-    let package = t
-        .get("package")
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| anyhow!("PubReference missing required `package` (string)"))?
-        .to_string();
-    let version = t
-        .get("version")
-        .and_then(toml::Value::as_str)
-        .map(String::from);
-    let test_only = t
-        .get("test_only")
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(false);
+    // Strict per-key type checks: a wrong-typed value must error, never
+    // silently coerce/default (it would diverge from the schema-side
+    // twin, which rejects wrong types).
+    let opt_str = |key: &str| -> Result<Option<String>> {
+        match t.get(key) {
+            None => Ok(None),
+            Some(toml::Value::String(s)) if s.is_empty() => {
+                Err(anyhow!("PubReference `{key}` must be non-empty"))
+            }
+            Some(toml::Value::String(s)) => Ok(Some(s.clone())),
+            Some(other) => Err(anyhow!(
+                "PubReference `{key}` must be a string; got {}",
+                other.type_str()
+            )),
+        }
+    };
+
+    let package = opt_str("package")?
+        .ok_or_else(|| anyhow!("PubReference missing required `package` (string)"))?;
+    let version = opt_str("version")?;
+    let test_only = match t.get("test_only") {
+        None => false,
+        Some(toml::Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(anyhow!(
+                "PubReference `{package}`: `test_only` must be a boolean; got {}",
+                other.type_str()
+            ))
+        }
+    };
 
     let source_keys: Vec<&str> = ["hosted", "git", "path", "sdk"]
         .into_iter()
@@ -322,27 +431,16 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
     let source = match source_keys.first().copied() {
         None => None,
         Some("hosted") => Some(PubSource::Hosted {
-            hosted: t
-                .get("hosted")
-                .and_then(toml::Value::as_str)
-                .ok_or_else(|| {
-                    anyhow!("PubReference `{package}`: `hosted` must be a URL string")
-                })?
-                .to_string(),
+            hosted: opt_str("hosted")?
+                .ok_or_else(|| anyhow!("PubReference `{package}`: `hosted` must be a URL string"))?,
         }),
         Some("path") => Some(PubSource::Path {
-            path: t
-                .get("path")
-                .and_then(toml::Value::as_str)
-                .ok_or_else(|| anyhow!("PubReference `{package}`: `path` must be a string"))?
-                .to_string(),
+            path: opt_str("path")?
+                .ok_or_else(|| anyhow!("PubReference `{package}`: `path` must be a string"))?,
         }),
         Some("sdk") => Some(PubSource::Sdk {
-            sdk: t
-                .get("sdk")
-                .and_then(toml::Value::as_str)
-                .ok_or_else(|| anyhow!("PubReference `{package}`: `sdk` must be a string"))?
-                .to_string(),
+            sdk: opt_str("sdk")?
+                .ok_or_else(|| anyhow!("PubReference `{package}`: `sdk` must be a string"))?,
         }),
         Some("git") => {
             let g = t.get("git").and_then(toml::Value::as_table).ok_or_else(|| {
@@ -359,21 +457,26 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
                     ));
                 }
             }
+            let git_str = |key: &str| -> Result<Option<String>> {
+                match g.get(key) {
+                    None => Ok(None),
+                    Some(toml::Value::String(s)) if s.is_empty() => Err(anyhow!(
+                        "PubReference `{package}`: `git.{key}` must be non-empty"
+                    )),
+                    Some(toml::Value::String(s)) => Ok(Some(s.clone())),
+                    Some(other) => Err(anyhow!(
+                        "PubReference `{package}`: `git.{key}` must be a string; got {}",
+                        other.type_str()
+                    )),
+                }
+            };
             Some(PubSource::Git {
                 git: bd_module::PubGit {
-                    url: g
-                        .get("url")
-                        .and_then(toml::Value::as_str)
-                        .ok_or_else(|| {
-                            anyhow!("PubReference `{package}`: `git.url` is required")
-                        })?
-                        .to_string(),
-                    r#ref: g.get("ref").and_then(toml::Value::as_str).map(String::from),
-                    path: g.get("path").and_then(toml::Value::as_str).map(String::from),
-                    tag_pattern: g
-                        .get("tag_pattern")
-                        .and_then(toml::Value::as_str)
-                        .map(String::from),
+                    url: git_str("url")?
+                        .ok_or_else(|| anyhow!("PubReference `{package}`: `git.url` is required"))?,
+                    r#ref: git_str("ref")?,
+                    path: git_str("path")?,
+                    tag_pattern: git_str("tag_pattern")?,
                 },
             })
         }
@@ -513,10 +616,18 @@ fn merge_dep(deps: &mut BTreeMap<String, PubRef>, r: PubRef, warnings: &mut Vec<
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn write_header(text: &mut String, project: &crate::config::ProjectSection, publish_to_none: bool) {
+fn write_header(
+    text: &mut String,
+    project: &crate::config::ProjectSection,
+    version: Option<&str>,
+    publish_to_none: bool,
+) {
     text.push_str(&format!("name: {}\n", pub_package_name(&project.name)));
     if let Some(desc) = &project.description {
         text.push_str(&format!("description: {}\n", quote_str(desc)));
+    }
+    if let Some(v) = version {
+        text.push_str(&format!("version: {}\n", quote_str(v)));
     }
     if publish_to_none {
         text.push_str("publish_to: none\n");
@@ -617,6 +728,25 @@ fn write_dep_entry(text: &mut String, name: &str, r: &PubRef) {
             text.push_str(&format!("  {}:\n", name));
             text.push_str(&format!("    sdk: {}\n", sdk));
             sibling_version(text);
+        }
+    }
+}
+
+/// Render the pubspec `flutter:` config block (last section by
+/// convention). An empty config emits nothing — a bare `flutter:`
+/// header would be YAML null, not the empty map pub expects.
+fn write_flutter_section(text: &mut String, config: &FlutterConfig) {
+    if config.is_empty() {
+        return;
+    }
+    text.push_str("flutter:\n");
+    if let Some(b) = config.uses_material_design {
+        text.push_str(&format!("  uses-material-design: {b}\n"));
+    }
+    if !config.assets.is_empty() {
+        text.push_str("  assets:\n");
+        for a in &config.assets {
+            text.push_str(&format!("    - {}\n", quote_str(a)));
         }
     }
 }
@@ -764,6 +894,107 @@ mod tests {
     sdk: flutter
 ";
         assert_eq!(text, expected);
+    }
+
+    /// The embedded PubReference schema and this module's hand-rolled
+    /// parser describe the same grammar in two places. This test locks
+    /// them together: for every case, the schema verdict and the parser
+    /// verdict must agree (and match the expected verdict). A divergence
+    /// means validate-passes-but-emit-fails (or the reverse) shipped.
+    #[test]
+    fn pub_reference_schema_and_parser_agree() {
+        let schema = crate::embedded_schemas::embedded_schema_entries()
+            .iter()
+            .find(|(keys, _)| keys.iter().any(|k| k == "pub_reference.schema.yaml"))
+            .expect("embedded PubReference schema")
+            .1
+            .pointer("/$defs/PubReference")
+            .expect("$defs/PubReference present")
+            .clone();
+        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+
+        // (toml source, expected-accepted)
+        let cases: &[(&str, bool)] = &[
+            ("package = \"http\"\nversion = \"^1.2.0\"", true),
+            (
+                "package = \"corp\"\nhosted = \"https://pub.corp.example\"\nversion = \"^2.0.0\"",
+                true,
+            ),
+            ("package = \"local\"\npath = \"../local\"", true),
+            ("package = \"local\"\npath = \"../local\"\nversion = \"^1.0.0\"", true),
+            (
+                "package = \"foo\"\nversion = \"^2.0.1\"\ngit = { url = \"https://g.example/foo\", ref = \"v1\", path = \"pkgs/foo\", tag_pattern = \"v{{version}}\" }",
+                true,
+            ),
+            ("package = \"foo\"\ngit = { url = \"https://g.example/foo\" }", true),
+            ("package = \"flutter\"\nsdk = \"flutter\"", true),
+            ("package = \"mocktail\"\nversion = \"^1.0.0\"\ntest_only = true", true),
+            // Rejections.
+            ("package = \"http\"", false),
+            ("package = \"corp\"\nhosted = \"https://pub.corp.example\"", false),
+            ("package = \"x\"\npth = \"../x\"", false),
+            ("package = \"x\"\npath = \"../x\"\nsdk = \"flutter\"", false),
+            ("package = \"foo\"\ngit = { ref = \"v1\" }", false),
+            ("package = \"foo\"\ngit = { url = \"u\", rev = \"abc\" }", false),
+            ("package = \"foo\"\ngit = { url = \"u\", ref = 1 }", false),
+            ("package = \"http\"\nversion = 45", false),
+            ("package = \"http\"\nversion = \"\"", false),
+            ("package = \"http\"\nversion = \"^1.0.0\"\ntest_only = \"yes\"", false),
+            ("package = \"\"\nversion = \"^1.0.0\"", false),
+        ];
+
+        for (src, expected_ok) in cases {
+            let value = toml_value(src);
+            let json = serde_json::to_value(&value).expect("toml → json");
+            let schema_ok = validator.validate(&json).is_ok();
+            let parser_ok = parse_pub_ref(&value).is_ok();
+            assert_eq!(
+                schema_ok, *expected_ok,
+                "schema verdict diverges for: {src}"
+            );
+            assert_eq!(
+                parser_ok, *expected_ok,
+                "parser verdict diverges for: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_version_and_flutter_config_parse_and_render() {
+        let arch = toml_value(
+            "version = \"1.2.3+45\"\n[flutter]\nuses_material_design = true\nassets = [\"assets/images/\"]",
+        );
+        let arch = arch.as_table().unwrap();
+        assert_eq!(
+            extract_app_version(arch).unwrap().as_deref(),
+            Some("1.2.3+45")
+        );
+        let cfg = extract_flutter_config(arch).unwrap();
+        assert_eq!(cfg.uses_material_design, Some(true));
+        assert_eq!(cfg.assets, vec!["assets/images/".to_string()]);
+
+        let mut text = String::new();
+        write_flutter_section(&mut text, &cfg);
+        assert_eq!(
+            text,
+            "flutter:\n  uses-material-design: true\n  assets:\n    - \"assets/images/\"\n"
+        );
+
+        // Empty config emits no header (a bare `flutter:` is YAML null).
+        let mut empty = String::new();
+        write_flutter_section(&mut empty, &FlutterConfig::default());
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn flutter_config_rejects_unknown_keys_and_wrong_types() {
+        let arch = toml_value("[flutter]\nfonts = []");
+        let err = extract_flutter_config(arch.as_table().unwrap()).unwrap_err();
+        assert!(format!("{err:#}").contains("unknown key `fonts`"), "{err:#}");
+
+        let arch = toml_value("version = 45");
+        let err = extract_app_version(arch.as_table().unwrap()).unwrap_err();
+        assert!(format!("{err:#}").contains("must be a string"), "{err:#}");
     }
 
     #[test]

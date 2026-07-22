@@ -20,6 +20,11 @@ description: >
   by widening this file plus the sibling `items.scm` — the analyzer takes
   its vocabulary from here at runtime.
 
+  `@override` members are never items: an override implements an
+  inherited contract (a widget's `build`, `createState`, `toString`),
+  and the contract lives on the declaring base. Extraction skips them,
+  so they never show as `in_source_only` drift.
+
   Sparseness rule: every `Item` carries `satisfies` (≥1 entry) unless it
   is a test (`test = true`, which carries `verifies` instead). Helper
   declarations that don't satisfy a requirement do not appear in

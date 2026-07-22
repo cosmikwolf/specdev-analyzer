@@ -171,6 +171,14 @@ fn build_member(
     if !vis_gate_passes(query, m, source, prefix) {
         return None;
     }
+    // Members whose captured annotations mark them as inherited contract
+    // (e.g. Dart's `@override`) are not new public surface — skip.
+    if capture_texts(query, m, source, "inherent.annotation")
+        .iter()
+        .any(|a| adapter.annotation_suppresses_item(a))
+    {
+        return None;
+    }
     let def_node = capture_node(query, m, &format!("{prefix}.def"))?;
     let host = capture_text(query, m, source, "inherent.host")?;
     let member = capture_text(query, m, source, &format!("{prefix}.name"))?;
@@ -269,6 +277,23 @@ fn capture_text<'a>(query: &Query, m: &QueryMatch, source: &'a str, name: &str) 
     let idx = query.capture_names().iter().position(|n| *n == name)?;
     let cap = m.captures.iter().find(|c| c.index as usize == idx)?;
     Some(&source[cap.node.byte_range()])
+}
+
+/// All texts for a (possibly quantified) capture name in this match.
+fn capture_texts<'a>(
+    query: &Query,
+    m: &QueryMatch,
+    source: &'a str,
+    name: &str,
+) -> Vec<&'a str> {
+    let Some(idx) = query.capture_names().iter().position(|n| *n == name) else {
+        return Vec::new();
+    };
+    m.captures
+        .iter()
+        .filter(|c| c.index as usize == idx)
+        .map(|c| &source[c.node.byte_range()])
+        .collect()
 }
 
 fn capture_node<'a>(query: &Query, m: &'a QueryMatch<'a, 'a>, name: &str) -> Option<Node<'a>> {

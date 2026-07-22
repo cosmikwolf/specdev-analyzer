@@ -1,0 +1,59 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/flutter-app/enums.schema.yaml"
+title: "flutter-app enums (v1)"
+description: >
+  Shared closed vocabularies used across the flutter-app profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+$defs:
+  Role:
+    description: >
+      The module's architectural role. `app` — composition root
+      (MaterialApp/shell, router configuration, DI bootstrap); `screen` —
+      a routable page; `widget` — reusable UI below screen level;
+      `service` — non-UI application logic and state (co-locate
+      providers/notifiers here, not in `app`); `platform_channel` — the
+      Dart side of a platform channel contract; `model` — pure Dart data
+      types and domain logic, platform-neutral. Drives the
+      `role_dependency` ordering check (warning severity): upward
+      dependencies against the ordering app > screen > widget > service >
+      platform_channel > model are flagged.
+    type: string
+    enum: [app, screen, widget, service, platform_channel, model]
+
+  PlatformName:
+    description: Flutter deployment platform.
+    type: string
+    enum: [android, ios, web, macos, windows, linux]
+
+  Identifier:
+    description: snake_case or PascalCase identifier usable in Dart source.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier. flutter-app is a
+      single-package profile — there is no package-qualified form.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-UI-001, APP-001, STORY-7-12).
+      The leading prefix is open: projects can adopt their published
+      requirement scheme (REQ-, APP-, RFC-, STORY-, …) without rename
+      ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+
+  DecisionId:
+    description: >
+      Identifier of a decision defined under specs/decisions.toml
+      (e.g. DEC-001). Shares the requirement id grammar — the open
+      PREFIX-(AREA-)*NUMBER form — but names a Decision, not a
+      Requirement.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

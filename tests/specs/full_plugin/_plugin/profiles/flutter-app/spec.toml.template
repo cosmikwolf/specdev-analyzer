@@ -1,0 +1,10 @@
+spec_version = "1.0"
+
+[project]
+name = "{{project_name}}"
+profile = "{{profile}}"
+language = "{{language}}"
+
+[paths]
+specs = "specs"
+source = "lib/src"

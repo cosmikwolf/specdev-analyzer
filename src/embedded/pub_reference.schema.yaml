@@ -1,0 +1,109 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml"
+title: "PubReference (v1)"
+description: |
+  Reusable pub-package dependency reference shared across profile-level
+  architecture schemas and module-level external_deps. Captures every
+  field that maps to a pubspec.yaml dependency entry. Embedded in the
+  analyzer crate so `$ref` to this `$id` resolves universally,
+  regardless of project content.
+
+  Every pub dep is captured in the spec; pubspec.yaml is OUTPUT — the
+  manifest step consumes these references to emit the full pubspec.
+
+  This shape is the schema-side twin of the pubspec emitter's spec-side
+  parser: the accepted key set, the at-most-one-source rule, and the
+  registry-needs-version rule must stay in lockstep with it (a lockstep
+  test enforces this).
+
+$defs:
+  PubReference:
+    type: object
+    additionalProperties: false
+    required: [package]
+    properties:
+      package:
+        description: |
+          pub package name (lower_snake_case identifier; pub's published
+          name rules — enforced downstream by `dart pub get`, not here,
+          matching the block-deps `pub:` vocabulary).
+        type: string
+        minLength: 1
+      version:
+        description: |
+          pub semver constraint (e.g. "^1.2.0", ">=2.0.0 <3.0.0",
+          "any"). Required for registry-hosted deps (no source key, or
+          `hosted`). Optional alongside git/path/sdk sources — pub
+          accepts a constraint next to any source and checks it against
+          the resolved package; with `git.tag_pattern` it is what the
+          version solver resolves against. Always emitted when present.
+        type: string
+        minLength: 1
+      hosted:
+        description: |
+          Custom package-repository URL (modern short form, SDK 2.15+).
+          The legacy `{ name, url }` long form is not spec input.
+        type: string
+        minLength: 1
+      git:
+        type: object
+        additionalProperties: false
+        required: [url]
+        properties:
+          url:
+            description: Git URL (https or ssh).
+            type: string
+            minLength: 1
+          ref:
+            description: Git ref (commit SHA, tag, or branch).
+            type: string
+            minLength: 1
+          path:
+            description: Sub-path inside the git repo holding the package.
+            type: string
+            minLength: 1
+          tag_pattern:
+            description: |
+              Version-resolution pattern over git tags (e.g.
+              "v{{version}}"): pub queries matching tags and feeds their
+              versions to the solver against the entry's `version`
+              constraint. Requires the project's SDK constraint to be
+              ^3.9.0 or higher.
+            type: string
+            minLength: 1
+      path:
+        description: Local path dep, relative to the pubspec's directory.
+        type: string
+        minLength: 1
+      sdk:
+        description: SDK source — `flutter` is the only commonly-used value.
+        type: string
+        minLength: 1
+      test_only:
+        description: |
+          Set to `true` to route this package to `dev_dependencies:`
+          instead of `dependencies:`. Test harness packages (mocktail,
+          golden_toolkit, flutter_test) that compile only for the test
+          target. Defaults to `false` when absent. A routing flag, not a
+          pubspec key — it never appears in the rendered dep value (and
+          has no effect inside `dependency_overrides`, which apply to
+          the whole resolution).
+        type: boolean
+    allOf:
+      # At most one source key. Each branch `required`s its
+      # discriminating keys — a bare `properties` subschema is vacuously
+      # true when the key is absent and would defeat the guard.
+      - not:
+          anyOf:
+            - required: [hosted, git]
+            - required: [hosted, path]
+            - required: [hosted, sdk]
+            - required: [git, path]
+            - required: [git, sdk]
+            - required: [path, sdk]
+      # Registry-hosted deps (no git/path/sdk key) must carry a version.
+      - anyOf:
+          - required: [git]
+          - required: [path]
+          - required: [sdk]
+          - required: [version]

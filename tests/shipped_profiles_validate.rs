@@ -97,11 +97,19 @@ fn every_shipped_profile_bootstraps_and_validates_clean() {
         let target = workspace.join("proj");
         std::fs::create_dir_all(&target).unwrap();
 
+        // Bootstrap in each profile's own declared language (a Dart
+        // profile has no rust codegen tier, and vice versa).
+        let language = specdev_analyzer::manifest::Profile::load(
+            &plugin_root.join("profiles").join(profile).join("profile.yaml"),
+        )
+        .unwrap_or_else(|e| panic!("[{profile}] profile.yaml failed to load: {e:#}"))
+        .language;
+
         if let Err(e) = bootstrap::run_bootstrap(
             &plugin_root,
             &BootstrapInputs {
                 profile: profile.clone(),
-                language: "rust".into(),
+                language,
                 project_name: "demo".into(),
                 target_dir: target.clone(),
             },

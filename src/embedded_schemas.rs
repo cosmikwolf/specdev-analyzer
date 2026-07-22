@@ -15,10 +15,14 @@ use std::sync::OnceLock;
 use serde_json::Value as JsonValue;
 
 const CRATE_REFERENCE_YAML: &str = include_str!("embedded/crate_reference.schema.yaml");
+const PUB_REFERENCE_YAML: &str = include_str!("embedded/pub_reference.schema.yaml");
 
 /// Static list of `(filename, raw YAML source)` pairs for every embedded
 /// schema that participates in `$ref` resolution.
-const EMBEDDED: &[(&str, &str)] = &[("crate_reference.schema.yaml", CRATE_REFERENCE_YAML)];
+const EMBEDDED: &[(&str, &str)] = &[
+    ("crate_reference.schema.yaml", CRATE_REFERENCE_YAML),
+    ("pub_reference.schema.yaml", PUB_REFERENCE_YAML),
+];
 
 /// Parsed entries: `(string-keys, JSON Value)` pairs ready to insert into
 /// a retriever doc map. Each schema is registered under both its `$id`
@@ -59,5 +63,21 @@ mod tests {
             cr.0
         );
         assert!(cr.1.pointer("/$defs/CrateReference").is_some());
+    }
+
+    #[test]
+    fn pub_reference_is_registered_under_its_id() {
+        let entries = embedded_schema_entries();
+        let pr = entries
+            .iter()
+            .find(|(keys, _)| keys.iter().any(|k| k == "pub_reference.schema.yaml"))
+            .expect("PubReference entry present");
+        assert!(
+            pr.0.iter()
+                .any(|k| k == "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml"),
+            "PubReference must be registered under its $id; got keys: {:?}",
+            pr.0
+        );
+        assert!(pr.1.pointer("/$defs/PubReference").is_some());
     }
 }

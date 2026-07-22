@@ -313,7 +313,6 @@ const EMPTY_DIRS: &[&str] = &[
     "specs/specdev/reductions/bridges",
     "specs/specdev/reductions/bridges/local",
     "specs/modules",
-    "src",
 ];
 
 pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()> {
@@ -445,6 +444,27 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
         let abs = inputs.target_dir.join(d);
         std::fs::create_dir_all(&abs)
             .with_context(|| format!("creating {}", abs.display()))?;
+    }
+
+    // Create the source root the rendered spec.toml declares
+    // (`[paths].source` — profile-owned: `src` for Rust profiles,
+    // `lib/src` for Dart), rather than assuming any one language's
+    // convention.
+    {
+        let spec_path = inputs.target_dir.join("spec.toml");
+        let spec_text = std::fs::read_to_string(&spec_path)
+            .with_context(|| format!("reading rendered {}", spec_path.display()))?;
+        let spec: toml::Value = toml::from_str(&spec_text)
+            .with_context(|| format!("parsing rendered {}", spec_path.display()))?;
+        if let Some(source) = spec
+            .get("paths")
+            .and_then(|p| p.get("source"))
+            .and_then(|s| s.as_str())
+        {
+            let abs = inputs.target_dir.join(source);
+            std::fs::create_dir_all(&abs)
+                .with_context(|| format!("creating source root {}", abs.display()))?;
+        }
     }
 
     // Walk the manifest's `bootstrap.steps` and
