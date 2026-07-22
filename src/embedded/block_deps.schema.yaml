@@ -161,8 +161,11 @@ $defs:
             type: string
           tag_pattern:
             description: |
-              pub 3.x version-resolution pattern over git tags
-              (e.g. "v{{version}}").
+              Version-resolution pattern over git tags (e.g.
+              "v{{version}}"): pub queries matching tags and feeds their
+              versions to the solver against the entry's `version`
+              constraint. Requires the project's SDK constraint to be
+              ^3.9.0 or higher.
             type: string
       path:
         description: Local path dep, relative to the pubspec's directory.

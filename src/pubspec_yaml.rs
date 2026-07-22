@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::cargo_toml::WorkspaceContext;
 use crate::layout::LayoutContext;
 use crate::manifest::block_deps as bd_module;
 use crate::manifest::{BlockDeps, Profile, PubShapeKind, PubSource};
@@ -72,12 +71,53 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedPubspec> {
     if layout.spec.workspace.is_some() {
         return render_workspace_root(layout, pubspec);
     }
-    // Ancestor-workspace detection is language-neutral (spec.toml
-    // `[workspace].members[].path` inclusion); reuse the cargo path's
-    // walker. Its Cargo-specific context (workspace_package fields,
-    // hoisted deps) is simply unused here.
-    let is_member = WorkspaceContext::find_for(layout)?.is_some();
+    let is_member = has_workspace_ancestor(layout)?;
     render_package(layout, pubspec, is_member)
+}
+
+/// True when an ancestor spec.toml carries a `[workspace]` whose
+/// `members[].path` includes this project's directory. Deliberately NOT
+/// the cargo path's `WorkspaceContext` — that walker also parses the
+/// workspace's `[[workspace_dependencies]]` as *cargo* refs, which
+/// would fail with cargo-vocabulary errors on a Dart workspace. Pub
+/// member mode needs only the membership boolean.
+fn has_workspace_ancestor(layout: &LayoutContext) -> Result<bool> {
+    let member_dir = layout.project_root.as_path();
+    let mut cursor = match member_dir.parent() {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+    loop {
+        let candidate = cursor.join("spec.toml");
+        if candidate.is_file() {
+            let text = std::fs::read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
+                let members = parsed
+                    .get("workspace")
+                    .and_then(|w| w.get("members"))
+                    .and_then(|m| m.as_array());
+                if let Some(members) = members {
+                    let root = candidate.parent().unwrap_or(&candidate);
+                    if let Ok(rel) = member_dir.strip_prefix(root) {
+                        let rel = rel.to_string_lossy().replace('\\', "/");
+                        if members.iter().any(|m| {
+                            m.get("path")
+                                .and_then(|p| p.as_str())
+                                .map(|p| p.trim_end_matches('/') == rel)
+                                .unwrap_or(false)
+                        }) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+        match cursor.parent() {
+            Some(p) => cursor = p,
+            None => return Ok(false),
+        }
+    }
 }
 
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Profile> {
@@ -159,6 +199,16 @@ fn render_package(
         merge_dep(&mut deps, r, &mut warnings);
     }
 
+    let name = pub_package_name(&project.name);
+    if !is_legal_pub_name(&name) {
+        warnings.push(format!(
+            "package name `{name}` (from [project].name) is not a legal pub \
+             identifier (lowercase_with_underscores, not starting with a \
+             digit); pub will reject the emitted pubspec until the project \
+             is renamed",
+        ));
+    }
+
     let mut text = String::new();
     write_header(&mut text, project, matches!(pubspec.shape, PubShapeKind::App));
     write_environment(&mut text, &sdk, flutter.as_deref());
@@ -172,8 +222,10 @@ fn render_package(
 }
 
 /// Render the workspace-root pubspec: `workspace:` member-path list
-/// (declaration order, matching the cargo members convention) plus the
-/// root package header. Pub workspace roots are never published.
+/// (declaration order, matching the cargo members convention). The root
+/// is a pure aggregator in this model — pub's documented placeholder
+/// `name: _` (never published, never a package of its own); the
+/// members are the packages.
 fn render_workspace_root(
     layout: &LayoutContext,
     pubspec: &crate::manifest::PubspecYamlSection,
@@ -183,12 +235,12 @@ fn render_workspace_root(
         .workspace
         .as_ref()
         .expect("render_workspace_root only called when [workspace] is set");
-    let project = &layout.spec.project;
     let arch = read_architecture(layout)?;
     let (sdk, flutter) = resolve_environment(layout, pubspec, &arch)?;
 
     let mut text = String::new();
-    write_header(&mut text, project, /* publish_to_none */ true);
+    text.push_str("name: _\n");
+    text.push_str("publish_to: none\n");
     write_environment(&mut text, &sdk, flutter.as_deref());
     text.push_str("workspace:\n");
     for member in &workspace_section.members {
@@ -328,8 +380,11 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
         Some(_) => unreachable!("source_keys drawn from the closed list"),
     };
 
-    // Registry-hosted deps (default or custom URL) need a version; the
-    // other sources carry their version in the source itself.
+    // Registry-hosted deps (default or custom URL) need a version. The
+    // other sources may still carry one (pub checks it against the
+    // resolved package; with `git.tag_pattern` it feeds the version
+    // solver), so it stays optional there — and is always emitted when
+    // present.
     if version.is_none() && matches!(source, None | Some(PubSource::Hosted { .. })) {
         return Err(anyhow!(
             "PubReference `{package}` is registry-hosted but has no `version` \
@@ -477,9 +532,15 @@ fn write_environment(text: &mut String, sdk: &str, flutter: Option<&str>) {
 }
 
 fn write_dependency_sections(text: &mut String, deps: &BTreeMap<String, PubRef>) {
-    text.push_str("dependencies:\n");
-    for (name, r) in deps.iter().filter(|(_, r)| !r.test_only) {
-        write_dep_entry(text, name, r);
+    // A section header with zero entries would render as a YAML null
+    // (`dependencies:` followed by nothing) — not the empty map pub
+    // expects — so empty sections are omitted entirely.
+    let regular: Vec<(&String, &PubRef)> = deps.iter().filter(|(_, r)| !r.test_only).collect();
+    if !regular.is_empty() {
+        text.push_str("dependencies:\n");
+        for (name, r) in regular {
+            write_dep_entry(text, name, r);
+        }
     }
     let dev: Vec<(&String, &PubRef)> = deps.iter().filter(|(_, r)| r.test_only).collect();
     if !dev.is_empty() {
@@ -507,13 +568,21 @@ fn write_overrides_section(text: &mut String, arch: &toml::value::Table) -> Resu
 }
 
 /// Render one dep entry (two-space indented under its section). Source
-/// dispatch is exhaustive — no silent drops:
+/// dispatch is exhaustive, and a `version` constraint is emitted for
+/// EVERY shape it appears on — pub accepts `version:` alongside any
+/// source (with `git.tag_pattern` it is what the solver resolves
+/// against), so dropping it would silently change resolution:
 ///   * no source        → `name: "<version>"` (default registry)
 ///   * hosted           → nested `hosted:` URL + `version:`
-///   * git              → nested `git:` block with url + optional keys
-///   * path             → nested `path:`
-///   * sdk              → nested `sdk:` (e.g. `flutter: { sdk: flutter }`)
+///   * git              → nested `git:` block + sibling `version:`
+///   * path             → nested `path:` + sibling `version:`
+///   * sdk              → nested `sdk:` + sibling `version:`
 fn write_dep_entry(text: &mut String, name: &str, r: &PubRef) {
+    let sibling_version = |text: &mut String| {
+        if let Some(v) = &r.version {
+            text.push_str(&format!("    version: {}\n", quote_str(v)));
+        }
+    };
     match &r.source {
         None => {
             let v = r.version.as_deref().expect("checked at parse time");
@@ -522,9 +591,7 @@ fn write_dep_entry(text: &mut String, name: &str, r: &PubRef) {
         Some(PubSource::Hosted { hosted }) => {
             text.push_str(&format!("  {}:\n", name));
             text.push_str(&format!("    hosted: {}\n", quote_str(hosted)));
-            if let Some(v) = &r.version {
-                text.push_str(&format!("    version: {}\n", quote_str(v)));
-            }
+            sibling_version(text);
         }
         Some(PubSource::Git { git }) => {
             text.push_str(&format!("  {}:\n", name));
@@ -539,23 +606,38 @@ fn write_dep_entry(text: &mut String, name: &str, r: &PubRef) {
             if let Some(tp) = &git.tag_pattern {
                 text.push_str(&format!("      tag_pattern: {}\n", quote_str(tp)));
             }
+            sibling_version(text);
         }
         Some(PubSource::Path { path }) => {
             text.push_str(&format!("  {}:\n", name));
             text.push_str(&format!("    path: {}\n", quote_str(path)));
+            sibling_version(text);
         }
         Some(PubSource::Sdk { sdk }) => {
             text.push_str(&format!("  {}:\n", name));
             text.push_str(&format!("    sdk: {}\n", sdk));
+            sibling_version(text);
         }
     }
 }
 
 /// A project name as a pub package identifier: pub requires
 /// lower_snake_case, so hyphens become underscores (the analog of the
-/// cargo path's `crate_ident`).
+/// cargo path's `crate_ident`). Other illegalities (uppercase, leading
+/// digit) are not silently rewritten — the renderer warns instead, so
+/// the author renames deliberately.
 fn pub_package_name(name: &str) -> String {
     name.replace('-', "_")
+}
+
+/// Legal pub package identifier: `[a-z_][a-z0-9_]*`.
+fn is_legal_pub_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// Double-quote a YAML scalar, escaping the double-quoted-style special
@@ -658,7 +740,7 @@ mod tests {
         for spec in [
             "package = \"http\"\nversion = \"^1.2.0\"",
             "package = \"corp\"\nhosted = \"https://pub.corp.example\"\nversion = \"^2.0.0\"",
-            "package = \"foo\"\ngit = { url = \"https://g.example/foo\", ref = \"v1\", path = \"pkgs/foo\", tag_pattern = \"v{{version}}\" }",
+            "package = \"foo\"\nversion = \"^2.0.1\"\ngit = { url = \"https://g.example/foo\", ref = \"v1\", path = \"pkgs/foo\", tag_pattern = \"v{{version}}\" }",
             "package = \"local\"\npath = \"../local\"",
             "package = \"flutter\"\nsdk = \"flutter\"",
         ] {
@@ -675,6 +757,7 @@ mod tests {
       ref: \"v1\"
       path: \"pkgs/foo\"
       tag_pattern: \"v{{version}}\"
+    version: \"^2.0.1\"
   local:
     path: \"../local\"
   flutter:
@@ -687,5 +770,14 @@ mod tests {
     fn pub_package_name_snakes_hyphens() {
         assert_eq!(pub_package_name("ble-scanner"), "ble_scanner");
         assert_eq!(pub_package_name("blescan"), "blescan");
+    }
+
+    #[test]
+    fn pub_name_legality() {
+        assert!(is_legal_pub_name("ble_scanner"));
+        assert!(is_legal_pub_name("_private"));
+        assert!(!is_legal_pub_name("BleScanner"), "uppercase is illegal");
+        assert!(!is_legal_pub_name("9lives"), "leading digit is illegal");
+        assert!(!is_legal_pub_name(""), "empty is illegal");
     }
 }
