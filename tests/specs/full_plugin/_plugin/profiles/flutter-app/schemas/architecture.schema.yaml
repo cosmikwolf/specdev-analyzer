@@ -1,0 +1,103 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/flutter-app/architecture.schema.yaml"
+title: "flutter-app architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for flutter-app projects. Declares
+  the platform matrix the app targets, the app version, the Flutter
+  config block, SDK environment constraints, and project-wide pub
+  dependencies. Modules restrict themselves to a subset of the platform
+  matrix via their top-level `platforms` array; reduction verifies every
+  module entry names a platform declared here.
+type: object
+additionalProperties: false
+required: [platforms]
+properties:
+  platforms:
+    description: >
+      The platforms this app targets — the project's platform matrix.
+      Modules omitting their own `platforms` field support all of these;
+      modules declaring one must stay within this set.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/PlatformName" }
+    uniqueItems: true
+    minItems: 1
+  version:
+    description: >
+      App version string emitted as pubspec.yaml's `version:` field.
+      pub form: semver plus optional build number after `+`
+      (e.g. "1.2.3+45" — Android versionCode / iOS build number derive
+      from the part after `+`). Optional — omit to leave `version:`
+      unset.
+    type: string
+    minLength: 1
+  flutter:
+    description: >
+      The pubspec `flutter:` config block. Emitted verbatim into the
+      generated pubspec.yaml. Custom font declarations are not yet
+      modeled.
+    type: object
+    additionalProperties: false
+    properties:
+      uses_material_design:
+        description: >
+          Emitted as `uses-material-design:`. Required true for Material
+          icon fonts to be bundled. Omit to leave the key out of the
+          emitted pubspec (Flutter treats absence as false).
+        type: boolean
+      assets:
+        description: >
+          Asset files or directories (trailing `/` includes the
+          directory's files) emitted under `flutter: assets:`. Paths are
+          relative to the package root.
+        type: array
+        items:
+          type: string
+          minLength: 1
+        uniqueItems: true
+  environment:
+    description: >
+      pubspec `environment:` constraints. Overrides the profile
+      manifest's defaults key-by-key; a Dart `sdk` constraint must come
+      from one of the two.
+    type: object
+    additionalProperties: false
+    properties:
+      sdk:
+        description: Dart SDK constraint (e.g. "^3.9.0").
+        type: string
+        minLength: 1
+      flutter:
+        description: Flutter SDK constraint (e.g. ">=3.35.0").
+        type: string
+        minLength: 1
+  external_deps:
+    description: >
+      Project-wide pub dependencies (infrastructure packages every
+      module may assume). Module-scoped packages belong in each module's
+      `external_deps` instead. Merged with module and block/bridge
+      contributions at `manifest` time; user-declared versions win on
+      conflict.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml#/$defs/PubReference"
+  dependency_overrides:
+    description: >
+      Entries emitted under pubspec's `dependency_overrides:` — pub's
+      escape hatch that forces a package's source/version for the whole
+      resolution. Use sparingly (local forks, unreleased fixes).
+      `test_only` has no effect here — overrides apply to the whole
+      resolution.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml#/$defs/PubReference"
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (platform matrix
+      rationale, state-management approach, navigation architecture).
+      Distinct from module-scope `guided_by`: project_decisions describes
+      commitments that span the architecture itself rather than any one
+      module's implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/DecisionId" }
+    uniqueItems: true

@@ -81,6 +81,16 @@ pub trait LanguageAdapter: Send + Sync {
         false
     }
 
+    /// Whether a member carrying this annotation name (captured as
+    /// `inherent.annotation` by the language's items query) is excluded
+    /// from extraction. Dart's `@override` is the motivating case: an
+    /// override implements an inherited contract — the contract lives on
+    /// the declaring base, so an override is never new public surface.
+    /// Default: nothing suppresses.
+    fn annotation_suppresses_item(&self, _annotation: &str) -> bool {
+        false
+    }
+
     /// Parse a single parameter node from this language's grammar, if the
     /// adapter recognizes its kind.
     fn parse_parameter(&self, node: Node<'_>, source: &str) -> Option<ParsedParameter>;

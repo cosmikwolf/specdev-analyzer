@@ -1,0 +1,170 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/flutter-app/module.schema.yaml"
+title: "flutter-app module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module per
+  file; filename should match the `name` field; source resolves to
+  `lib/src/<snake>.dart`. flutter-app targets Flutter applications where
+  the load-bearing concerns are each module's architectural role, the
+  platform matrix it must run on, and its pub dependencies.
+type: object
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas even when
+# those are valid via the aggregator `allOf:` slot. unevaluatedProperties
+# IS allOf-aware.
+unevaluatedProperties: false
+required: [name, role]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  role:
+    $ref: "enums.schema.yaml#/$defs/Role"
+  description:
+    type: string
+  platforms:
+    description: >
+      Platforms this module supports. Omitted means the module runs on
+      every platform the project targets (`platforms` in
+      architecture.toml); declaring the field restricts the module to the
+      listed subset. Each entry must name a platform in the project's
+      matrix — reduction resolves entries against the project's Platform
+      entities, so an out-of-matrix entry fails at validate time. Declare
+      an explicit fence on platform-bound modules (a `platform_channel`
+      module almost always needs one — channels have no native side on
+      web). Codegen reads this field: the module's generated doc header
+      states its platform contract, and web-excluded modules get the
+      conditional-export guard idiom.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/PlatformName" }
+    uniqueItems: true
+    minItems: 1
+  channels:
+    description: >
+      The platform channels this module owns — the cross-language
+      contract with the native side, which must register the same names.
+      Only `role = "platform_channel"` modules may declare channels (a
+      service wanting platform access should depend on a dedicated
+      platform_channel module). Channel names are globally unique across
+      the app (`channel_names_unique`); the dotted-domain convention
+      (`com.example.app/battery`) avoids collisions with plugin-owned
+      channels. Modules using a generator that owns its channel names
+      (e.g. pigeon) omit this field.
+    type: array
+    items: { $ref: "#/$defs/Channel" }
+    uniqueItems: true
+    minItems: 1
+  depends_on:
+    description: >
+      Other modules within this app this module depends on. The
+      `modules_acyclic` graph check enforces no cycles; the
+      `role_dependency` check warns on upward dependencies against the
+      role ordering (app > screen > widget > service > platform_channel
+      > model).
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  satisfies:
+    description: >
+      Requirement ids this module satisfies. The
+      `module_satisfies_resolves` graph check verifies each id exists.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  external_deps:
+    description: >
+      Pub package dependencies this module needs. Each entry becomes a
+      pubspec.yaml `dependencies:` line (`dev_dependencies:` when
+      `test_only = true`); the union across modules, architecture-level
+      `[[external_deps]]`, and block/bridge contributions determines the
+      full dep set `manifest` emits. User-declared versions win on
+      conflict. The PubReference shape is embedded in the analyzer (the
+      $ref below resolves internally, not to a file on disk); the
+      architecture template's dep comment block documents the accepted
+      shapes readably.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml#/$defs/PubReference"
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Open in v1.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Public Dart declarations that carry spec significance — an items[]
+      entry per class, mixin, enum, extension, extension type, function
+      (including public members of a declaration, named
+      `<Declaration>.<member>`), getter, setter, typedef, or const
+      contributing to the module's contractual surface. Privacy is
+      lexical: `_`-prefixed names are never items. Sparseness rule
+      (enforced by the language schema): every item carries `satisfies`
+      (≥1 requirement id) unless it is a test (`test = true`, which
+      carries `verifies` instead). Consumed by `/spec-gen` for symbol
+      emission and by the three-stage agentic sync (`items diff` /
+      `items propose` / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are not supported.
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/DecisionId" }
+    uniqueItems: true
+
+# Only platform_channel modules declare channels. The `required` guard
+# is load-bearing: a bare `properties` subschema is vacuously true when
+# the key is absent, so without it the constraint would never fire. The
+# guard is phrased so a violation's error anchors at `channels` (the
+# field to remove), not at `role` — the inverted phrasing ("if channels
+# then role must be platform_channel") pointed users at flipping the
+# role instead.
+if:
+  required: [role]
+  properties:
+    role: { not: { const: platform_channel } }
+then:
+  properties:
+    channels: false
+
+$defs:
+  Channel:
+    type: object
+    additionalProperties: false
+    required: [name, kind]
+    properties:
+      name:
+        description: >
+          The channel name string, exactly as both sides register it.
+        type: string
+        minLength: 1
+      kind:
+        description: >
+          Which Flutter channel class carries this contract: `method` →
+          MethodChannel (request/response calls), `event` → EventChannel
+          (native-to-Dart streams), `basic_message` →
+          BasicMessageChannel (raw bidirectional messaging).
+        type: string
+        enum: [method, event, basic_message]
+      description:
+        type: string

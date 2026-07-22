@@ -42,6 +42,13 @@ impl LanguageAdapter for DartAdapter {
         name.split('.').all(|seg| !seg.starts_with('_'))
     }
 
+    fn annotation_suppresses_item(&self, annotation: &str) -> bool {
+        // `@override` members implement inherited contract (a widget's
+        // `build`, `createState`, `toString`); the contract lives on the
+        // declaring base, so overrides are not new public surface.
+        annotation == "override"
+    }
+
     fn parameter_node_kind(&self) -> &'static str {
         "formal_parameter"
     }

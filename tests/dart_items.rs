@@ -159,6 +159,45 @@ fn dart_privacy_and_non_item_shapes_are_filtered() {
     assert!(!names.contains(&"Status.idle"), "got: {names:?}");
 }
 
+/// `@override` members implement inherited contract (a widget's `build`,
+/// `createState`, `toString`) — never new public surface. Concrete and
+/// abstract members hang their annotations on different grammar nodes
+/// (inside `method_declaration` vs on `class_member`), so both shapes
+/// are exercised; a differently-annotated member must still extract.
+#[test]
+fn dart_override_members_are_not_items() {
+    let src = r#"
+class HomeScreen {
+  @override
+  Object build(Object context) => context;
+
+  @override
+  int get hashCode => 1;
+
+  @Deprecated('old')
+  void legacyHelper() {}
+
+  void refresh() {}
+}
+
+abstract class Base {
+  @override
+  void poke();
+}
+"#;
+    let items = extract_items_from_source(src, &DartAdapter).unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+
+    assert!(!names.contains(&"HomeScreen.build"), "got: {names:?}");
+    assert!(!names.contains(&"HomeScreen.hashCode"), "got: {names:?}");
+    assert!(!names.contains(&"Base.poke"), "abstract @override; got: {names:?}");
+    assert!(
+        names.contains(&"HomeScreen.legacyHelper"),
+        "non-override annotation must not suppress; got: {names:?}"
+    );
+    assert!(names.contains(&"HomeScreen.refresh"), "got: {names:?}");
+}
+
 const DART_MODULE_SPEC: &str = r#"name = "BleScanner"
 visibility = "pub"
 

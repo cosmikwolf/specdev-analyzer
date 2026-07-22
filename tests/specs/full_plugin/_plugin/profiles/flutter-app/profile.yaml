@@ -1,0 +1,27 @@
+# Manifest — drives analyzer dispatch for flutter-app projects.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+name: flutter-app
+language: dart
+
+pubspec_yaml:
+  shape: app
+  environment:
+    sdk: "^3.9.0"                 # architecture.toml [environment] overrides key-by-key
+    flutter: ">=3.35.0"
+
+bootstrap:
+  steps: []                       # standalone app; no workspace machinery
+
+context:
+  module_fields_for_prompt:
+    [items, satisfies, depends_on, context_files, external_deps, platforms, channels]
+  context_subcommand_extras:
+    - field: role
+      from_attr: role
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

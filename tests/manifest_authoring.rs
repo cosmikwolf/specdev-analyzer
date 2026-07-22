@@ -52,6 +52,7 @@ const PROFILES: &[&str] = &[
     "firmware-layered",
     "audio-plugin",
     "rust-workspace",
+    "flutter-app",
 ];
 
 const BLOCKS: &[&str] = &["nih-plug", "egui", "embassy", "stm32h5-rs"];
@@ -70,8 +71,13 @@ fn fixture_profiles_load_cleanly() {
         let m = Profile::load(&p)
             .unwrap_or_else(|e| panic!("profile {name} failed to load from fixture: {e:#}"));
         assert_eq!(m.name, *name, "manifest .name must match dir name for {name}");
-        assert_eq!(m.language, "rust");
-        assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml");
+        // Each profile must declare the manifest-emission section
+        // matching its language.
+        match m.language.as_str() {
+            "rust" => assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml"),
+            "dart" => assert!(m.pubspec_yaml.is_some(), "{name} must declare pubspec_yaml"),
+            other => panic!("profile {name} declares unexpected language `{other}`"),
+        }
     }
 }
 

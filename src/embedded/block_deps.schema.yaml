@@ -127,8 +127,10 @@ $defs:
         path: "..."                             — path dep
         sdk: "flutter"                          — SDK-vendored (e.g. flutter)
       `version` is required for registry-hosted deps (default or custom
-      URL) and forbidden-by-convention elsewhere (git/path/sdk deps take
-      their version from the source; pub ignores a constraint there).
+      URL) and optional elsewhere — pub accepts a constraint alongside
+      any source and checks it against the resolved package (with
+      `git.tag_pattern` it is what the solver resolves against). A
+      stated version is always emitted.
     type: object
     additionalProperties: false
     required: [package]
