@@ -326,7 +326,9 @@ pubspec_yaml:
 
     let r = run_cli(&root, &["manifest"]);
     assert_eq!(r.exit_code, Some(0), "stderr: {}", r.stderr);
-    assert!(r.stdout.contains("name: fm_suite"), "stdout: {}", r.stdout);
+    // Pub's documented aggregator-root shape: placeholder name, never
+    // published.
+    assert!(r.stdout.contains("name: _\n"), "stdout: {}", r.stdout);
     assert!(r.stdout.contains("publish_to: none"), "stdout: {}", r.stdout);
     assert!(
         r.stdout.contains("workspace:\n  - \"app\"\n"),
@@ -361,6 +363,13 @@ pubspec_yaml:
     assert!(
         m.stdout.contains("resolution: workspace\n"),
         "member pubspec must opt into workspace resolution; stdout: {}",
+        m.stdout
+    );
+    // The member has zero deps — an empty `dependencies:` section would
+    // be a YAML null, so it must be omitted entirely.
+    assert!(
+        !m.stdout.contains("dependencies:"),
+        "empty dependency sections must be omitted; stdout: {}",
         m.stdout
     );
     let _ = std::fs::remove_dir_all(&root);
