@@ -1,0 +1,50 @@
+metaschema_version: "v1"
+
+# universal-ble block reduction. Two entity kinds — Service and
+# Characteristic — both extending Module (they are sub-units of a
+# module's GATT contract with a remote peripheral). The file's location
+# establishes the namespace: kinds resolve to `universal-ble.Service` /
+# `universal-ble.Characteristic`.
+#
+# One intra-block relation: `characteristic_in_service`
+# (Characteristic → Service), materialized from each characteristic's
+# `service` field. It makes a typo'd service reference a
+# REDUCE_UNRESOLVED error at validate time via the existing
+# unresolved-endpoint machinery — no new graph-check primitive.
+#
+# The qualified entity name combines the parent module name with the
+# local id (e.g. "SensorLink.battery") so multiple modules' services
+# coexist without collision. Endpoints interpolate `${root.name}` on
+# both sides, so the relation is intra-module by design: a
+# characteristic cannot claim a service declared in another module
+# (such a reference goes REDUCE_UNRESOLVED).
+
+entities:
+  - kind: Service
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "universal_ble.services[]"
+    name: "${root.name}.${.id}"
+    attrs:
+      uuid: ".uuid"
+
+  - kind: Characteristic
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "universal_ble.characteristics[]"
+    name: "${root.name}.${.id}"
+    attrs:
+      service: ".service"
+      uuid: ".uuid"
+      properties: ".properties"
+
+relations:
+  - kind: characteristic_in_service
+    extends: depends_on
+    from_kind: Characteristic
+    to_kind: Service
+    from_spec: "specs/modules/*.toml"
+    for_each: "universal_ble.characteristics[]"
+    endpoints:
+      from: "${root.name}.${.id}"
+      to: "${root.name}.${.service}"

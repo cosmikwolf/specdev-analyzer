@@ -1,0 +1,140 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/universal-ble.v1"
+title: "universal-ble block (v1)"
+description: >
+  Schema fragment contributed by the `universal-ble` block. Adds a
+  namespaced `[universal_ble]` table to `Module` carrying the GATT
+  topology the module consumes over BLE — the services and
+  characteristics of the remote peripheral the app talks to, accessed
+  through the [universal_ble](https://pub.dev/packages/universal_ble)
+  package in the central role (scan, connect, read / write / subscribe).
+
+  The table models the app's CONTRACT with the peripheral: only the
+  services and characteristics the app actually consumes — never the
+  peripheral's full GATT database, and never scan or connection
+  BEHAVIOR (the scan filter, connect flow, and per-characteristic
+  access idioms are codegen-owned emissions derived from this
+  topology; see this block's codegen prose).
+
+  Any module may carry the table; the common case is the service-role
+  module that owns the BLE seam, with the rest of the app depending on
+  that module. An app talking to two different peripheral kinds may
+  split their GATT profiles across two modules.
+
+  Self-contained: identifier patterns are inlined, not $ref'd against
+  a profile's enums.schema.yaml, so the block composes against any
+  profile that exposes `Module`.
+
+  Validation note: a schema error INSIDE this table also cascades to a
+  module-level "Unevaluated properties are not allowed
+  ('universal_ble' was unexpected)" error — that second message is the
+  cascade, not a missing-inline problem. Fix the inner error first.
+type: object
+properties:
+  universal_ble:
+    type: object
+    additionalProperties: false
+    required: [services]
+    properties:
+      services:
+        description: >
+          GATT services the module consumes, each identified by its
+          UUID. The declared set drives the emitted scan filter
+          (`ScanFilter(withServices: [...])`) — on the web platform a
+          service NOT listed at scan time is inaccessible after
+          connecting, so declare every service the module touches.
+          Service `id`s must be unique within the module (a duplicate
+          collides at reduction time).
+        type: array
+        items: { $ref: "#/$defs/Service" }
+        minItems: 1
+      characteristics:
+        description: >
+          Characteristics the module reads, writes, or subscribes to.
+          Each names its parent service by `id` and lists the GATT
+          properties the app relies on — the `properties` set selects
+          WHICH access idioms codegen emits, nothing else. A module
+          that only detects peripheral presence by service UUID may
+          omit this table entirely. Characteristic `id`s must be
+          unique within the module.
+        type: array
+        items: { $ref: "#/$defs/Characteristic" }
+
+$defs:
+  Identifier:
+    description: >
+      snake_case identifier; seeds the generated Dart names (constants,
+      accessors) after snake_case → lowerCamelCase conversion.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  BleUuid:
+    description: >
+      A GATT UUID: either the 16-bit short form ("180F") or the full
+      128-bit dashed form
+      ("0000180f-0000-1000-8000-00805f9b34fb"), any case. Emitted
+      verbatim — the universal_ble package accepts any format/case and
+      normalizes internally to lowercase 128-bit.
+    type: string
+    pattern: "^([0-9A-Fa-f]{4}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$"
+
+  Service:
+    description: >
+      One GATT service the module consumes. `id` is the service's
+      stable spec-level handle (cross-referenced by characteristics
+      and used to derive generated names); `uuid` is its wire-level
+      identity.
+    type: object
+    additionalProperties: false
+    required: [id, uuid]
+    properties:
+      id:
+        $ref: "#/$defs/Identifier"
+      uuid:
+        $ref: "#/$defs/BleUuid"
+
+  Characteristic:
+    description: >
+      One GATT characteristic the module consumes. Belongs to exactly
+      one declared service (by `id`); carries the subset of GATT
+      properties the app relies on.
+    type: object
+    additionalProperties: false
+    required: [id, service, uuid, properties]
+    properties:
+      id:
+        $ref: "#/$defs/Identifier"
+      service:
+        description: >
+          `id` of the service this characteristic belongs to. Must
+          reference a declared `[[universal_ble.services]]` entry in
+          the SAME module; the `characteristic_in_service` reduction
+          relation surfaces unresolved references at validate time.
+        $ref: "#/$defs/Identifier"
+      uuid:
+        $ref: "#/$defs/BleUuid"
+      properties:
+        description: |
+          GATT properties the app consumes on this characteristic.
+          Each value selects one access idiom at codegen time (see the
+          codegen prose per-property table):
+
+            read                   — one-shot value read
+            write                  — write with response (acknowledged)
+            write_without_response — fire-and-forget write
+            notify                 — subscribe to notifications and
+                                     stream incoming values
+            indicate               — subscribe to indications
+                                     (acknowledged notify)
+
+          Declare only what the app uses, not everything the
+          peripheral offers. The remaining GATT properties (broadcast,
+          authenticated signed writes, extended properties) are not
+          modeled: the pinned package exposes no API that consumes
+          them, so a value here could not change emitted code.
+        type: array
+        items:
+          type: string
+          enum: [read, write, write_without_response, notify, indicate]
+        minItems: 1
+        uniqueItems: true

@@ -63,6 +63,7 @@ const BLOCKS: &[(&str, &str)] = &[
     ("embassy", "rust"),
     ("stm32h5-rs", "rust"),
     ("flutter-rust-bridge", "dart"),
+    ("universal-ble", "dart"),
 ];
 
 const BRIDGES: &[&str] = &["egui+nih-plug", "embassy+stm32h5-rs"];

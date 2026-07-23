@@ -469,7 +469,7 @@ mod tests {
         let root = scratch();
         write_block_lang(
             &root,
-            "universal-ble",
+            "some-dart-block",
             "dart",
             &["scan"],
             &[("scan.dart", "class Scanner {}\n")],
@@ -486,7 +486,7 @@ mod tests {
         // extension is the adapter's, not a hardcode.
         write_block_lang(
             &root,
-            "universal-ble",
+            "some-dart-block",
             "dart",
             &["scan"],
             &[("scan.rs", "fn scan() {}\n")],
