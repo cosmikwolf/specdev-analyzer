@@ -53,6 +53,7 @@ const PROFILES: &[&str] = &[
     "audio-plugin",
     "rust-workspace",
     "flutter-app",
+    "rust-app",
 ];
 
 // (name, codegen language) — the deps manifest lives at

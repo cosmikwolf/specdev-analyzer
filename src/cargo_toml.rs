@@ -146,7 +146,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     let profile = layout.spec.project.profile.as_str();
     match profile {
         "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
-        "library-api" => render_library(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "library-api" => render_library(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "rust-workspace" => Err(anyhow!( // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
             "spec.toml at {} declares profile `rust-workspace` but has no \
@@ -191,7 +191,7 @@ fn render_by_shape(
         )
     })?;
     match cargo.shape {
-        ShapeKind::Library => render_library(layout, workspace_ctx),
+        ShapeKind::Library => render_library(layout, workspace_ctx, cargo.bin.as_ref()),
         ShapeKind::Binary => render_firmware(layout, workspace_ctx),
         ShapeKind::Plugin => render_audio_plugin(layout, workspace_ctx, cargo.bin.as_ref()),
         ShapeKind::Workspace => Err(anyhow!(
@@ -592,6 +592,7 @@ fn render_firmware(
 fn render_library(
     layout: &LayoutContext,
     workspace: Option<&WorkspaceContext>,
+    manifest_bin: Option<&BinSection>,
 ) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
@@ -640,6 +641,32 @@ fn render_library(
 
     text.push_str("[lib]\n\n");
 
+    // Optional `[[bin]]` alongside the `[lib]`. A library-shaped profile
+    // that also ships an executable (the `src/lib.rs` + `src/main.rs`
+    // crate — a testable core plus a thin entry point) declares
+    // `cargo_toml.bin` in its manifest; profiles that don't, don't.
+    // Same gate semantics as the plugin shape, but name/path come from
+    // the manifest templates rather than a hardcoded pair.
+    let emit_bin = match manifest_bin {
+        Some(b) => match b.gate.as_ref() {
+            Some(gate) => evaluate_bin_gate(gate, &arch),
+            None => true,
+        },
+        None => false,
+    };
+    if let (true, Some(b)) = (emit_bin, manifest_bin) {
+        text.push_str("[[bin]]\n");
+        text.push_str(&format!(
+            "name = {}\n",
+            quote_str(&b.name_template.replace("{project_name}", &project.name))
+        ));
+        text.push_str(&format!(
+            "path = {}\n",
+            quote_str(&b.path_template.replace("{project_name}", &project.name))
+        ));
+        text.push('\n');
+    }
+
     if !parsed_features.features.is_empty() {
         text.push_str("[features]\n");
         // Synthetic `default = [list]` line — emitted always when there's
@@ -674,7 +701,24 @@ fn render_library(
 
     write_dependencies_section(&mut text, &deps);
 
-    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
+    // Pair an emitted `[[bin]]` with a stub source file so the crate
+    // compiles on a fresh emit (the caller skips the write when the file
+    // already exists, so a hand-authored entry point is never
+    // overwritten). Mirrors the plugin shape's standalone pairing.
+    let mut extra_files: Vec<(PathBuf, String)> = Vec::new();
+    if let (true, Some(stub), Some(b)) = (
+        emit_bin,
+        manifest_bin.and_then(|b| b.paired_stub.as_ref()),
+        manifest_bin,
+    ) {
+        let body = read_paired_stub_body(layout, stub, &project.name)?;
+        extra_files.push((
+            PathBuf::from(b.path_template.replace("{project_name}", &project.name)),
+            body,
+        ));
+    }
+
+    Ok(RenderedCargoToml { text, warnings, extra_files })
 }
 
 // ---------------------------------------------------------------------------

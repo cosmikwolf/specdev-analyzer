@@ -1,0 +1,78 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/rust-app/enums.schema.yaml"
+title: "rust-app enums (v1)"
+description: >
+  Shared closed vocabularies used across the rust-app profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+$defs:
+  Layer:
+    description: >
+      Architectural layer a module belongs to. Dependencies flow
+      downward per domain.toml's `layer_dependency` rule: `entry` may
+      depend on anything, `adapter` on `core` and `support`, `core` on
+      `support` only, and `support` on nothing above it. Same-layer
+      dependencies are allowed; upward ones are flagged.
+
+      The axis is deliberately generic — four layers that fit any
+      standalone application, with no framework or hardware vocabulary
+      baked in:
+
+        entry    — process entry point and startup wiring. The thin
+                   `src/main.rs` side: argument/config parsing, building
+                   the object graph, handing off. Nothing here should be
+                   worth unit-testing.
+        adapter  — everything that talks to the outside world: network,
+                   filesystem, database, GUI, clock, other processes.
+                   Where a real implementation and a test double are
+                   both plausible.
+        core     — the application's own logic and types. No I/O, no
+                   framework imports; testable without a runtime, a
+                   socket, or a window.
+        support  — cross-cutting utilities every layer may use: error
+                   types, logging setup, small helpers. Kept small on
+                   purpose — a growing `support` layer usually means
+                   something belongs in `core`.
+    type: string
+    enum: [entry, adapter, core, support]
+
+  Visibility:
+    description: >
+      Module visibility. `pub` is reachable from outside the crate;
+      `crate` is reachable within the crate only; `private` is reachable
+      within its parent module only. Mirrors Rust's `pub`, `pub(crate)`,
+      and bare-module visibility.
+    type: string
+    enum: [pub, crate, private]
+
+  Identifier:
+    description: snake_case or PascalCase identifier usable in Rust source.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier, or a
+      package-qualified `<package>::<Module>` form for multi-package
+      projects.
+    type: string
+    pattern: "^([a-z][a-z0-9_]*::)?[A-Za-z_][A-Za-z0-9_]*$"
+
+  FeatureName:
+    description: >
+      Cargo feature name. Lowercase, digits, hyphens, underscores.
+      Must start with a letter or digit. Matches cargo's accepted
+      feature-name grammar.
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_-]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-API-001, ZFM-001, RFC-7-12).
+      The leading prefix is open: projects can adopt their published
+      requirement scheme (REQ-, ZFM-, RFC-, STORY-, …) without rename
+      ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

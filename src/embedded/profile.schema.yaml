@@ -71,8 +71,19 @@ properties:
             type: boolean
       bin:
         description: |
-          [[bin]] section emit policy. Present when shape ∈ {binary, plugin}.
-          For plugin shape, requires `gate` to fire conditionally.
+          [[bin]] section emit policy. Present when shape ∈ {binary,
+          plugin, library}.
+
+          For `plugin` shape, requires `gate` to fire conditionally.
+
+          For `library` shape, this is what expresses the `src/lib.rs` +
+          `src/main.rs` crate — a testable core plus a thin executable
+          entry point, in one crate. Absent `bin`, a library-shaped
+          profile emits `[lib]` only (the prior behavior, unchanged).
+          `name_template` / `path_template` are honored here (the plugin
+          shape predates them and uses a fixed standalone pair); a
+          `paired_stub` is written on first emit so the crate compiles
+          before the entry point is hand-authored.
         type: object
         additionalProperties: false
         required: [name_template, path_template]

@@ -1,0 +1,107 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/rust-app/module.schema.yaml"
+title: "rust-app module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module
+  per file; filename should match the `name` field. rust-app targets a
+  standalone Rust application — a testable core behind `src/lib.rs` plus
+  a thin `src/main.rs` entry point — where the load-bearing concerns are
+  which layer a module sits in, what it depends on, and what its
+  contract surface is. Modules carry a `layer` and a visibility, and may
+  declare feature gates that conditionally include them.
+type: object
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas even when
+# those are valid via the aggregator `allOf:` slot. unevaluatedProperties
+# IS allOf-aware.
+unevaluatedProperties: false
+required: [name, layer, visibility]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  layer:
+    $ref: "enums.schema.yaml#/$defs/Layer"
+  visibility:
+    $ref: "enums.schema.yaml#/$defs/Visibility"
+  description:
+    type: string
+  depends_on:
+    description: >
+      Other modules within this library this module depends on. The
+      `modules_acyclic` graph check enforces no cycles.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  satisfies:
+    description: >
+      Requirement ids this module satisfies. The
+      `module_satisfies_resolves` graph check verifies each id exists.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  external_deps:
+    description: |
+      External crate dependencies this module needs. Each entry
+      becomes a Cargo.toml `[dependencies]` line; the union across all
+      modules in the library determines the full dep set `gen` emits.
+      Use this for crates that aren't gated by
+      a Cargo feature; feature-gated optional deps are still expressed
+      via `feature_gates` + the architecture's `[[features]]` table.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
+  feature_gates:
+    description: >
+      Cargo features that conditionally include this module. The module
+      compiles only when at least one of the listed features is active
+      (treated as `#[cfg(any(feature = "f1", feature = "f2"))]`). An
+      empty list (or omitted field) means the module is unconditional.
+      `module_feature_gates_resolve` verifies every name is declared in
+      `architecture.toml`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
+    uniqueItems: true
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Open in v1.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Top-level Rust constructs that carry spec significance — items[]
+      entry per `pub` function, struct, enum, trait, impl, type, const,
+      static, re-export, or macro contributing to the module's
+      contractual surface. Sparseness rule (enforced by the language
+      schema): every item except `kind = "re_export"` must carry
+      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
+      symbol emission and by the three-stage agentic sync
+      (`items diff` / `items propose` / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are bounded deferrals.
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
