@@ -126,8 +126,82 @@ pub fn record_files(
     files: &[PathBuf],
     generated_at: &str,
 ) -> Result<Vec<String>> {
+    record_files_inner(layout, module, files, generated_at, false)
+}
+
+/// `record_files` with the edited-file guard lifted.
+///
+/// Use only when the caller has decided the current bytes are the intended
+/// baseline — a hand-edit deliberately kept, or a formatter run that is part
+/// of emission. Everything else must go through `record_files`.
+pub fn record_files_accepting_edits(
+    layout: &LayoutContext,
+    module: Option<&str>,
+    files: &[PathBuf],
+    generated_at: &str,
+) -> Result<Vec<String>> {
+    record_files_inner(layout, module, files, generated_at, true)
+}
+
+fn record_files_inner(
+    layout: &LayoutContext,
+    module: Option<&str>,
+    files: &[PathBuf],
+    generated_at: &str,
+    accept_edits: bool,
+) -> Result<Vec<String>> {
     if files.is_empty() {
         bail!("gen-record: no files given — pass the emitted file paths");
+    }
+
+    // Guard: refuse to overwrite the baseline of a file that already drifted.
+    //
+    // Recording is how a file becomes "clean", so an unguarded record after a
+    // hand-edit makes that edit the new truth and gen-drift can never surface
+    // it again. Observed in the field: edit → gen-record → `clean` forever,
+    // with the edit still in the source. The tripwire reported healthy while
+    // the code no longer matched what `/spec-gen` produced.
+    //
+    // A file that is `clean` or absent from the lineage records freely — the
+    // common path (a fresh emission) is unaffected.
+    if !accept_edits {
+        let drifted: Vec<String> = run_gen_drift(layout)?
+            .files
+            .into_iter()
+            .filter(|d| d.category == GenFileCategory::Edited)
+            .map(|d| d.path)
+            .collect();
+        if !drifted.is_empty() {
+            let requested: std::collections::BTreeSet<String> = files
+                .iter()
+                .filter_map(|f| f.canonicalize().ok())
+                .filter_map(|abs| {
+                    let root = layout.project_root.canonicalize().ok()?;
+                    abs.strip_prefix(&root).ok().map(rel_key)
+                })
+                .collect();
+            let collisions: Vec<&String> =
+                drifted.iter().filter(|p| requested.contains(*p)).collect();
+            if !collisions.is_empty() {
+                bail!(
+                    "gen-record: refusing to re-record {} file(s) that gen-drift \
+                     reports as `edited`:\n{}\n\n\
+                     Recording is what makes a file `clean`, so recording now would \
+                     make the hand-edit the new baseline and gen-drift could never \
+                     report it again.\n\
+                     Either re-run `/spec-gen` for the module so the emitted bytes \
+                     match the spec, or fold the edit into the spec and regenerate. \
+                     If the current bytes ARE the intended baseline (a kept edit, or \
+                     a formatter pass that belongs to emission), pass --accept-edits.",
+                    collisions.len(),
+                    collisions
+                        .iter()
+                        .map(|p| format!("  - {p}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+            }
+        }
     }
     let project_root = layout
         .project_root

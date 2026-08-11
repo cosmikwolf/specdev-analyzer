@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::gen_lineage::{
-    gen_lineage_path, record_files, run_gen_drift, run_gen_plan, GenFileCategory,
-    GenLineage, GenPlanCategory,
+    gen_lineage_path, record_files, record_files_accepting_edits, run_gen_drift,
+    run_gen_plan, GenFileCategory, GenLineage, GenPlanCategory,
 };
 use specdev_analyzer::layout::LayoutContext;
 
@@ -206,6 +206,12 @@ fn deleted_file_is_flagged_missing() {
     assert_eq!(report.files[0].category, GenFileCategory::Missing);
 }
 
+/// Regeneration legitimately moves the baseline: `/spec-gen` re-emits a file,
+/// its bytes differ from the last recording, and recording the new bytes is
+/// correct. That path must declare itself, because the alternative — a bare
+/// re-record — is how a hand-edit gets laundered into `clean`
+/// (`gen_record_edit_guard.rs`). Byte-difference alone cannot tell a fresh
+/// emission from a hand-edit, so the caller states which it is.
 #[test]
 fn re_record_returns_edited_file_to_clean() {
     let root = tmp("rerecord");
@@ -217,7 +223,8 @@ fn re_record_returns_edited_file_to_clean() {
     fs::write(&src, "pub fn widget() { /* regenerated */ }\n").unwrap();
     assert!(!run_gen_drift(&layout).unwrap().is_clean());
 
-    record_files(&layout, Some("Widget"), &[src], "2026-06-12T11:00:00Z").unwrap();
+    record_files_accepting_edits(&layout, Some("Widget"), &[src], "2026-06-12T11:00:00Z")
+        .unwrap();
     let report = run_gen_drift(&layout).unwrap();
     assert!(report.is_clean());
     // Upsert replaced, not appended.
