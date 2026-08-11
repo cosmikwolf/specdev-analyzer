@@ -113,16 +113,24 @@ fn rust_app_pairs_the_bin_with_a_stub_source() {
     );
 }
 
+/// Golden: a library-shaped profile that declares no `bin` renders
+/// **byte-for-byte** what it rendered before `[[bin]]` emission existed.
+///
+/// Deliberately an exact-match assertion rather than a set of `contains`
+/// checks. The claim the widening rests on is that library-api's output did
+/// not move at all, and only byte equality states that. A containment check
+/// would pass while a stray blank line or a reordered section crept in.
 #[test]
-fn library_profile_without_bin_is_unchanged() {
+fn library_profile_without_bin_is_byte_for_byte_unchanged() {
     let (_target, layout) = fresh("library-api", "mylib", "libonly");
     let rendered = render(&layout).unwrap();
 
-    assert!(rendered.text.contains("[lib]"));
-    assert!(
-        !rendered.text.contains("[[bin]]"),
-        "a library-shaped profile declaring no `bin` must not gain one:\n{}",
-        rendered.text
+    const GOLDEN: &str = "[package]\nname = \"mylib\"\nedition = \"2021\"\n\n[lib]\n\n[dependencies]\n";
+    assert_eq!(
+        rendered.text, GOLDEN,
+        "library-api Cargo.toml emission moved. If this change is intended, \
+         update GOLDEN — but confirm first that no `[[bin]]` leaked in from \
+         the library-shape bin widening."
     );
     assert!(
         rendered.extra_files.is_empty(),
