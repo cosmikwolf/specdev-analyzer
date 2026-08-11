@@ -329,6 +329,15 @@ pub enum Command {
         /// resolve inside the project root.
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Record a file even when gen-drift reports it as `edited`.
+        ///
+        /// Without this, re-recording an edited file is refused: recording is
+        /// what makes a file `clean`, so it would make the hand-edit the new
+        /// baseline and gen-drift could never report it again. Pass this only
+        /// when the current bytes ARE the intended baseline — a kept edit, or
+        /// a formatter pass that belongs to emission.
+        #[arg(long)]
+        accept_edits: bool,
     },
 }
 
@@ -528,7 +537,8 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             module,
             files,
-        } => run_gen_record(project, spec_path.as_deref(), module, files),
+            accept_edits,
+        } => run_gen_record(project, spec_path.as_deref(), module, files, accept_edits),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -1610,6 +1620,7 @@ fn run_gen_record(
     spec_path: Option<&std::path::Path>,
     module: Option<String>,
     files: Vec<PathBuf>,
+    accept_edits: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1619,12 +1630,12 @@ fn run_gen_record(
         }
     };
     let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    match specdev_analyzer::gen_lineage::record_files(
-        &layout,
-        module.as_deref(),
-        &files,
-        &generated_at,
-    ) {
+    let record = if accept_edits {
+        specdev_analyzer::gen_lineage::record_files_accepting_edits
+    } else {
+        specdev_analyzer::gen_lineage::record_files
+    };
+    match record(&layout, module.as_deref(), &files, &generated_at) {
         Ok(recorded) => {
             for path in &recorded {
                 println!("recorded {path}");
