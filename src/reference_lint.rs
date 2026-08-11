@@ -1,6 +1,6 @@
 //! Plugin-author lint for reference crates.
 //!
-//! Two opt-in, deterministic checks over a unit's `reference/<lang>/`:
+//! Four opt-in, deterministic checks over a unit's `reference/<lang>/`:
 //!
 //! - **`REF-COVERAGE-001`** — every name in `reference/<lang>/reference_cases.yaml`
 //!   has a `reference/<lang>/src/<name>.<ext>`, with `<ext>` from the language
@@ -10,12 +10,30 @@
 //!   reference-source arities are the ground truth (they type-check); only base
 //!   names present in the reference are checked, so prose-only types never flag.
 //!
-//! Both are agnostic: the case names are opaque strings the analyzer never
-//! interprets, and the arity comparison is a *Rust-language* operation via the
-//! existing tree-sitter adapter, not a domain notion. The manifest is opt-in —
-//! a unit without `reference_cases.yaml` is skipped — and lives under
-//! `reference/`, which `inline` never copies, so it is plugin-author CI-only
-//! state (never reaches a user project).
+//! - **`REF-PIN-001`** — every crate declared in BOTH the unit's
+//!   `codegen/<lang>/deps.yaml` and its reference manifest is pinned to the
+//!   same version (or, for a git source, the same rev). Without this the
+//!   reference can compile green against versions users never receive, which
+//!   silently voids the guarantee the other checks rest on.
+//! - **`REF-PIN-002`** — a `deps.yaml` git source declares a `rev` (or `tag`)
+//!   when the reference pins one. An unpinned git dep resolves to the default
+//!   branch at emit time, so users track HEAD while the reference proves a
+//!   fixed commit — a divergence that can never self-correct, because the
+//!   reference keeps compiling forever.
+//!
+//! All four are agnostic: the case names are opaque strings the analyzer never
+//! interprets; the arity comparison is a *Rust-language* operation via the
+//! existing tree-sitter adapter; and the pin comparison reads dependency tables
+//! out of a build manifest, treating crate names as opaque keys. No profile,
+//! block, or bridge name or concept is involved. The manifests live under
+//! `reference/` and `codegen/`, and the pin checks compare only files already
+//! present in the plugin tree — no network, so the lint stays offline and
+//! deterministic.
+//!
+//! Opt-in posture differs by check: coverage and arity require a
+//! `reference_cases.yaml`, while the pin checks run for any unit shipping both
+//! a `deps.yaml` and a reference manifest for the same language (a unit with a
+//! reference but no declared cases still must not test the wrong versions).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -74,9 +92,15 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
+        // --- REF-PIN-001 / REF-PIN-002 ---
+        // Runs ahead of the reference_cases opt-in: a unit that ships a
+        // reference must not test versions its users never receive,
+        // whether or not it declares discrete cases.
+        lint_pins(unit, &unit_name, &lang, &lang_dir, offenders)?;
+
         let manifest = lang_dir.join("reference_cases.yaml");
         if !manifest.is_file() {
-            continue; // opt-in: no manifest, no checks
+            continue; // opt-in: no manifest, no coverage/arity checks
         }
         // Both checks need the language adapter (file extension for coverage,
         // grammar + path separator for arity). A reference dir for a language
@@ -126,6 +150,137 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// What a build manifest pins for one dependency. `version` and `rev` are
+/// both optional because a git dep carries no version and a registry dep
+/// carries no rev; the comparison below only fires when both sides have
+/// the same-shaped fact.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Pin {
+    version: Option<String>,
+    rev: Option<String>,
+}
+
+/// REF-PIN-001 / REF-PIN-002 for one (unit, language).
+///
+/// Compares `codegen/<lang>/deps.yaml` against the reference build manifest.
+/// Only crates present in BOTH are compared — a reference legitimately pins
+/// crates the unit does not contribute (a bridge's reference pins its endpoint
+/// blocks' crates too), and a unit may contribute crates the reference has no
+/// worked example for.
+fn lint_pins(
+    unit: &Path,
+    unit_name: &str,
+    lang: &str,
+    lang_dir: &Path,
+    offenders: &mut Vec<String>,
+) -> Result<()> {
+    let deps_path = unit.join("codegen").join(lang).join("deps.yaml");
+    if !deps_path.is_file() {
+        return Ok(());
+    }
+    // Reference build-manifest filename is a language fact, like the source
+    // extension the coverage check already takes from the adapter.
+    let (manifest_name, parse): (&str, fn(&str) -> Result<BTreeMap<String, Pin>>) = match lang {
+        "rust" => ("Cargo.toml", parse_cargo_pins),
+        _ => return Ok(()), // no reference-manifest reader for this language yet
+    };
+    let ref_manifest = lang_dir.join(manifest_name);
+    if !ref_manifest.is_file() {
+        return Ok(());
+    }
+    let deps = crate::manifest::BlockDeps::load(&deps_path)
+        .with_context(|| format!("loading {}", deps_path.display()))?;
+    let text = std::fs::read_to_string(&ref_manifest)
+        .with_context(|| format!("reading {}", ref_manifest.display()))?;
+    let ref_pins =
+        parse(&text).with_context(|| format!("parsing {}", ref_manifest.display()))?;
+
+    for entry in &deps.crates {
+        let Some(ref_pin) = ref_pins.get(&entry.name) else {
+            continue; // not exercised by the reference; nothing to compare
+        };
+        let declared_git = match &entry.source {
+            Some(crate::manifest::CrateSource::Git { rev, tag, .. }) => {
+                Some(rev.clone().or_else(|| tag.clone()))
+            }
+            _ => None,
+        };
+        match declared_git {
+            // Git source: the rev is the version. Compare it, and require one.
+            Some(declared_rev) => match (&declared_rev, &ref_pin.rev) {
+                (Some(d), Some(r)) if d != r => offenders.push(format!(
+                    "{unit_name}: [REF-PIN-001] deps.yaml pins `{}` at git rev {d} \
+                     but the reference pins {r}",
+                    entry.name
+                )),
+                (None, Some(r)) => offenders.push(format!(
+                    "{unit_name}: [REF-PIN-002] deps.yaml declares `{}` as a git \
+                     dep with no rev/tag, so projects track the default branch, \
+                     while the reference pins rev {r} — the reference cannot \
+                     detect an upstream break projects would hit",
+                    entry.name
+                )),
+                _ => {}
+            },
+            // Registry source: compare the version requirement verbatim.
+            None => {
+                if let Some(ref_version) = &ref_pin.version {
+                    if &entry.version != ref_version {
+                        offenders.push(format!(
+                            "{unit_name}: [REF-PIN-001] deps.yaml pins `{}` at \
+                             version {} but the reference pins {ref_version}",
+                            entry.name, entry.version
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Collect `{crate → Pin}` from a Cargo manifest's dependency tables,
+/// including target-specific ones. Both the shorthand (`foo = "1"`) and the
+/// table (`foo = { version = "1" }`) forms are read.
+fn parse_cargo_pins(text: &str) -> Result<BTreeMap<String, Pin>> {
+    let doc: toml::Value = toml::from_str(text).context("parsing Cargo manifest TOML")?;
+    let mut out = BTreeMap::new();
+
+    fn absorb(table: Option<&toml::Value>, out: &mut BTreeMap<String, Pin>) {
+        let Some(t) = table.and_then(toml::Value::as_table) else {
+            return;
+        };
+        for (name, spec) in t {
+            let pin = match spec {
+                toml::Value::String(v) => Pin { version: Some(v.clone()), rev: None },
+                toml::Value::Table(tt) => Pin {
+                    version: tt.get("version").and_then(toml::Value::as_str).map(String::from),
+                    rev: tt
+                        .get("rev")
+                        .or_else(|| tt.get("tag"))
+                        .and_then(toml::Value::as_str)
+                        .map(String::from),
+                },
+                _ => continue,
+            };
+            out.insert(name.clone(), pin);
+        }
+    }
+
+    for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        absorb(doc.get(key), &mut out);
+    }
+    // `[target.'cfg(..)'.dependencies]` — one level of nesting under `target`.
+    if let Some(targets) = doc.get("target").and_then(toml::Value::as_table) {
+        for spec in targets.values() {
+            for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                absorb(spec.get(key), &mut out);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Parse `reference_cases: [..]` from the manifest into a list of opaque names.

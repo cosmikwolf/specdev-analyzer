@@ -17,6 +17,12 @@ crates:
     features: []
     source:
       git: "https://github.com/robbert-vdh/nih-plug.git"
+      # Pinned to the rev the reference crate compiles against. Without a
+      # rev, projects resolve the default branch at emit time while the
+      # reference proves a fixed commit — the reference would stay green
+      # through an upstream break every project would hit. Bump this and
+      # the reference's Cargo.toml together, never one alone.
+      rev: "f36931f7af4646065488a9845d8f8c2f95252c23"
 
 recommended_external_deps:
   - crate: nih_plug
