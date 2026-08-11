@@ -7,13 +7,18 @@ crates:
     features: []
     source:
       git: "https://github.com/robbert-vdh/nih-plug.git"
-      # Same rev as the nih-plug block pins — the two crates live in one
-      # repo and must resolve to the same commit, or their types will not
-      # unify. Bump both blocks and both reference crates together.
+      # Same rev as the nih-plug block pins. The two crates ship from one
+      # repo and nih_plug_egui depends on nih_plug, so a split rev risks
+      # two nih_plug versions in the tree. Bump both blocks and both
+      # reference crates together.
       rev: "f36931f7af4646065488a9845d8f8c2f95252c23"
-  - name: egui
-    version: "0.27"
-    source: crates-io
+
+# NOTE: no separate `egui` entry, deliberately. `nih_plug_egui` re-exports
+# the egui this block needs (`nih_plug_egui::egui`), which is what the
+# codegen prose and the reference crate both use. Declaring egui directly
+# would put a second, independently-versioned egui in the dependency tree
+# whose types would not unify with the re-exported one — the same hazard
+# the eframe block documents from the other direction.
 
 recommended_external_deps:
   - crate: egui_extras
