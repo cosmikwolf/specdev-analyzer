@@ -7,6 +7,10 @@ crates:
     features: []
     source:
       git: "https://github.com/robbert-vdh/nih-plug.git"
+      # Same rev as the nih-plug block pins — the two crates live in one
+      # repo and must resolve to the same commit, or their types will not
+      # unify. Bump both blocks and both reference crates together.
+      rev: "f36931f7af4646065488a9845d8f8c2f95252c23"
   - name: egui
     version: "0.27"
     source: crates-io
