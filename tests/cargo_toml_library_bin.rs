@@ -184,3 +184,39 @@ fn library_crate_type_reaches_the_manifest() {
     let staticlib = rendered.text.find("staticlib").unwrap();
     assert!(cdylib < staticlib, "declaration order preserved");
 }
+
+/// `[project].crate_type` overrides the profile's default.
+///
+/// Linkage is a property of the individual crate, not of the shape it shares
+/// with its siblings. Most `library-api` projects want the default rlib; an
+/// FFI companion crate linked from Dart needs `["cdylib", "staticlib"]`.
+/// Setting that on the profile would impose the exception on every project
+/// using it — the same reasoning that gave `crate_shape` a per-package
+/// override.
+#[test]
+fn project_crate_type_overrides_the_profile_default() {
+    let (target, layout) = fresh("library-api", "ffilib", "projoverride");
+    let spec = target.join("spec.toml");
+
+    // Baseline: no override, no crate-type.
+    assert!(!render(&layout).unwrap().text.contains("crate-type"));
+
+    let original = fs::read_to_string(&spec).unwrap();
+    fs::write(
+        &spec,
+        original.replace(
+            "language = \"rust\"",
+            "language = \"rust\"\ncrate_type = [\"cdylib\", \"staticlib\"]",
+        ),
+    )
+    .unwrap();
+    // Re-discover so the edited spec.toml is read.
+    let layout = LayoutContext::discover(&target, None).unwrap();
+
+    let rendered = render(&layout).unwrap();
+    assert!(
+        rendered.text.contains("crate-type = [\"cdylib\", \"staticlib\"]"),
+        "the per-project override must reach the manifest:\n{}",
+        rendered.text
+    );
+}

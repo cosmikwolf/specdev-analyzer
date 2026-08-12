@@ -64,6 +64,17 @@ pub struct ProjectSection {
     /// same block/bridge/architecture dependencies.
     #[serde(default)]
     pub crate_shape: Option<CrateShape>,
+    /// Per-package `[lib] crate-type` override. Absent = the profile's own
+    /// `cargo_toml.lib.crate_type`.
+    ///
+    /// Linkage is a property of the individual crate, not of the shape it
+    /// shares with its siblings: a library consumed only by Rust wants the
+    /// default rlib, while one linked by a foreign toolchain (an FFI
+    /// companion crate) needs `["cdylib", "staticlib"]`. Putting that on the
+    /// profile would impose the exception on every project using it. Same
+    /// reasoning as `crate_shape` above, one field over.
+    #[serde(default)]
+    pub crate_type: Vec<crate::manifest::profile::CrateType>,
 }
 
 /// Per-package Cargo crate-target override. Generic Cargo concepts, not
