@@ -23,6 +23,7 @@ pub mod block_deps;
 pub mod bridge_contract;
 pub mod profile;
 
+pub use profile::{CrateType as ProfileCrateType, LibSection};
 pub use block_deps::{
     BlockDeps, CrateEntry, CrateSource, CrateSourceTag, PubEntry, PubGit, PubSource,
     RecommendedDep,

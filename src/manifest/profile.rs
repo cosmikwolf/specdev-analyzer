@@ -98,6 +98,20 @@ pub enum CrateType {
     ProcMacro,
 }
 
+impl CrateType {
+    /// The literal cargo writes in `[lib] crate-type = [...]`.
+    pub fn as_cargo_str(self) -> &'static str {
+        match self {
+            CrateType::Lib => "lib",
+            CrateType::Rlib => "rlib",
+            CrateType::Cdylib => "cdylib",
+            CrateType::Staticlib => "staticlib",
+            CrateType::Dylib => "dylib",
+            CrateType::ProcMacro => "proc-macro",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct BinSection {
     pub name_template: String,

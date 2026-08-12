@@ -23,6 +23,7 @@ use serde::Deserialize;
 
 use crate::layout::LayoutContext;
 use crate::manifest::block_deps as bd_module;
+use crate::manifest::profile::LibSection;
 use crate::manifest::{BinGate, BinSection, BlockDeps, PairedStub, Profile, ShapeKind};
 
 /// One Cargo.toml `[dependencies]` entry, normalized.
@@ -146,7 +147,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     let profile = layout.spec.project.profile.as_str();
     match profile {
         "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
-        "library-api" => render_library(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "library-api" => render_library(layout, workspace_ctx.as_ref(), None, None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "rust-workspace" => Err(anyhow!( // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
             "spec.toml at {} declares profile `rust-workspace` but has no \
@@ -191,7 +192,12 @@ fn render_by_shape(
         )
     })?;
     match cargo.shape {
-        ShapeKind::Library => render_library(layout, workspace_ctx, cargo.bin.as_ref()),
+        ShapeKind::Library => render_library(
+            layout,
+            workspace_ctx,
+            cargo.bin.as_ref(),
+            cargo.lib.as_ref(),
+        ),
         ShapeKind::Binary => render_firmware(layout, workspace_ctx),
         ShapeKind::Plugin => render_audio_plugin(layout, workspace_ctx, cargo.bin.as_ref()),
         ShapeKind::Workspace => Err(anyhow!(
@@ -593,6 +599,7 @@ fn render_library(
     layout: &LayoutContext,
     workspace: Option<&WorkspaceContext>,
     manifest_bin: Option<&BinSection>,
+    manifest_lib: Option<&LibSection>,
 ) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
@@ -639,7 +646,29 @@ fn render_library(
     write_package_section(&mut text, project, rust_version, workspace);
     text.push('\n');
 
-    text.push_str("[lib]\n\n");
+    // `[lib]`, with `crate-type` when the profile manifest declares one.
+    //
+    // `cargo_toml.lib.crate_type` existed in the manifest schema and struct
+    // but nothing read it — a declared field with no effect, which validates
+    // clean and silently does nothing. It matters for any library that is
+    // linked by something other than Rust: an FFI companion crate needs
+    // `["cdylib", "staticlib"]`, and without this it received a bare `[lib]`
+    // (rlib) that the foreign toolchain cannot link.
+    text.push_str("[lib]\n");
+    let crate_types: Vec<&str> = manifest_lib
+        .map(|l| l.crate_type.iter().map(|t| t.as_cargo_str()).collect())
+        .unwrap_or_default();
+    if !crate_types.is_empty() {
+        text.push_str(&format!(
+            "crate-type = [{}]\n",
+            crate_types
+                .iter()
+                .map(|t| quote_str(t))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    text.push('\n');
 
     // Optional `[[bin]]` alongside the `[lib]`. A library-shaped profile
     // that also ships an executable (the `src/lib.rs` + `src/main.rs`
