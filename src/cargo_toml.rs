@@ -654,10 +654,18 @@ fn render_library(
     // linked by something other than Rust: an FFI companion crate needs
     // `["cdylib", "staticlib"]`, and without this it received a bare `[lib]`
     // (rlib) that the foreign toolchain cannot link.
+    // Per-package `[project].crate_type` wins over the profile's default.
+    // Linkage is a property of the individual crate, not of the shape it
+    // shares with its siblings — the same reasoning that gave `crate_shape`
+    // a per-package override one field over.
     text.push_str("[lib]\n");
-    let crate_types: Vec<&str> = manifest_lib
-        .map(|l| l.crate_type.iter().map(|t| t.as_cargo_str()).collect())
-        .unwrap_or_default();
+    let crate_types: Vec<&str> = if !project.crate_type.is_empty() {
+        project.crate_type.iter().map(|t| t.as_cargo_str()).collect()
+    } else {
+        manifest_lib
+            .map(|l| l.crate_type.iter().map(|t| t.as_cargo_str()).collect())
+            .unwrap_or_default()
+    };
     if !crate_types.is_empty() {
         text.push_str(&format!(
             "crate-type = [{}]\n",
