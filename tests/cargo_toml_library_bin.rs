@@ -138,3 +138,49 @@ fn library_profile_without_bin_is_byte_for_byte_unchanged() {
         rendered.extra_files.iter().map(|(p, _)| p).collect::<Vec<_>>()
     );
 }
+
+/// `cargo_toml.lib.crate_type` must reach the rendered manifest.
+///
+/// The field existed in the schema and the `LibSection` struct, but nothing
+/// read it — `render_library` emitted a bare `[lib]` unconditionally. A
+/// declared field with no effect validates clean and silently does nothing,
+/// which is the same dead-flag class the project has hit before. It matters
+/// for any library linked by a non-Rust toolchain: an FFI companion crate
+/// needs `["cdylib", "staticlib"]` and got an rlib.
+#[test]
+fn library_crate_type_reaches_the_manifest() {
+    use specdev_analyzer::manifest::Profile;
+
+    let (target, layout) = fresh("library-api", "ffilib", "cratetype");
+    let manifest_path = target.join("specs/specdev/profile.yaml");
+    let original = fs::read_to_string(&manifest_path).unwrap();
+
+    // Baseline: library-api declares `lib: {}`, so no crate-type renders.
+    assert!(
+        !render(&layout).unwrap().text.contains("crate-type"),
+        "precondition: an empty lib section renders no crate-type"
+    );
+
+    // Declare the crate types an FFI companion crate needs.
+    fs::write(
+        &manifest_path,
+        original.replace(
+            "  lib: {}",
+            "  lib:\n    crate_type: [cdylib, staticlib]",
+        ),
+    )
+    .unwrap();
+    Profile::load(&manifest_path).expect("edited manifest must still validate");
+
+    let rendered = render(&layout).unwrap();
+    assert!(
+        rendered.text.contains("crate-type = [\"cdylib\", \"staticlib\"]"),
+        "crate_type must render in declaration order:\n{}",
+        rendered.text
+    );
+    // Order is the manifest's, not sorted — cargo treats the list as ordered
+    // and a reordering would churn the emitted file for no reason.
+    let cdylib = rendered.text.find("cdylib").unwrap();
+    let staticlib = rendered.text.find("staticlib").unwrap();
+    assert!(cdylib < staticlib, "declaration order preserved");
+}
