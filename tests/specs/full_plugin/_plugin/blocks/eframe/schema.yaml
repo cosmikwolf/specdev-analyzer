@@ -1,0 +1,219 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/eframe.v1"
+title: "eframe block (v1)"
+description: >
+  Schema fragment contributed by the `eframe` block. Adds a namespaced
+  `[eframe]` table to `Module` carrying the native application shell for
+  [eframe](https://github.com/emilk/egui/tree/master/crates/eframe): the
+  root window, the repaint policy, persisted state keys, and any
+  additional viewports.
+
+  This block models the SHELL — how the application starts, when it
+  repaints, what survives a restart, and how many OS windows exist. It
+  does NOT model what is drawn inside a window; layout is a different
+  concern with a different vocabulary, and keeping it out is what lets
+  this block stay small.
+
+  The repaint policy is the load-bearing field. eframe is reactive by
+  default: it paints on input and stops otherwise, so anything arriving
+  from outside the UI thread is invisible until something requests a
+  repaint. Declaring the policy makes that choice explicit rather than an
+  accident of whichever example was copied.
+
+  Deferred to v1.x: web/wasm targets (native only today), custom fonts and
+  visuals, window icons, menu bars, and the wgpu renderer's configuration
+  surface beyond selecting it.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  eframe:
+    type: object
+    additionalProperties: false
+    required: [app_name, window_title]
+    properties:
+      app_name:
+        description: >
+          Name passed to eframe at startup. Also determines the on-disk
+          location of persisted state, so changing it orphans whatever was
+          previously saved. Distinct from `window_title`: this is an
+          identifier, that is user-facing text.
+        type: string
+        minLength: 1
+      window_title:
+        description: >
+          Text shown in the root window's title bar.
+        type: string
+        minLength: 1
+      app_id:
+        description: >
+          Platform application identifier, conventionally reverse-DNS
+          (e.g. "dev.example.myapp"). Used by desktop environments to
+          associate the window with its launcher entry and icon; on
+          Wayland, getting this wrong is why a window shows a generic
+          icon. Optional — omit and the platform falls back to app_name.
+        type: string
+        minLength: 1
+      initial_size:
+        description: >
+          Root window size at first launch, in logical points. Ignored on
+          later launches when `persist_window` is true and a previous
+          geometry was stored.
+        type: object
+        additionalProperties: false
+        required: [width, height]
+        properties:
+          width:  { type: number, exclusiveMinimum: 0 }
+          height: { type: number, exclusiveMinimum: 0 }
+      min_size:
+        description: >
+          Smallest size the user may resize the root window to, in logical
+          points. Worth setting whenever the UI has a layout that stops
+          making sense below some width — the alternative is a window the
+          user can break.
+        type: object
+        additionalProperties: false
+        required: [width, height]
+        properties:
+          width:  { type: number, exclusiveMinimum: 0 }
+          height: { type: number, exclusiveMinimum: 0 }
+      resizable:
+        description: >
+          Whether the user may resize the root window.
+        type: boolean
+        default: true
+      centered:
+        description: >
+          Place the root window at the centre of the active monitor on
+          launch, rather than at the platform's default position.
+        type: boolean
+        default: false
+      renderer:
+        description: >
+          Rendering backend. `glow` targets OpenGL and is the broadest
+          option. `wgpu` targets Vulkan / Metal / DX12 and is the choice
+          when the application also wants to render its own GPU content.
+          Each requires the corresponding eframe cargo feature.
+        type: string
+        enum: [glow, wgpu]
+        default: glow
+      persist_window:
+        description: >
+          Restore the root window's position and size from the previous
+          run. Independent of `[[eframe.persisted]]`, which covers
+          application state; this covers only window geometry.
+        type: boolean
+        default: false
+      repaint:
+        description: >
+          When the application repaints.
+
+          `reactive` (the default) paints on user input and whenever
+          something calls request_repaint — including from another thread.
+          Correct for almost every application, and the only one of the
+          three that idles at zero CPU.
+
+          `continuous` paints every frame unconditionally. Burns CPU and
+          GPU whether or not anything changed; justified for animation
+          that must not drop a frame, and rarely otherwise.
+
+          `interval` wakes again after a fixed delay, bounding staleness
+          without spinning. Suits a value that is polled rather than
+          pushed — a clock, a periodically-sampled reading.
+
+          Choosing `reactive` while receiving work from another thread
+          obliges that thread to call request_repaint; otherwise its
+          results appear only when the user happens to move the mouse.
+        type: string
+        enum: [reactive, continuous, interval]
+        default: reactive
+      repaint_interval_ms:
+        description: >
+          Delay between repaints when `repaint = "interval"`. Ignored for
+          the other policies. Has no meaning as a frame rate cap — it is a
+          floor on staleness, not a ceiling on painting, since input still
+          triggers a repaint immediately.
+        type: integer
+        minimum: 1
+      viewports:
+        description: >
+          Additional OS windows beyond the root. Each becomes one
+          viewport, shown by the parent's UI code.
+        type: array
+        items: { $ref: "#/$defs/Viewport" }
+      persisted:
+        description: >
+          Application state that survives a restart. Each entry is one
+          storage key and the type stored under it.
+        type: array
+        items: { $ref: "#/$defs/Persisted" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Viewport:
+    type: object
+    additionalProperties: false
+    required: [id, title]
+    properties:
+      id:
+        $ref: "#/$defs/Identifier"
+      title:
+        description: Text shown in this viewport's title bar.
+        type: string
+        minLength: 1
+      kind:
+        description: >
+          `deferred` paints on its own schedule; its callback runs only
+          when that viewport needs repainting. `immediate` re-runs inside
+          the parent's pass, which means a slow child stalls the root
+          window. Prefer deferred unless the child must read state the
+          parent is holding borrowed.
+        type: string
+        enum: [deferred, immediate]
+        default: deferred
+      initial_size:
+        description: Size at first show, in logical points.
+        type: object
+        additionalProperties: false
+        required: [width, height]
+        properties:
+          width:  { type: number, exclusiveMinimum: 0 }
+          height: { type: number, exclusiveMinimum: 0 }
+      resizable:
+        description: Whether the user may resize this viewport.
+        type: boolean
+        default: true
+
+  Persisted:
+    type: object
+    additionalProperties: false
+    required: [key, value_type]
+    properties:
+      key:
+        description: >
+          Storage key. Stable across releases — changing it silently
+          orphans whatever was stored under the old name, which reads to a
+          user as "my settings were lost".
+        $ref: "#/$defs/Identifier"
+      value_type:
+        description: >
+          Rust type expression for the stored value. Must implement serde's
+          Serialize and Deserialize. The type is owned by the project, not
+          by this block.
+        type: string
+        minLength: 1
+      default_on_error:
+        description: >
+          Fall back to the type's Default when the stored value is missing
+          or fails to deserialize, rather than propagating the failure.
+          Defaults to true, because a corrupt preferences file must not
+          stop the application from starting. Set false only where a
+          missing value genuinely cannot be defaulted.
+        type: boolean
+        default: true

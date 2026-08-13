@@ -1,0 +1,40 @@
+# Manifest — Cargo deps the rtic block contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# Versions resolved from the registry at authoring time, not recalled:
+# rtic 2.3.0, rtic-sync 1.5.0.
+#
+# NO BACKEND FEATURE IS DECLARED HERE, deliberately. `rtic` requires
+# exactly one backend feature and which one is correct depends on the
+# core the project targets:
+#
+#   thumbv6-backend        Cortex-M0 / M0+
+#   thumbv7-backend        Cortex-M3 / M4 / M7
+#   thumbv8base-backend    Cortex-M23
+#   thumbv8main-backend    Cortex-M33 / M55 / M85
+#
+# This block models the application structure and is core-agnostic, so it
+# cannot know which. The chip binding supplies it. That leaves this block
+# unable to build from its own contributions alone — the same position as
+# any topology block whose production path runs through a binding, and the
+# reason the block's README points at one.
+#
+# The reference crate pins thumbv7-backend for its own compile vehicle;
+# that is the reference's choice, not a claim about your project.
+
+crates:
+  - name: rtic
+    version: "2.3"
+    source: crates-io
+
+  # Inter-task channels. Contributed unconditionally, like every dep in
+  # this manifest — there is no conditional mechanism — but unlike some
+  # unconditional contributions this one HAS a schema surface
+  # (`[[rtic.channels]]`), so a project can express what it is for.
+  - name: rtic-sync
+    version: "1.5"
+    source: crates-io
+
+recommended_external_deps:
+  - crate: rtic-monotonics
+    purpose: "Delays and timeouts when no time source is already present."

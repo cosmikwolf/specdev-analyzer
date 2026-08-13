@@ -1,0 +1,233 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/iroh.v1"
+title: "iroh block (v1)"
+description: >
+  Schema fragment contributed by the `iroh` block. Adds a namespaced
+  `[iroh]` table to `Module` carrying peer-to-peer QUIC transport concerns
+  for [iroh](https://github.com/n0-computer/iroh): the endpoint's identity
+  and address-lookup configuration, the ALPN-identified protocol it speaks,
+  the QUIC streams that protocol opens, and the channels through which a
+  caller on another thread drives the endpoint.
+
+  v1 models **one endpoint per module**. The endpoint runtime owns its own
+  tokio task; `channels` describe the surface that crosses the thread
+  boundary out of it, so a consumer never touches the `Endpoint` directly.
+  That surface is deliberately UI-agnostic and transport-owned — what a
+  caller does with a drained event is not an iroh concern.
+
+  Deferred to v1.x: multiple endpoints per module, custom relay maps,
+  QUIC datagrams (streams only today), 0-RTT, and connection migration
+  policy. Blob/gossip/document protocols are separate crates and would be
+  separate blocks.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  iroh:
+    type: object
+    additionalProperties: false
+    required: [alpn]
+    properties:
+      alpn:
+        description: >
+          Application-Layer Protocol Negotiation identifier for this
+          endpoint's protocol, exchanged during the QUIC handshake. Both
+          sides must present a byte-identical ALPN or the connection is
+          refused. Convention is a slash-delimited path ending in a
+          version integer, e.g. "myorg/telemetry/0" — bump the trailing
+          integer on any wire-incompatible change.
+        type: string
+        minLength: 1
+      role:
+        description: >
+          Whether this endpoint accepts inbound connections, dials
+          outbound ones, or both. `accept` spawns a Router; `connect`
+          does not. `both` is the common case for symmetric peers where
+          either side may initiate.
+        type: string
+        enum: [accept, connect, both]
+        default: both
+      identity:
+        description: >
+          Lifetime of the endpoint's ed25519 secret key, which determines
+          its EndpointId. `ephemeral` generates a fresh key on every bind,
+          so the EndpointId changes across restarts and previously shared
+          addresses go stale. `persisted` loads the key from disk on
+          start and generates + saves one on first run, giving a stable
+          identity.
+        type: string
+        enum: [ephemeral, persisted]
+        default: ephemeral
+      relay:
+        description: >
+          Relay-server participation. `n0` uses the public relays operated
+          by number0, which assist hole punching and carry traffic when a
+          direct path cannot be established. `disabled` binds without
+          relays — direct paths only, so peers behind symmetric NAT will
+          fail to connect. Relay traffic stays end-to-end encrypted, but
+          a relay does observe endpoint ids and IP addresses.
+        type: string
+        enum: [n0, disabled]
+        default: n0
+      address_lookup:
+        description: >
+          Mechanisms used to resolve an EndpointId to reachable addresses.
+          `dns` resolves via n0's DNS/pkarr service (works across the
+          internet). `mdns` discovers peers on the local link only, and
+          requires an additional crate beyond the core iroh dependency.
+          Listing both is normal; order carries no priority meaning.
+          An empty list means addresses must always be supplied in full
+          by the caller.
+        type: array
+        items:
+          type: string
+          enum: [dns, mdns]
+        uniqueItems: true
+        default: [dns]
+      streams:
+        description: >
+          QUIC streams this protocol opens over an established connection.
+          Each becomes one open/accept path plus its framing code. Streams
+          are independent and unordered relative to each other, so a
+          slow bulk stream never head-of-line-blocks a latency-sensitive
+          one — that independence is the reason to declare more than one.
+        type: array
+        items: { $ref: "#/$defs/Stream" }
+      channels:
+        description: >
+          The thread-crossing surface. The endpoint runtime owns a tokio
+          task; each channel is one direction of traffic between that task
+          and its caller. Declaring them here is what lets the runtime be
+          driven without exposing the Endpoint, the Connection, or any
+          async machinery to the consumer.
+        type: array
+        items: { $ref: "#/$defs/Channel" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Stream:
+    type: object
+    additionalProperties: false
+    required: [name, kind, direction, carries, channel]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      kind:
+        description: >
+          QUIC stream shape. `bidi` opens a paired send/recv stream — use
+          it when the peer answers. `uni` opens a one-way stream — use it
+          for continuous push where no reply exists, which avoids
+          allocating a return path that is never read.
+        type: string
+        enum: [bidi, uni]
+      direction:
+        description: >
+          Which side opens the stream, from this module's point of view.
+          `outbound` means this endpoint opens it and writes; `inbound`
+          means this endpoint accepts it and reads. For a `bidi` stream
+          this names the initiating side only — data flows both ways
+          regardless.
+        type: string
+        enum: [inbound, outbound]
+      framing:
+        description: >
+          How messages are delimited on the stream. `length_prefixed`
+          writes a u32 little-endian byte count before each encoded
+          message, so a reader recovers message boundaries from a byte
+          stream — required for any stream carrying more than one message.
+          `raw` writes the payload bytes with no delimiter and is only
+          correct for a stream carrying exactly one message before close.
+        type: string
+        enum: [length_prefixed, raw]
+        default: length_prefixed
+      carries:
+        description: >
+          Rust type expression for the message this stream transports.
+          The type is owned by the project's domain, NOT by this block —
+          declare it in the project's domain spec and name it here. It
+          must implement serde's Serialize and Deserialize. Examples:
+          "Signal", "TelemetryFrame", "Vec<u8>".
+        type: string
+        minLength: 1
+      channel:
+        description: >
+          Name of the `[[iroh.channels]]` entry this stream is wired to.
+          An `inbound` stream decodes messages and sends them into that
+          channel; an `outbound` stream receives from it and encodes.
+
+          DIRECTION COHERENCE: it follows that an `inbound` stream must
+          name a `from_runtime` channel and an `outbound` stream must
+          name a `to_runtime` channel. Pairing them the other way round
+          describes a stream reading from the channel that carries data
+          out to the caller, which cannot be implemented. This is NOT
+          machine-checked — a block can declare relations but not
+          invariants over the related pair's attributes — so it is on
+          the author. Check it when reviewing a module.
+
+          Note that a symmetric peer (`role = "both"`) needs BOTH
+          directions of any flow it participates in, which means two
+          stream entries and two channels, not one of each.
+
+          Must match a declared channel name — a stream naming an unknown
+          channel is caught at validate time by `stream_on_channel`.
+        $ref: "#/$defs/Identifier"
+      rate_hz:
+        description: >
+          Expected message rate in hertz, when the stream carries a
+          continuous flow. Advisory: it does not throttle anything, but it
+          documents the load the channel capacity and overflow policy were
+          chosen against, and flags the mismatch when someone later pairs
+          a 1000 Hz stream with a 4-slot channel. Omit for request-driven
+          streams with no steady rate.
+        type: integer
+        minimum: 1
+
+  Channel:
+    type: object
+    additionalProperties: false
+    required: [name, direction, payload_type, capacity]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      direction:
+        description: >
+          Which way traffic flows relative to the endpoint runtime.
+          `to_runtime` carries commands in — connect, disconnect, send
+          this message. `from_runtime` carries events out — peer
+          connected, message received, path changed. The two are separate
+          channels rather than one duplex channel because their capacity
+          and overflow policies are almost never the same.
+        type: string
+        enum: [to_runtime, from_runtime]
+      payload_type:
+        description: >
+          Rust type expression for the channel's payload — typically an
+          enum of command or event variants. Owned by the project's
+          domain, not by this block. Must implement Send.
+        type: string
+        minLength: 1
+      capacity:
+        description: >
+          Bounded channel capacity in messages. Bounded rather than
+          unbounded is deliberate: an unbounded channel converts a slow
+          consumer into unbounded memory growth, which surfaces as an
+          out-of-memory kill long after the actual fault.
+        type: integer
+        minimum: 1
+      overflow:
+        description: >
+          Behaviour when a send would exceed `capacity`. `backpressure`
+          awaits a free slot — correct for commands, where losing one
+          silently changes program behaviour. `drop_oldest` evicts the
+          oldest queued message — correct for continuous telemetry, where
+          the newest sample matters and history does not. `drop_newest`
+          rejects the incoming message, preserving the queued prefix.
+        type: string
+        enum: [backpressure, drop_oldest, drop_newest]
+        default: backpressure

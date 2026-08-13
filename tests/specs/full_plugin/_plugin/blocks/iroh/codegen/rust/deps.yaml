@@ -1,0 +1,39 @@
+# Manifest — Cargo deps the iroh block contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# Pinned to iroh 1.0.3. The 1.0 release renamed the core vocabulary —
+# NodeId -> EndpointId, NodeAddr -> EndpointAddr, the `discovery` module ->
+# `address_lookup` — so prose or code written against 0.x does not compile
+# here. The reference crate under ../../reference/rust is the guard: it
+# type-checks every worked example in README.md against exactly this pin.
+
+crates:
+  - name: iroh
+    version: "1.0.3"
+    source: crates-io
+  - name: tokio
+    version: "1"
+    features: ["rt-multi-thread", "sync", "macros"]
+    source: crates-io
+  - name: serde
+    version: "1"
+    features: ["derive"]
+    source: crates-io
+  - name: postcard
+    version: "1"
+    features: ["use-std"]
+    source: crates-io
+
+  # Only required when `address_lookup` includes "mdns". Local-link
+  # discovery left the core iroh crate at 1.0 and is no longer reachable
+  # through a cargo feature on `iroh`.
+  - name: iroh-mdns-address-lookup
+    version: "0.4"
+    source: crates-io
+
+# NOTE: `purpose` is capped at 80 characters by block_deps.schema.yaml.
+recommended_external_deps:
+  - crate: data-encoding
+    purpose: "Base32 tickets: shorter and case-insensitive, unlike the reference's hex."
+  - crate: directories
+    purpose: "Finding the OS config dir when identity = persisted."
