@@ -3,21 +3,26 @@ $id: "https://specdev.dev/blocks/egui.v1"
 title: "egui block (v1)"
 description: >
   Schema fragment contributed by the `egui` block. Adds a namespaced
-  `[egui]` table to `Module` carrying editor topology — panels and
-  regions — for plugin shells that ship a custom UI via
+  `[egui]` table to `Module` carrying interface topology — panels and
+  regions — for any module that draws with
   [egui](https://github.com/emilk/egui).
 
-  v1 models **topology only** (D47): the block describes WHERE
-  controls live (panel layout, region positions, region purpose) but
-  NOT WHICH widgets render WHICH parameters. Parameter→widget bindings
-  live in the `egui+nih-plug` bridge (Phase 15-E). Custom drawing
-  (oscilloscopes, modulation visualizers, spectrum analyzers) is
-  declared structurally via `purpose = "free_form"` regions and
-  hand-authored Rust inside the codegen scaffold.
+  v1 models **topology only**: the block describes WHERE controls live
+  (panel layout, region positions, region purpose) but NOT WHICH
+  widgets render WHICH values. Value→widget bindings live in a bridge
+  against whichever unit owns the values. Custom drawing (plots,
+  visualizers, spectrum analyzers) is declared structurally via
+  `purpose = "free_form"` regions and hand-authored Rust inside the
+  codegen scaffold.
+
+  The block is **host-neutral** and contributes no crates: egui itself
+  arrives from the host the project inlines (`eframe::egui` from the
+  `eframe` block, `nih_plug_egui::egui` from the `egui+nih-plug`
+  bridge). See the block README's `EGUI-NEEDS-A-HOST` section.
 
   This separation lets the egui block stay small (5 panel kinds, 5
   region purposes, a few layout attributes) and lets new widget kinds
-  extend the bridge without touching this block.
+  extend a bridge without touching this block.
 
   This schema is self-contained: identifier patterns are inlined rather
   than $ref'd against profile-shipped enums.schema.yaml so the block
@@ -30,9 +35,10 @@ properties:
     properties:
       default_size:
         description: >
-          Optional default editor window size. nih_plug_egui uses this
-          when constructing the editor; the host may resize at
-          runtime if `resizable = true`.
+          Optional preferred size of the drawn surface. The host uses
+          this when it has no size of its own; a host that declares its
+          own window geometry wins and this is ignored. The host may
+          resize at runtime if `resizable = true`.
         type: object
         additionalProperties: false
         required: [width, height]
@@ -41,26 +47,28 @@ properties:
           height: { type: integer, minimum: 1 }
       resizable:
         description: >
-          When true, the host may resize the editor window. Defaults
-          to false (fixed-size editors are the common case for plugins).
+          When true, the host may resize the drawn surface. Defaults
+          to false. Hosts that own a resizable window of their own
+          (an `[eframe]` window does) declare it on their own table.
         type: boolean
         default: false
       panels:
         description: >
-          Editor panels — each becomes one of egui's panel types
+          Panels — each becomes one of egui's panel types
           (CentralPanel, SidePanel, TopBottomPanel) at codegen time.
-          Order is significant: side / top / bottom panels are
-          declared before the central panel in nih_plug_egui's frame
-          builder. Codegen emits in the order panels are listed.
+          Order is significant: side / top / bottom panels must be
+          declared before the central panel, because each removes its
+          strip from the available area and the central panel fills
+          what is left. Codegen emits in the order panels are listed.
         type: array
         items: { $ref: "#/$defs/Panel" }
         minItems: 1
       regions:
         description: >
           Regions inside panels. Each carries a `purpose` that drives
-          the codegen scaffolding pattern (see Phase 15-D codegen
-          prose). Cross-cutting binding (parameter→widget) lives in
-          the `egui+nih-plug` bridge, not here.
+          the codegen scaffolding pattern (see this block's codegen
+          prose). Cross-cutting binding (value→widget) lives in a
+          bridge against the unit that owns the values, not here.
         type: array
         items: { $ref: "#/$defs/Region" }
 
@@ -72,7 +80,7 @@ $defs:
 
   Panel:
     description: >
-      One editor panel. egui supports CentralPanel (one per editor),
+      One panel. egui supports CentralPanel (one per surface),
       SidePanel (left or right), and TopBottomPanel (top or bottom).
       The panel `kind` drives the egui type; `id` is the panel's
       stable name for cross-region references.
@@ -85,7 +93,7 @@ $defs:
       kind:
         description: >
           Panel position. `central` is the main panel (one per
-          editor; egui requires it last in the frame builder).
+          surface; egui requires it last in the paint callback).
           `side_left` / `side_right` are vertical strips on the
           edges. `top` / `bottom` are horizontal strips. Codegen
           emits `egui::CentralPanel`, `egui::SidePanel::left/right`,
@@ -98,7 +106,7 @@ $defs:
           panels. Hosts may resize when `[egui].resizable = true`;
           codegen uses this as the SidePanel's `default_width`. Has
           no effect on `central` / `top` / `bottom` panels (their
-          widths are determined by the editor frame).
+          widths are determined by the surface).
         type: integer
         minimum: 1
       height:
@@ -113,8 +121,8 @@ $defs:
   Region:
     description: >
       A region inside a panel. Regions group widgets by purpose; the
-      `purpose` enum drives the codegen scaffold pattern (see Phase
-      15-D codegen prose).
+      `purpose` enum drives the codegen scaffold pattern (see this
+      block's codegen prose).
     type: object
     additionalProperties: false
     required: [id, panel, purpose]
@@ -132,19 +140,21 @@ $defs:
         description: |
           Region role. Drives codegen scaffold per the table:
 
-            parameter_controls — region holds widgets bound to plugin
-                                 parameters via the `egui+nih-plug`
-                                 bridge's `parameter_widgets[]`.
-                                 Codegen emits a placeholder loop the
-                                 bridge fills in.
-            metering           — region reads from `Atomic*` cells
-                                 published by the audio thread.
-                                 Codegen emits the read-side
+            parameter_controls — region holds widgets bound to values
+                                 a bridge declares (the `egui+nih-plug`
+                                 bridge's `parameter_widgets[]` is the
+                                 shipped case). Codegen emits a
+                                 placeholder marker the bridge fills
+                                 in; with no such bridge inlined the
+                                 region body is hand-authored.
+            metering           — region displays values published from
+                                 another thread, typically `Atomic*`
+                                 cells. Codegen emits the read-side
                                  boilerplate; user fills in the
                                  visualization (level meter, LED, etc.).
-            preset_selector    — region renders a preset picker
-                                 (combo box + prev/next buttons +
-                                 save/load). Codegen emits the
+            preset_selector    — region renders a saved-configuration
+                                 picker (combo box + prev/next buttons
+                                 + save/load). Codegen emits the
                                  standard pattern.
             free_form          — region body is hand-authored.
                                  Codegen emits a TODO marker and
