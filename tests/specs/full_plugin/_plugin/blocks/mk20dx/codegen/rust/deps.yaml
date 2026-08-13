@@ -1,0 +1,31 @@
+# Manifest — Cargo deps the mk20dx block contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# This block contributes NO crates, and the reason is mechanical rather
+# than a design preference.
+#
+# The HAL it targets is not on a package registry, and it cannot be
+# consumed by git either: its own manifest declares the PAC by a path
+# that points outside its repository, so a git fetch resolves that path
+# to nothing. A `path` source IS expressible here, but the renderer emits
+# it verbatim with no rebasing — which makes it a claim about the
+# consuming project's filesystem layout that a shipped block has no way
+# to make correctly.
+#
+# So the project declares the HAL itself, in `[[external_deps]]`, with
+# whatever path is true for it:
+#
+#   [[external_deps]]
+#   crate = "mk20dx-hal"
+#   features = ["mk20d7", "rt", "critical-section"]
+#   source = { path = "../../mk20dx/mk20dx-hal" }
+#
+# A path dep needs no version, so none is stated.
+#
+# This block therefore cannot build from its own contributions alone.
+# That is the same position as any topology block whose production path
+# runs through something it does not own, and the README says so.
+
+recommended_external_deps:
+  - crate: cortex-m-rt
+    purpose: "Vector table and startup for the bare-metal binary."

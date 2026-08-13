@@ -1,0 +1,109 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/mk20dx.v1"
+title: "mk20dx block (v1)"
+description: >
+  Schema fragment contributed by the `mk20dx` block. Adds a namespaced
+  `[mk20dx]` table to `Module` carrying MK20DX chip topology
+  (MK20DX128 / MK20DX256 — the Teensy 3.x family).
+
+  v1 covers PINS ONLY. That is a deliberate scope, not an oversight: the
+  pin map is the high-value half — it is the thing a board's design
+  actually fixes, and the half whose HAL surface is small enough to
+  document accurately. Peripheral instances (UART / SPI / I2C / FTM / ADC
+  / DMA) are deferred; their construction goes through per-peripheral
+  builder configs and typed pin traits, which is a much larger surface to
+  describe, and this block's prose has no compiled witness yet. Promote
+  when the block gains one — see this block's README.
+
+  This block models topology only. It contributes no crates: the HAL it
+  targets is consumed by a path dependency that a shipped block cannot
+  express honestly, so the project declares it. See
+  `codegen/rust/deps.yaml`.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  mk20dx:
+    type: object
+    additionalProperties: false
+    description: >
+      NOTE: if a validation error names this table, fix the inner error
+      first — an error inside any entry below also surfaces as an
+      "unevaluated properties" finding at the module root.
+    properties:
+      pins:
+        description: >
+          GPIO pins the module owns. Each becomes a typed pin handle
+          moved into the mode the entry declares.
+        type: array
+        items: { $ref: "#/$defs/Pin" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Pin:
+    type: object
+    additionalProperties: false
+    required: [name, port, pin, mode]
+    # An alternate-function pin must say which mux, and nothing else may.
+    # Both branches `required: [mode]` on purpose — a bare `properties`
+    # guard is vacuously TRUE when the key is absent, so without it a pin
+    # omitting `mode` would slip past both.
+    allOf:
+      - if:
+          required: [mode]
+          properties:
+            mode: { const: alternate }
+        then:
+          required: [alt_fn]
+      - if:
+          required: [mode]
+          properties:
+            mode:
+              enum: [push_pull_output, open_drain_output, floating_input,
+                     pull_up_input, pull_down_input]
+        then:
+          not:
+            required: [alt_fn]
+    properties:
+      name:
+        description: >
+          Name this pin is known by in the module's own code — the role
+          it plays, not its chip coordinates (`status_led`, not `pc5`).
+        $ref: "#/$defs/Identifier"
+      port:
+        description: GPIO port. The chip family exposes five.
+        type: string
+        enum: [A, B, C, D, E]
+      pin:
+        description: Pin number within the port.
+        type: integer
+        minimum: 0
+        maximum: 31
+      mode:
+        description: >
+          The mode the pin is moved into at init. `alternate` hands the
+          pin to a peripheral and requires `alt_fn`; every other value is
+          plain GPIO.
+        type: string
+        enum:
+          - push_pull_output
+          - open_drain_output
+          - floating_input
+          - pull_up_input
+          - pull_down_input
+          - alternate
+      alt_fn:
+        description: >
+          Alternate-function mux index, from the chip's pin-mux table.
+          Required when `mode = "alternate"`, forbidden otherwise. Which
+          index selects which peripheral is a datasheet fact this block
+          does not model — check the pin-mux table for the part.
+        type: integer
+        minimum: 1
+        maximum: 7
