@@ -9,7 +9,10 @@ metaschema_version: "v1"
 # with the local name (e.g. "Display.reset_line") so two modules may each
 # own a pin called `reset_line` without colliding.
 #
-# No relations. A pin references nothing else in this block, and the one
+# No relations. Neither a pin nor an interrupt references anything else in
+# this block. A pin's own `interrupt` trigger implies its port's vector, but
+# that is derived at codegen rather than declared, so there is nothing to
+# resolve. The one
 # cross-cutting relation worth having — "no two modules claim the same
 # physical pin" — is a uniqueness property over (port, pin) rather than a
 # relation, and is not expressible as one. Recorded in the README as a
@@ -26,5 +29,14 @@ entities:
       pin: ".pin"
       mode: ".mode"
       alt_fn: ".alt_fn"
+      interrupt: ".interrupt"
+
+  - kind: Interrupt
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.interrupts[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      vector: ".vector"
 
 relations: []

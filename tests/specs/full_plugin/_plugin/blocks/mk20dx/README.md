@@ -17,11 +17,13 @@ it is the thing a reader most often needs and least often finds.
 | Table | Becomes |
 |---|---|
 | `[[mk20dx.pins]]` | typed pin handles, moved into the declared mode |
+| `interrupt` on a pin | the port handler's trigger config and per-pin dispatch |
+| `[[mk20dx.interrupts]]` | a handler per declared vector, with the right flag-clear |
 
 **Crates: none.** See "Why it contributes nothing" below — that is a mechanical
 consequence, not a design stance.
 
-## v1 is pins only
+## v1 scope — pins and interrupts
 
 Peripheral instances — UART, SPI, I2C, FTM, ADC, DMA — are deliberately out of
 v1. They are not harder to model, they are harder to *document correctly*:
@@ -31,6 +33,18 @@ witness to check it against. Adding a large body of unverifiable prose is the
 failure this project has paid for before.
 
 **Promote peripherals when the block gains a reference crate**, not before.
+
+**Interrupts are in scope and were added deliberately** (2026-08-12), because a
+project using this chip will use them. The block covers both sources: a pin's
+`interrupt` trigger, which raises its **port's** vector and is dispatched by
+flag, and `[[mk20dx.interrupts]]` for every other vector. The load-bearing
+content is the **flag-clear obligation** — a handler that returns without
+clearing re-enters forever, which is the most common way MK20 interrupt code
+fails, and the clear differs per peripheral family.
+
+Note what is deliberately *not* modelled: the vector's family is derived from
+its name rather than declared, and how a handler is bound to its vector belongs
+to the concurrency runtime. Neither is a field here.
 
 ## Why it contributes nothing
 
