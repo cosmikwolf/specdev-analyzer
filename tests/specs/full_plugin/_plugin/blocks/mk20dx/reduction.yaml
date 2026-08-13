@@ -1,0 +1,30 @@
+metaschema_version: "v1"
+
+# mk20dx block reduction. Pins materialize as entities under the `mk20dx`
+# namespace (the file's location establishes the namespace; the entity
+# kind path resolves to `mk20dx.Pin`).
+#
+# Pin extends Module — a pin is a sub-unit of a module's hardware
+# composition. The qualified entity name combines the parent module name
+# with the local name (e.g. "Display.reset_line") so two modules may each
+# own a pin called `reset_line` without colliding.
+#
+# No relations. A pin references nothing else in this block, and the one
+# cross-cutting relation worth having — "no two modules claim the same
+# physical pin" — is a uniqueness property over (port, pin) rather than a
+# relation, and is not expressible as one. Recorded in the README as a
+# deferred check rather than approximated here.
+
+entities:
+  - kind: Pin
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.pins[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      port: ".port"
+      pin: ".pin"
+      mode: ".mode"
+      alt_fn: ".alt_fn"
+
+relations: []
