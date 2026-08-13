@@ -108,7 +108,99 @@ The port is a `char` and the pin number a `u8`, both const generics — so
 `Pin<'C', 5, …>`, with the port letter **quoted as a character literal and
 uppercase**.
 
-## 4. What this block does not emit
+## 4. Interrupts
+
+Two sources, and they emit differently. A pin's `interrupt` field describes a
+**port** interrupt; the `[[mk20dx.interrupts]]` table declares every other
+vector the module owns.
+
+### 4.1 The one rule that applies to every handler
+
+**A handler MUST clear its source's flag before returning.** The chip does not
+clear it for you, so a handler that returns without clearing re-enters
+immediately and the application appears to hang inside an ISR that looks
+correct. This is the single most common way MK20 interrupt code fails.
+
+How to clear depends on the source, and codegen derives the family from the
+vector name:
+
+| Vector | Clear by |
+|---|---|
+| `PORTA`…`PORTE` | writing the read `ISFR` value back (write-1-to-clear) |
+| `PIT0`…`PIT3` | the timer channel's `clear_interrupt()` |
+| `DMA0`…`DMA15` | the DMA channel's `clear_interrupt()` |
+| anything else | its own peripheral status register — **look it up** |
+
+**Do NOT guess a clear for a peripheral not listed above.** The HAL provides
+`clear_interrupt()` on timer and DMA channels only; for other peripherals the
+sequence is peripheral-specific (some clear on reading a data register, some
+need an explicit write). If the spec does not make it determinable, stop and
+ask rather than emitting a handler that might spin.
+
+### 4.2 Pin interrupts — `interrupt` on a pin
+
+**One vector serves the whole port.** Every interrupting pin on port B raises
+`PORTB`, so there is exactly one handler per port and it dispatches by flag.
+Emit one handler per port that has any interrupting pin, never one per pin.
+
+Set the trigger when the pin is configured. The spec states intent; these are
+the register values it maps to:
+
+| `interrupt` | Meaning |
+|---|---|
+| `rising` / `falling` / `either_edge` | edge-triggered |
+| `level_high` / `level_low` | level-triggered — stays asserted while the level holds |
+| `dma_rising` / `dma_falling` / `dma_either_edge` | raises a **DMA request, not a CPU interrupt** |
+
+**Do NOT emit a handler for a `dma_*` pin.** There is no interrupt to service;
+emitting one produces a handler that never runs and implies wiring that does
+not exist.
+
+Dispatch reads the port's flag register, tests the bit for each pin the module
+declared, and writes the flags back to clear:
+
+```rust
+// one handler for PORTB, covering every interrupting pin on that port
+let isfr = /* read the port's ISFR */;
+if isfr & (1 << 0) != 0 {
+    // the pin declared at port = "B", pin = 0
+}
+if isfr & (1 << 19) != 0 {
+    // the pin declared at port = "B", pin = 19
+}
+// write the read value back to clear exactly the flags observed
+```
+
+**Do NOT clear the whole register with a blanket write.** Write back the value
+you read, so a pin that fired between the read and the write keeps its flag and
+is serviced next time instead of being lost.
+
+**Level-triggered pins need their condition removed before returning**, not
+just the flag cleared — the flag re-asserts immediately while the level holds.
+For a `level_high` / `level_low` pin, the handler must do whatever makes the
+level go away (service the device, or disable that pin's trigger) before it
+returns.
+
+Where the project enables the HAL's `async` feature, the read-and-clear step is
+available as a helper per port rather than hand-rolled — prefer it, since it
+gets the write-back-what-you-read rule right. It does not exist without that
+feature, so do not emit a call to it unless the project declared the feature.
+
+### 4.3 Other vectors — `[[mk20dx.interrupts]]`
+
+Each entry names a vector the module owns. Emit a handler for it and clear its
+flag per §4.1.
+
+**Do NOT emit the binding itself.** How a handler is attached to a vector is
+the concurrency runtime's business — a task declaration in whatever runtime the
+project uses, or a bare interrupt attribute if it uses none. This block says
+which vector and what to clear; it does not say how the function gets there.
+
+**Do NOT put long work in a handler.** Latch what happened and hand it to
+ordinary code — an atomic, a channel, or a task the runtime wakes. A handler
+that blocks delays every lower-priority interrupt on the chip.
+
+## 5. What this block does not emit
 
 **Do NOT emit peripheral construction here** — UART, SPI, I2C, timers, ADC,
 DMA. This block's v1 models pins only. A module needing a peripheral gets it
@@ -117,6 +209,6 @@ from the project's own init code until the block covers them.
 **Do NOT emit clock configuration.** The clock tree is project-wide, not a
 per-module concern, and is set up once before any module sees a pin.
 
-**Do NOT emit interrupt handlers here.** How a pin's edge becomes a task is a
-concurrency concern belonging to whichever runtime the project uses; that
-binding lives outside this block.
+**Do NOT emit the runtime binding for a handler.** Section 4 covers what a
+handler must do; how it gets attached to its vector belongs to whichever
+runtime the project uses.

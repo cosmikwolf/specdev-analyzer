@@ -39,6 +39,14 @@ properties:
           moved into the mode the entry declares.
         type: array
         items: { $ref: "#/$defs/Pin" }
+      interrupts:
+        description: >
+          Interrupt vectors this module owns, other than the port vectors
+          implied by a pin's `interrupt` trigger. Declaring one records
+          that the module is responsible for the handler — and, more
+          usefully, tells codegen which source flag has to be cleared.
+        type: array
+        items: { $ref: "#/$defs/Interrupt" }
 
 $defs:
   Identifier:
@@ -70,6 +78,16 @@ $defs:
         then:
           not:
             required: [alt_fn]
+      # An edge or level trigger on a pin the chip is driving is
+      # meaningless — the only transitions are the ones this code caused.
+      - if:
+          required: [mode]
+          properties:
+            mode:
+              enum: [push_pull_output, open_drain_output]
+        then:
+          not:
+            required: [interrupt]
     properties:
       name:
         description: >
@@ -107,3 +125,47 @@ $defs:
         type: integer
         minimum: 1
         maximum: 7
+      interrupt:
+        description: >
+          Condition on which this pin raises its port's interrupt. Stated
+          as intent; codegen writes the matching register field.
+
+          The chip raises ONE vector per port, shared by every
+          interrupting pin on it, so a handler dispatches by reading the
+          port's flag register. That is codegen's job, not the spec's —
+          see this block's codegen prose.
+
+          The `dma_*` values request a DMA transfer instead of a CPU
+          interrupt; they do not produce a handler.
+        type: string
+        enum:
+          - rising
+          - falling
+          - either_edge
+          - level_high
+          - level_low
+          - dma_rising
+          - dma_falling
+          - dma_either_edge
+
+  Interrupt:
+    type: object
+    additionalProperties: false
+    required: [name, vector]
+    properties:
+      name:
+        description: >
+          Name for the role this interrupt plays (`tick`, `dma_complete`),
+          not a restatement of the vector.
+        $ref: "#/$defs/Identifier"
+      vector:
+        description: >
+          Interrupt vector name, spelled exactly as the chip's PAC spells
+          it (`PIT0`, `SPI0`, `DMA3`). Whether the name exists is settled
+          by the compiler when the handler is bound, so this block does
+          not enumerate the chip's vector table.
+
+          Which peripheral family a vector belongs to — and therefore how
+          its flag is cleared — is derived from this name by codegen, so
+          there is no separate field for it.
+        $ref: "#/$defs/Identifier"
