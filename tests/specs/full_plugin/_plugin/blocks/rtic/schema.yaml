@@ -1,0 +1,174 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/rtic.v1"
+title: "rtic block (v1)"
+description: >
+  Schema fragment contributed by the `rtic` block. Adds a namespaced
+  `[rtic]` table to `Module` carrying the RTIC application model: tasks
+  bound to interrupt priorities, the shared/local resources they access,
+  and inter-task channels.
+
+  The content here is the RESOURCE MODEL, not merely a task list. RTIC's
+  value is that `#[shared]` resources accessed under `.lock()` with
+  priority ceilings replace hand-rolled critical sections; a schema that
+  modelled only "these tasks exist" would leave out the part that makes
+  the framework worth adopting.
+
+  Deliberately absent: an `async` field. Whether a handler is `async` is
+  fully determined by the task's `kind` — RTIC software tasks are always
+  `async fn`, hardware tasks always `fn`. A separate field could only
+  agree with `kind` or contradict it, so the codegen prose derives it.
+
+  Chip-specific facts — which interrupt vectors exist, which are free for
+  the executor's dispatchers — belong to the chip binding, not here. This
+  block names no chip.
+
+  v1 covers tasks, resources, and channels. Monotonics and the
+  spawn-after/spawn-at surface are deferred; promote when a real project
+  needs them.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  rtic:
+    type: object
+    additionalProperties: false
+    description: >
+      NOTE: if a validation error names this table, fix the inner error
+      first — an error inside any entry below also surfaces as an
+      "unevaluated properties" finding at the module root.
+    properties:
+      tasks:
+        description: >
+          Tasks the application declares. Each becomes a function inside
+          the `#[rtic::app]` module, annotated `#[task(...)]`. See the
+          `kind` field for the hardware / software / idle distinction.
+        type: array
+        items: { $ref: "#/$defs/Task" }
+      resources:
+        description: >
+          State the tasks share. Each becomes a field of the app's
+          `Shared` or `Local` struct per its `sharing` value. Access
+          discipline is the reason this block exists — see this block's
+          codegen prose.
+        type: array
+        items: { $ref: "#/$defs/Resource" }
+      channels:
+        description: >
+          Inter-task message channels, materialized with
+          `rtic_sync::make_channel!`. Use these for streaming values
+          between tasks; use a shared resource for state a task mutates
+          in place.
+        type: array
+        items: { $ref: "#/$defs/Channel" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Task:
+    type: object
+    additionalProperties: false
+    required: [name, kind]
+    # A hardware task runs in an interrupt vector, so it must say which
+    # one; nothing else may. Both branches `required: [kind]` on purpose —
+    # a bare `properties` guard is vacuously TRUE when the key is absent,
+    # so without it a task omitting `kind` would slip past both branches.
+    allOf:
+      - if:
+          required: [kind]
+          properties:
+            kind: { const: hardware }
+        then:
+          required: [binds]
+      - if:
+          required: [kind]
+          properties:
+            kind: { enum: [software, idle] }
+        then:
+          not:
+            required: [binds]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      kind:
+        description: >
+          `hardware` — runs in the interrupt vector named by `binds`.
+          Always a plain `fn`; RTIC rejects an `async` hardware handler,
+          so work that must await belongs in a software task.
+          `software` — runs on the executor in a dispatcher vector.
+          Always an `async fn`.
+          `idle` — runs when nothing else is runnable, at priority 0.
+          At most one per application.
+        type: string
+        enum: [hardware, software, idle]
+      priority:
+        description: >
+          Preemption priority. Higher preempts lower. Omit for `idle`,
+          which is always 0. The ceiling of a shared resource is the
+          highest priority among the tasks that access it, which is what
+          decides whether a given task needs `.lock()`.
+        type: integer
+        minimum: 1
+        maximum: 15
+      binds:
+        description: >
+          Interrupt vector this hardware task runs in, named exactly as
+          the chip's PAC spells it (e.g. "PIT0"). Required for `hardware`,
+          forbidden otherwise. Whether the vector exists on the target
+          chip is checked by the chip binding, not by this block.
+        $ref: "#/$defs/Identifier"
+      uses:
+        description: >
+          Resources this task accesses, by `name`. Each must be declared
+          in `resources` below. Whether the generated access needs
+          `.lock()` follows from the resource's ceiling, and the codegen
+          prose derives it — do not record it here.
+        type: array
+        items: { $ref: "#/$defs/Identifier" }
+
+  Resource:
+    type: object
+    additionalProperties: false
+    required: [name, sharing, type]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      sharing:
+        description: >
+          `shared` — reachable from more than one task; becomes a field
+          of the app's `Shared` struct, and RTIC enforces the lock
+          discipline at compile time.
+          `local` — owned by exactly one task; becomes a field of
+          `Local` and needs no lock, because no other task can reach it.
+        type: string
+        enum: [shared, local]
+      type:
+        description: >
+          Rust type expression for the resource's value. Examples:
+          "u32", "SequencerState", "[u8; 64]".
+        type: string
+        minLength: 1
+
+  Channel:
+    type: object
+    additionalProperties: false
+    required: [name, payload_type, capacity]
+    properties:
+      name:
+        $ref: "#/$defs/Identifier"
+      payload_type:
+        description: >
+          Rust type expression for the channel's payload. Examples:
+          "u32", "Event", "[u8; 8]".
+        type: string
+        minLength: 1
+      capacity:
+        description: >
+          Slot count. The channel is fixed-size and allocated at compile
+          time; a send past capacity is refused rather than queued.
+        type: integer
+        minimum: 1

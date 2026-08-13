@@ -58,10 +58,16 @@ const PROFILES: &[&str] = &[
 
 // (name, codegen language) — the deps manifest lives at
 // blocks/<name>/codegen/<lang>/deps.yaml, so language is part of the row.
+// This list is meant to be the full inventory, and it had silently drifted:
+// two shipped blocks were missing, so their manifests were unchecked while the
+// suite looked complete. Add a row whenever a block ships.
 const BLOCKS: &[(&str, &str)] = &[
     ("nih-plug", "rust"),
     ("egui", "rust"),
+    ("eframe", "rust"),
     ("embassy", "rust"),
+    ("iroh", "rust"),
+    ("rtic", "rust"),
     ("stm32h5-rs", "rust"),
     ("flutter-rust-bridge", "dart"),
     ("universal-ble", "dart"),
