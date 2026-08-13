@@ -288,7 +288,7 @@ gets a different stub variant.
 
 ### Test items
 
-An `[[items]]` entry with `test = true` is a test (D60): a `kind = "fn"`
+An `[[items]]` entry with `test = true` is a test: a `kind = "fn"`
 item using `verifies = [...]` (against `nature = "test"` requirements)
 instead of `satisfies`, with a `test_kind` driving emit location — `unit`
 → `#[cfg(test)] mod tests` in the module file; `integration` →
@@ -321,12 +321,15 @@ Module specs in this profile typically carry block-contributed tables:
   declarative config. The block's `codegen/rust/README.md` drives
   `#[derive(Params)]` emission, range constructors, smoother
   attachment, and the export-macro selection.
-- `[egui]` block — editor topology (panels, regions). The block's
-  prose drives `nih_plug_egui::create_egui_editor` skeleton emission
-  and per-region scaffolding.
-- `bindings."egui+nih-plug"` bridge — parameter→widget bindings. The
-  bridge's prose drives per-binding widget emission inside region
-  loops.
+- `[egui]` block — editor topology (panels, regions). The block is
+  host-neutral and contributes no crates; its prose drives panel
+  emission and per-region scaffolding only.
+- `bindings."egui+nih-plug"` bridge — parameter→widget bindings **and
+  the egui host binding**. The bridge contributes `nih_plug_egui`,
+  emits the crate-root `pub use nih_plug_egui::egui;` alias and the
+  `create_egui_editor` skeleton, and drives per-binding widget
+  emission inside region bodies. Because this host pins egui 0.31, the
+  egui block's legacy panel form applies throughout this profile.
 
 Read the relevant block / bridge READMEs for those emission rules.
 This profile prose covers only the architecture-level shape (crate
@@ -401,7 +404,7 @@ spec does not type-check them; the Rust compiler does. Read the
 parameter value with `self.params.<id>.value()` (nih-plug's smoothed
 accessor); bind it to a local `value`, apply the transform, then write.
 
-### Value transforms (D59)
+### Value transforms
 
 Six named transforms plus a `custom` escape hatch. Each rewrites the
 `value` local before the write:

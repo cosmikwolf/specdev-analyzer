@@ -1,10 +1,19 @@
 # egui+nih-plug bridge
 
-Pairwise wiring between the `egui` block (editor topology) and the
+Pairwise wiring between the `egui` block (interface topology) and the
 `nih-plug` block (plugin parameters + audio I/O). Contributes
 parameter ↔ widget bindings under
 `bindings."egui+nih-plug".parameter_widgets[]` on plugin shell
 modules.
+
+It is also **the egui host for a plugin**. The `egui` block is
+host-neutral and contributes no crates, so this bridge supplies
+`nih_plug_egui` — the join product of the pairing, an adapter that
+exists only because a nih-plug plugin hosts an egui interface — along
+with the crate-root `pub use nih_plug_egui::egui;` alias and the
+`create_egui_editor` closure the topology draws into. Neither endpoint
+block may own that crate: `nih-plug` must stay UI-agnostic and `egui`
+must stay host-agnostic.
 
 This is the **architectural validation moment** for the bridge
 primitive. Unlike `embassy+stm32h5-rs` (which is closer to a wiring
@@ -21,15 +30,18 @@ Inline `egui+nih-plug` when:
 - Your plugin shell module has both a `[nih_plug]` table (parameters)
   and an `[egui]` table (editor topology).
 - You want declarative parameter↔widget binding (knob, slider, toggle,
-  button, dropdown, radio_group, numeric_field, value_display per D50)
+  button, dropdown, radio_group, numeric_field, value_display per WIDGET-KIND-V1)
   rather than hand-authoring the egui calls inside `free_form` regions.
+
+- Your plugin ships an egui editor at all, **even with no parameter
+  widgets yet**. The bindings table may be empty; the host binding is
+  what makes the stack compile, and it lives here.
 
 Don't inline if:
 
-- Your editor is entirely custom-drawn (no parameter widgets) — the
-  egui block's `free_form` regions handle this.
 - You're not using egui (using iced / vizia / raw skia). A different
   bridge would handle that pairing.
+- Your plugin ships no editor.
 
 ## What this bridge contributes
 
@@ -39,7 +51,7 @@ Schema additions on `Module`:
 [[bindings."egui+nih-plug".parameter_widgets]]
 parameter   = "gain"               # references nih_plug.parameters[].id
 region      = "param_grid"         # references egui.regions[].id
-widget_kind = "knob"               # 8-value closed enum (D50)
+widget_kind = "knob"               # 8-value closed enum (WIDGET-KIND-V1)
 range_hint  = "logarithmic"        # optional; defaults from parameter.smoother
 label       = "above"              # optional; default per region.layout
 ```
@@ -54,7 +66,7 @@ Reduction relation:
   primitive.
 
 Codegen prose (`codegen/rust/README.md`) describes how each binding
-maps to Rust egui calls. The 8 widget kinds (D50) each get one
+maps to Rust egui calls. The 8 widget kinds (WIDGET-KIND-V1) each get one
 emission stanza:
 
 | widget_kind     | egui call                                                                |
@@ -68,10 +80,10 @@ emission stanza:
 | `numeric_field` | `egui::DragValue::new(...).clamp_range(...)` wired through setter         |
 | `value_display` | `ui.label(format!("{}{}", value, unit))` — read-only                      |
 
-## Sharp-test rationale (doc 15 §3.1)
+## Sharp-test rationale
 
 - **Concreteness:** ✓ — names two specific blocks (egui + nih-plug)
-  and a specific widget vocabulary (D50's 8 kinds).
+  and a specific widget vocabulary (WIDGET-KIND-V1's 8 kinds).
 - **Codegen-completeness:** ✓ — given a conforming TOML, the codegen
   prose produces working Rust source: per-binding widget calls
   emitted into the egui block's `parameter_controls` region
@@ -100,7 +112,7 @@ Two layers of validation in v1:
 
 These are NOT graph-check primitives in v1 — promotion to validate-
 time enforcement (NIH-EGUI-003..009 codes) is a bounded follow-up per
-D50. Trigger: first dogfood that produces a misbinding the codegen-
+WIDGET-KIND-V1. Trigger: first dogfood that produces a misbinding the codegen-
 prose discipline doesn't catch.
 
 ## Co-residency requirement (v1)
@@ -108,12 +120,20 @@ prose discipline doesn't catch.
 Both `[nih_plug]` and `[egui]` tables MUST be on the SAME module (the
 plugin_shell-layer module). The bindings table lives on that same
 module. v1 does NOT support cross-module bindings (e.g. an engine
-module's parameter rendered in a shell module's editor). This is a
-named bounded follow-up (spike §7) — trigger to commit cross-module
-bindings is the first dogfood needing engine-published metering
-surfaced in the editor.
+module's parameter rendered in a shell module's editor).
 
-## Deferred (revisit triggers per spike §7 + D50)
+A misplaced binding surfaces at validate time as
+`REDUCE_UNRESOLVED: unresolved Parameter endpoint <id>` (or
+`unresolved Region endpoint <id>`) with a follow-up `hint:` line that
+names this bridge — fix by moving the bindings table to the module
+that owns both `[nih_plug]` and `[egui]`, or by moving the missing
+declaration onto the module that owns the bindings table.
+
+Cross-module support is a named bounded follow-up — trigger to commit
+cross-module bindings is the first dogfood needing engine-published
+metering surfaced in the editor.
+
+## Deferred (revisit triggers, including WIDGET-KIND-V1)
 
 - **Validate-time enforcement of NIH-EGUI-003..009.** v1 catches them
   in codegen prose; promotion to graph-check primitives requires
@@ -133,14 +153,11 @@ surfaced in the editor.
 - **Style attributes per binding.** Knob diameter, slider thickness,
   custom colors. Out of scope for v1 — emerge from a real plugin's
   cosmetic needs.
-- **Wider `widget_kind` enum.** D50 ships 8 kinds; bounded follow-up
+- **Wider `widget_kind` enum.** WIDGET-KIND-V1 ships 8 kinds; bounded follow-up
   for additional 1:1 kinds (radio buttons styled as buttons,
   segmented controls, etc.).
 
 ## References
 
-- Phase 15-A spike: `specdev-next/000-audio-plugin-spike-2026-05-03.md`
-- D47: egui topology-only (parameter→widget bindings live in this bridge)
-- D50: widget_kind enum widening (8 kinds, NIH-EGUI-001..009)
 - nih-plug widgets: `nih_plug::widgets` module
 - egui: https://github.com/emilk/egui

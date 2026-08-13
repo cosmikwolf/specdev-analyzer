@@ -1,0 +1,31 @@
+# Manifest — Cargo deps the egui+nih-plug bridge contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml (bridges
+# reuse the block deps manifest shape).
+#
+# `nih_plug_egui` is the join product of this pairing: an adapter that exists
+# only because a nih-plug plugin hosts an egui interface. Neither endpoint may
+# declare it — the `nih-plug` block must stay UI-agnostic and the `egui` block
+# must stay host-agnostic — so the bridge owns it, the same way the
+# embassy+stm32h5-rs bridge owns its HAL.
+#
+# It carries the egui this stack uses. `nih_plug_egui` re-exports it as
+# `nih_plug_egui::egui`, and the bridge's prose emits
+# `pub use nih_plug_egui::egui;` at the crate root, which is the path the
+# egui block's emitted topology code resolves through. Declaring `egui`
+# separately here would put a second, independently-versioned egui in the
+# graph whose types would not unify with the re-exported one.
+#
+# The rev matches the nih-plug block's pin. The two crates ship from one repo
+# and nih_plug_egui depends on nih_plug, so a split rev risks two nih_plug
+# versions in the tree. Bump both units and all three reference crates
+# together.
+
+crates:
+  - name: nih_plug_egui
+    version: "0.0"                # nih-plug subcrate; git-only, same repo as nih_plug
+    features: []
+    source:
+      git: "https://github.com/robbert-vdh/nih-plug.git"
+      rev: "f36931f7af4646065488a9845d8f8c2f95252c23"
+
+recommended_external_deps: []
