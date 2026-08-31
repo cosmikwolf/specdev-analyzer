@@ -91,11 +91,6 @@ const ZERO_DEP_BLOCKS: &[(&str, &str)] = &[
     // Contributing a version here would put a second, independently-versioned
     // egui in the graph alongside the host's, whose types would not unify.
     ("egui", "the host owns the egui version"),
-    // Topology-only: the HAL is on no registry, and cannot be consumed by git
-    // either because its own manifest path-deps the PAC outside its repo. A
-    // path source renders verbatim with no rebasing, so a block cannot state
-    // one correctly for an arbitrary consumer — the project declares it.
-    ("mk20dx", "the HAL is not consumable as a shippable source"),
 ];
 
 // ===========================================================================
