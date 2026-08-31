@@ -12,13 +12,12 @@ description: >
   document accurately. Peripheral instances (UART / SPI / I2C / FTM / ADC
   / DMA) are deferred; their construction goes through per-peripheral
   builder configs and typed pin traits, which is a much larger surface to
-  describe, and this block's prose has no compiled witness yet. Promote
-  when the block gains one — see this block's README.
+  describe. The reference crate that gated their promotion now exists —
+  see this block's README.
 
-  This block models topology only. It contributes no crates: the HAL it
-  targets is consumed by a path dependency that a shipped block cannot
-  express honestly, so the project declares it. See
-  `codegen/rust/deps.yaml`.
+  This block models topology only. It contributes one crate, the family's
+  HAL (`mk20dx-hal`); the PAC arrives through the HAL's part-selection
+  feature. See `codegen/rust/deps.yaml`.
 
   This schema is self-contained: identifier patterns are inlined rather
   than $ref'd against profile-shipped enums.schema.yaml so the block

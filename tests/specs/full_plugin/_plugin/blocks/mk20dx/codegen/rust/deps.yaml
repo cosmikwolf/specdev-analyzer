@@ -1,30 +1,29 @@
 # Manifest — Cargo deps the mk20dx block contributes.
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
 #
-# This block contributes NO crates, and the reason is mechanical rather
-# than a design preference.
+# Versions resolved from the registry at authoring time, not recalled:
+# mk20dx-hal 0.1.1 (2026-08-31), which depends on mk20d7-pac / mk20d5-pac
+# 0.1.1 by version.
 #
-# The HAL it targets is not on a package registry, and it cannot be
-# consumed by git either: its own manifest declares the PAC by a path
-# that points outside its repository, so a git fetch resolves that path
-# to nothing. A `path` source IS expressible here, but the renderer emits
-# it verbatim with no rebasing — which makes it a claim about the
-# consuming project's filesystem layout that a shipped block has no way
-# to make correctly.
+# NAMING TRAP — name the HAL alone, never a PAC. `mk20d7` on crates.io is
+# an unrelated 2018 crate; the real PACs are `mk20d7-pac` / `mk20d5-pac`,
+# renamed back to `mk20d7` / `mk20d5` inside the HAL's manifest via
+# `package =`. The `mk20d7` feature below is what pulls the right PAC in.
 #
-# So the project declares the HAL itself, in `[[external_deps]]`, with
-# whatever path is true for it:
+# The `mk20d7` feature selects the MK20DX256 (Teensy 3.1/3.2) part. The
+# family's other part, MK20DX128 (Teensy 3.0), needs `mk20d5` instead —
+# there is no conditional mechanism in a deps manifest, so a mk20d5
+# project overrides the feature list in its own spec.
 #
-#   [[external_deps]]
-#   crate = "mk20dx-hal"
-#   features = ["mk20d7", "rt", "critical-section"]
-#   source = { path = "../../mk20dx/mk20dx-hal" }
-#
-# A path dep needs no version, so none is stated.
-#
-# This block therefore cannot build from its own contributions alone.
-# That is the same position as any topology block whose production path
-# runs through something it does not own, and the README says so.
+# `rt` brings the vector table and interrupt support; `critical-section`
+# forwards to the PAC's critical-section implementation, which
+# `Peripherals::take()` needs.
+
+crates:
+  - name: mk20dx-hal
+    version: "^0.1.1"
+    features: [mk20d7, rt, critical-section]
+    source: crates-io
 
 recommended_external_deps:
   - crate: cortex-m-rt

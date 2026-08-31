@@ -20,19 +20,20 @@ it is the thing a reader most often needs and least often finds.
 | `interrupt` on a pin | the port handler's trigger config and per-pin dispatch |
 | `[[mk20dx.interrupts]]` | a handler per declared vector, with the right flag-clear |
 
-**Crates: none.** See "Why it contributes nothing" below — that is a mechanical
-consequence, not a design stance.
+**Crates: `mk20dx-hal`**, from the registry, with the `mk20d7`, `rt` and
+`critical-section` features (`codegen/rust/deps.yaml`). The PAC arrives
+through the `mk20d7` feature — never name a PAC crate directly; the bare
+`mk20d7` name on crates.io is an unrelated 2018 crate.
 
 ## v1 scope — pins and interrupts
 
 Peripheral instances — UART, SPI, I2C, FTM, ADC, DMA — are deliberately out of
 v1. They are not harder to model, they are harder to *document correctly*:
 construction runs through per-peripheral builder configs and typed pin traits,
-which is a large surface, and this block's prose currently has no compiled
-witness to check it against. Adding a large body of unverifiable prose is the
-failure this project has paid for before.
-
-**Promote peripherals when the block gains a reference crate**, not before.
+which is a large surface. That was gated on the block having a compiled
+witness for its prose, and the gate is now met — the block ships a
+reference crate. Peripherals and the clock tree are the next authoring
+pass, not a deferral.
 
 **Interrupts are in scope and were added deliberately** (2026-08-12), because a
 project using this chip will use them. The block covers both sources: a pin's
@@ -46,46 +47,22 @@ Note what is deliberately *not* modelled: the vector's family is derived from
 its name rather than declared, and how a handler is bound to its vector belongs
 to the concurrency runtime. Neither is a field here.
 
-## Why it contributes nothing
+## Verification status
 
-The HAL is not on a package registry, and it cannot be consumed by git either:
-its own manifest declares the PAC by a path pointing outside its repository, so
-a git fetch resolves that path to nothing. A `path` source is expressible in a
-block manifest, but it renders verbatim with no rebasing — a claim about the
-consuming project's filesystem that a shipped block cannot make correctly.
+**The codegen prose has a compiled witness: `reference/rust/`.** It
+type-checks every emission kind the block models — pins in every mode the
+schema admits, a pin-trigger port interrupt with its dispatch, and a
+`[[mk20dx.interrupts]]` vector with its flag clear — against the published
+`mk20dx-hal` the block contributes, cross-compiled for the family's
+target triple, with `unused_crate_dependencies` denied so a contributed
+dep nothing exercises fails the build. CI compiles it like every other
+block's reference crate.
 
-So the project declares the HAL itself, and this block stays topology-only.
-It therefore **cannot build from its own contributions alone**, which is the
-same position as any topology block whose production path runs through
-something it does not own.
-
-## Verification status — and what would fix it
-
-**This block ships no reference crate, so its codegen prose has no compiled
-witness.** That is a real weakness, and it is worth being precise about why,
-because the usual reason does not apply: the API exists, is stable, and was
-read from source. What is missing is a way for CI to *reach* it.
-
-Every signature in the codegen prose was read from the HAL's own source and
-cross-checked against firmware that runs on hardware. That makes it accurate
-today. It does not make it self-checking.
-
-**Any one of these would let this block gain a real gate**, in rough order of
-cleanliness:
-
-1. **Publish the PAC crates to a registry** and have the HAL depend on them by
-   version. The HAL then becomes git-consumable, this block can pin a rev, and
-   the reference crate compiles in CI like every other block's.
-2. **Point the HAL's PAC dependency at the PAC's own git repository.** One
-   commit; makes the HAL git-consumable. Costs a side-by-side checkout the
-   convenience of being used directly.
-3. **Check both repositories out side by side in plugin CI** and have the
-   reference crate path-dep the HAL. Gates the prose without changing anything
-   upstream, but bakes a directory layout into the plugin tree and leaves the
-   reference unbuildable for anyone whose checkout differs.
-
-Until one lands, treat a disagreement between the codegen prose and the HAL as
-the prose being wrong.
+The block was zero-crate until 2026-08-31: the HAL's own manifest used to
+declare its PAC by a path outside its repository, which made it
+consumable neither from a registry nor from git. That was resolved
+upstream by publishing `mk20d7-pac` / `mk20d5-pac` and `mk20dx-hal` to
+crates.io with by-version PAC deps.
 
 ## Pairing
 
@@ -95,8 +72,10 @@ carries what neither can state alone.
 
 ## Deferred
 
-- **Peripheral instances.** See above; gated on a reference crate.
-- **Clock-tree configuration.** Project-wide rather than per-module.
+- **Peripheral instances.** See above; the reference-crate gate is met,
+  so these are next-pass work rather than deferred.
+- **Clock-tree configuration.** Project-wide rather than per-module; same
+  next pass.
 - **"No two modules claim the same physical pin."** Genuinely worth checking
   and not expressible as a relation — it is a uniqueness property over the
   `(port, pin)` pair across modules, and the available graph primitives check

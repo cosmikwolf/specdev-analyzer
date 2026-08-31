@@ -6,20 +6,21 @@ Read the project's profile's `module.conventions.md` for module-wide rules
 (naming, error handling, doc comments). This file covers only what the
 `[mk20dx]` table adds.
 
-> **Verification status: this prose has no compiled witness.** Every signature
-> below was read from the HAL's own source and cross-checked against working
-> firmware, but nothing recompiles it when the HAL changes. Treat a mismatch
-> between this file and the HAL as this file being wrong, and fix it here.
+> **Verification status: compiled witness in `../../reference/rust/`.** Every
+> worked example below is type-checked in CI against the published
+> `mk20dx-hal` this block contributes, cross-compiled for the family's
+> target triple. A mismatch between this file and the HAL fails that build
+> before it can reach a downstream `/spec-gen`.
 
 ---
 
-## 1. The crate this emits against is declared by the project
+## 1. The crate this emits against
 
-This block contributes no dependency. The HAL arrives from the project's own
-`[[external_deps]]`, because it is consumed by a local path that only the
-project knows. Emit `use mk20dx_hal::…` paths normally; do **not** emit a
-manifest entry for it, and do not assume a crate name other than the one the
-project declared.
+This block contributes `mk20dx-hal` (see `deps.yaml`), so the crate is
+already in the project's manifest — emit `use mk20dx_hal::…` paths and
+nothing else. Do **not** emit a manifest entry for it, and do **not** name
+a PAC crate: the PAC arrives through the HAL's `mk20d7` feature, and the
+bare `mk20d7` name on crates.io is an unrelated 2018 crate.
 
 ## 2. Ports are split once, then pins are moved into their modes
 
@@ -143,14 +144,22 @@ ask rather than emitting a handler that might spin.
 `PORTB`, so there is exactly one handler per port and it dispatches by flag.
 Emit one handler per port that has any interrupting pin, never one per pin.
 
-Set the trigger when the pin is configured. The spec states intent; these are
-the register values it maps to:
+Set the trigger when the pin is configured. The spec states intent; the
+PCR's `IRQC` field holds the value it maps to:
 
-| `interrupt` | Meaning |
-|---|---|
-| `rising` / `falling` / `either_edge` | edge-triggered |
-| `level_high` / `level_low` | level-triggered — stays asserted while the level holds |
-| `dma_rising` / `dma_falling` / `dma_either_edge` | raises a **DMA request, not a CPU interrupt** |
+| `interrupt` | `IRQC` | Meaning |
+|---|---|---|
+| `rising` / `falling` / `either_edge` | `1001` / `1010` / `1011` | edge-triggered |
+| `level_high` / `level_low` | `1100` / `1000` | level-triggered — stays asserted while the level holds |
+| `dma_rising` / `dma_falling` / `dma_either_edge` | `0001` / `0010` / `0011` | raises a **DMA request, not a CPU interrupt** |
+
+Two facts about the write itself, both witnessed in the reference crate.
+The port register block is reached through the PAC's raw pointer
+(`unsafe { &*pac::Portb::PTR }`) — the port peripheral was consumed by its
+split, so there is no owned handle to go through. And the PCR's `ISF` bit
+is write-1-to-clear, so a `modify` that sets `IRQC` must write `ISF` to 0
+explicitly (`w.irqc()._1011().isf()._0()`) — writing back the 1 it read
+would clear a pending flag as a side effect of configuring the trigger.
 
 **Do NOT emit a handler for a `dma_*` pin.** There is no interrupt to service;
 emitting one produces a handler that never runs and implies wiring that does
