@@ -5,7 +5,7 @@ description: >
   Closed vocabulary of root kinds every entity ultimately extends. Adding
   or renaming a root kind is a metaschema version bump. Embedded in the
   analyzer per doc 15 §11 invariant 5 (no plugin lookup at analyze time).
-  See specdev-next/10-metaschema.md for rationale.
+  See specdev-planning/10-metaschema.md for rationale.
 
 $defs:
   RootKind:
