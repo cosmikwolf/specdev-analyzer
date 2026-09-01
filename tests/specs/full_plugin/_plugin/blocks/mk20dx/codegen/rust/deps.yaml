@@ -25,6 +25,13 @@ crates:
     features: [mk20d7, rt, critical-section]
     source: crates-io
 
+  # The PIT emission's period literal (`600u32.micros()`) needs fugit's
+  # ExtU32 — the HAL takes fugit durations in its public API but does not
+  # re-export the crate. Version matched to the HAL's own requirement.
+  - name: fugit
+    version: "0.3"
+    source: crates-io
+
 recommended_external_deps:
   - crate: cortex-m-rt
     purpose: "Vector table and startup for the bare-metal binary."

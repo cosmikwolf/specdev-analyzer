@@ -209,15 +209,229 @@ which vector and what to clear; it does not say how the function gets there.
 ordinary code — an atomic, a channel, or a task the runtime wakes. A handler
 that blocks delays every lower-priority interrupt on the chip.
 
-## 5. What this block does not emit
+## 5. Clock — `[mk20dx.clock]`
 
-**Do NOT emit peripheral construction here** — UART, SPI, I2C, timers, ADC,
-DMA. This block's v1 models pins only. A module needing a peripheral gets it
-from the project's own init code until the block covers them.
+The tree is configured ONCE, before any peripheral exists, and every
+peripheral constructor takes the frozen result:
 
-**Do NOT emit clock configuration.** The clock tree is project-wide, not a
-per-module concern, and is set up once before any module sees a pin.
+```rust
+use mk20dx_hal::clocks::{ClockSpeed, McgExt};
+
+// speed = "mhz120"
+let clocks = dp.mcg.constrain().freeze_at(ClockSpeed::Mhz120, dp.osc, &dp.sim);
+```
+
+The preset maps directly: `mhz72` / `mhz96` / `mhz120` →
+`ClockSpeed::Mhz72` / `Mhz96` / `Mhz120`. All three assume the family's
+standard 16 MHz crystal. `freeze_at` consumes the OSC peripheral and
+borrows `Sim`.
+
+**`mhz48` is the MK20DX128 shape and emits differently** — that part has
+no `ClockSpeed` enum; emit `dp.mcg.constrain().freeze(dp.osc, &dp.sim)`.
+A `mhz48` spec on an mk20d7 project (or `mhz72`+ on mk20d5) is a
+part/spec mismatch: stop and ask, do not pick a nearby preset.
+
+**AT MOST ONE module declares `[mk20dx.clock]`.** The graph primitives
+cannot express this uniqueness, so it is codegen's rule: refuse to emit
+when two modules declare it, naming both. Emission belongs in the
+project's init path; the resulting `Clocks` value is passed by reference
+to every constructor below.
+
+**Do NOT silently downgrade an overclock.** `mhz96` / `mhz120` exceed the
+72 MHz datasheet rating; that is the board's recorded design choice, and
+120 MHz is the Teensy community default.
+
+## 6. PIT timers — `[[mk20dx.timers]]`
+
+The PIT is split ONCE, in project init, like a port:
+
+```rust
+use mk20dx_hal::timer::{PitChannel, PitExt};
+
+let pit = dp.pit.split(&dp.sim, &clocks);
+```
+
+The split yields all four channels (`pit.ch0` .. `pit.ch3`); the module
+receives the channels it declared, typed by index:
+
+```rust
+// [[mk20dx.timers]] name = "sequencer_tick", channel = 0, period_us = 600
+use fugit::ExtU32;
+let mut sequencer_tick: PitChannel<0> = pit.ch0;
+sequencer_tick.start(600u32.micros());
+```
+
+`start` takes a `fugit` duration — `fugit` is contributed by this block's
+deps for exactly this call; `ExtU32` provides the literal suffix.
+
+**An entry without `period_us` is handed over unstarted.** The module's
+own code owns its timing (a time driver, a one-shot). Do NOT invent a
+period, and do NOT call `start` for it.
+
+**The timer's interrupt is a separate declaration.** When the module also
+declares the matching `PIT<n>` vector in `[[mk20dx.interrupts]]`, emit
+`enable_interrupt()` after `start` (it pre-clears the pending flag) and
+clear with `clear_interrupt()` in the handler per §4.1. A timers entry
+alone gets polling (`wait()` / `has_expired()`), not a handler.
+
+## 7. SPI — `[[mk20dx.spi]]`
+
+`sck` / `mosi` / `miso` name entries in the module's own `pins` table,
+already moved into `alternate` mode per §3. The constructor takes the
+typed handles, and the HAL's per-instance pin traits make the compiler
+settle pin-function agreement — a pin that cannot carry SCK for this
+instance fails the build at the call:
+
+```rust
+use mk20dx_hal::spi::{Config, Spi, SpiExt};
+use mk20dx_hal::time::U32Ext;
+
+// name = "main_bus", instance = 0, baudrate_hz = 15000000
+let main_bus: Spi<mk20dx_hal::spi::Spi0> = dp.spi0.spi(
+    spi_sck, spi_mosi, spi_miso,
+    Config::new(15_000_000u32.Hz()),
+    &clocks, &dp.sim,
+);
+```
+
+A non-zero `mode` goes through the builder: `Config::new(...).mode(MODE_2)`
+(`MODE_0`..`MODE_3` re-exported from `mk20dx_hal::spi`). Omit the call
+for mode 0 — it is the default.
+
+**Name the instance marker by module path** (`mk20dx_hal::spi::Spi0`),
+never by a bare import: the PAC peripheral type in scope as `dp.spi0`'s
+type is ALSO called `Spi0`, and a glob or bare import silently shadows
+one with the other.
+
+**The baud is a target, not a promise.** The hardware divides the bus
+clock; the driver picks the nearest rate at or below the spec's
+`baudrate_hz`. Do not emit compensation logic.
+
+## 8. UARTs — `[[mk20dx.uarts]]`
+
+Same shape: `tx` / `rx` name `alternate`-mode pins from §3, typed pin
+traits settle the function agreement:
+
+```rust
+use mk20dx_hal::uart::{Config, UartExt};
+use mk20dx_hal::time::U32Ext;
+
+// name = "midi", instance = 2, baudrate = 31250
+let midi = dp.uart2.serial(
+    midi_tx, midi_rx,
+    Config::new(31_250u32.Hz()),
+    &clocks, &dp.sim,
+);
+let (midi_tx_half, midi_rx_half) = midi.split();
+```
+
+Non-default framing goes through the builder:
+`Config::new(...).parity(Parity::Even).word_length(WordLength::Bits9)`.
+Omit both calls for the 8N1 default.
+
+Emit the `split()` when the module's ports hand TX and RX to different
+owners; keep the joined `Serial` when one owner reads and writes.
+
+## 9. ADCs — `[[mk20dx.adcs]]`
+
+```rust
+use mk20dx_hal::adc::{Adc, AdcExt, Averaging, Resolution};
+
+// name = "cv_inputs", instance = 1, resolution = "bits12", averaging = "x4"
+let mut cv_inputs: Adc<mk20dx_hal::adc::Adc1> = dp.adc1.adc(&clocks, &dp.sim);
+cv_inputs.set_resolution(Resolution::Bits12);
+cv_inputs.set_averaging(Averaging::Avg4);
+cv_inputs.calibrate().expect("ADC calibration failed");
+```
+
+The spec vocabulary maps `bits8`..`bits16` → `Resolution::Bits8`..`Bits16`
+and `none` / `x4` / `x8` / `x16` / `x32` → `Averaging::Disabled` /
+`Avg4`.. `Avg32`. Omit the setter for an absent field — the constructor's
+defaults (10-bit, no averaging) stand.
+
+**`calibrate` defaults to true and returns a `Result` — handle it.**
+Calibration is what makes the stated resolution real; a swallowed failure
+is an ADC quietly out of spec. How to handle it is the project's error
+policy; `expect` is the floor, not the recommendation. Emit no
+`calibrate()` call only when the spec says `calibrate = false`.
+
+Which input channel a `read` samples is a call-site fact in the module's
+own code, not part of construction.
+
+## 10. DMA channels — `[[mk20dx.dma_channels]]`
+
+The controller is split ONCE, in project init:
+
+```rust
+use mk20dx_hal::dma::{DmaChannel, DmaExt, DmaSource};
+
+let dma = dp.dma.split(dp.dmamux, &dp.sim);
+```
+
+The module receives its declared channels, typed by index, and each entry
+with a `source` is wired at init:
+
+```rust
+// name = "display_flush", channel = 1, source = "SPI0_TX"
+let mut display_flush: DmaChannel<1> = dma.ch1;
+display_flush.set_source(DmaSource::SPI0_TX);
+```
+
+The `source` string is the HAL constant's name, verbatim
+(`DmaSource::SPI0_TX`). **Do NOT invent one** — whether the name exists
+is settled by the compiler, and the DMAMUX request table is a chip fact
+this block does not enumerate. An entry without `source` is a
+software-triggered channel: hand it over unwired.
+
+A channel that raises a completion interrupt is, again, a separate
+`DMA<n>` entry in `[[mk20dx.interrupts]]`, cleared per §4.1.
+
+## 11. FTM timers — `[[mk20dx.ftms]]`
+
+An entry WITH `frequency_hz` is running PWM: emit the one-call
+constructor, then configure each declared channel:
+
+```rust
+use mk20dx_hal::pwm::FtmExt;
+use mk20dx_hal::time::U32Ext;
+
+// name = "gate_pwm", instance = 0, frequency_hz = 20000
+let gate_channels = dp.ftm0.pwm(20_000u32.Hz(), &clocks, &dp.sim);
+
+// channels: name = "gate_1", channel = 2
+let mut gate_1 = gate_channels.ch2;
+gate_1.set_pwm();
+gate_1.set_value(0);
+```
+
+`pwm()` starts the counter but every channel starts disabled — the
+`set_pwm()` per declared channel is what produces output, and the initial
+duty is 0 unless the spec's module prose says otherwise.
+
+**Duty on a single channel is `set_value`, not `set_duty`.** `set_value`
+writes the CnV compare against the timer's modulo (the embedded-hal
+`SetDutyCycle` impl goes through the same call); `set_duty` exists only
+on the combine-mode channel PAIR, which this block does not model —
+emitting it on a channel does not compile.
+
+An entry WITHOUT `frequency_hz` is manual-configuration ownership
+(combine mode, input capture): emit `dp.ftm0.split(&clocks, &dp.sim)`
+and hand the parts over stopped — the module's own code takes it from
+there. Do NOT start the counter for it.
+
+**Which package pin a channel drives is §3's business.** Declare the pin
+in `pins` with `mode = "alternate"` and the part's ALT index (FTM pins
+are typically ALT3 or ALT4 — a pin-mux table fact; do not guess). The
+HAL does not take pins in the FTM constructor, so nothing here connects
+them — the schema deliberately mirrors that.
+
+## 12. What this block does not emit
 
 **Do NOT emit the runtime binding for a handler.** Section 4 covers what a
 handler must do; how it gets attached to its vector belongs to whichever
 runtime the project uses.
+
+**Do NOT emit I2C, I2S, USB, or the small analog blocks** (CMP / VREF /
+DAC). They are out of the block's modelled surface; a module needing one
+gets it from the project's own init code until the block covers it, with
+its witness added in the same commit.

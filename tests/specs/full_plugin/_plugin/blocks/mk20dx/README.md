@@ -1,7 +1,8 @@
 # `mk20dx` block
 
-Chip topology for the MK20DX128 / MK20DX256 family (Teensy 3.x): which pins a
-module owns, where they sit, and what mode they are moved into.
+Chip topology for the MK20DX128 / MK20DX256 family (Teensy 3.x): which pins,
+interrupt vectors, and peripheral instances a module owns, and the
+construction-time facts the board fixes for each.
 
 Author-facing. This file is **not** inlined into projects.
 
@@ -19,21 +20,39 @@ it is the thing a reader most often needs and least often finds.
 | `[[mk20dx.pins]]` | typed pin handles, moved into the declared mode |
 | `interrupt` on a pin | the port handler's trigger config and per-pin dispatch |
 | `[[mk20dx.interrupts]]` | a handler per declared vector, with the right flag-clear |
+| `[mk20dx.clock]` | the one-per-project clock-tree preset (`freeze_at`) |
+| `[[mk20dx.timers]]` | PIT channel handles, started when a period is declared |
+| `[[mk20dx.spi]]` | an SPI master wired with the module's own alternate pins |
+| `[[mk20dx.uarts]]` | a UART wired the same way, split into halves on demand |
+| `[[mk20dx.adcs]]` | a configured, calibrated ADC handle |
+| `[[mk20dx.dma_channels]]` | DMA channel handles, DMAMUX-wired when a source is declared |
+| `[[mk20dx.ftms]]` | running PWM channels, or split FTM parts for manual use |
 
-**Crates: `mk20dx-hal`**, from the registry, with the `mk20d7`, `rt` and
-`critical-section` features (`codegen/rust/deps.yaml`). The PAC arrives
-through the `mk20d7` feature — never name a PAC crate directly; the bare
-`mk20d7` name on crates.io is an unrelated 2018 crate.
+**Crates: `mk20dx-hal`** (with the `mk20d7`, `rt` and `critical-section`
+features) **and `fugit`** for the timer-period literals
+(`codegen/rust/deps.yaml`). The PAC arrives through the `mk20d7` feature —
+never name a PAC crate directly; the bare `mk20d7` name on crates.io is an
+unrelated 2018 crate.
 
-## v1 scope — pins and interrupts
+## v2 scope — pins, interrupts, clock, and six peripheral surfaces
 
-Peripheral instances — UART, SPI, I2C, FTM, ADC, DMA — are deliberately out of
-v1. They are not harder to model, they are harder to *document correctly*:
-construction runs through per-peripheral builder configs and typed pin traits,
-which is a large surface. That was gated on the block having a compiled
-witness for its prose, and the gate is now met — the block ships a
-reference crate. Peripherals and the clock tree are the next authoring
-pass, not a deferral.
+v2 adds the clock preset and the peripheral instances (PIT / SPI / UART /
+ADC / DMA / FTM) that were deferred from v1 behind the reference-crate
+gate. Peripheral entries model OWNERSHIP and construction-time facts;
+runtime use of a handle is the module's code. Still out: I2C, I2S, USB,
+and the small analog blocks (CMP / VREF / DAC) — promote each when a
+project needs it, with its witness in the same commit.
+
+SPI and UART entries name their pins from the module's own `pins` table,
+and those references are declared as reduction relations — a name that
+resolves to nothing is a validation error with source-line provenance
+(`spi_uses_sck_pin` and friends), proven by a red-path control at
+authoring time.
+
+Where a field is legal on only one part of the family (SPI1, ADC1, FTM2,
+DMA channels 4-15 are MK20DX256-only), the schema admits the union and
+the compiler settles it — the handle's field does not exist on the
+smaller part. Same philosophy as interrupt vector names.
 
 **Interrupts are in scope and were added deliberately** (2026-08-12), because a
 project using this chip will use them. The block covers both sources: a pin's
@@ -49,14 +68,20 @@ to the concurrency runtime. Neither is a field here.
 
 ## Verification status
 
-**The codegen prose has a compiled witness: `reference/rust/`.** It
-type-checks every emission kind the block models — pins in every mode the
-schema admits, a pin-trigger port interrupt with its dispatch, and a
-`[[mk20dx.interrupts]]` vector with its flag clear — against the published
-`mk20dx-hal` the block contributes, cross-compiled for the family's
-target triple, with `unused_crate_dependencies` denied so a contributed
-dep nothing exercises fails the build. CI compiles it like every other
-block's reference crate.
+**The codegen prose has a compiled witness: `reference/rust/`.** One
+module per emission kind — pins in every mode the schema admits, a
+pin-trigger port interrupt with its dispatch, a `[[mk20dx.interrupts]]`
+vector with its flag clear, the clock preset, and one module per
+peripheral table (covering both construction forms where an entry forks
+on a field: timer with/without period, FTM with/without frequency) —
+type-checked against the published `mk20dx-hal` the block contributes,
+cross-compiled for the family's target triple, with
+`unused_crate_dependencies` denied so a contributed dep nothing exercises
+fails the build. CI compiles it like every other block's reference crate.
+
+The witness has already corrected the prose once: single-channel PWM duty
+is `set_value` (CnV), while `set_duty` exists only on the combine-mode
+channel pair — the draft prose had the pair's method on the channel.
 
 The block was zero-crate until 2026-08-31: the HAL's own manifest used to
 declare its PAC by a path outside its repository, which made it
@@ -72,13 +97,19 @@ carries what neither can state alone.
 
 ## Deferred
 
-- **Peripheral instances.** See above; the reference-crate gate is met,
-  so these are next-pass work rather than deferred.
-- **Clock-tree configuration.** Project-wide rather than per-module; same
-  next pass.
+- **I2C, I2S, USB, CMP / VREF / DAC.** Out of the modelled surface until a
+  project needs one; each promotion carries its witness in the same
+  commit.
+- **FTM combine mode and input capture.** An `ftms` entry without
+  `frequency_hz` hands the split parts over for the module's own code —
+  the manual surface (channel pairs, deadtime, quadrature) is used, not
+  modelled.
 - **"No two modules claim the same physical pin."** Genuinely worth checking
   and not expressible as a relation — it is a uniqueness property over the
   `(port, pin)` pair across modules, and the available graph primitives check
   uniqueness of a single field, references resolving, orphans, and cycles.
-  Recorded rather than approximated: a check that catches most collisions would
-  be worse than none, because it would be trusted.
+  The same shape recurs for PIT channels, DMA channels, and peripheral
+  instances. Recorded rather than approximated: a check that catches most
+  collisions would be worse than none, because it would be trusted. The
+  ONE uniqueness rule that is enforced is `[mk20dx.clock]`'s
+  at-most-one-module, as a codegen-refusal rule in the prose.
