@@ -37,6 +37,26 @@ software tasks at priorities 1, 1 and 2 need two dispatchers. Fewer is a compile
 error naming the shortfall (`not enough interrupts to dispatch all software
 tasks`); more is harmless.
 
+**The project must select rtic's backend feature, and this block cannot.**
+`rtic` compiles only with exactly one backend feature, chosen by the core the
+project targets (`thumbv7-backend` for Cortex-M3/M4/M7, `thumbv6-backend` for
+M0/M0+, `thumbv8base-backend` / `thumbv8main-backend` for M23 / M33-M55-M85);
+this block is core-agnostic and contributes the crate without one. The project
+states it in `specs/architecture.toml`, where the manifest merge adds the
+feature to the contributed crate:
+
+```toml
+[[external_deps]]
+crate = "rtic"
+version = "^2.3"
+features = ["thumbv7-backend"]
+```
+
+Without it the build stops at `rtic-macros: No backend feature selected` —
+if the entry is missing, add it (deriving the feature from
+`[platform].target_triple`) rather than emitting a build that cannot
+compile.
+
 ## 2. Resources — `[[rtic.resources]]`
 
 Each entry becomes a field of one of two generated structs, selected by

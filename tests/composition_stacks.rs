@@ -547,6 +547,39 @@ fn firmware_stack_resolves_one_runtime() {
     lock.sole_version("embassy-stm32", "firmware");
 }
 
+/// embedded rtic: the concurrency-framework block + the MCU-family block,
+/// co-inlined with NO bridge — the pairing's earn-its-keep gate closed the
+/// bridge (its would-be binding was not relation-shaped), so nothing else
+/// in the tree ever resolves these two together.
+///
+/// The shared surface is `cortex-m`, declared by the profile's platform
+/// pick: types cross it — the PAC's `InterruptNumber` impl is consumed by
+/// rtic's NVIC handling — so a split would be a real break, not a
+/// harmless duplicate.
+#[test]
+#[ignore = "resolves against crates.io; run with --ignored"]
+fn rtic_mk20dx_stack_resolves_one_cortex_m() {
+    require_plugin_tree!();
+    let (_plugin, root) = compose(
+        "rtic-mk20dx",
+        "firmware-layered",
+        "rust",
+        "composition-rtic-mk20dx",
+        &["rtic", "mk20dx"],
+        &[],
+    );
+    write_manifest(&root);
+    let lock = resolve_cargo(&root, "rtic-mk20dx");
+
+    // Every crate the composed units declare, plus the profile's shared
+    // platform surface. The chip's PACs arrive transitively through the
+    // HAL's part feature and are deliberately NOT asserted by name here —
+    // which PAC resolves is the HAL's business.
+    for crate_name in ["rtic", "rtic-sync", "mk20dx-hal", "fugit", "cortex-m"] {
+        lock.sole_version(crate_name, "rtic-mk20dx");
+    }
+}
+
 /// flutter: the app profile + the FFI-binding block + a platform-services
 /// block, with no bridge between them.
 ///
