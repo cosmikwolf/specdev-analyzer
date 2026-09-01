@@ -109,6 +109,24 @@ The port is a `char` and the pin number a `u8`, both const generics — so
 `Pin<'C', 5, …>`, with the port letter **quoted as a character literal and
 uppercase**.
 
+### Driving the handle
+
+Reads and writes go through embedded-hal's digital traits, which this
+block contributes as a dependency because the HAL implements them without
+re-exporting them:
+
+```rust
+use embedded_hal::digital::{InputPin, OutputPin, StatefulOutputPin};
+
+status_led.set_high().ok();   // OutputPin
+status_led.toggle().ok();     // StatefulOutputPin
+if button.is_low().unwrap() { /* pressed (pull-up input) */ }
+```
+
+The methods return `Result` with an `Infallible`-style error on this
+chip; `.ok()` / `.unwrap()` at the call site is the accepted form —
+do not thread the error.
+
 ## 4. Interrupts
 
 Two sources, and they emit differently. A pin's `interrupt` field describes a
@@ -204,6 +222,24 @@ flag per §4.1.
 the concurrency runtime's business — a task declaration in whatever runtime the
 project uses, or a bare interrupt attribute if it uses none. This block says
 which vector and what to clear; it does not say how the function gets there.
+
+### 4.3.1 What a concurrency runtime needs from this chip
+
+Two chip facts a runtime's own prose cannot know, recorded here because
+this block is where chip facts live:
+
+- **The `device` path is `mk20dx_hal`.** The HAL completes the svd2rust
+  device contract in one path — `pub mod interrupt`, `Peripherals`, and
+  `NVIC_PRIO_BITS` — so a runtime attribute that takes a device path
+  (RTIC's `#[rtic::app(device = ...)]`) takes `mk20dx_hal` directly, with
+  no join module. Do NOT point it at the PAC: the PAC alone lacks the
+  `interrupt` module (newer svd2rust stopped emitting it).
+- **Dispatcher / stolen vectors come from peripherals the design does not
+  use.** A runtime that runs executors in interrupt vectors needs vectors
+  nothing else claims. On boards that do not use CAN, this family's
+  `CAN0_ORed_Message_buffer` and `CAN0_Bus_Off` are the conventional
+  picks. Never hand a runtime a vector any module declares in
+  `[[mk20dx.interrupts]]` or raises through a pin trigger.
 
 **Do NOT put long work in a handler.** Latch what happened and hand it to
 ordinary code — an atomic, a channel, or a task the runtime wakes. A handler

@@ -32,6 +32,14 @@ crates:
     version: "0.3"
     source: crates-io
 
+  # Driving the emitted pin handles goes through embedded-hal's digital
+  # traits (OutputPin / StatefulOutputPin / InputPin) — the HAL implements
+  # them but re-exports neither the traits nor the crate. A pin handle
+  # nothing can set is not a contribution. Version matched to the HAL's.
+  - name: embedded-hal
+    version: "1.0"
+    source: crates-io
+
 recommended_external_deps:
   - crate: cortex-m-rt
     purpose: "Vector table and startup for the bare-metal binary."
