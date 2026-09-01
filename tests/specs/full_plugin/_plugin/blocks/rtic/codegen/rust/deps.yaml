@@ -2,7 +2,7 @@
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
 #
 # Versions resolved from the registry at authoring time, not recalled:
-# rtic 2.3.0, rtic-sync 1.5.0.
+# rtic 2.3.1.
 #
 # NO BACKEND FEATURE IS DECLARED HERE, deliberately. `rtic` requires
 # exactly one backend feature and which one is correct depends on the
@@ -19,22 +19,28 @@
 # any topology block whose production path runs through a binding, and the
 # reason the block's README points at one.
 #
-# The reference crate pins thumbv7-backend for its own compile vehicle;
-# that is the reference's choice, not a claim about your project.
+# NO CHANNEL CRATE IS CONTRIBUTED HERE either. `[[rtic.channels]]` is
+# vocabulary — what flows and how many slots. Which crate carries a
+# channel is the project's choice between two executor-neutral options,
+# and a manifest cannot be conditional, so contributing one would force
+# it on every project including those that already run the other. Both
+# are recommended below; the codegen prose documents the emitted form
+# for each. A project that declares channels accepts one of them in its
+# own `[[external_deps]]`.
+#
+# The reference crate carries both channel crates as compile witnesses
+# for the two documented forms; that is the reference's business, not a
+# contribution.
 
 crates:
   - name: rtic
     version: "2.3"
     source: crates-io
 
-  # Inter-task channels. Contributed unconditionally, like every dep in
-  # this manifest — there is no conditional mechanism — but unlike some
-  # unconditional contributions this one HAS a schema surface
-  # (`[[rtic.channels]]`), so a project can express what it is for.
-  - name: rtic-sync
-    version: "1.5"
-    source: crates-io
-
 recommended_external_deps:
+  - crate: rtic-sync
+    purpose: "Channels via make_channel! when no async-sync crate is present yet."
+  - crate: embassy-sync
+    purpose: "Channels as statics when the project already runs embassy-sync."
   - crate: rtic-monotonics
     purpose: "Delays and timeouts when no time source is already present."

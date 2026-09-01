@@ -56,10 +56,12 @@ properties:
         items: { $ref: "#/$defs/Resource" }
       channels:
         description: >
-          Inter-task message channels, materialized with
-          `rtic_sync::make_channel!`. Use these for streaming values
-          between tasks; use a shared resource for state a task mutates
-          in place.
+          Inter-task message channels: what flows and how many slots.
+          Which crate carries a channel is the project's choice, read
+          from its manifest at emission time; this block contributes no
+          channel crate and its codegen prose documents one form per
+          crate. Use these for streaming values between tasks; use a
+          shared resource for state a task mutates in place.
         type: array
         items: { $ref: "#/$defs/Channel" }
 

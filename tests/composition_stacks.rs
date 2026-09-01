@@ -575,7 +575,7 @@ fn rtic_mk20dx_stack_resolves_one_cortex_m() {
     // platform surface. The chip's PACs arrive transitively through the
     // HAL's part feature and are deliberately NOT asserted by name here —
     // which PAC resolves is the HAL's business.
-    for crate_name in ["rtic", "rtic-sync", "mk20dx-hal", "fugit", "cortex-m"] {
+    for crate_name in ["rtic", "mk20dx-hal", "fugit", "cortex-m"] {
         lock.sole_version(crate_name, "rtic-mk20dx");
     }
 }
