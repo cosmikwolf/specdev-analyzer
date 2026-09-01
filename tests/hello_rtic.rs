@@ -216,10 +216,11 @@ fn codegen_gate_passes_and_prompts_assemble_for_both_modules() {
 fn cargo_toml_render_carries_both_blocks_deps() {
     let (_target, layout) = hello_rtic_project("cargo");
     let rendered = cargo_toml::render(&layout).unwrap();
-    // rtic's deps.yaml (rtic + rtic-sync), mk20dx's (mk20dx-hal + fugit),
+    // rtic's deps.yaml (rtic alone — its channel crates are recommended,
+    // not contributed), mk20dx's (mk20dx-hal + fugit),
     // and the profile-template platform picks must all survive the
     // manifest-driven dispatch.
-    for dep in ["rtic", "rtic-sync", "mk20dx-hal", "fugit", "cortex-m-rt"] {
+    for dep in ["rtic", "mk20dx-hal", "fugit", "cortex-m-rt"] {
         assert!(
             rendered.text.contains(dep),
             "missing dep {dep}:\n{}",

@@ -108,6 +108,41 @@ three are rejected. The error names the type
 gives direct access; reaching for `shared` and then locking a resource nobody
 contends for is pure overhead and misleads the next reader about the design.
 
+### Locals that must not cross the init stack — declare them inline
+
+A `Local` field is constructed in `init` and then moved into the framework's
+storage, so a large value (a sample buffer, a step table) sits on the init
+stack frame first. The framework accepts an inline-initialized local on `init`
+and on any task; the value lives in a static from the start and the context
+hands out a `&'static mut`:
+
+```rust
+// On init — the borrow can then be stored in a Shared or Local field, which
+// is how a large table becomes lockable state without ever being on the stack.
+#[init(local = [table: [u16; 64] = [0; 64]])]
+fn init(cx: init::Context) -> (Shared, Local) {
+    let table: &'static mut [u16; 64] = cx.local.table;
+    (Shared { counter: 0, table }, Local { toggle: false })
+}
+
+// On a task — private to that task, same static placement.
+#[task(binds = <binds>, local = [ticks: u32 = 0], priority = 3)]
+fn sample(cx: sample::Context) {
+    *cx.local.ticks += 1;
+}
+```
+
+The initializer must be a constant expression. Prefer this placement for a
+`sharing = "local"` resource whose type is large, or whose consumer needs a
+`'static` borrow; use the `Local` struct form for everything else. Both are
+`sharing = "local"` in the spec — the placement is an emission choice, not a
+schema field.
+
+**Do NOT reach for a `static mut` plus a raw-pointer cast to get a large
+table into the app.** That is exactly the aliasing the resource model exists
+to remove; the inline local gives the same static storage with a checked
+borrow.
+
 ## 3. Tasks — `[[rtic.tasks]]`
 
 `kind` decides the shape completely. **Never emit an `async` hardware task or a
@@ -129,7 +164,7 @@ fn sample(mut cx: sample::Context) {
 **Do NOT `.await` anywhere in a hardware task**, and do not reach for a
 block-on helper to get around it — that reintroduces the priority inversion the
 resource model exists to remove. Work that must await belongs in a software
-task; hand it over by spawning one or sending on a channel.
+task; hand it over by spawning one or sending on a channel's sync path (§4).
 
 ### `kind = "software"`
 
@@ -170,7 +205,21 @@ spec declares it — the framework supplies its own default otherwise.
 
 ## 4. Channels — `[[rtic.channels]]`
 
-Created in `init` and handed to tasks as local resources:
+A channel entry says **what** flows and **how many** slots. **Which crate**
+carries it is the project's choice, and this block contributes neither
+candidate. Read the project's manifest (`[[external_deps]]` in
+`specs/architecture.toml`) and emit the form for the crate it holds:
+
+| Manifest holds | Emit |
+|---|---|
+| `rtic-sync` | form A — `make_channel!` in `init`, ends handed to tasks as locals |
+| `embassy-sync` | form B — a `static Channel<…>` at module scope |
+| neither | **stop** and say so; a channel crate is a dependency the project must accept knowingly |
+| both | **stop** and say so; one crate carries every channel the app declares |
+
+Both forms compile in this block's reference crate.
+
+### Form A — `rtic-sync`: created in `init`, ends as locals
 
 ```rust
 use rtic_sync::{channel::{Receiver, Sender}, make_channel};
@@ -194,11 +243,64 @@ async fn pump(cx: pump::Context) {
 }
 ```
 
-**Do NOT use a channel from a hardware task** — both ends `.await`.
+**Do NOT use a form-A channel from a hardware task** — both ends `.await`.
+A hardware task that must emit an event uses form B's sync send, or latches
+into a shared resource and spawns a software task.
+
+### Form B — `embassy-sync`: a `static` at module scope
+
+```rust
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+
+// [[rtic.channels]] name = "events", payload_type = "u32", capacity = 4
+static EVENTS: Channel<CriticalSectionRawMutex, u32, 4> = Channel::new();
+```
+
+The static name uppercases the channel name (`events` → `EVENTS`). It is
+reachable from every task without passing ends through resources, and it has
+a sync path on both sides, which is what lets a **hardware** task feed a
+**software** task:
+
+```rust
+// hardware task — sync send; Err means the channel is full, which is a
+// runtime state to count or drop, never to unwrap
+#[task(binds = <binds>, priority = 3)]
+fn sample(_cx: sample::Context) {
+    if EVENTS.try_send(1).is_err() {
+        // full: record the overflow and move on
+    }
+}
+
+// software task — awaits
+#[task(priority = 1)]
+async fn drain(_cx: drain::Context) {
+    let value = EVENTS.receive().await;
+    let _ = value;
+}
+```
+
+`try_receive` is the sync receive for the rare hardware-task consumer. The
+`CriticalSectionRawMutex` parameter needs a `critical-section` implementation
+at link time — on single-core Cortex-M that is the `cortex-m` crate's
+`critical-section-single-core` feature, which the project's platform pick
+normally already enables; if the link fails on `_critical_section_1_0_acquire`,
+that feature is what is missing.
+
+**Do NOT `.await` a form-B channel in a hardware task.** `receive()` and
+`send()` are futures; the hardware side uses `try_send` / `try_receive` only.
+
+**Do NOT place the static inside `init`.** It is `'static` by construction and
+lives at module scope (inside `mod app` is fine).
+
+### Both forms
 
 **Do NOT use a channel where a shared resource is meant.** A channel carries
 values from one task to another; a shared resource is state a task mutates in
 place. Emitting a channel for state produces a queue nobody drains.
+
+**Do NOT mix forms in one application.** One crate carries every channel the
+app declares; if the manifest holds both, stop and say so.
 
 ## 5. Error handling
 
