@@ -6,6 +6,7 @@ use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     cargo_toml::render,
     layout::LayoutContext,
+    validate, Severity,
 };
 
 fn full_plugin() -> PathBuf {
@@ -306,4 +307,78 @@ version = "{version}"
 "#
     );
     std::fs::write(target.join(format!("specs/modules/{mod_name}.toml")), body).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// [[test_targets]] → [[test]] rows: declaration order, `path` when given,
+// `harness = false` only when false (true is Cargo's default and is
+// elided); the rows sit between the crate target and [dependencies].
+// ---------------------------------------------------------------------------
+#[test]
+fn firmware_test_targets_render_as_test_rows() {
+    let (target, layout) = fresh_project("firmware-layered", "demo", "fw-test-targets");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    let augmented = format!(
+        "{arch}\n\
+         [[test_targets]]\nname = \"zeta_hw\"\nharness = false\n\n\
+         [[test_targets]]\nname = \"alpha-smoke\"\npath = \"tests/on_target/alpha.rs\"\n\n\
+         [[test_targets]]\nname = \"plain\"\nharness = true\n"
+    );
+    std::fs::write(target.join("specs/architecture.toml"), augmented).unwrap();
+
+    let t = render(&layout).unwrap().text;
+    let zeta = "[[test]]\nname = \"zeta_hw\"\nharness = false\n\n";
+    let alpha = "[[test]]\nname = \"alpha-smoke\"\npath = \"tests/on_target/alpha.rs\"\n\n";
+    let plain = "[[test]]\nname = \"plain\"\n\n";
+    assert!(t.contains(zeta), "{t}");
+    assert!(t.contains(alpha), "path rendered when given:\n{t}");
+    assert!(t.contains(plain), "harness = true is elided:\n{t}");
+    assert!(!t.contains("harness = true"), "{t}");
+    let z = t.find(zeta).unwrap();
+    let a = t.find(alpha).unwrap();
+    let p = t.find(plain).unwrap();
+    assert!(z < a && a < p, "declaration order, not lex order:\n{t}");
+    let bin = t.find("[[bin]]").unwrap();
+    let deps = t.find("[dependencies]").unwrap();
+    assert!(
+        bin < z && p < deps,
+        "rows sit between the crate target and [dependencies]:\n{t}"
+    );
+
+    // The schema admits exactly these keys; the spec validates clean.
+    let report = validate::run_project(&target, None).unwrap();
+    let errors: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+}
+
+#[test]
+fn firmware_without_test_targets_emits_no_test_rows() {
+    let (_target, layout) = fresh_project("firmware-layered", "demo", "fw-no-test-targets");
+    let t = render(&layout).unwrap().text;
+    assert!(!t.contains("[[test]]"), "{t}");
+}
+
+// A test target is a closed subset: `required-features`, `bench`,
+// `test = false` and every other Cargo key are rejected until a project
+// brings a witness for them.
+#[test]
+fn firmware_test_target_rejects_keys_outside_the_subset() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-test-target-closed");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[test_targets]]\nname = \"hw\"\nbench = false\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| matches!(f.severity, Severity::Error)
+            && f.message.contains("bench")),
+        "an unknown key on a test target must be a validate error:\n{}",
+        report.render_plain()
+    );
 }

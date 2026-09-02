@@ -82,6 +82,21 @@ version = "^0.4"
 # version = "^2"
 
 # ---------------------------------------------------------------------------
+# Cargo [[test]] targets that need a non-default setting. Cargo
+# auto-discovers tests/<name>.rs by itself; list a target here only when
+# it must run without the standard harness (embedded-test, defmt-test)
+# or lives at a non-default path. Each entry renders one [[test]] row.
+# ---------------------------------------------------------------------------
+# [[test_targets]]
+# name = "hw_integration"
+# harness = false
+
+# [[test_targets]]
+# name = "smoke"
+# path = "tests/on_target/smoke.rs"
+# harness = false
+
+# ---------------------------------------------------------------------------
 # Cross-module port connections.
 #
 # Each [[connections]] entry wires one module's port to another module's

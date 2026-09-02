@@ -116,6 +116,20 @@ properties:
     items:
       $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
 
+  test_targets:
+    description: |
+      Cargo `[[test]]` targets this crate declares explicitly. Cargo
+      auto-discovers `tests/<name>.rs` on its own, so an entry is needed
+      only when a target needs a non-default setting — above all
+      `harness = false` for a target that supplies its own `main`
+      (`embedded-test`, `defmt-test`). Each entry renders one `[[test]]`
+      row: `name`, `path` when given, `harness = false` only when false.
+      Distinct from test *items* (`[[items]]` with `test = true` on a
+      module), which are functions; a target is the binary that hosts
+      them.
+    type: array
+    items: { $ref: "#/$defs/TestTarget" }
+
   connections:
     description: |
       Cross-module port connections. Each entry wires one module's
@@ -147,3 +161,28 @@ $defs:
       from:      { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       to:        { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       flow_type: { type: string }
+
+  TestTarget:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name:
+        description: |
+          Target name in Cargo's target-name grammar (letters, digits,
+          `_`, `-`). With no `path`, Cargo looks for `tests/<name>.rs`.
+        type: string
+        pattern: "^[A-Za-z0-9_-]+$"
+      harness:
+        description: |
+          `false` when the target supplies its own `main` and must not
+          be linked against libtest. Cargo's default is `true`; the
+          emitter writes `harness = false` only when false.
+        type: boolean
+        default: true
+      path:
+        description: |
+          Source path relative to the crate root. Omit to let Cargo
+          infer `tests/<name>.rs`.
+        type: string
+        minLength: 1

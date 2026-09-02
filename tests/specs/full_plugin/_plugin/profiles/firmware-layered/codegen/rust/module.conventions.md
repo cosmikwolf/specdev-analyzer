@@ -380,6 +380,17 @@ Every entry lands in Cargo.toml `[dependencies]` with its `crate`,
 project author already knows how to use the crate; the spec just
 records what it is so the build is reproducible.
 
+### `[[test_targets]]` → `[[test]]` rows
+
+Each `[[test_targets]]` entry in `architecture.toml` lands in Cargo.toml
+as one `[[test]]` row, in declaration order, after the crate target and
+before `[dependencies]`: `name`, then `path` when the spec gives one,
+then `harness = false` only when the spec says so (Cargo's default is
+`true`, so it is never written). Cargo still auto-discovers
+`tests/<name>.rs` targets the spec does not list; list a target only
+when it needs a non-default setting. A test target is the binary that
+hosts test items; it is not a test item and carries no `verifies[]`.
+
 ### Determinism
 
 Cargo.toml entries emit in lex-order by crate name. Within `[features]`
