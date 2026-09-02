@@ -1002,6 +1002,38 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     }
     text.push_str("]\n");
 
+    // `default-members` — spec names members by NAME; Cargo wants
+    // paths, so resolve each through the member table. An unknown name
+    // is a hard error here (not a warning): `manifest` does not run
+    // `validate`, and a `default-members` entry that names no member
+    // is a manifest Cargo rejects. Declaration order, no sort.
+    if !workspace_section.default_members.is_empty() {
+        text.push_str("default-members = [\n");
+        for name in &workspace_section.default_members {
+            let member = workspace_section
+                .members
+                .iter()
+                .find(|m| &m.name == name)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "spec.toml at {}: [workspace].default_members names `{name}`, \
+                         which is not the `name` of any [[workspace.members]] entry",
+                        layout.spec_toml_path.display(),
+                    )
+                })?;
+            text.push_str(&format!("    {},\n", quote_str(&member.path)));
+        }
+        text.push_str("]\n");
+    }
+    // `exclude` — verbatim paths, declaration order.
+    if !workspace_section.exclude.is_empty() {
+        text.push_str("exclude = [\n");
+        for path in &workspace_section.exclude {
+            text.push_str(&format!("    {},\n", quote_str(path)));
+        }
+        text.push_str("]\n");
+    }
+
     // [workspace.package] — only the fields actually present in
     // architecture.toml's [workspace_package]. Emit in Cargo's
     // idiomatic order (matches zfm dogfood baseline): identity →

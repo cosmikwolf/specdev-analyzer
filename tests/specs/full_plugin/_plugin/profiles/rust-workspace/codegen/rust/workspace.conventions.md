@@ -18,6 +18,12 @@ members = [
     "crates/<name-1>",    # spec.toml [[workspace.members]] entries,
     "crates/<name-2>",    # in declaration order
 ]
+default-members = [       # spec.toml [workspace].default_members — member
+    "crates/<name-1>",    # NAMES in the spec, each resolved to that member's
+]                         # path; declaration order; omitted when empty
+exclude = [               # spec.toml [workspace].exclude — paths, verbatim,
+    "tools/<dir>",        # declaration order; omitted when empty
+]
 
 [workspace.package]
 version = "..."           # architecture.toml [workspace_package] fields,
@@ -51,6 +57,12 @@ detected workspace:
 
 ## Determinism
 
-Every emission is byte-stable across runs. Members and dependencies are
-emitted in their authoring order (workspace members) or lex-sorted
-(workspace_dependencies). No timestamps, no machine-specific paths.
+Every emission is byte-stable across runs. Members, default members and
+excludes are emitted in their authoring order; dependencies are
+lex-sorted (workspace_dependencies). No timestamps, no machine-specific
+paths.
+
+A `default_members` name that matches no `[[workspace.members]]` entry
+is an error at emit time as well as at validate time — `manifest` does
+not run `validate`, and Cargo rejects a `default-members` path that is
+not a member.

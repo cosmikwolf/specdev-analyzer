@@ -21,6 +21,7 @@ use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     cargo_toml::render,
     layout::LayoutContext,
+    validate, Severity,
 };
 
 fn full_plugin() -> PathBuf {
@@ -111,9 +112,11 @@ fn bootstrap_emits_workspace_conventions_not_module_conventions() {
         "rust-workspace must NOT carry module.conventions.md (no module surface)"
     );
     assert!(
-        target
+        !target
             .join("specs/specdev/schemas/workspace.schema.yaml")
-            .is_file()
+            .exists(),
+        "spec.toml's [workspace] table is validated by the analyzer's embedded \
+         spec.schema.yaml; the profile ships no copy of that schema"
     );
     assert!(
         target
@@ -791,4 +794,182 @@ source = "src"
         ),
     )
     .unwrap();
+}
+
+fn overwrite_spec_with_two_members_and_root_lists(
+    target: &Path,
+    default_members: &[&str],
+    exclude: &[&str],
+) {
+    let quoted = |xs: &[&str]| {
+        xs.iter()
+            .map(|x| format!("{x:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    std::fs::write(
+        target.join("spec.toml"),
+        format!(
+            r#"spec_version = "1.0"
+
+[project]
+name = "demo-ws"
+profile = "rust-workspace"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "."
+
+[workspace]
+resolver = "2"
+default_members = [{}]
+exclude = [{}]
+
+[[workspace.members]]
+name = "alpha-shared"
+path = "crates/alpha"
+
+[[workspace.members]]
+name = "beta-utils"
+path = "crates/beta"
+"#,
+            quoted(default_members),
+            quoted(exclude),
+        ),
+    )
+    .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 11 — `[workspace].default_members` names members by NAME; the render
+//      resolves each to the member's path and writes `default-members`
+//      after `members`, in declaration order (not member-table order).
+//      `exclude` renders verbatim after it.
+// ---------------------------------------------------------------------------
+#[test]
+fn workspace_root_render_resolves_default_members_and_emits_exclude() {
+    let target = fresh_workspace("ws-default-members");
+    overwrite_spec_with_two_members_and_root_lists(
+        &target,
+        &["beta-utils", "alpha-shared"],
+        &["tools/bench"],
+    );
+    overwrite_workspace_arch_minimal(&target);
+
+    let layout = discover(&target);
+    let t = render(&layout).unwrap().text;
+
+    let members = "members = [\n    \"crates/alpha\",\n    \"crates/beta\",\n]\n";
+    let defaults = "default-members = [\n    \"crates/beta\",\n    \"crates/alpha\",\n]\n";
+    let exclude = "exclude = [\n    \"tools/bench\",\n]\n";
+    assert!(t.contains(members), "{t}");
+    assert!(
+        t.contains(defaults),
+        "default members resolved to paths, in the spec's declaration order:\n{t}"
+    );
+    assert!(t.contains(exclude), "exclude rendered verbatim:\n{t}");
+    let m = t.find(members).unwrap();
+    let d = t.find(defaults).unwrap();
+    let e = t.find(exclude).unwrap();
+    let wp = t.find("[workspace.package]").unwrap();
+    assert!(
+        m < d && d < e && e < wp,
+        "order: members → default-members → exclude → [workspace.package]:\n{t}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 12 — Neither key renders when the spec declares neither: a spec with
+//      no `default_members` / `exclude` emits the pre-existing shape
+//      byte-for-byte (Cargo's own defaults apply).
+// ---------------------------------------------------------------------------
+#[test]
+fn workspace_root_render_omits_default_members_and_exclude_when_undeclared() {
+    let target = fresh_workspace("ws-no-root-lists");
+    overwrite_spec_with_two_members(&target);
+    overwrite_workspace_arch_minimal(&target);
+
+    let layout = discover(&target);
+    let t = render(&layout).unwrap().text;
+    assert!(!t.contains("default-members"), "{t}");
+    assert!(!t.contains("exclude"), "{t}");
+
+    // Empty lists are the same as absent lists.
+    overwrite_spec_with_two_members_and_root_lists(&target, &[], &[]);
+    let layout = discover(&target);
+    assert_eq!(render(&layout).unwrap().text, t, "empty lists render as absent");
+}
+
+// ---------------------------------------------------------------------------
+// 13 — An unknown default member fails BOTH paths: `validate` (the
+//      profile's `workspace_default_member` relation → REDUCE_UNRESOLVED)
+//      and `render` (a hard error, since `manifest` does not run
+//      `validate` and Cargo rejects a `default-members` path that is not
+//      a member).
+// ---------------------------------------------------------------------------
+#[test]
+fn unknown_default_member_fails_validate_and_render() {
+    let target = fresh_workspace("ws-ghost-default-member");
+    overwrite_spec_with_two_members_and_root_lists(&target, &["ghost"], &[]);
+    overwrite_workspace_arch_minimal(&target);
+
+    let report = validate::run_project(&target, None).unwrap();
+    let hits: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(
+        hits.iter().any(|f| f.rule == "REDUCE_UNRESOLVED"
+            && f.message.contains("workspace_default_member")
+            && f.message.contains("`ghost`")),
+        "expected REDUCE_UNRESOLVED naming the relation and `ghost`:\n{}",
+        report.render_plain()
+    );
+
+    let layout = discover(&target);
+    let err = render(&layout).unwrap_err().to_string();
+    assert!(
+        err.contains("default_members") && err.contains("`ghost`"),
+        "render must refuse an unknown default member:\n{err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 14 — The embedded spec.schema.yaml owns the `[workspace]` table: a
+//      typo'd key beside `default_members` is still rejected (the
+//      table stays closed), and a well-formed spec validates clean.
+// ---------------------------------------------------------------------------
+#[test]
+fn workspace_table_stays_closed_and_valid_root_lists_validate_clean() {
+    let target = fresh_workspace("ws-root-lists-valid");
+    overwrite_spec_with_two_members_and_root_lists(
+        &target,
+        &["alpha-shared"],
+        &["tools/bench"],
+    );
+    overwrite_workspace_arch_minimal(&target);
+    let report = validate::run_project(&target, None).unwrap();
+    let errors: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+
+    let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
+    std::fs::write(
+        target.join("spec.toml"),
+        spec.replace("exclude = [", "excluded = ["),
+    )
+    .unwrap();
+    let err = LayoutContext::discover(&target, None)
+        .err()
+        .map(|e| format!("{e:#}"))
+        .unwrap_or_default();
+    assert!(
+        err.contains("excluded"),
+        "an unknown key under [workspace] must be rejected by the embedded schema:\n{err}"
+    );
 }
