@@ -586,6 +586,10 @@ fn render_firmware(
     }
     text.push('\n');
 
+    // [[test]] rows from `[[test_targets]]` — read by fixed key when
+    // present, like the slot tables above.
+    write_test_targets(&mut text, arch.get("test_targets"))?;
+
     write_dependencies_section(&mut text, &deps);
 
     Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
@@ -1071,6 +1075,33 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/// Write one `[[test]]` row per `[[test_targets]]` entry, in declaration
+/// order: `name` always; `path` when given; `harness = false` only when
+/// the entry says so (Cargo's default is `true`, so writing it is noise).
+/// Cargo auto-discovers `tests/<name>.rs` targets the spec does not
+/// list, so an entry exists only to carry a non-default setting.
+fn write_test_targets(text: &mut String, value: Option<&toml::Value>) -> Result<()> {
+    let Some(arr) = value.and_then(toml::Value::as_array) else {
+        return Ok(());
+    };
+    for item in arr {
+        let Some(t) = item.as_table() else { continue };
+        let Some(name) = t.get("name").and_then(toml::Value::as_str) else {
+            return Err(anyhow!("[[test_targets]] entry without a `name`"));
+        };
+        text.push_str("[[test]]\n");
+        text.push_str(&format!("name = {}\n", quote_str(name)));
+        if let Some(path) = t.get("path").and_then(toml::Value::as_str) {
+            text.push_str(&format!("path = {}\n", quote_str(path)));
+        }
+        if t.get("harness").and_then(toml::Value::as_bool) == Some(false) {
+            text.push_str("harness = false\n");
+        }
+        text.push('\n');
+    }
+    Ok(())
+}
 
 fn read_architecture(path: &Path) -> Result<toml::value::Table> {
     if !path.is_file() {
