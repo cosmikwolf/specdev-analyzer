@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
+use crate::lineage::Lineage;
 use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
@@ -871,23 +872,17 @@ fn run_reverse(
         }
     };
 
-    // Enumerate inlined block names: each immediate subdirectory of
-    // <specs_dir>/schemas/inlined/blocks/ whose name maps to a block.
-    let mut inlined_blocks: Vec<String> = Vec::new();
-    if layout.inlined_blocks_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&layout.inlined_blocks_dir) {
-            for e in entries.flatten() {
-                if let Ok(ft) = e.file_type() {
-                    if ft.is_dir() {
-                        if let Some(name) = e.file_name().to_str() {
-                            inlined_blocks.push(name.to_string());
-                        }
-                    }
-                }
-            }
+    // Enumerate inlined block names from lineage.toml — the record `inline`
+    // writes. (An earlier version listed subdirectories of
+    // <specs_dir>/schemas/inlined/blocks/, but `inline` writes flat
+    // `<block>.schema.yaml` files there, so it never saw a real block.)
+    let inlined_blocks: Vec<String> = match Lineage::load(&layout.specdev_root) {
+        Ok(l) => l.blocks.keys().cloned().collect(),
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
         }
-    }
-    inlined_blocks.sort();
+    };
 
     // Parse --into.
     let into_blocks: Vec<String> = into

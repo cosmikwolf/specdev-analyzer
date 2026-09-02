@@ -14,6 +14,8 @@ use std::process::Command;
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
+    inline,
+    layout::LayoutContext,
     items::extract::extract_items_from_source,
     lang::rust::RustAdapter,
 };
@@ -262,12 +264,12 @@ fn reverse_two_inlined_blocks_emits_reverse_003_warning() {
     )
     .unwrap();
 
-    // Simulate two inlined blocks by creating empty subdirs under
-    // schemas/inlined/blocks/. The pre-flight only checks for directory
-    // existence, not for valid block content.
-    let blocks_dir = target.join("specs/specdev/schemas/inlined/blocks");
-    std::fs::create_dir_all(blocks_dir.join("embassy")).unwrap();
-    std::fs::create_dir_all(blocks_dir.join("stm32h5-rs")).unwrap();
+    // Inline two real blocks so the pre-flight reads what `inline` actually
+    // writes (lineage.toml + flat `<block>.schema.yaml` files), not a
+    // simulated layout.
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
 
     let out = Command::new(analyzer_bin())
         .arg("reverse")
@@ -307,9 +309,9 @@ fn reverse_into_scopes_to_subset() {
         },
     )
     .unwrap();
-    let blocks_dir = target.join("specs/specdev/schemas/inlined/blocks");
-    std::fs::create_dir_all(blocks_dir.join("embassy")).unwrap();
-    std::fs::create_dir_all(blocks_dir.join("stm32h5-rs")).unwrap();
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
 
     let out = Command::new(analyzer_bin())
         .arg("reverse")
