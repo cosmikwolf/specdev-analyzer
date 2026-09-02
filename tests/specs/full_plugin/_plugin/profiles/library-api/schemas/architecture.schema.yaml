@@ -21,6 +21,19 @@ properties:
   features:
     type: array
     items: { $ref: "#/$defs/Feature" }
+  external_deps:
+    description: |
+      Crates the library depends on as a whole, rather than through any
+      one module. Every entry lands in Cargo.toml `[dependencies]` (or
+      `[dev-dependencies]` with `test_only = true`). Use this for
+      crate-wide picks (a serialization framework, an error type, a
+      logging facade) and for workspace-inherited or path dependencies
+      on sibling crates; keep crates that only one module needs in that
+      module's own `external_deps[]` instead, so the dependency stays
+      traceable to what wanted it.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
   profiles:
     description: |
       Cargo build profiles (`[profile.<name>]`) — a closed subset: the

@@ -482,3 +482,57 @@ fn firmware_duplicate_feature_names_fail_validate() {
         report.render_plain()
     );
 }
+
+// ---------------------------------------------------------------------------
+// A crate may sit in [dependencies] and [dev-dependencies] with different
+// features — Cargo unions them for test builds; the spec keeps both rows
+// (found by the first adoption: a no_std core with `postcard` plain and
+// `postcard` + `use-std` for its host tests).
+// ---------------------------------------------------------------------------
+#[test]
+fn same_crate_in_dependencies_and_dev_dependencies_keeps_both_rows() {
+    let (target, layout) = fresh_project("library-api", "liblib", "lib-dual-table");
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        r#"[[external_deps]]
+crate = "postcard"
+version = "1.1"
+
+[[external_deps]]
+crate = "postcard"
+version = "1.1"
+features = ["use-std"]
+test_only = true
+"#,
+    )
+    .unwrap();
+    let r = render(&layout).unwrap();
+    assert!(r.text.contains("[dependencies]\npostcard = \"1.1\"\n"), "{}", r.text);
+    assert!(
+        r.text.contains("[dev-dependencies]\npostcard = { version = \"1.1\", features = [\"use-std\"] }\n"),
+        "the dev row keeps its own features:\n{}",
+        r.text
+    );
+    assert!(r.warnings.is_empty(), "no conflict warning for a dual-table crate: {:?}", r.warnings);
+}
+
+// ---------------------------------------------------------------------------
+// [project].version is emitted literally on a standalone crate.
+// ---------------------------------------------------------------------------
+#[test]
+fn project_version_is_emitted_literally() {
+    let (target, _layout) = fresh_project("library-api", "liblib", "lib-version");
+    let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
+    std::fs::write(
+        target.join("spec.toml"),
+        spec.replace("[project]\n", "[project]\nversion = \"0.4.2\"\n"),
+    )
+    .unwrap();
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    let r = render(&layout).unwrap();
+    assert!(
+        r.text.contains("[package]\nname = \"liblib\"\nversion = \"0.4.2\"\n"),
+        "{}",
+        r.text
+    );
+}

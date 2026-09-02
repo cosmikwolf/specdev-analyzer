@@ -42,6 +42,11 @@ pub struct ProjectSection {
     pub name: String,
     pub profile: String,
     pub language: String,
+    /// The crate's `[package] version`. Optional; emitted literally when
+    /// set. A workspace member that leaves it unset inherits the
+    /// workspace's value when the root declares one.
+    #[serde(default)]
+    pub version: Option<String>,
     /// Rust edition. Optional; defaults to "2021" at gen time.
     #[serde(default)]
     pub edition: Option<String>,

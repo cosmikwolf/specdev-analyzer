@@ -471,7 +471,7 @@ fn render_firmware(
     let arch = read_architecture(&layout.architecture_toml_path)?;
     let parsed_features = parse_library_features(arch.get("features"))?;
 
-    let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+    let mut deps: DepMap = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
     // [platform.mcu_core] / [platform.mcu_runtime]
@@ -582,12 +582,12 @@ fn render_library(
 
     let parsed_features = parse_library_features(arch.get("features"))?;
 
-    let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+    let mut deps: DepMap = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Library architecture currently has no [[external_deps]]
-    // (library-api's typed picks live at module level), but accept it
-    // if present for future flexibility.
+    // Architecture-level [[external_deps]] — crate-wide picks and
+    // workspace-inherited / path deps on siblings; read by fixed key when
+    // the profile's schema admits it (library shapes do).
     for c in extract_crate_ref_array(arch.get("external_deps"))? {
         merge_dep(&mut deps, c, &mut warnings);
     }
@@ -764,7 +764,7 @@ fn render_audio_plugin(
         }
     };
 
-    let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
+    let mut deps: DepMap = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
     // Architecture-level [[external_deps]] (unstructured open list).
@@ -1274,10 +1274,17 @@ fn collect_module_external_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>>
 /// already exists, push a warning and keep the existing entry
 /// (deterministic: lex-first source wins; warning surfaces the
 /// conflict so the spec author can reconcile).
-fn merge_dep(deps: &mut BTreeMap<String, CrateRef>, c: CrateRef, warnings: &mut Vec<String>) {
-    match deps.get(&c.crate_name) {
+/// Dependency accumulator keyed by `(test_only, crate)`: a crate may sit
+/// in both `[dependencies]` and `[dev-dependencies]` with different
+/// features (Cargo unions them for test builds), so the two rows must
+/// not merge into one.
+type DepMap = BTreeMap<(bool, String), CrateRef>;
+
+fn merge_dep(deps: &mut DepMap, c: CrateRef, warnings: &mut Vec<String>) {
+    let key = (c.test_only == Some(true), c.crate_name.clone());
+    match deps.get(&key) {
         None => {
-            deps.insert(c.crate_name.clone(), c);
+            deps.insert(key, c);
         }
         Some(existing) if existing == &c => {
             // exact duplicate; ignore.
@@ -1320,7 +1327,7 @@ fn merge_dep(deps: &mut BTreeMap<String, CrateRef>, c: CrateRef, warnings: &mut 
             } else if merged.default_features.is_none() {
                 merged.default_features = c.default_features;
             }
-            deps.insert(c.crate_name.clone(), merged);
+            deps.insert(key, merged);
         }
     }
 }
@@ -1407,9 +1414,11 @@ fn write_package_section(
             .unwrap_or(false)
     };
 
-    // version — workspace-inheritable; not on standalone ProjectSection
-    // today (could become a per-crate override field later).
-    if inherits("version") {
+    // version — the crate's own `[project].version` wins; else inherit
+    // the workspace's when it declares one; else Cargo's default applies.
+    if let Some(v) = &project.version {
+        text.push_str(&format!("version = {}\n", quote_str(v)));
+    } else if inherits("version") {
         text.push_str("version.workspace = true\n");
     }
 
@@ -1450,17 +1459,20 @@ fn write_package_section(
     }
 }
 
-fn write_dependencies_section(text: &mut String, deps: &BTreeMap<String, CrateRef>) {
-    // Partition by the `test_only` routing flag: regular deps go under
-    // `[dependencies]`, test-only deps under `[dev-dependencies]`.
-    // `test_only` is never rendered into the value.
+fn write_dependencies_section(text: &mut String, deps: &DepMap) {
+    // Partition by the `test_only` routing flag (the map key's first
+    // half): regular deps go under `[dependencies]`, test-only deps under
+    // `[dev-dependencies]`. `test_only` is never rendered into the value.
+    // The same crate may appear in both — Cargo allows different features
+    // on the two rows and unions them for test builds.
     text.push_str("[dependencies]\n");
-    for (name, c) in deps.iter().filter(|(_, c)| c.test_only != Some(true)) {
+    for ((_, name), c) in deps.iter().filter(|((dev, _), _)| !*dev) {
         text.push_str(&format!("{} = {}\n", name, render_dep_value(c)));
     }
     let dev: Vec<(&String, &CrateRef)> = deps
         .iter()
-        .filter(|(_, c)| c.test_only == Some(true))
+        .filter(|((dev, _), _)| *dev)
+        .map(|((_, name), c)| (name, c))
         .collect();
     if !dev.is_empty() {
         text.push_str("\n[dev-dependencies]\n");
