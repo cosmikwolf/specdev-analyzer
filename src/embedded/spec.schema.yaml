@@ -24,6 +24,15 @@ properties:
         description: Project name. Lowercase letters, digits, underscores, hyphens; must start with a letter.
         pattern: "^[a-z][a-z0-9_-]*$"
         maxLength: 64
+      version:
+        type: string
+        description: |
+          The crate's `[package] version` (a semver string). Optional.
+          Emitted literally when set; a workspace member that leaves it
+          unset inherits the workspace's `[workspace.package] version`
+          when the root declares one (`version.workspace = true`), and a
+          member that sets it overrides the inherited value.
+        minLength: 1
       profile:
         type: string
         description: Profile owning the project shape (e.g. firmware-layered, library-api).

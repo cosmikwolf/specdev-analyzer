@@ -443,9 +443,14 @@ serde = ["std"]
 
 The generated `Cargo.toml` reflects this exactly. Cargo.toml is OUTPUT:
 the analyzer's `manifest` subcommand writes it deterministically from
-the spec (architecture features + the union of module `external_deps`)
-— never maintain it by hand; if a dep or feature is missing, edit the
-spec and re-emit.
+the spec (architecture features + architecture-level `[[external_deps]]`
++ the union of module `external_deps`) — never maintain it by hand; if a
+dep or feature is missing, edit the spec and re-emit. Architecture-level
+`[[external_deps]]` is for crate-wide picks and for workspace-inherited
+or path deps on sibling crates; a crate one module needs belongs in that
+module's own `external_deps[]`. The same crate may appear once as a
+regular dep and once with `test_only = true` — Cargo allows different
+features on the two — and the emitter keeps both rows.
 
 Do **not** emit feature definitions in code (e.g. `#[cfg(feature = …)]`
 for an undeclared feature). The schema check catches missing feature
