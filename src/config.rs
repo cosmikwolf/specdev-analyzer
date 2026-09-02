@@ -97,6 +97,17 @@ pub struct WorkspaceSection {
     #[serde(default)]
     pub resolver: Option<String>,
     pub members: Vec<WorkspaceMember>,
+    /// Member *names* (not paths) that `cargo` builds by default at the
+    /// root. Resolved to each member's `path` at emit time; a name that
+    /// matches no member fails validation (the profile's
+    /// `workspace_default_member` relation) and fails the render.
+    /// Empty = Cargo's default (every member).
+    #[serde(default)]
+    pub default_members: Vec<String>,
+    /// Paths Cargo must not treat as members. Emitted verbatim as
+    /// `exclude = [...]`. Empty = nothing excluded.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

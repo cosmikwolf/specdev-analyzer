@@ -16,6 +16,18 @@ source = "."
 [workspace]
 resolver = "2"
 
+# Optional: the members `cargo` builds at the root when no `-p` /
+# `--workspace` flag is given. Member NAMES from [[workspace.members]]
+# (the emitter writes their paths). Use it when a member cannot build
+# for the host — a board crate — and must be opted into by hand.
+#
+# default_members = ["my-core", "my-utils"]
+#
+# Optional: paths Cargo must not treat as members even though they sit
+# under this root (a host-only tool, a vendored crate). Emitted verbatim.
+#
+# exclude = ["tools/my-monitor"]
+
 # Example member entries — replace with real members. Each entry's
 # `name` must match the member's [project].name; `path` is relative
 # to this spec.toml.
