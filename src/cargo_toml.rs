@@ -517,6 +517,7 @@ fn render_firmware(
 ) -> Result<RenderedCargoToml> {
     let project = &layout.spec.project;
     let arch = read_architecture(&layout.architecture_toml_path)?;
+    let parsed_features = parse_library_features(arch.get("features"))?;
 
     let mut deps: BTreeMap<String, CrateRef> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -589,6 +590,10 @@ fn render_firmware(
     // [[test]] rows from `[[test_targets]]` — read by fixed key when
     // present, like the slot tables above.
     write_test_targets(&mut text, arch.get("test_targets"))?;
+
+    // [features] — the same writer the library and plugin shapes use;
+    // `[[features]]` is read by fixed key when present.
+    write_features_section(&mut text, &parsed_features);
 
     write_dependencies_section(&mut text, &deps);
 
@@ -708,37 +713,7 @@ fn render_library(
         text.push('\n');
     }
 
-    if !parsed_features.features.is_empty() {
-        text.push_str("[features]\n");
-        // Synthetic `default = [list]` line — emitted always when there's
-        // a [features] section, so member crates that have features but
-        // no defaults still render `default = []` (matches Cargo
-        // convention and the zfm dogfood baseline).
-        let default_arr = parsed_features
-            .defaults
-            .iter()
-            .map(|d| quote_str(d))
-            .collect::<Vec<_>>()
-            .join(", ");
-        text.push_str(&format!("default = [{}]\n", default_arr));
-        for (name, deps) in &parsed_features.features {
-            if name == "default" {
-                // User-authored `default` feature would collide with the
-                // synthetic line; skip and emit the literal at synthesis
-                // time instead. (Real projects don't author `default`
-                // explicitly; if they do, the synthesis above already
-                // covers it via the `default = true` flag.)
-                continue;
-            }
-            let arr = deps
-                .iter()
-                .map(|d| quote_str(d))
-                .collect::<Vec<_>>()
-                .join(", ");
-            text.push_str(&format!("{} = [{}]\n", name, arr));
-        }
-        text.push('\n');
-    }
+    write_features_section(&mut text, &parsed_features);
 
     write_dependencies_section(&mut text, &deps);
 
@@ -864,29 +839,7 @@ fn render_audio_plugin(
 
     // [features] — same synthesis as library-api (always-emit `default
     // = [...]` line when [features] is present).
-    if !parsed_features.features.is_empty() {
-        text.push_str("[features]\n");
-        let default_arr = parsed_features
-            .defaults
-            .iter()
-            .map(|d| quote_str(d))
-            .collect::<Vec<_>>()
-            .join(", ");
-        text.push_str(&format!("default = [{}]\n", default_arr));
-        for (name, feature_deps) in &parsed_features.features {
-            if name == "default" {
-                continue;
-            }
-            let arr = feature_deps
-                .iter()
-                .map(|d| quote_str(d))
-                .collect::<Vec<_>>()
-                .join(", ");
-            text.push_str(&format!("{} = [{}]\n", name, arr));
-        }
-        text.push('\n');
-    }
-
+    write_features_section(&mut text, &parsed_features);
     write_dependencies_section(&mut text, &deps);
 
     // Pair the [[bin]] standalone row with a stub source file so
@@ -1101,6 +1054,39 @@ fn write_test_targets(text: &mut String, value: Option<&toml::Value>) -> Result<
         text.push('\n');
     }
     Ok(())
+}
+
+/// Write the `[features]` section — shared by every shape that reads
+/// `[[features]]`. A synthetic `default = [...]` line comes first,
+/// always (a crate with features but no defaults still renders
+/// `default = []`, matching Cargo convention); then each feature's deps
+/// in name order. A user-authored `default` feature is skipped — the
+/// `default = true` flag is how the line is populated. Emits nothing
+/// when the spec declares no features.
+fn write_features_section(text: &mut String, parsed_features: &ParsedFeatures) {
+    if parsed_features.features.is_empty() {
+        return;
+    }
+    text.push_str("[features]\n");
+    let default_arr = parsed_features
+        .defaults
+        .iter()
+        .map(|d| quote_str(d))
+        .collect::<Vec<_>>()
+        .join(", ");
+    text.push_str(&format!("default = [{}]\n", default_arr));
+    for (name, deps) in &parsed_features.features {
+        if name == "default" {
+            continue;
+        }
+        let arr = deps
+            .iter()
+            .map(|d| quote_str(d))
+            .collect::<Vec<_>>()
+            .join(", ");
+        text.push_str(&format!("{} = [{}]\n", name, arr));
+    }
+    text.push('\n');
 }
 
 fn read_architecture(path: &Path) -> Result<toml::value::Table> {

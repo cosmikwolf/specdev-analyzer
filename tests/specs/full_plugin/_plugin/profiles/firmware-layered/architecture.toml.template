@@ -82,6 +82,27 @@ version = "^0.4"
 # version = "^2"
 
 # ---------------------------------------------------------------------------
+# Cargo features the binary exposes. Each [[features]] entry renders one
+# line of Cargo.toml [features]; `default = true` puts it in the
+# synthesized `default = [...]` line. `cargo_deps` carries Cargo's
+# feature-dep strings: `dep:<crate>` enables a dep whose CrateReference
+# carries `optional = true`. A feature with no deps is a plain cfg switch.
+# ---------------------------------------------------------------------------
+# EXAMPLE: an optional dep enabled by a default feature. Mark the dep
+# `optional = true` on its CrateReference (here [runtime.panic_handler]),
+# then declare the feature that enables it:
+# [[features]]
+# name = "panic-probe"
+# description = "Link panic-probe; drop it for a size-constrained build."
+# default = true
+# cargo_deps = ["dep:panic-probe"]
+
+# EXAMPLE: a cfg-only feature.
+# [[features]]
+# name = "debug-memory"
+# description = "Enable the heap/stack usage report on the debug menu."
+
+# ---------------------------------------------------------------------------
 # Cargo [[test]] targets that need a non-default setting. Cargo
 # auto-discovers tests/<name>.rs by itself; list a target here only when
 # it must run without the standard harness (embedded-test, defmt-test)

@@ -116,6 +116,20 @@ properties:
     items:
       $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
 
+  features:
+    description: |
+      Cargo features the binary exposes. Each entry renders one line of
+      Cargo.toml `[features]`; entries marked `default = true` form the
+      synthesized `default = [...]` line. `cargo_deps` carries Cargo's
+      feature-dep strings — `dep:<crate>` enables a dep whose
+      CrateReference carries `optional = true` (an optional panic
+      handler, a debug-only crate); a feature with no deps is a plain
+      cfg switch. Names are unique (`feature_unique_names`); a
+      `depends_on` entry that names no declared feature is a validate
+      error (`feature_depends_on` relation).
+    type: array
+    items: { $ref: "#/$defs/Feature" }
+
   test_targets:
     description: |
       Cargo `[[test]]` targets this crate declares explicitly. Cargo
@@ -186,3 +200,47 @@ $defs:
           infer `tests/<name>.rs`.
         type: string
         minLength: 1
+
+  Feature:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name:
+        $ref: "enums.schema.yaml#/$defs/FeatureName"
+      description:
+        type: string
+      depends_on:
+        description: >
+          Other features that must be enabled for this feature to be
+          meaningful. Each entry must name a declared feature — an
+          unknown name is a validate error through the
+          `feature_depends_on` relation.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
+        uniqueItems: true
+      cargo_deps:
+        description: >
+          Cargo's open-form feature dep strings — accepts `dep:<crate>`
+          (enable an optional dep without the implicit-feature shadow),
+          `<crate>/<feature>` (enable a feature on a dep), and
+          `<crate>?/<feature>` (weak-dep variant). Emitted into the
+          generated Cargo.toml `[features]` table verbatim, after the
+          `depends_on` entries.
+
+          Use `depends_on` for sibling-feature references (resolved at
+          validate time); use this field for cargo-grammar references
+          that the spec cannot resolve. Cargo rejects a `dep:` that
+          names a crate not marked `optional = true`; the spec does not
+          re-check that.
+        type: array
+        items:
+          type: string
+          pattern: "^(dep:[a-z0-9_-]+|[a-z0-9_-]+\\??/[a-z0-9_-]+)$"
+        uniqueItems: true
+      default:
+        description: >
+          When `true`, this feature is in the crate's `[features]
+          default = [...]` set. Defaults to `false`.
+        type: boolean
+        default: false

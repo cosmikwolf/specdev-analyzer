@@ -101,3 +101,11 @@ $defs:
       ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
     type: string
     pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+
+  FeatureName:
+    description: >
+      Cargo feature name. Lowercase, digits, hyphens, underscores.
+      Must start with a letter or digit. Matches cargo's accepted
+      feature-name grammar.
+    type: string
+    pattern: "^[a-z0-9][a-z0-9_-]*$"
