@@ -136,29 +136,38 @@ properties:
                 minLength: 1
       features:
         description: |
-          [features] synthesis policy mirroring library-api / audio-plugin
-          today.
+          [features] synthesis policy — DESCRIPTIVE ONLY. The cargo-toml
+          renderer does not read this section: dispatch is by `shape`, and
+          each renderer reads architecture.toml's `[[features]]` by fixed
+          key when its shape supports them. Keep the values truthful for
+          the shape; wiring the renderer to these keys is the v1.1
+          fixed-key cleanup.
         type: object
         additionalProperties: false
         properties:
           synthesize_default:
             description: |
-              When true, always emit `default = [...]` line in [features]
-              section (matches the existing library-api / audio-plugin
-              behavior).
+              Declares that the renderer for this shape always emits a
+              `default = [...]` line in [features]. Not read by the
+              renderer — see `features`.
             type: boolean
           drain_from:
             description: |
-              architecture.toml table paths supplying [[features]] entries.
-              e.g. ["features"] reads architecture.toml's [[features]] array.
+              Declares the architecture.toml table paths that supply
+              [[features]] entries, e.g. ["features"]. Not read by the
+              renderer — it reads `features` by fixed key.
             type: array
             items:
               type: string
       architecture_deps:
         description: |
-          Crate-ref drains from architecture.toml. `typed_slots` covers
-          firmware-layered's [platform.mcu_core] etc.; `open_arrays` covers
-          [[external_deps]]-style open lists.
+          Crate-ref drains from architecture.toml — DESCRIPTIVE ONLY. The
+          renderer does not read this section; it reads the single-crate
+          slot tables (`platform`, `runtime`, `logger`) and the open
+          `[[external_deps]]` list by fixed key. `typed_slots` names the
+          slot tables the binary shape reads; `open_arrays` names the
+          open lists. Keep them truthful; wiring the renderer to these
+          keys is the v1.1 fixed-key cleanup.
         type: object
         additionalProperties: false
         properties:
