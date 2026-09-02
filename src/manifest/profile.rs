@@ -141,6 +141,10 @@ pub struct PairedStub {
     pub template_file: String,
 }
 
+/// `cargo_toml.features` — descriptive only. The cargo-toml renderer
+/// dispatches on `shape` and reads architecture.toml's `[[features]]` by
+/// fixed key; nothing reads these two fields. Kept because inlined
+/// projects carry them; wiring them in is the v1.1 fixed-key cleanup.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct FeaturesSection {
     #[serde(default)]
@@ -149,6 +153,10 @@ pub struct FeaturesSection {
     pub drain_from: Vec<String>,
 }
 
+/// `cargo_toml.architecture_deps` — descriptive only. The renderer reads
+/// the slot tables (`platform`, `runtime`, `logger`) and `[[external_deps]]`
+/// by fixed key; nothing reads these two fields. Same v1.1 cleanup as
+/// [`FeaturesSection`].
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ArchitectureDepsSection {
     #[serde(default)]
