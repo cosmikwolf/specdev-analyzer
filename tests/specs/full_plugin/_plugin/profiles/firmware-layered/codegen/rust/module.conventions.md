@@ -380,6 +380,22 @@ Every entry lands in Cargo.toml `[dependencies]` with its `crate`,
 project author already knows how to use the crate; the spec just
 records what it is so the build is reproducible.
 
+### `[[features]]` → `[features]`
+
+Each `[[features]]` entry in `architecture.toml` lands in Cargo.toml
+`[features]`, in name order, after the crate target (and any `[[test]]`
+rows) and before `[dependencies]`. The section always opens with a
+synthesized `default = [...]` line listing the entries marked
+`default = true` (empty when none). A feature's line carries its
+`depends_on` entries and its `cargo_deps` strings, sorted; a feature
+with neither is a plain cfg switch and renders `name = []`. A
+`cargo_deps` entry of the form `dep:<crate>` enables a dep whose
+CrateReference carries `optional = true` — that dep renders with
+`optional = true` in `[dependencies]`, and Cargo refuses a `dep:` that
+names a non-optional crate (Cargo's error; the spec does not re-check
+it). Every `#[cfg(feature = "...")]` site in a module must name a
+declared feature.
+
 ### `[[test_targets]]` → `[[test]]` rows
 
 Each `[[test_targets]]` entry in `architecture.toml` lands in Cargo.toml

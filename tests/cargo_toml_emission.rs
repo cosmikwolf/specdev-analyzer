@@ -382,3 +382,103 @@ fn firmware_test_target_rejects_keys_outside_the_subset() {
         report.render_plain()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Firmware [features]: a default set, an empty (cfg-only) feature, a
+// feature that depends on another, a `dep:` feature over an optional
+// typed-slot dep. The optional slot dep renders `optional = true`; the
+// section sits between the crate target and [dependencies]; the spec
+// validates clean (Feature entity + feature_depends_on relation +
+// feature_unique_names rule all present).
+// ---------------------------------------------------------------------------
+#[test]
+fn firmware_features_render_with_default_line_and_optional_slot_dep() {
+    let (target, layout) = fresh_project("firmware-layered", "demo", "fw-features");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^0.3\"\nfeatures = [\"print-defmt\"]\n";
+    assert!(arch.contains(anchor), "template shape changed; update this test's anchor");
+    let arch = arch.replace(anchor, &format!("{anchor}optional = true\n"));
+    let augmented = format!(
+        "{arch}\n\
+         [[features]]\nname = \"panic-probe\"\ndefault = true\ncargo_deps = [\"dep:panic-probe\"]\n\n\
+         [[features]]\nname = \"debug-memory\"\n\n\
+         [[features]]\nname = \"fb-rgb565\"\ndepends_on = [\"debug-memory\"]\n"
+    );
+    std::fs::write(target.join("specs/architecture.toml"), augmented).unwrap();
+
+    let t = render(&layout).unwrap().text;
+    let features = "[features]\n\
+                    default = [\"panic-probe\"]\n\
+                    debug-memory = []\n\
+                    fb-rgb565 = [\"debug-memory\"]\n\
+                    panic-probe = [\"dep:panic-probe\"]\n\n";
+    assert!(t.contains(features), "{t}");
+    assert!(
+        t.contains(
+            "panic-probe = { version = \"^0.3\", features = [\"print-defmt\"], optional = true }\n"
+        ),
+        "an optional typed-slot dep renders `optional = true`:\n{t}"
+    );
+    let b = t.find("[[bin]]").unwrap();
+    let f = t.find("[features]").unwrap();
+    let d = t.find("[dependencies]").unwrap();
+    assert!(b < f && f < d, "[[bin]] → [features] → [dependencies]:\n{t}");
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errors: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+}
+
+// A spec with no [[features]] renders no [features] section — the
+// pre-existing firmware shape, byte-for-byte (firmware_cargo_toml_byte_stable
+// covers stability; this covers absence).
+#[test]
+fn firmware_without_features_emits_no_features_section() {
+    let (_target, layout) = fresh_project("firmware-layered", "demo", "fw-no-features");
+    let t = render(&layout).unwrap().text;
+    assert!(!t.contains("[features]"), "{t}");
+}
+
+// `depends_on` resolves through the feature_depends_on relation:
+// an unknown feature name is REDUCE_UNRESOLVED.
+#[test]
+fn firmware_feature_depends_on_unknown_feature_fails_validate() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-features-ghost");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[features]]\nname = \"alpha\"\ndepends_on = [\"ghost\"]\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| f.rule == "REDUCE_UNRESOLVED"
+            && f.message.contains("feature_depends_on")
+            && f.message.contains("`ghost`")),
+        "expected REDUCE_UNRESOLVED naming feature_depends_on and `ghost`:\n{}",
+        report.render_plain()
+    );
+}
+
+// Duplicate feature names fail the feature_unique_names rule.
+#[test]
+fn firmware_duplicate_feature_names_fail_validate() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-features-dup");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[features]]\nname = \"alpha\"\n\n[[features]]\nname = \"alpha\"\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| f.rule == "feature_unique_names"
+            && matches!(f.severity, Severity::Error)),
+        "expected a feature_unique_names error:\n{}",
+        report.render_plain()
+    );
+}

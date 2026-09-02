@@ -11,9 +11,9 @@ cargo_toml:
   bin:
     name_template: "{project_name}"
     path_template: "src/main.rs"
-  features:
-    synthesize_default: false     # firmware-layered doesn't ship [[features]] by default
-    drain_from: []
+  features:                       # descriptive — the binary-shape renderer drains
+    synthesize_default: true      #   architecture.toml's [[features]] by fixed key and
+    drain_from: ["features"]      #   always writes `default = [...]` when any exist
   architecture_deps:
     typed_slots:
       - table: "platform"
