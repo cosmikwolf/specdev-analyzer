@@ -477,3 +477,15 @@ spec and re-emit.
 Do **not** emit feature definitions in code (e.g. `#[cfg(feature = …)]`
 for an undeclared feature). The schema check catches missing feature
 names; runtime cargo will catch typos in declared-but-unused names.
+
+Build profiles follow the same rule. A standalone crate's
+`architecture.toml` `[profiles.<name>]` tables land after
+`[dependencies]` as `[profile.<name>]` (dev, release, test, bench, then
+custom profiles lex-sorted; keys in a fixed order; package overrides
+right after their parent). The subset is closed — `opt-level`, `debug`,
+`lto`, `codegen-units`, `panic`, `strip`, `overflow-checks`,
+`debug-assertions`, `incremental`, and `package.<crate>` overrides
+without `panic` / `lto`. In a workspace, profiles belong to the root's
+architecture.toml: Cargo ignores them in a member manifest, `validate`
+rejects them on a member (`PROFILES-ROOT-ONLY`), and the member render
+emits nothing for them.

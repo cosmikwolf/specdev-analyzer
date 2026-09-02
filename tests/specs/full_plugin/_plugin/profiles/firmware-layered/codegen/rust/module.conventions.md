@@ -407,6 +407,20 @@ then `harness = false` only when the spec says so (Cargo's default is
 when it needs a non-default setting. A test target is the binary that
 hosts test items; it is not a test item and carries no `verifies[]`.
 
+### `[profiles.<name>]` → `[profile.<name>]` (standalone crate only)
+
+A standalone firmware crate's build profiles come from `architecture.toml`
+`[profiles.<name>]` and land after `[dependencies]` as `[profile.<name>]`
+tables — dev, release, test, bench in that order, then custom profiles
+lex-sorted, keys in a fixed order, each `[profile.<name>.package.<crate>]`
+override right after its parent with crates lex-sorted. The subset is
+closed (`opt-level`, `debug`, `lto`, `codegen-units`, `panic`, `strip`,
+`overflow-checks`, `debug-assertions`, `incremental`; overrides without
+`panic` / `lto`). In a workspace the profiles belong to the root's
+architecture.toml: Cargo ignores them in a member manifest, `validate`
+rejects them on a member (`PROFILES-ROOT-ONLY`), and the member render
+emits nothing for them.
+
 ### Determinism
 
 Cargo.toml entries emit in lex-order by crate name. Within `[features]`

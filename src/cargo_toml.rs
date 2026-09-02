@@ -402,90 +402,41 @@ pub(crate) struct WorkspaceContext {
     /// is reserved for the future reconciliation pass.
     #[allow(dead_code)]
     pub workspace_deps: BTreeMap<String, CrateRef>,
+    /// The workspace root's `spec.toml` — named in the refusal a member
+    /// gets for declaring root-only tables (build profiles).
+    pub root_spec_toml: PathBuf,
 }
 
 impl WorkspaceContext {
     /// Walk up from the member's spec.toml to find an ancestor spec.toml
     /// carrying `[workspace]` whose `members[].path` references the
-    /// member's directory (relative to the workspace root). Returns
+    /// member's directory — the shared `layout::find_workspace_root_spec`
+    /// walk, which `validate` uses for its root-only rules too. Returns
     /// `Ok(None)` if no workspace ancestor is found (standalone project).
     fn find_for(layout: &LayoutContext) -> Result<Option<Self>> {
-        let member_dir = layout.project_root.as_path();
-        // Start one directory above the member: a workspace's spec.toml
-        // is by definition outside the member's tree.
-        let mut cursor = match member_dir.parent() {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-        loop {
-            let candidate = cursor.join("spec.toml");
-            if candidate.is_file() {
-                if let Some(ctx) = Self::try_load(&candidate, member_dir)? {
-                    return Ok(Some(ctx));
-                }
-            }
-            match cursor.parent() {
-                Some(p) => cursor = p,
-                None => return Ok(None),
-            }
+        match crate::layout::find_workspace_root_spec(layout.project_root.as_path())? {
+            Some(root_spec) => Self::load(&root_spec).map(Some),
+            None => Ok(None),
         }
     }
 
-    fn try_load(
-        candidate_spec: &Path,
-        member_dir: &Path,
-    ) -> Result<Option<Self>> {
-        // Parse the candidate; if it's not a workspace spec or doesn't
-        // include this member, return None and let the caller keep
-        // walking. Parse errors short-circuit to None — a malformed
-        // ancestor spec.toml is the analyzer's job to flag during its
-        // own validate run, not cargo-toml's.
-        let text = std::fs::read_to_string(candidate_spec)
-            .with_context(|| format!("reading {}", candidate_spec.display()))?;
-        let parsed: serde_json::Value = match toml::from_str::<serde_json::Value>(&text) {
-            Ok(v) => v,
-            Err(_) => return Ok(None),
-        };
-        let workspace = match parsed.get("workspace") {
-            Some(w) if w.is_object() => w,
-            _ => return Ok(None),
-        };
-        let candidate_root = candidate_spec.parent().unwrap_or(candidate_spec);
-        let rel_member = match member_dir.strip_prefix(candidate_root) {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
-        };
-        // Normalize to forward slashes for comparison against the
-        // members[].path field, which is always written in spec-toml
-        // forward-slash form.
-        let rel_member_str = rel_member.to_string_lossy().replace('\\', "/");
-        let members = workspace
-            .get("members")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.as_slice())
-            .unwrap_or(&[]);
-        let included = members.iter().any(|m| {
-            m.get("path")
-                .and_then(|p| p.as_str())
-                .map(|p| {
-                    // Trim trailing slash on stored paths for tolerance.
-                    p.trim_end_matches('/') == rel_member_str
-                })
-                .unwrap_or(false)
-        });
-        if !included {
-            return Ok(None);
-        }
-
-        // Found the workspace ancestor. Load architecture.toml from the
-        // workspace's `<paths.specs>/architecture.toml`. Default to
-        // "specs/architecture.toml" if [paths] is unparseable.
+    /// Load the workspace's `[workspace_package]` field set and hoisted
+    /// `[[workspace_dependencies]]` from the root spec.toml found by
+    /// [`Self::find_for`]. The root's architecture.toml lives at
+    /// `<root>/<paths.specs>/architecture.toml`; "specs" when `[paths]`
+    /// is absent.
+    fn load(root_spec: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(root_spec)
+            .with_context(|| format!("reading {}", root_spec.display()))?;
+        let parsed: serde_json::Value = toml::from_str(&text)
+            .with_context(|| format!("parsing {}", root_spec.display()))?;
+        let root_dir = root_spec.parent().unwrap_or(root_spec);
         let specs_dir = parsed
             .get("paths")
             .and_then(|p| p.get("specs"))
             .and_then(|s| s.as_str())
             .unwrap_or("specs");
-        let arch_path = candidate_root.join(specs_dir).join("architecture.toml");
+        let arch_path = root_dir.join(specs_dir).join("architecture.toml");
         let arch = read_architecture(&arch_path)?;
 
         let mut package_fields: BTreeSet<String> = BTreeSet::new();
@@ -500,10 +451,11 @@ impl WorkspaceContext {
             workspace_deps.insert(c.crate_name.clone(), c);
         }
 
-        Ok(Some(WorkspaceContext {
+        Ok(WorkspaceContext {
             package_fields,
             workspace_deps,
-        }))
+            root_spec_toml: root_spec.to_path_buf(),
+        })
     }
 }
 
@@ -596,6 +548,16 @@ fn render_firmware(
     write_features_section(&mut text, &parsed_features);
 
     write_dependencies_section(&mut text, &deps);
+
+    // [profile.*] — a standalone crate's own; refused (warning, nothing
+    // emitted) when this crate is a workspace member.
+    write_profiles(
+        &mut text,
+        arch.get("profiles"),
+        workspace,
+        &layout.architecture_toml_path,
+        &mut warnings,
+    )?;
 
     Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
 }
@@ -716,6 +678,16 @@ fn render_library(
     write_features_section(&mut text, &parsed_features);
 
     write_dependencies_section(&mut text, &deps);
+
+    // [profile.*] — a standalone crate's own; refused (warning, nothing
+    // emitted) when this crate is a workspace member.
+    write_profiles(
+        &mut text,
+        arch.get("profiles"),
+        workspace,
+        &layout.architecture_toml_path,
+        &mut warnings,
+    )?;
 
     // Pair an emitted `[[bin]]` with a stub source file so the crate
     // compiles on a fresh emit (the caller skips the write when the file
@@ -842,6 +814,16 @@ fn render_audio_plugin(
     write_features_section(&mut text, &parsed_features);
     write_dependencies_section(&mut text, &deps);
 
+    // [profile.*] — a standalone crate's own; refused (warning, nothing
+    // emitted) when this crate is a workspace member.
+    write_profiles(
+        &mut text,
+        arch.get("profiles"),
+        workspace,
+        &layout.architecture_toml_path,
+        &mut warnings,
+    )?;
+
     // Pair the [[bin]] standalone row with a stub source file so
     // the project compiles immediately after a fresh emit. The caller
     // skips the write if the file already exists, so hand-edited bins
@@ -942,7 +924,7 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         .expect("render_workspace_root only called when [workspace] is set");
 
     let arch = read_architecture(&layout.architecture_toml_path)?;
-    let warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     let mut text = String::new();
 
@@ -1022,6 +1004,15 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         }
     }
 
+    // [profile.*] — root-only; read by fixed key when present.
+    write_profiles(
+        &mut text,
+        arch.get("profiles"),
+        None,
+        &layout.architecture_toml_path,
+        &mut warnings,
+    )?;
+
     Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
 }
 
@@ -1087,6 +1078,132 @@ fn write_features_section(text: &mut String, parsed_features: &ParsedFeatures) {
         text.push_str(&format!("{} = [{}]\n", name, arr));
     }
     text.push('\n');
+}
+
+/// Write `[profile.<name>]` tables from architecture.toml's `profiles`
+/// table — a closed subset validated by the embedded
+/// `cargo_profiles.schema.yaml`. Built-ins first in Cargo's order (dev,
+/// release, test, bench), then custom profiles lex-sorted; keys in a
+/// fixed order (`inherits` first on a custom profile); each
+/// `[profile.<name>.package.<crate>]` override right after its parent,
+/// crates lex-sorted. Values keep Cargo's spelling (`opt-level = "s"`,
+/// `debug = 2`). Emits nothing when the spec declares no profiles.
+///
+/// Root-only: when `workspace` is `Some` (a member-mode render) and the
+/// member declares profiles, nothing is written and a warning names the
+/// workspace root as the home. Cargo ignores profiles in a member
+/// manifest, and `manifest` does not run `validate`, so the refusal has
+/// to live here as well as in the validate rule.
+fn write_profiles(
+    text: &mut String,
+    value: Option<&toml::Value>,
+    workspace: Option<&WorkspaceContext>,
+    architecture_toml_path: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    let Some(table) = value.and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    if table.is_empty() {
+        return Ok(());
+    }
+    if let Some(ws) = workspace {
+        warnings.push(format!(
+            "{} declares [profiles.*] but this crate is a member of the workspace at {}; \
+             Cargo ignores profiles in a member manifest, so nothing was emitted — \
+             declare them in the workspace root's architecture.toml",
+            architecture_toml_path.display(),
+            ws.root_spec_toml.display(),
+        ));
+        return Ok(());
+    }
+
+    const BUILTIN: [&str; 4] = ["dev", "release", "test", "bench"];
+    const KEYS: [&str; 9] = [
+        "opt-level",
+        "debug",
+        "lto",
+        "codegen-units",
+        "panic",
+        "strip",
+        "overflow-checks",
+        "debug-assertions",
+        "incremental",
+    ];
+    const OVERRIDE_KEYS: [&str; 7] = [
+        "opt-level",
+        "debug",
+        "codegen-units",
+        "strip",
+        "overflow-checks",
+        "debug-assertions",
+        "incremental",
+    ];
+
+    let mut names: Vec<&str> = BUILTIN
+        .iter()
+        .copied()
+        .filter(|n| table.contains_key(*n))
+        .collect();
+    let mut custom: Vec<&str> = table
+        .keys()
+        .map(String::as_str)
+        .filter(|k| !BUILTIN.contains(k))
+        .collect();
+    custom.sort_unstable();
+    names.extend(custom);
+
+    for name in names {
+        let Some(profile) = table.get(name).and_then(toml::Value::as_table) else {
+            return Err(anyhow!("[profiles.{name}] must be a table"));
+        };
+        text.push('\n');
+        text.push_str(&format!("[profile.{name}]\n"));
+        if let Some(inherits) = profile.get("inherits").and_then(toml::Value::as_str) {
+            text.push_str(&format!("inherits = {}\n", quote_str(inherits)));
+        }
+        for key in KEYS {
+            if let Some(v) = profile.get(key) {
+                text.push_str(&format!("{key} = {}\n", render_profile_value(name, key, v)?));
+            }
+        }
+        if let Some(packages) = profile.get("package").and_then(toml::Value::as_table) {
+            let mut crates: Vec<&str> = packages.keys().map(String::as_str).collect();
+            crates.sort_unstable();
+            for crate_name in crates {
+                let Some(overrides) = packages.get(crate_name).and_then(toml::Value::as_table)
+                else {
+                    return Err(anyhow!(
+                        "[profiles.{name}.package.{crate_name}] must be a table"
+                    ));
+                };
+                text.push('\n');
+                text.push_str(&format!("[profile.{name}.package.{crate_name}]\n"));
+                for key in OVERRIDE_KEYS {
+                    if let Some(v) = overrides.get(key) {
+                        text.push_str(&format!(
+                            "{key} = {}\n",
+                            render_profile_value(name, key, v)?
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A profile knob's value in Cargo's own spelling: strings quoted,
+/// integers and booleans bare. The schema admits nothing else.
+fn render_profile_value(profile: &str, key: &str, v: &toml::Value) -> Result<String> {
+    match v {
+        toml::Value::String(s) => Ok(quote_str(s)),
+        toml::Value::Integer(i) => Ok(i.to_string()),
+        toml::Value::Boolean(b) => Ok(b.to_string()),
+        other => Err(anyhow!(
+            "[profiles.{profile}].{key}: unsupported value `{other}` (string, integer or bool)"
+        )),
+    }
 }
 
 fn read_architecture(path: &Path) -> Result<toml::value::Table> {
