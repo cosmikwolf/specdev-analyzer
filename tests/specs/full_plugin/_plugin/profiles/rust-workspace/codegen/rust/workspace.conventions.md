@@ -37,7 +37,28 @@ repository = "..."
 <crate> = { version = "...", path = "...", default-features = false }
                            # lex-sorted by crate name; rendered identically
                            # to a [dependencies] entry.
+
+[profile.<name>]           # architecture.toml [profiles.<name>] — dev, release,
+opt-level = ...            # test, bench in that order, then custom profiles
+debug = ...                # lex-sorted; keys in a fixed order; omitted entirely
+                           # when the spec declares no profiles
+[profile.<name>.package.<crate>]
+opt-level = ...            # right after its parent profile, crates lex-sorted
 ```
+
+## Build profiles are root-only
+
+`[profile.*]` tables come from the workspace root's `architecture.toml`
+`[profiles.<name>]` and are emitted only into the root `Cargo.toml`.
+Cargo ignores profiles declared in a member manifest, so a member
+architecture that declares `profiles` fails `validate`
+(`PROFILES-ROOT-ONLY`, naming the root) and the member-mode render
+refuses them with a warning and emits nothing. The subset is closed:
+`opt-level`, `debug`, `lto`, `codegen-units`, `panic`, `strip`,
+`overflow-checks`, `debug-assertions`, `incremental`, and
+`package.<crate>` overrides of the seven Cargo allows there (no `panic`,
+`lto`, `rpath`). A custom profile carries `inherits`. Values keep
+Cargo's spelling: `opt-level = "s"`, `debug = 2`, `lto = "fat"`.
 
 ## Member Cargo.toml shape (workspace-aware)
 

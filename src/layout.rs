@@ -416,3 +416,63 @@ source = "src"
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// Walk up from `member_dir` to the nearest ancestor `spec.toml` whose
+/// `[workspace].members[].path` names `member_dir`, and return that
+/// spec.toml's path. `None` for a standalone project. One walk shared by
+/// the cargo-toml renderer (member-mode inheritance) and `validate` (the
+/// rules that hold only at a workspace root, such as build profiles). A
+/// candidate that does not parse is skipped — flagging it is that
+/// project's own validate run's job, not the member's.
+pub fn find_workspace_root_spec(member_dir: &Path) -> Result<Option<PathBuf>> {
+    // Start one directory above the member: a workspace's spec.toml is
+    // by definition outside the member's tree.
+    let mut cursor = match member_dir.parent() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    loop {
+        let candidate = cursor.join("spec.toml");
+        if candidate.is_file() && spec_lists_member(&candidate, member_dir)? {
+            return Ok(Some(candidate));
+        }
+        match cursor.parent() {
+            Some(p) => cursor = p,
+            None => return Ok(None),
+        }
+    }
+}
+
+/// Does `candidate_spec` carry a `[workspace]` table whose
+/// `members[].path` (spec-toml forward-slash form; a trailing slash is
+/// tolerated) names `member_dir` relative to the candidate's directory?
+fn spec_lists_member(candidate_spec: &Path, member_dir: &Path) -> Result<bool> {
+    let text = std::fs::read_to_string(candidate_spec)
+        .with_context(|| format!("reading {}", candidate_spec.display()))?;
+    let parsed: serde_json::Value = match toml::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return Ok(false),
+    };
+    let workspace = match parsed.get("workspace") {
+        Some(w) if w.is_object() => w,
+        _ => return Ok(false),
+    };
+    let candidate_root = candidate_spec.parent().unwrap_or(candidate_spec);
+    let rel_member = match member_dir.strip_prefix(candidate_root) {
+        Ok(r) => r,
+        Err(_) => return Ok(false),
+    };
+    let rel_member_str = rel_member.to_string_lossy().replace('\\', "/");
+    Ok(workspace
+        .get("members")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter().any(|m| {
+                m.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|p| p.trim_end_matches('/') == rel_member_str)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false))
+}

@@ -46,3 +46,17 @@
 # name = "serde"
 # description = "Serialize/deserialize support via serde."
 # depends_on = ["std"]
+
+# ---------------------------------------------------------------------------
+# Cargo build profiles ([profile.*]) — for a STANDALONE crate only. In a
+# workspace, profiles live in the workspace root's architecture.toml;
+# Cargo ignores them in a member manifest and validate rejects them here.
+# Closed subset: opt-level, debug, lto, codegen-units, panic, strip,
+# overflow-checks, debug-assertions, incremental, plus package.<crate>
+# overrides (no panic / lto there).
+# ---------------------------------------------------------------------------
+# EXAMPLE: a smaller release binary.
+# [profiles.release]
+# lto = "fat"
+# codegen-units = 1
+# strip = true

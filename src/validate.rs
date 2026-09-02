@@ -122,6 +122,7 @@ pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Rep
     validate_reserved_test_kinds(layout, filter, &mut report);
     validate_context_files_when_strict(layout, filter, &mut report);
     validate_profile_layout_match(layout, &mut report);
+    validate_profiles_root_only(layout, &mut report)?;
     Ok(report)
 }
 
@@ -1991,4 +1992,56 @@ pub fn validate_profile_layout_match(layout: &LayoutContext, report: &mut Report
         ),
         _ => {}
     }
+}
+
+/// Root-only rule for Cargo build profiles: `architecture.toml`'s
+/// `profiles` table is legal on a workspace root or a standalone crate,
+/// never on a workspace member. Cargo ignores profiles in a member
+/// manifest (with a warning nobody reads), so a member that declares
+/// them carries build configuration that silently does nothing. Finding
+/// `PROFILES-ROOT-ONLY` names the workspace root as the home. The
+/// cargo-toml renderer refuses the same case on the emit path, since
+/// `manifest` does not run `validate`.
+///
+/// Membership is decided by the same walk the renderer uses
+/// (`layout::find_workspace_root_spec`). A parse failure of
+/// architecture.toml is left to the schema pass (`SCHEMA-ARCH`).
+pub fn validate_profiles_root_only(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+    if layout.spec.workspace.is_some() {
+        return Ok(());
+    }
+    if !layout.architecture_toml_path.is_file() {
+        return Ok(());
+    }
+    let text = std::fs::read_to_string(&layout.architecture_toml_path)
+        .with_context(|| format!("reading {}", layout.architecture_toml_path.display()))?;
+    let Ok(value) = toml::from_str::<toml::Value>(&text) else {
+        return Ok(());
+    };
+    let declares = value
+        .get("profiles")
+        .and_then(toml::Value::as_table)
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+    if !declares {
+        return Ok(());
+    }
+    let Some(root) = crate::layout::find_workspace_root_spec(layout.project_root.as_path())?
+    else {
+        return Ok(());
+    };
+    report.push(
+        Finding::new(
+            "PROFILES-ROOT-ONLY",
+            Severity::Error,
+            format!(
+                "architecture.toml declares [profiles.*] but this crate is a member of the \
+                 workspace at {}; Cargo ignores profiles in a member manifest — move them to \
+                 that workspace's architecture.toml",
+                root.display(),
+            ),
+        )
+        .with_file(layout.architecture_toml_path.display().to_string()),
+    );
+    Ok(())
 }

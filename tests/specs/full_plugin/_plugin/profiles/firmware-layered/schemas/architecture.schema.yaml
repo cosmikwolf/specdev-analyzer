@@ -154,6 +154,16 @@ properties:
     type: array
     items: { $ref: "#/$defs/Connection" }
 
+  profiles:
+    description: |
+      Cargo build profiles (`[profile.<name>]`) — a closed subset: the
+      nine knobs projects set, plus per-package overrides of what Cargo
+      allows in an override. Declare them here only for a STANDALONE
+      crate. In a workspace they belong to the workspace root's
+      architecture.toml — Cargo ignores profiles in a member manifest,
+      so a member that declares them fails validate and the renderer
+      refuses them. Emitted after `[dependencies]`.
+    $ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"
   project_decisions:
     description: >
       Decision ids that shape the project as a whole (platform pick,
