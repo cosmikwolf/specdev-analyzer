@@ -432,3 +432,121 @@ source = { path = "../sibling-core" }
     assert!(line.contains("features = [\"alloc\", \"serde\"]"));
     assert!(line.contains("path = \"../sibling-core\""));
 }
+
+// ---------------------------------------------------------------------------
+// 10 — `source = "workspace"` needs no `version`: the workspace root's
+//      `[[workspace_dependencies]]` entry owns it and the member renders
+//      `{ workspace = true }` with no version key, so a repeated string on
+//      the member would only go stale on a root bump. Same exemption as a
+//      path dep (F12-23); registry and git deps stay version-pinned.
+// ---------------------------------------------------------------------------
+#[test]
+fn workspace_dep_without_version_validates_and_renders() {
+    let (target, layout) = fresh_library("workspace-noversion");
+    std::fs::write(
+        target.join("specs/modules/Inherits.toml"),
+        r#"name = "Inherits"
+visibility = "pub"
+
+[[external_deps]]
+crate = "shared-helper"
+source = "workspace"
+optional = true
+"#,
+    )
+    .unwrap();
+
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        errors(&report).is_empty(),
+        "a workspace-sourced dep needs no version; got:\n{}",
+        report.render_plain()
+    );
+
+    let r = render(&layout).unwrap();
+    let line = r
+        .text
+        .lines()
+        .find(|l| l.starts_with("shared-helper ="))
+        .expect("shared-helper line present");
+    assert!(
+        line.contains("workspace = true"),
+        "expected workspace inheritance: {line}"
+    );
+    assert!(!line.contains("version"), "workspace dep must omit version: {line}");
+}
+
+#[test]
+fn registry_dep_without_version_still_rejected() {
+    let (target, _layout) = fresh_library("registry-noversion");
+    std::fs::write(
+        target.join("specs/modules/Pinned.toml"),
+        r#"name = "Pinned"
+visibility = "pub"
+
+[[external_deps]]
+crate = "serde"
+source = "crates-io"
+"#,
+    )
+    .unwrap();
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errs = errors(&report);
+    assert!(
+        !errs.is_empty(),
+        "a registry dep without a version must fail validation; got:\n{}",
+        report.render_plain()
+    );
+    assert!(
+        errs.iter().any(|f| f.message.contains("version")),
+        "the error must name the missing version; got:\n{}",
+        report.render_plain()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 11 — a versionless workspace-sourced dep at the architecture level and a
+//      versioned entry for the same crate on a module merge without a
+//      version-conflict warning: the workspace root owns the version, the
+//      rendered row is `{ workspace = true }`, and the module's features
+//      still union in.
+// ---------------------------------------------------------------------------
+#[test]
+fn versionless_workspace_dep_merges_with_versioned_module_entry() {
+    let (target, layout) = fresh_library("workspace-merge");
+    let arch = target.join("specs/architecture.toml");
+    let mut body = std::fs::read_to_string(&arch).unwrap();
+    body.push_str("\n[[external_deps]]\ncrate = \"embedded-hal\"\nsource = \"workspace\"\n");
+    std::fs::write(&arch, body).unwrap();
+    std::fs::write(
+        target.join("specs/modules/Pins.toml"),
+        r#"name = "Pins"
+visibility = "pub"
+
+[[external_deps]]
+crate = "embedded-hal"
+version = "1.0"
+features = ["defmt-03"]
+"#,
+    )
+    .unwrap();
+
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(errors(&report).is_empty(), "{}", report.render_plain());
+
+    let r = render(&layout).unwrap();
+    assert!(
+        r.warnings.is_empty(),
+        "an unversioned side is not a version conflict; got warnings: {:?}",
+        r.warnings
+    );
+    let line = r
+        .text
+        .lines()
+        .find(|l| l.starts_with("embedded-hal ="))
+        .expect("embedded-hal line present");
+    assert!(line.contains("workspace = true"), "workspace form kept: {line}");
+    assert!(!line.contains("version"), "no version on a workspace row: {line}");
+    assert!(line.contains("defmt-03"), "module features union in: {line}");
+}

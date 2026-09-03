@@ -286,8 +286,11 @@ imports document dependency intent.
 The union across every module in the library determines the full
 dependency set the `gen` step writes to `Cargo.toml`. Each entry is a
 [`CrateReference`](https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml) —
-`crate` + `version` are required; `source`, `features`,
-`default_features`, and `optional` are optional.
+`crate` is required; `version` is required unless `source` is a local
+path or `"workspace"` (the path crate, or the workspace root's
+`[[workspace_dependencies]]` entry, owns the version and the rendered
+dep carries none); `source`, `features`, `default_features`, and
+`optional` are optional.
 
 `source` is a **tagged union** — pick one shape per entry:
 
@@ -306,13 +309,13 @@ version = "0.1"
 source  = { path = "../ym2414b-core" }
 features = ["std"]
 
-# Workspace inheritance — render `<dep>.workspace = true`.
+# Workspace inheritance — render `<dep>.workspace = true`. No
+# `version`: the root's `[[workspace_dependencies]]` entry owns it.
 # Permitted alongside `optional = true`; package-field workspace
 # inheritance is per-field via `architecture.toml`'s
 # `[workspace_package]`.
 [[external_deps]]
 crate   = "tracing"
-version = "0.1"
 source  = "workspace"
 
 # Git dep with a pinned revision (use `tag` or `branch` instead of
