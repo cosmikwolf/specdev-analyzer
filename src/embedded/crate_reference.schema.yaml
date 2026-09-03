@@ -17,18 +17,24 @@ $defs:
     type: object
     additionalProperties: false
     required: [crate]
-    # `version` is required for every source EXCEPT a local path dep. A
-    # workspace-internal path dep needs no registry version (F12-23) — a
-    # stated version would only be checked against the path crate's own
-    # `[package] version` and is pure friction. Registry (crates.io default /
-    # "crates-io"), git, and workspace deps stay version-pinned.
+    # `version` is required for every source EXCEPT a local path dep and a
+    # workspace-inherited dep. A workspace-internal path dep needs no
+    # registry version (F12-23) — a stated version would only be checked
+    # against the path crate's own `[package] version` and is pure friction.
+    # The same argument covers `source = "workspace"`: the root's
+    # `[[workspace_dependencies]]` entry owns the version, the member renders
+    # `{ workspace = true }` with no version key, and a repeated string on the
+    # member would go stale on a root bump with nothing to check it. Registry
+    # (crates.io default / "crates-io") and git deps stay version-pinned.
     allOf:
       - if:
           required: [source]
           properties:
             source:
-              type: object
-              required: [path]
+              anyOf:
+                - type: object
+                  required: [path]
+                - const: "workspace"
         then: true
         else:
           required: [version]
@@ -45,8 +51,10 @@ $defs:
           ("0.3.2"), caret ("^0.3.2"), tilde ("~0.3.2"), wildcards
           ("0.3.*"), comparisons (">=0.3, <0.4"), and "*". Passed
           through to Cargo.toml unchanged; Cargo validates downstream.
-          Optional ONLY when `source` is a local `{ path = "..." }` dep;
-          required for every other source.
+          Optional ONLY when `source` is a local `{ path = "..." }` dep or
+          `"workspace"` (the workspace root owns the version and the member
+          renders `{ workspace = true }` without one); required for every
+          other source.
         type: string
         minLength: 1
       source:

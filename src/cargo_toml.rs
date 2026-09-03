@@ -1289,7 +1289,11 @@ fn merge_dep(deps: &mut DepMap, c: CrateRef, warnings: &mut Vec<String>) {
         Some(existing) if existing == &c => {
             // exact duplicate; ignore.
         }
-        Some(existing) if existing.version != c.version => {
+        Some(existing)
+            if existing.version.is_some()
+                && c.version.is_some()
+                && existing.version != c.version =>
+        {
             let show = |v: &Option<String>| v.clone().unwrap_or_else(|| "<none>".to_string());
             warnings.push(format!(
                 "crate `{}` declared with conflicting versions ({} vs {}); using {}",
@@ -1300,9 +1304,13 @@ fn merge_dep(deps: &mut DepMap, c: CrateRef, warnings: &mut Vec<String>) {
             ));
         }
         Some(existing) => {
-            // Same version, different ancillary fields (features /
-            // default_features / source). Union features; first source
-            // wins; warn if default_features disagrees.
+            // Same version — or one side carries no version at all (a path
+            // or workspace-sourced reference whose version lives in the path
+            // crate's manifest or the workspace root's table; the other
+            // side's version is not a conflict). Different ancillary fields
+            // (features / default_features / source): union features; first
+            // source and first version win; warn if default_features
+            // disagrees.
             let mut merged = existing.clone();
             let combined: BTreeSet<String> = existing
                 .features
