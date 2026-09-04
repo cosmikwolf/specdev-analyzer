@@ -22,6 +22,35 @@ pub struct Profile {
     pub context: Option<ContextSection>,
     #[serde(default)]
     pub surface: Option<SurfaceSection>,
+    #[serde(default)]
+    pub items: Option<ItemsSection>,
+    #[serde(default)]
+    pub reverse: Option<ReverseSection>,
+}
+
+/// `items` — extraction policy (#101(b)). The floor is an opaque string
+/// the language adapter interprets; `src/` never compares it itself.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+pub struct ItemsSection {
+    #[serde(default)]
+    pub visibility_floor: Option<String>,
+}
+
+/// `reverse` — pre-flight policy (#102).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+pub struct ReverseSection {
+    #[serde(default)]
+    pub vocabulary: ReverseVocabulary,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReverseVocabulary {
+    /// Inlined block schemas are the vocabulary (the original model).
+    #[default]
+    Blocks,
+    /// The profile's own schema is the vocabulary; no block is needed.
+    Profile,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -222,6 +251,26 @@ fn default_true() -> bool {
 }
 
 impl Profile {
+    /// Load the project's inlined `<specdev_root>/profile.yaml` if it
+    /// exists. `Ok(None)` when the manifest is absent (pre-manifest
+    /// projects); `Err` only on a malformed manifest. The one loader the
+    /// dispatch consumers share — `cargo_toml.rs`, `context.rs`, the
+    /// items callers and `reverse` all read the same file.
+    pub fn load_inlined(specdev_root: &Path) -> Result<Option<Self>> {
+        let path = specdev_root.join("profile.yaml");
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Self::load(&path).map(Some)
+    }
+
+    /// The profile-declared visibility floor, if any (`items.visibility_floor`).
+    pub fn visibility_floor(&self) -> Option<&str> {
+        self.items
+            .as_ref()
+            .and_then(|i| i.visibility_floor.as_deref())
+    }
+
     /// Load and validate a `profile.yaml`. Path is the file itself
     /// (typically `specs/specdev/profile.yaml` in the inlined tree, or
     /// `profiles/<name>/profile.yaml` in the plugin tree).

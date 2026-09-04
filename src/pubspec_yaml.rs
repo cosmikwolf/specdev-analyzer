@@ -122,15 +122,13 @@ fn has_workspace_ancestor(layout: &LayoutContext) -> Result<bool> {
 }
 
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Profile> {
-    let path = layout.specdev_root.join("profile.yaml");
-    if !path.is_file() {
-        return Err(anyhow!(
+    Profile::load_inlined(&layout.specdev_root)?.ok_or_else(|| {
+        anyhow!(
             "no profile.yaml at {} — pubspec emission is manifest-driven and \
              has no pre-manifest fallback; re-bootstrap or run `specdev migrate`",
-            path.display(),
-        ));
-    }
-    Profile::load(&path)
+            layout.specdev_root.join("profile.yaml").display(),
+        )
+    })
 }
 
 /// Resolve the `environment:` block: architecture.toml's `[environment]`

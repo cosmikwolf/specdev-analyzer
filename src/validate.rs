@@ -1141,6 +1141,12 @@ fn verified_by_resolves_dispatch(
     };
     let source_root = layout.spec.paths.source.as_str();
     let project_root = &layout.project_root;
+    // #101(b): profile floor (a malformed manifest is MANIFEST-001's
+    // business elsewhere; here it means "adapter default", matching this
+    // pass's permissive stance).
+    let floor = items_extract::profile_visibility_floor(&layout.specdev_root)
+        .ok()
+        .flatten();
 
     // Cache of module name → extracted items. Avoid re-parsing.
     let mut items_by_module: HashMap<String, Vec<ExtractedItem>> = HashMap::new();
@@ -1150,13 +1156,17 @@ fn verified_by_resolves_dispatch(
         if let Some(cached) = items_by_module.get(module_name) {
             return cached.clone();
         }
+        // #101(a): honour the module spec's `source_file` override.
+        let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
+        let override_path = source_map::load_source_file_override(&module_path);
         let items = match source_map::resolve_source_path(
             module_name,
+            override_path.as_deref(),
             adapter.as_ref(),
             project_root,
             source_root,
         ) {
-            Some(p) => items_extract::extract_items_from_path(&p, adapter.as_ref())
+            Some(p) => items_extract::extract_items_from_path(&p, adapter.as_ref(), floor.as_deref())
                 .unwrap_or_default(),
             None => Vec::new(),
         };

@@ -604,11 +604,7 @@ fn collect_local_entities_by_kind(
 fn load_inlined_profile(
     layout: &LayoutContext,
 ) -> Result<Option<crate::manifest::Profile>> {
-    let path = layout.specdev_root.join("profile.yaml");
-    if !path.is_file() {
-        return Ok(None);
-    }
-    crate::manifest::Profile::load(&path).map(Some)
+    crate::manifest::Profile::load_inlined(&layout.specdev_root)
 }
 
 fn rel(full: &Path, root: &Path) -> String {
