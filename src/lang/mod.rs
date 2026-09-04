@@ -64,6 +64,43 @@ pub trait LanguageAdapter: Send + Sync {
         name.to_string()
     }
 
+    /// Ordered candidate file names (relative to the source root) for a
+    /// spec module whose snake_case name is `snake`. The first that exists
+    /// wins. Default: `<snake>.<ext>`. Rust adds `<snake>/mod.rs`; an ESM
+    /// language may add `<snake>/index.<ext>`. Callers never switch on
+    /// the language name to add a layout (#101(a)).
+    fn module_file_candidates(&self, snake: &str) -> Vec<String> {
+        vec![format!("{snake}.{}", self.file_extension())]
+    }
+
+    /// The visibility floor this language applies when the profile
+    /// declares none (`items.visibility_floor` absent). `None` means the
+    /// language has no visibility modifiers — every declared `.vis`
+    /// capture is then ignored and only the name rule filters. Rust
+    /// returns `pub`. Default: `None`.
+    fn default_visibility_floor(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Whether a captured visibility modifier (`None` = no modifier
+    /// written) is at or above `floor`. The floor is an opaque profile
+    /// string; the lattice (`pub` ⊃ `pub(crate)` ⊃ `pub(super)`) is
+    /// language knowledge and lives here, never in the extractor.
+    /// Default: exact match only.
+    fn visibility_at_least(&self, captured: Option<&str>, floor: &str) -> bool {
+        captured.map(str::trim) == Some(floor)
+    }
+
+    /// Map a re-export's captured visibility modifier to the spec-side
+    /// `re_export.visibility` enum value, or `None` when the spec cannot
+    /// express it (the item then drops). Rust: `pub` → `pub`,
+    /// `pub(crate)` → `crate`, anything else → `None` (#104). Default:
+    /// `None` — a language that declares no `re_export` kind never gets
+    /// here.
+    fn re_export_visibility(&self, _captured: &str) -> Option<&'static str> {
+        None
+    }
+
     /// Whether an extracted item name is public contract surface under
     /// this language's naming rules. Languages with lexical privacy
     /// (Dart's `_` prefix) override this; languages with visibility

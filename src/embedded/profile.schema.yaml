@@ -226,6 +226,43 @@ properties:
             type: string
             minLength: 1
 
+  items:
+    description: |
+      items[] extraction policy (#101(b)). Read by `extract-items`,
+      `items diff` and the validate pass's `verified_by` resolution.
+    type: object
+    additionalProperties: false
+    properties:
+      visibility_floor:
+        description: |
+          Lowest source visibility the extractor treats as contract
+          surface. An OPAQUE string: the analyzer never interprets it —
+          the language adapter compares each captured `<kind>.vis`
+          against it (Rust: `pub` ⊃ `pub(crate)` ⊃ `pub(super)`; Dart
+          has no modifiers and ignores the key). Absent → the adapter's
+          own default (Rust: `pub`). A binary-shaped profile whose
+          contract surface is crate-wide declares `pub(crate)`. Does not
+          apply to `re_export`, which the spec's own `visibility` enum
+          gates per item.
+        type: string
+        minLength: 1
+
+  reverse:
+    description: |
+      `reverse` pre-flight policy (#102).
+    type: object
+    additionalProperties: false
+    properties:
+      vocabulary:
+        description: |
+          Where the reverse-engineering vocabulary comes from. `blocks`
+          (default): inlined block schemas; zero inlined blocks and no
+          `--into` is REVERSE-002 (error). `profile`: the profile's own
+          schema is the vocabulary; zero inlined blocks is REVERSE-004
+          (info) and the run proceeds.
+        type: string
+        enum: [blocks, profile]
+
   bootstrap:
     description: |
       Bootstrap-time pipeline. Today, only `rust-workspace` populates

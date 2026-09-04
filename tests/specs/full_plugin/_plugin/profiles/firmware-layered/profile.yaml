@@ -24,6 +24,14 @@ cargo_toml:
         keys: ["provider", "backend"]
     open_arrays: ["external_deps"]
 
+items:
+  # #101(b): a binary crate's contract surface is crate-wide, so the
+  # extractor admits `pub` and `pub(crate)` items here (a library floor is
+  # `pub`, the adapter default). The string is opaque to the analyzer —
+  # the language adapter interprets it. Project-owned after bootstrap:
+  # edit the inlined copy if this crate's floor differs.
+  visibility_floor: "pub(crate)"
+
 bootstrap:
   steps: []                       # standalone binary; no workspace machinery
 

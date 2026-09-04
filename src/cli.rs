@@ -800,6 +800,15 @@ fn run_extract_items(
     };
 
     let source_root = layout.spec.paths.source.as_str();
+    // #101(b): the profile-declared floor, if any; the adapter default
+    // applies when absent.
+    let floor = match extract::profile_visibility_floor(&layout.specdev_root) {
+        Ok(f) => f,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
 
     let mut modules_out: Vec<ModuleItems> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -818,10 +827,18 @@ fn run_extract_items(
             }
         }
 
-        let source_file =
-            source_map::resolve_source_path(&name, adapter.as_ref(), &project, source_root);
+        // #101(a): the module spec's `source_file` override wins over the
+        // adapter's layout candidates.
+        let override_path = source_map::load_source_file_override(module_path);
+        let source_file = source_map::resolve_source_path(
+            &name,
+            override_path.as_deref(),
+            adapter.as_ref(),
+            &project,
+            source_root,
+        );
         let items = match &source_file {
-            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref()) {
+            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref(), floor.as_deref()) {
                 Ok(v) => v,
                 Err(e) => {
                     errors.push(format!("{name}: {e}"));
@@ -884,6 +901,23 @@ fn run_reverse(
         }
     };
 
+    // #102: a profile may declare its own schema as the reverse vocabulary
+    // (`reverse.vocabulary: profile`); zero inlined blocks is then info,
+    // not an error. Keyed on the declaration, never on the profile name.
+    let profile_vocabulary: Option<String> =
+        match specdev_analyzer::manifest::Profile::load_inlined(&layout.specdev_root) {
+            Ok(p) => p
+                .filter(|p| {
+                    p.reverse.as_ref().map(|r| r.vocabulary)
+                        == Some(specdev_analyzer::manifest::ReverseVocabulary::Profile)
+                })
+                .map(|p| p.name),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(2);
+            }
+        };
+
     // Parse --into.
     let into_blocks: Vec<String> = into
         .map(|s| {
@@ -913,15 +947,24 @@ fn run_reverse(
     // - 1 inlined block, no --into → fine; coarse warning skipped.
     // - 2+ inlined blocks, no --into → coarse ambiguity warning.
     let mut warnings: Vec<String> = Vec::new();
+    let mut infos: Vec<String> = Vec::new();
     if inlined_blocks.is_empty() && into_blocks.is_empty() {
-        errors.push(
-            "[REVERSE-002] no blocks inlined and no --into specified; \
-             reverse engineering requires a chosen vocabulary. Either run \
-             `specdev-analyzer inline <block>` first, or pass --into \
-             <block,...> naming the blocks whose vocabulary should govern \
-             the output."
-                .to_string(),
-        );
+        if let Some(name) = &profile_vocabulary {
+            infos.push(format!(
+                "[REVERSE-004] no blocks inlined; profile `{name}` declares \
+                 `reverse.vocabulary: profile`, so its own schema is the \
+                 vocabulary. Proceed."
+            ));
+        } else {
+            errors.push(
+                "[REVERSE-002] no blocks inlined and no --into specified; \
+                 reverse engineering requires a chosen vocabulary. Either run \
+                 `specdev-analyzer inline <block>` first, or pass --into \
+                 <block,...> naming the blocks whose vocabulary should govern \
+                 the output."
+                    .to_string(),
+            );
+        }
     } else if inlined_blocks.len() >= 2 && into_blocks.is_empty() {
         warnings.push(format!(
             "[REVERSE-003] {} blocks inlined ({:?}) and --into not \
@@ -934,9 +977,15 @@ fn run_reverse(
         ));
     }
 
-    // Effective vocabulary: --into if specified, else all inlined.
+    // Effective vocabulary: --into if specified, else all inlined, else
+    // the profile itself when it declares so (`profile:<name>`).
     let vocab: Vec<String> = if !into_blocks.is_empty() {
         into_blocks
+    } else if inlined_blocks.is_empty() {
+        profile_vocabulary
+            .iter()
+            .map(|n| format!("profile:{n}"))
+            .collect()
     } else {
         inlined_blocks.clone()
     };
@@ -945,12 +994,14 @@ fn run_reverse(
     struct ReverseReport<'a> {
         inlined_blocks: &'a [String],
         vocabulary: &'a [String],
+        infos: &'a [String],
         warnings: &'a [String],
         errors: &'a [String],
     }
     let report = ReverseReport {
         inlined_blocks: &inlined_blocks,
         vocabulary: &vocab,
+        infos: &infos,
         warnings: &warnings,
         errors: &errors,
     };
@@ -968,6 +1019,9 @@ fn run_reverse(
             eprintln!("{e}");
         }
         return ExitCode::from(1);
+    }
+    for i in &infos {
+        eprintln!("{i}");
     }
     if !warnings.is_empty() {
         for w in &warnings {

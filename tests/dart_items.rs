@@ -99,7 +99,7 @@ extension type Meters(double v) {
 
 #[test]
 fn dart_extraction_covers_the_tier_vocabulary() {
-    let items = extract_items_from_source(DART_SOURCE, &DartAdapter).unwrap();
+    let items = extract_items_from_source(DART_SOURCE, &DartAdapter, None).unwrap();
     let pairs: Vec<(&str, &str)> = items
         .iter()
         .map(|i| (i.kind.as_str(), i.name.as_str()))
@@ -136,7 +136,7 @@ fn dart_extraction_covers_the_tier_vocabulary() {
 
 #[test]
 fn dart_privacy_and_non_item_shapes_are_filtered() {
-    let items = extract_items_from_source(DART_SOURCE, &DartAdapter).unwrap();
+    let items = extract_items_from_source(DART_SOURCE, &DartAdapter, None).unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
 
     // `_`-prefixed declarations and members of `_`-prefixed hosts.
@@ -185,7 +185,7 @@ abstract class Base {
   void poke();
 }
 "#;
-    let items = extract_items_from_source(src, &DartAdapter).unwrap();
+    let items = extract_items_from_source(src, &DartAdapter, None).unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
 
     assert!(!names.contains(&"HomeScreen.build"), "got: {names:?}");

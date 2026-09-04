@@ -167,11 +167,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 /// manifest. Bootstrap ensures every freshly-bootstrapped project has
 /// this file when its profile ships one.
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<Profile>> {
-    let path = layout.specdev_root.join("profile.yaml");
-    if !path.is_file() {
-        return Ok(None);
-    }
-    Profile::load(&path).map(Some)
+    Profile::load_inlined(&layout.specdev_root)
 }
 
 /// Manifest-driven dispatch. Each `ShapeKind` routes to the

@@ -332,15 +332,18 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
     let adapter = crate::lang::adapter_for(language)
         .ok_or_else(|| anyhow!("[ITEM-101] no language adapter for `{language}`"))?;
     let source_root = layout.spec.paths.source.as_str();
+    // #101(a): the spec's `source_file` override; #101(b): the profile floor.
     let source_file = source_map::resolve_source_path(
         module_name,
+        source_map::source_file_override(&value),
         adapter.as_ref(),
         &layout.project_root,
         source_root,
     );
+    let floor = extract::profile_visibility_floor(&layout.specdev_root)?;
 
     let extracted: Vec<ExtractedItem> = match &source_file {
-        Some(p) => extract::extract_items_from_path(p, adapter.as_ref())
+        Some(p) => extract::extract_items_from_path(p, adapter.as_ref(), floor.as_deref())
             .with_context(|| format!("extracting items from {}", p.display()))?,
         None => Vec::new(),
     };

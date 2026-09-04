@@ -31,8 +31,9 @@ pub use block_deps::{
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
     BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection,
-    ContextExtra, ContextSection, FeaturesSection, PairedStub,
-    Profile, PubEnvironment, PubShapeKind, PubspecYamlSection, ShapeKind, SurfaceSection,
+    ContextExtra, ContextSection, FeaturesSection, ItemsSection, PairedStub,
+    Profile, PubEnvironment, PubShapeKind, PubspecYamlSection, ReverseSection,
+    ReverseVocabulary, ShapeKind, SurfaceSection,
 };
 
 use anyhow::{anyhow, Context, Result};

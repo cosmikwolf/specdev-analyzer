@@ -21,6 +21,12 @@ cargo_toml:
     typed_slots: []
     open_arrays: ["external_deps"]
 
+reverse:
+  # #102: a pure-Rust crate inlines no block; its reverse vocabulary is
+  # the profile's own schema (items, visibility, feature gates). The
+  # pre-flight reads this and reports REVERSE-002 as info, not an error.
+  vocabulary: profile
+
 bootstrap:
   steps: []                       # standalone crate; no workspace machinery
 
