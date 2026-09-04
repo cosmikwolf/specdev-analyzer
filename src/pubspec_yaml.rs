@@ -590,22 +590,36 @@ fn merge_dep(deps: &mut BTreeMap<String, PubRef>, r: PubRef, warnings: &mut Vec<
             deps.insert(r.package.clone(), r);
         }
         Some(existing) if existing == &r => {}
-        Some(existing) if existing.version != r.version => {
-            let show = |v: &Option<String>| v.clone().unwrap_or_else(|| "<none>".to_string());
-            warnings.push(format!(
-                "package `{}` declared with conflicting versions ({} vs {}); using {}",
-                r.package,
-                show(&existing.version),
-                show(&r.version),
-                show(&existing.version),
-            ));
-        }
-        Some(_) => {
-            warnings.push(format!(
-                "package `{}` declared with conflicting sources; keeping the \
-                 first-declared entry",
-                r.package,
-            ));
+        Some(existing) => {
+            // A version conflict needs BOTH sides to name a version. An
+            // unversioned reference takes its version from its own source —
+            // a path package's own pubspec, an sdk-provided package, a git
+            // ref — so `<none>` vs `^1.2.0` is not a disagreement, it is one
+            // side declining to say. The schema makes this shape legal:
+            // `pub_reference.schema.yaml` requires only `package`, and
+            // `version` is documented as optional alongside git/path/sdk.
+            //
+            // The cargo emitter settled exactly this in #99 and this arm is
+            // the same rule; the two mergers had diverged because the fix
+            // landed in one emitter only (#106).
+            if existing.version.is_some() && r.version.is_some() && existing.version != r.version {
+                let show = |v: &Option<String>| v.clone().unwrap_or_else(|| "<none>".to_string());
+                warnings.push(format!(
+                    "package `{}` declared with conflicting versions ({} vs {}); using {}",
+                    r.package,
+                    show(&existing.version),
+                    show(&r.version),
+                    show(&existing.version),
+                ));
+            } else if existing.source != r.source {
+                warnings.push(format!(
+                    "package `{}` declared with conflicting sources; keeping the \
+                     first-declared entry",
+                    r.package,
+                ));
+            }
+            // Otherwise the entries agree on everything that can conflict —
+            // one side simply carries less. First-declared wins, silently.
         }
     }
 }

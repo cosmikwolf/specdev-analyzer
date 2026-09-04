@@ -177,6 +177,65 @@ version = "^1.19.0"
     target
 }
 
+/// #106: an unversioned side is NOT a version conflict.
+///
+/// `pub_reference.schema.yaml` requires only `package`; version is
+/// "Optional alongside git/path/sdk sources", and `PubRef.version` is
+/// `Option<String>`. So an architecture-level path dep and a block's
+/// versioned entry for the same package is legal spec input.
+///
+/// The cargo emitter settled this in #99: it only warns when BOTH sides
+/// carry a version and they differ, because an unversioned reference gets
+/// its version from the path crate's own manifest. `pubspec_yaml.rs`
+/// never got that fix and tested `existing.version != r.version`, so
+/// `None` vs `Some` read as a conflict and warned on correct input.
+#[test]
+fn dart_manifest_unversioned_path_dep_is_not_a_version_conflict() {
+    let target = build_dart_project("unversioned-merge");
+
+    // The architecture already declares `local_proto` as a bare path dep
+    // with no version. Have the block declare the same package WITH one.
+    let block_codegen = target.join("specs/specdev/codegen/dart/blocks/bletest");
+    std::fs::write(
+        block_codegen.join("deps.yaml"),
+        "pub:\n  - package: local_proto\n    version: \"^1.2.0\"\n",
+    )
+    .unwrap();
+
+    let r = run_cli(&target, &["manifest"]);
+    assert_eq!(
+        r.exit_code,
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        r.stderr,
+        r.stdout
+    );
+    assert!(
+        !r.stderr.contains("`local_proto` declared with conflicting versions"),
+        "unversioned path dep + versioned block entry must not warn as a \
+         version conflict (#106).\nstderr: {}",
+        r.stderr
+    );
+    // The path source still wins, exactly as the cargo side keeps the
+    // first-declared source.
+    assert!(
+        r.stdout.contains("local_proto:") && r.stdout.contains("../local_proto"),
+        "first-declared path source must survive the merge.\nstdout: {}",
+        r.stdout
+    );
+    // What IS reported instead: the two entries really do name different
+    // sources (a path vs the default hosted registry), and that is the
+    // accurate warning for this input. Pinned here so the fix is not read
+    // as "silence the merger". NOTE: the cargo emitter stays silent on a
+    // source difference, so the two mergers still diverge here — tracked
+    // separately; do not "align" them by deleting this warning.
+    assert!(
+        r.stderr.contains("`local_proto` declared with conflicting sources"),
+        "a genuine source difference must still be reported.\nstderr: {}",
+        r.stderr
+    );
+}
+
 #[test]
 fn dart_manifest_emits_pubspec_with_all_dep_shapes() {
     let target = build_dart_project("full");
