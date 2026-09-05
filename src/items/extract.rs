@@ -146,7 +146,11 @@ fn vis_gate_passes(
     let Some(floor) = floor else {
         return true;
     };
-    adapter.visibility_at_least(capture_text(query, m, source, &vis_capture).map(str::trim), floor)
+    adapter.visibility_at_least_for(
+        prefix,
+        capture_text(query, m, source, &vis_capture).map(str::trim),
+        floor,
+    )
 }
 
 /// Build an item for a plain `<kind>.def` / `<kind>.name` capture pair.
@@ -266,9 +270,10 @@ fn build_re_export(
         .trim()
         .to_string();
     // Extract a short name for matching purposes: the last segment of the
-    // target path, after `::` or `as`. `pub use foo::bar as Baz;` →
-    // name = "Baz". `pub use foo::bar;` → name = "bar".
-    let name = re_export_name(&target);
+    // target path, after the language's separator or `as`.
+    // `pub use foo::bar as Baz;` → "Baz"; `pub use foo::bar;` → "bar";
+    // TypeScript `export { a as b }` → "b"; `export * from "./x"` → "./x".
+    let name = re_export_name(&target, adapter.path_separator());
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
@@ -280,18 +285,37 @@ fn build_re_export(
     })
 }
 
-fn re_export_name(target: &str) -> String {
-    // Handle `path::to::thing as Alias` — after `as`.
-    if let Some(idx) = target.rfind(" as ") {
-        return target[idx + 4..].trim().trim_end_matches(';').to_string();
+fn re_export_name(target: &str, separator: &str) -> String {
+    let trimmed = target.trim().trim_end_matches(';').trim();
+    // A quoted module specifier (`"./barrel"`, `'./x'`) names the whole
+    // module: strip the quotes and never split it — a `.` separator would
+    // otherwise cut a relative path in half.
+    if let Some(inner) = quoted_inner(trimmed) {
+        return inner.to_string();
     }
-    // Otherwise the last `::` segment. Strip trailing `;` defensively.
-    let trimmed = target.trim().trim_end_matches(';');
+    // Handle `path::to::thing as Alias` — after `as`.
+    if let Some(idx) = trimmed.rfind(" as ") {
+        return trimmed[idx + 4..].trim().to_string();
+    }
+    // Otherwise the last separator segment.
     trimmed
-        .rsplit("::")
+        .rsplit(separator)
         .next()
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+/// The text inside a matching pair of `"` or `'` quotes, if `s` is exactly
+/// one quoted string.
+fn quoted_inner(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let q = bytes[0];
+        if (q == b'"' || q == b'\'') && bytes[bytes.len() - 1] == q {
+            return Some(&s[1..s.len() - 1]);
+        }
+    }
+    None
 }
 
 fn build_extern_block(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
@@ -574,9 +598,9 @@ impl Show for T { fn show(&self) {} }
 
     #[test]
     fn re_export_name_from_alias() {
-        assert_eq!(re_export_name("foo::bar as Baz"), "Baz");
-        assert_eq!(re_export_name("foo::bar"), "bar");
-        assert_eq!(re_export_name("crate::Inner;"), "Inner");
+        assert_eq!(re_export_name("foo::bar as Baz", "::"), "Baz");
+        assert_eq!(re_export_name("foo::bar", "::"), "bar");
+        assert_eq!(re_export_name("crate::Inner;", "::"), "Inner");
     }
 
     #[test]

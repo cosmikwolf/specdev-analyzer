@@ -10,9 +10,11 @@
 //! Visibility is `export`: a top-level declaration is public when wrapped
 //! in an `export_statement`, and a class member is public unless it carries
 //! `private` / `protected` or a `#`-prefixed name. The `#` rule is
-//! lexical and lives in `item_is_public_name`; the modifier rules arrive
-//! with the items vocabulary (`items.scm`), which this adapter does not
-//! ship yet — `items_query()` is deliberately left at the `None` default.
+//! lexical and lives in `item_is_public_name`; the modifier rules live in
+//! `visibility_at_least_for`, which reads the capture prefix to tell a
+//! top-level `.vis` (absent = private) from a member `.vis` (absent =
+//! public). The floor string is `export`; it is the only floor the
+//! language has, so a profile has nothing to declare.
 
 use tree_sitter::{Language, Node};
 
@@ -21,6 +23,7 @@ use super::{LanguageAdapter, ParsedParameter};
 pub struct TypeScriptAdapter;
 
 const QUERY: &str = include_str!("../../../specdev/languages/typescript/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/typescript/items.scm");
 
 impl LanguageAdapter for TypeScriptAdapter {
     fn name(&self) -> &'static str {
@@ -53,6 +56,33 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn embedded_query(&self) -> &'static str {
         QUERY
+    }
+
+    fn items_query(&self) -> Option<&'static str> {
+        Some(ITEMS_QUERY)
+    }
+
+    fn default_visibility_floor(&self) -> Option<&'static str> {
+        // The one floor the language has: an item must be exported.
+        Some("export")
+    }
+
+    fn visibility_at_least(&self, captured: Option<&str>, floor: &str) -> bool {
+        // Top-level rule: the captured `.vis` is the `export` keyword or
+        // nothing. Nothing written means module-private.
+        captured.map(str::trim) == Some(floor)
+    }
+
+    fn visibility_at_least_for(&self, prefix: &str, captured: Option<&str>, floor: &str) -> bool {
+        if prefix.starts_with("inherent_") {
+            // Member rule: absent accessibility modifier (or `public`) is
+            // public; `private` / `protected` are not contract surface.
+            // The host being exported is the query's job (the member
+            // patterns require an enclosing `export_statement`).
+            !matches!(captured.map(str::trim), Some("private") | Some("protected"))
+        } else {
+            self.visibility_at_least(captured, floor)
+        }
     }
 
     fn module_file_candidates(&self, snake: &str) -> Vec<String> {

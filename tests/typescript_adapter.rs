@@ -1,8 +1,8 @@
 //! TypeScript language admission: adapter resolution, the two-grammar
 //! split (`.ts` → typescript, `.tsx` → tsx), embedded audit query compile
 //! + captures under BOTH grammars over real source, parameter parsing,
-//! lockstep between the two `language` schema enums, and the no-items-
-//! vocabulary-yet refusal.
+//! lockstep between the two `language` schema enums, and extraction over
+//! the fixture under both grammars.
 //!
 //! The syntax-coverage fixtures under `tests/fixtures/typescript/` must
 //! parse with zero ERROR nodes under their own grammar. The `.ts` fixture
@@ -192,15 +192,29 @@ fn public_name_rule_rejects_hash_private_segments() {
 }
 
 #[test]
-fn extract_items_refuses_until_the_items_vocabulary_ships() {
-    // No `items.scm` in this tier yet: the extractor must say so by name,
-    // not panic or return an empty list that reads as "no items".
+fn extract_items_runs_the_items_vocabulary_over_the_fixture() {
+    // The items vocabulary shipped with the tier; the fixture is a real
+    // module, so extraction must succeed under both grammars and see the
+    // exported surface. Detailed vocabulary coverage lives in
+    // `tests/typescript_items.rs`.
     let a = ts();
-    let err = extract_items_from_source(TS_FIXTURE, "ts", a.as_ref(), None).unwrap_err();
-    let s = format!("{err:#}");
+    let items = extract_items_from_source(TS_FIXTURE, "ts", a.as_ref(), None).unwrap();
+    let pairs: Vec<(&str, &str)> = items
+        .iter()
+        .map(|i| (i.kind.as_str(), i.name.as_str()))
+        .collect();
+    assert!(pairs.contains(&("class", "Circle")), "{pairs:?}");
+    assert!(pairs.contains(&("function", "clamp01")), "{pairs:?}");
     assert!(
-        s.contains("no items.scm query for language `typescript`"),
-        "{s}"
+        !pairs.iter().any(|(_, n)| *n == "helper"),
+        "not exported: {pairs:?}"
+    );
+    let items = extract_items_from_source(TSX_FIXTURE, "tsx", a.as_ref(), None).unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|i| i.kind == "function" && i.name == "EventCard"),
+        "{items:?}"
     );
 }
 
