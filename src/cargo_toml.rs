@@ -1320,6 +1320,13 @@ fn merge_dep(deps: &mut DepMap, c: CrateRef, warnings: &mut Vec<String>) {
             } else {
                 Some(combined.into_iter().collect())
             };
+            if !same_stated_source(&existing.source, &c.source) {
+                warnings.push(format!(
+                    "crate `{}` declared with conflicting sources; keeping the \
+                     first-declared entry",
+                    c.crate_name,
+                ));
+            }
             if existing.default_features.is_some()
                 && c.default_features.is_some()
                 && existing.default_features != c.default_features
@@ -1333,6 +1340,27 @@ fn merge_dep(deps: &mut DepMap, c: CrateRef, warnings: &mut Vec<String>) {
             }
             deps.insert(key, merged);
         }
+    }
+}
+
+/// Source-conflict rule shared with the pub and npm mergers: a genuine
+/// source difference warns. Cargo's own normalization before comparing:
+/// an absent source and an explicit `"crates-io"` are the same registry;
+/// `"workspace"` is inheritance, not a source — the root's
+/// `[[workspace_dependencies]]` entry owns the real source, so a
+/// workspace-inherited side is "unstated" and never conflicts (the
+/// unversioned-workspace-side case that #99 made legal).
+fn same_stated_source(a: &Option<CrateSource>, b: &Option<CrateSource>) -> bool {
+    let norm = |s: &Option<CrateSource>| -> Option<Option<CrateSource>> {
+        match s {
+            Some(CrateSource::Tagged(CrateSourceTag::Workspace)) => None,
+            Some(CrateSource::Tagged(CrateSourceTag::CratesIo)) | None => Some(None),
+            other => Some(other.clone()),
+        }
+    };
+    match (norm(a), norm(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => true,
     }
 }
 

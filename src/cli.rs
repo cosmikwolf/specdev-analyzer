@@ -7,7 +7,8 @@ use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
     diagnostics::report_error,
-    cargo_toml as cargo_toml_mod, drift, extract, inline, pubspec_yaml as pubspec_yaml_mod,
+    cargo_toml as cargo_toml_mod, drift, extract, inline, package_json as package_json_mod,
+    pubspec_yaml as pubspec_yaml_mod,
     layout::LayoutContext,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
@@ -636,17 +637,32 @@ fn run_manifest(
         return ExitCode::from(2);
     }
 
-    // (rendered manifest text, warnings, paired extra files, canonical filename)
-    let (text, warnings, extra_files, default_filename) = match language.as_str() {
+    // (rendered manifest text, warnings, paired extra files written only
+    // when absent, gen-owned sibling files overwritten on every write,
+    // canonical filename)
+    let (text, warnings, extra_files, sibling_files, default_filename) = match language.as_str() {
         "rust" => match cargo_toml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, r.extra_files, "Cargo.toml"),
+            Ok(r) => (r.text, r.warnings, r.extra_files, Vec::new(), "Cargo.toml"),
             Err(e) => {
                 report_error(&e);
                 return ExitCode::from(1);
             }
         },
         "dart" => match pubspec_yaml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, Vec::new(), "pubspec.yaml"),
+            Ok(r) => (r.text, r.warnings, Vec::new(), Vec::new(), "pubspec.yaml"),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
+            }
+        },
+        "typescript" => match package_json_mod::render(&layout) {
+            Ok(r) => (
+                r.text,
+                r.warnings,
+                Vec::new(),
+                r.sibling_files,
+                "package.json",
+            ),
             Err(e) => {
                 report_error(&e);
                 return ExitCode::from(1);
@@ -655,7 +671,7 @@ fn run_manifest(
         other => {
             eprintln!(
                 "error: manifest emission for language `{other}` is not \
-                 implemented; supported: rust, dart"
+                 implemented; supported: rust, dart, typescript"
             );
             return ExitCode::from(1);
         }
@@ -670,10 +686,31 @@ fn run_manifest(
         Some(path) => match std::fs::write(&path, &text) {
             Ok(()) => {
                 eprintln!("wrote {default_filename} to {}", path.display());
+                let project_root = layout.project_root.as_path();
+                // Gen-owned sibling files (e.g. the pnpm workspace
+                // root's `pnpm-workspace.yaml`) are output like the
+                // manifest itself: written beside it and overwritten on
+                // every `--write`. They are skipped under `--output`,
+                // which redirects the manifest text alone.
+                if write {
+                    for (rel, body) in &sibling_files {
+                        let dst = project_root.join(rel);
+                        if let Err(e) = std::fs::write(&dst, body) {
+                            eprintln!("failed to write {}: {e}", dst.display());
+                            return ExitCode::from(2);
+                        }
+                        eprintln!("wrote {rel} to {}", dst.display());
+                    }
+                } else if !sibling_files.is_empty() {
+                    let names: Vec<&str> = sibling_files.iter().map(|(r, _)| r.as_str()).collect();
+                    eprintln!(
+                        "note: sibling file(s) {} not written under --output; use --write",
+                        names.join(", ")
+                    );
+                }
                 // F-016: pair `[[bin]]` rows with their stub source
                 // files. Skip writes when the path already exists —
                 // hand-edited bins are never overwritten.
-                let project_root = layout.project_root.as_path();
                 for (rel, body) in &extra_files {
                     let dst = project_root.join(rel);
                     if dst.exists() {
