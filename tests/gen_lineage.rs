@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::gen_lineage::{
-    gen_lineage_path, record_files, record_files_accepting_edits, run_gen_drift,
-    run_gen_plan, GenFileCategory, GenLineage, GenPlanCategory,
+    gen_lineage_path, record_files, record_files_accepting_edits, run_gen_drift, run_gen_plan,
+    GenFileCategory, GenLineage, GenPlanCategory,
 };
 use specdev_analyzer::layout::LayoutContext;
 
@@ -154,7 +154,10 @@ fn missing_module_spec_records_output_but_no_input_hash() {
         .unwrap();
     assert_eq!(entry.module.as_deref(), Some("Widget"));
     assert!(entry.content_hash.starts_with("sha256:"));
-    assert_eq!(entry.input_hash, None, "unassemblable module → no input_hash");
+    assert_eq!(
+        entry.input_hash, None,
+        "unassemblable module → no input_hash"
+    );
 }
 
 #[test]
@@ -223,8 +226,7 @@ fn re_record_returns_edited_file_to_clean() {
     fs::write(&src, "pub fn widget() { /* regenerated */ }\n").unwrap();
     assert!(!run_gen_drift(&layout).unwrap().is_clean());
 
-    record_files_accepting_edits(&layout, Some("Widget"), &[src], "2026-06-12T11:00:00Z")
-        .unwrap();
+    record_files_accepting_edits(&layout, Some("Widget"), &[src], "2026-06-12T11:00:00Z").unwrap();
     let report = run_gen_drift(&layout).unwrap();
     assert!(report.is_clean());
     // Upsert replaced, not appended.
@@ -473,4 +475,354 @@ fn plan_covers_every_module_and_is_yaml_stable() {
     let y1 = plan.to_yaml().unwrap();
     let y2 = run_gen_plan(&layout).unwrap().to_yaml().unwrap();
     assert_eq!(y1, y2);
+}
+
+// ---------------------------------------------------------------------------
+// Compile-gate results: the `gates` table + gen-plan's `verified` axis.
+// ---------------------------------------------------------------------------
+
+use specdev_analyzer::gen_lineage::{
+    compose_gate_key, current_gate_key, lockfile_hash, record_gate, KEY_NONE,
+};
+
+/// Plan row for one module (category + verified).
+fn plan_row(layout: &LayoutContext, module: &str) -> (GenPlanCategory, bool) {
+    let m = run_gen_plan(layout)
+        .unwrap()
+        .modules
+        .into_iter()
+        .find(|m| m.module == module)
+        .unwrap_or_else(|| panic!("module `{module}` not in plan"));
+    (m.category, m.verified)
+}
+
+/// A generated + recorded module whose files are clean and inputs match:
+/// `unchanged` before any gate is recorded.
+fn unchanged_module(root: &Path, layout: &LayoutContext, name: &str) {
+    write_module(root, name, "");
+    let src = root.join(format!("src/{}.rs", name.to_lowercase()));
+    fs::write(&src, format!("pub fn {}() {{}}\n", name.to_lowercase())).unwrap();
+    record_files(layout, Some(name), &[src], TS).unwrap();
+    assert_eq!(category_of(layout, name), GenPlanCategory::Unchanged);
+}
+
+#[test]
+fn gate_fail_row_leaves_module_unchanged_but_unverified() {
+    // #107: the skip hole. Before this table a failed gate left the module
+    // `unchanged` with nothing to say it never compiled.
+    let root = tmp("gate-fail");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", false).unwrap();
+    // Still `unchanged` on the regenerate axis — nothing about its inputs or
+    // outputs moved — but `verified == false`, which is the re-gate set.
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+}
+
+#[test]
+fn gate_pass_is_invalidated_by_a_lockfile_change_without_regenerating() {
+    let root = tmp("gate-lock");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    fs::write(root.join("Cargo.lock"), "# lock v1\n").unwrap();
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+
+    // A `cargo update`: lockfile moves, spec and source do not.
+    fs::write(root.join("Cargo.lock"), "# lock v2\n").unwrap();
+    // Regenerate axis untouched; verification axis dropped. The skill
+    // answers this with `cargo check`, not with a prompt.
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+}
+
+#[test]
+fn gate_pass_is_invalidated_by_a_spec_edit() {
+    let root = tmp("gate-spec");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+
+    write_module(&root, "Widget", "description = \"moved\"\n");
+    // `stale` regenerates anyway; `verified` must agree (the pass was about
+    // the old inputs).
+    assert_eq!(plan_row(&layout, "Widget"), (GenPlanCategory::Stale, false));
+}
+
+#[test]
+fn missing_lockfile_is_a_distinct_stable_key() {
+    // `cargo check` on an unresolvable dependency writes no Cargo.lock;
+    // a fresh crate has none until its first check. Both must key
+    // deterministically and differ from any hash.
+    let root = tmp("gate-nolock");
+    let layout = minimal_project(&root);
+    let none = lockfile_hash(&layout).unwrap();
+    assert_eq!(none, KEY_NONE);
+    assert_eq!(lockfile_hash(&layout).unwrap(), none, "stable across calls");
+
+    fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
+    let some = lockfile_hash(&layout).unwrap();
+    assert_ne!(some, KEY_NONE);
+    assert!(some.starts_with("sha256:"), "{some}");
+
+    assert_eq!(compose_gate_key(None, KEY_NONE), "none|none");
+    assert_eq!(
+        current_gate_key(&layout, None, &some),
+        format!("none|{some}"),
+        "a batch row has no input part"
+    );
+}
+
+#[test]
+fn toolchain_pin_file_joins_the_key() {
+    let root = tmp("gate-toolchain");
+    let layout = minimal_project(&root);
+    fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
+    let before = lockfile_hash(&layout).unwrap();
+    fs::write(
+        root.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.85\"\n",
+    )
+    .unwrap();
+    let after = lockfile_hash(&layout).unwrap();
+    assert_ne!(before, after, "a toolchain pin is a project fact and keys");
+}
+
+#[test]
+fn workspace_member_keys_on_the_root_lockfile() {
+    // A cargo workspace has ONE Cargo.lock, at the root; members have none.
+    // The walk must find it, bounded by the workspace spec.toml that lists
+    // the member.
+    let ws = tmp("gate-ws");
+    fs::write(
+        ws.join("spec.toml"),
+        r#"
+spec_version = "1.0"
+
+[project]
+name = "ws-root"
+profile = "rust-workspace"
+language = "rust"
+
+[workspace]
+members = [{ path = "crates/app" }]
+"#,
+    )
+    .unwrap();
+    let member = ws.join("crates/app");
+    let layout = minimal_project(&member);
+    assert_eq!(
+        lockfile_hash(&layout).unwrap(),
+        KEY_NONE,
+        "no lockfile anywhere yet"
+    );
+
+    fs::write(ws.join("Cargo.lock"), "# root lock v1\n").unwrap();
+    let v1 = lockfile_hash(&layout).unwrap();
+    assert_ne!(v1, KEY_NONE, "root lockfile found from the member");
+
+    fs::write(ws.join("Cargo.lock"), "# root lock v2\n").unwrap();
+    let v2 = lockfile_hash(&layout).unwrap();
+    assert_ne!(v1, v2, "root lockfile change re-keys the member");
+}
+
+#[test]
+fn walk_is_bounded_by_the_repository_root_when_no_workspace_spec() {
+    // No workspace spec.toml above the project: the walk stops at the
+    // nearest `.git`, and a lockfile beyond it is NOT the project's.
+    let outer = tmp("gate-gitbound");
+    fs::write(outer.join("Cargo.lock"), "# unrelated lock\n").unwrap();
+    let repo = outer.join("repo");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    let proj = repo.join("proj");
+    let layout = minimal_project(&proj);
+    assert_eq!(
+        lockfile_hash(&layout).unwrap(),
+        KEY_NONE,
+        "the lockfile above .git must not be seen"
+    );
+    fs::write(repo.join("Cargo.lock"), "# repo lock\n").unwrap();
+    assert_ne!(
+        lockfile_hash(&layout).unwrap(),
+        KEY_NONE,
+        "the repo-root lockfile is seen"
+    );
+}
+
+#[test]
+fn record_gate_writes_a_batch_row_and_replaces_by_module_and_label() {
+    let root = tmp("gate-rows");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    unchanged_module(&root, &layout, "Gadget");
+
+    let rows = record_gate(
+        &layout,
+        &[
+            "Widget".to_string(),
+            "Gadget".to_string(),
+            "Widget".to_string(),
+        ],
+        "cargo-check",
+        false,
+    )
+    .unwrap();
+    // Batch row first, then modules sorted + deduped.
+    let modules: Vec<Option<&str>> = rows.iter().map(|r| r.module.as_deref()).collect();
+    assert_eq!(modules, vec![None, Some("Gadget"), Some("Widget")]);
+
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert_eq!(lineage.gates.len(), 3);
+    assert!(!lineage.gate(None, "cargo-check").unwrap().pass);
+
+    // A second result for the same (module, label) replaces, never appends.
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert_eq!(lineage.gates.len(), 3, "replaced, not appended");
+    assert!(lineage.gate(Some("Widget"), "cargo-check").unwrap().pass);
+    assert!(
+        lineage.gate(None, "cargo-check").unwrap().pass,
+        "batch row replaced too"
+    );
+    assert!(
+        !lineage.gate(Some("Gadget"), "cargo-check").unwrap().pass,
+        "untouched"
+    );
+
+    // A different label is a different row.
+    record_gate(&layout, &[], "next-build", true).unwrap();
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert_eq!(lineage.gates.len(), 4);
+
+    // gen-plan surfaces the batch state per label, sorted.
+    let plan = run_gen_plan(&layout).unwrap();
+    let labels: Vec<&str> = plan.batch.iter().map(|b| b.label.as_str()).collect();
+    assert_eq!(labels, vec!["cargo-check", "next-build"]);
+    assert!(
+        plan.batch.iter().all(|b| b.current),
+        "keys match the current lockfile"
+    );
+    assert!(plan.batch.iter().all(|b| b.pass));
+}
+
+#[test]
+fn a_failed_run_does_not_touch_modules_outside_the_run() {
+    // #107, point 5 of the decision: modules NOT in the failed run keep their pass rows and
+    // skip; the batch row is what says the tree does not build.
+    let root = tmp("gate-outside");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    unchanged_module(&root, &layout, "Gadget");
+    record_gate(
+        &layout,
+        &["Widget".to_string(), "Gadget".to_string()],
+        "cargo-check",
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+    assert_eq!(
+        plan_row(&layout, "Gadget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+
+    // Gadget regenerated alone and broke the build.
+    record_gate(&layout, &["Gadget".to_string()], "cargo-check", false).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true),
+        "kept"
+    );
+    assert_eq!(
+        plan_row(&layout, "Gadget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+    let plan = run_gen_plan(&layout).unwrap();
+    assert_eq!(plan.batch.len(), 1);
+    assert!(
+        !plan.batch[0].pass,
+        "the tree state is carried by the batch row"
+    );
+    assert!(plan.batch[0].current);
+}
+
+#[test]
+fn lineage_written_before_gates_existed_loads_with_an_empty_table() {
+    let root = tmp("gate-oldfile");
+    let layout = minimal_project(&root);
+    fs::write(
+        gen_lineage_path(&layout.specdev_root),
+        "[files.\"src/dsp.rs\"]\nmodule = \"Dsp\"\ngenerated_at = \"2026-06-12T10:00:00Z\"\ncontent_hash = \"sha256:abc\"\ninput_hash = \"sha256:in\"\n",
+    )
+    .unwrap();
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert_eq!(lineage.files.len(), 1);
+    assert!(lineage.gates.is_empty());
+    // And a file with no gates serializes with no `gates` key at all.
+    assert!(!lineage.to_toml_string().unwrap().contains("gates"));
+}
+
+#[test]
+fn gates_table_is_byte_stable_regardless_of_insertion_order() {
+    let mk = |order: &[(Option<&str>, &str)]| {
+        let mut l = GenLineage::default();
+        for (module, label) in order {
+            l.upsert_gate(specdev_analyzer::gen_lineage::GateResult {
+                module: module.map(str::to_string),
+                label: (*label).to_string(),
+                pass: true,
+                key: "none|none".into(),
+            });
+        }
+        l.to_toml_string().unwrap()
+    };
+    let a = mk(&[
+        (Some("Z"), "cargo-check"),
+        (None, "cargo-check"),
+        (Some("A"), "next-build"),
+    ]);
+    let b = mk(&[
+        (Some("A"), "next-build"),
+        (Some("Z"), "cargo-check"),
+        (None, "cargo-check"),
+    ]);
+    assert_eq!(a, b);
+    assert!(
+        !a.contains("generated_at"),
+        "gate rows carry no timestamp:\n{a}"
+    );
+}
+
+#[test]
+fn record_gate_refuses_an_empty_label() {
+    let root = tmp("gate-nolabel");
+    let layout = minimal_project(&root);
+    let err = record_gate(&layout, &[], "  ", true).unwrap_err();
+    assert!(format!("{err:#}").contains("--label"), "{err:#}");
 }

@@ -340,6 +340,33 @@ pub enum Command {
         #[arg(long)]
         accept_edits: bool,
     },
+    /// Record a compile-gate result in `specs/specdev/gen-lineage.toml`.
+    /// Invoked by the `/spec-gen` skill AFTER the compile gate (Step 8) —
+    /// never before it, because the gate itself writes the lockfile that
+    /// becomes part of the result's key. Writes one batch row (the
+    /// whole-tree result) plus one row per `--module`; rows replace by
+    /// `(module, label)`. `report gen-plan` reads them to decide which
+    /// `unchanged` modules still need a re-gate.
+    GenRecordGate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module(s) generated in this run. Repeatable. Omit to record a
+        /// batch row only.
+        #[arg(long)]
+        module: Vec<String>,
+        /// Opaque gate label (e.g. `cargo-check`, `flutter-analyze`,
+        /// `next-build`). The analyzer never interprets it.
+        #[arg(long)]
+        label: String,
+        /// The gate passed.
+        #[arg(long, conflicts_with = "fail", required_unless_present = "fail")]
+        pass: bool,
+        /// The gate failed. Every named module and the batch get a fail
+        /// row, so none of them can be skipped as verified next run.
+        #[arg(long, conflicts_with = "pass", required_unless_present = "pass")]
+        fail: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -540,6 +567,13 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             files,
             accept_edits,
         } => run_gen_record(project, spec_path.as_deref(), module, files, accept_edits),
+        Command::GenRecordGate {
+            project,
+            module,
+            label,
+            pass,
+            fail: _,
+        } => run_gen_record_gate(project, spec_path.as_deref(), module, &label, pass),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -1688,6 +1722,38 @@ fn run_gen_record(
         Ok(recorded) => {
             for path in &recorded {
                 println!("recorded {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_gen_record_gate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    modules: Vec<String>,
+    label: &str,
+    pass: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match specdev_analyzer::gen_lineage::record_gate(&layout, &modules, label, pass) {
+        Ok(rows) => {
+            for row in &rows {
+                let verdict = if row.pass { "pass" } else { "fail" };
+                match &row.module {
+                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
+                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
+                }
             }
             ExitCode::SUCCESS
         }

@@ -23,6 +23,33 @@
 //! a path replaces its entry — the file always reflects the latest gen run.
 //! Byte-stability via `BTreeMap`, same discipline as [`crate::lineage`].
 //!
+//! A second table records **compile-gate results**, because a gate result
+//! is about a module (or the whole tree), not a file, and so cannot live on
+//! a per-file entry:
+//!
+//! ```toml
+//! [[gates]]
+//! module = "Dsp"                  # absent for a batch (whole-tree) row
+//! label  = "cargo-check"          # opaque to the analyzer; the skill names it
+//! pass   = true
+//! key    = "sha256:...|sha256:..." # input_hash ⊕ lockfile/toolchain hash
+//! ```
+//!
+//! One row per `(module, label)`; a new result replaces the old row, and
+//! rows carry no timestamp — this file is committed and must not churn.
+//! The `key` binds a result to the inputs it was about: the module's
+//! `input_hash` (what was generated) and a hash of every lockfile and
+//! toolchain-pin file the language adapter names (what it was compiled
+//! against). A spec edit or a `cargo update` therefore invalidates a pass
+//! without anyone deleting it. A pass row means exactly: one environment
+//! compiled these inputs against this lockfile, once. The toolchain
+//! *version* is deliberately not in the key — it is a machine fact, and
+//! this file is committed.
+//!
+//! `report gen-plan` reads the table to add a second axis to its verdicts:
+//! `verified` (a pass row exists at the current key). The skill re-gates
+//! `unchanged && !verified` modules — running the compiler, not the LLM.
+//!
 //! The `content_hash` witnesses the *output* (did the emitted file change?);
 //! the `input_hash` witnesses the *input* (did the generation prompt change?).
 //! Together they let a later run skip a module whose inputs are unchanged and
@@ -54,6 +81,36 @@ pub const GEN_LINEAGE_FILE: &str = "gen-lineage.toml";
 pub struct GenLineage {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, GenEntry>,
+    /// Compile-gate results, one per `(module, label)`. Kept sorted by
+    /// `(module, label)` on save so the file is byte-stable. Absent from
+    /// lineage files written before gate recording existed — those load
+    /// with an empty table and every module reads unverified once.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gates: Vec<GateResult>,
+}
+
+/// One compile-gate result. See the module docs for the key's meaning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GateResult {
+    /// Module the gate was recorded for. Absent for a batch row — the
+    /// whole-tree result of the run (the thing `cargo check` actually
+    /// proves; per-module Rust rows are the under-claiming projection).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    /// Opaque gate label chosen by the skill (`cargo-check`, `flutter-analyze`,
+    /// `next-build`). The analyzer never enumerates or interprets labels.
+    pub label: String,
+    pub pass: bool,
+    /// `<input_hash or "none">|<lockfile+toolchain hash or "none">`. A batch
+    /// row has no module and so no input part: `none|<lock hash>`.
+    pub key: String,
+}
+
+impl GateResult {
+    /// Sort key: batch rows (no module) first, then by module, then label.
+    fn order(&self) -> (Option<&str>, &str) {
+        (self.module.as_deref(), self.label.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,8 +138,8 @@ impl GenLineage {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text =
-            std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).map_err(|e| {
             anyhow!(
                 "[GEN-LINEAGE-001] {} is not a valid gen-lineage.toml: {}",
@@ -107,7 +164,28 @@ impl GenLineage {
 
     /// Serialize to a TOML string (byte-stable). Public for tests.
     pub fn to_toml_string(&self) -> Result<String> {
-        toml::to_string(self).context("serializing gen-lineage")
+        let mut sorted = self.clone();
+        sorted.gates.sort_by(|a, b| a.order().cmp(&b.order()));
+        toml::to_string(&sorted).context("serializing gen-lineage")
+    }
+
+    /// Insert or replace the row for `(module, label)`.
+    pub fn upsert_gate(&mut self, row: GateResult) {
+        match self
+            .gates
+            .iter_mut()
+            .find(|g| g.module == row.module && g.label == row.label)
+        {
+            Some(existing) => *existing = row,
+            None => self.gates.push(row),
+        }
+    }
+
+    /// The recorded result for `(module, label)`, if any.
+    pub fn gate(&self, module: Option<&str>, label: &str) -> Option<&GateResult> {
+        self.gates
+            .iter()
+            .find(|g| g.module.as_deref() == module && g.label == label)
     }
 }
 
@@ -244,8 +322,7 @@ fn record_files_inner(
             )
         })?;
         let key = rel_key(rel);
-        let bytes =
-            std::fs::read(&abs).with_context(|| format!("reading {}", abs.display()))?;
+        let bytes = std::fs::read(&abs).with_context(|| format!("reading {}", abs.display()))?;
         lineage.files.insert(
             key.clone(),
             GenEntry {
@@ -260,6 +337,162 @@ fn record_files_inner(
     lineage.save(&layout.specdev_root)?;
     recorded.sort();
     Ok(recorded)
+}
+
+// ---------------------------------------------------------------------------
+// Compile-gate results.
+// ---------------------------------------------------------------------------
+
+/// Placeholder for an absent key component. A missing lockfile is a real,
+/// stable state (a fresh crate before its first `cargo check`; a resolution
+/// failure that never wrote one) and must key deterministically — it is
+/// not an error and not the same as any hash.
+pub const KEY_NONE: &str = "none";
+
+/// Hash of every lockfile and toolchain-pin file the project's language
+/// adapter names, found on a walk **up** from the project root.
+///
+/// The walk is bounded by, in order of preference: the directory of the
+/// workspace `spec.toml` that lists this project as a member; else the
+/// nearest ancestor holding a `.git` entry (repository root — a lockfile
+/// outside the repository cannot be the project's); else the project root
+/// itself (no walk). A cargo workspace keeps one `Cargo.lock` at its root
+/// and *none* in its members, so the walk is what lets a member's gate key
+/// see its real lockfile. Every candidate found on the walk is hashed —
+/// over-inclusion only costs a re-gate.
+///
+/// Returns [`KEY_NONE`] when nothing is found. Call this **after** the
+/// gate, never before: `cargo check` creates or rewrites `Cargo.lock`, and
+/// a package-manager install step rewrites its lockfile mid-gate.
+pub fn lockfile_hash(layout: &LayoutContext) -> Result<String> {
+    let language = layout.spec.project.language.as_str();
+    let adapter = crate::lang::adapter_for(language)
+        .ok_or_else(|| anyhow!("gen-record-gate: unknown language `{language}`"))?;
+    let mut names: Vec<&str> = adapter.lockfile_candidates().to_vec();
+    names.extend_from_slice(adapter.toolchain_file_candidates());
+    if names.is_empty() {
+        return Ok(KEY_NONE.to_string());
+    }
+
+    let root = layout
+        .project_root
+        .canonicalize()
+        .with_context(|| format!("canonicalizing {}", layout.project_root.display()))?;
+    let bound = gate_walk_bound(&root)?;
+
+    // Collect (relative-name, bytes) for every candidate found between the
+    // root and the bound, inclusive. Sorted by path so the hash is stable.
+    let mut found: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut cursor: Option<&Path> = Some(root.as_path());
+    while let Some(dir) = cursor {
+        for name in &names {
+            let p = dir.join(name);
+            if p.is_file() {
+                let bytes =
+                    std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
+                found.push((p.to_string_lossy().into_owned(), bytes));
+            }
+        }
+        if dir == bound {
+            break;
+        }
+        cursor = dir.parent();
+    }
+    if found.is_empty() {
+        return Ok(KEY_NONE.to_string());
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut buf: Vec<u8> = Vec::new();
+    for (path, bytes) in &found {
+        // Key on the file name, not the absolute path — the same lockfile
+        // must hash identically on every checkout of the repository.
+        let name = Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+    }
+    Ok(content_hash(&buf))
+}
+
+/// Where the lockfile walk stops (inclusive). See [`lockfile_hash`].
+fn gate_walk_bound(root: &Path) -> Result<PathBuf> {
+    if let Some(ws_spec) = crate::layout::find_workspace_root_spec(root)? {
+        if let Some(dir) = ws_spec.parent() {
+            return Ok(dir.to_path_buf());
+        }
+    }
+    let mut cursor = root;
+    loop {
+        if cursor.join(".git").exists() {
+            return Ok(cursor.to_path_buf());
+        }
+        match cursor.parent() {
+            Some(p) => cursor = p,
+            None => return Ok(root.to_path_buf()),
+        }
+    }
+}
+
+/// Compose a gate key from its two parts.
+pub fn compose_gate_key(input_hash: Option<&str>, lock_hash: &str) -> String {
+    format!("{}|{}", input_hash.unwrap_or(KEY_NONE), lock_hash)
+}
+
+/// The key a gate result for `module` would carry *right now*: the module's
+/// freshly assembled `input_hash` (or `none` if the prompt cannot be
+/// assembled, or for a batch row) joined with `lock_hash`.
+pub fn current_gate_key(layout: &LayoutContext, module: Option<&str>, lock_hash: &str) -> String {
+    let input = module.and_then(|m| crate::prompt::module_input_hash(layout, m).ok());
+    compose_gate_key(input.as_deref(), lock_hash)
+}
+
+/// Record a compile-gate result. Writes one row per module in `modules`
+/// **and** one batch row (no module) for the run — the batch row is the
+/// whole-tree fact the gate actually established; the module rows are the
+/// under-claiming projection onto the modules this run generated. Rows
+/// replace by `(module, label)`. The lockfile is hashed here, i.e. after
+/// the gate ran. Returns the rows written, batch row first.
+pub fn record_gate(
+    layout: &LayoutContext,
+    modules: &[String],
+    label: &str,
+    pass: bool,
+) -> Result<Vec<GateResult>> {
+    if label.trim().is_empty() {
+        bail!("gen-record-gate: --label must not be empty");
+    }
+    let lock = lockfile_hash(layout)?;
+    let mut lineage = GenLineage::load(&layout.specdev_root)?;
+    let mut written = Vec::with_capacity(modules.len() + 1);
+
+    let batch = GateResult {
+        module: None,
+        label: label.to_string(),
+        pass,
+        key: compose_gate_key(None, &lock),
+    };
+    lineage.upsert_gate(batch.clone());
+    written.push(batch);
+
+    let mut names: Vec<&String> = modules.iter().collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        let row = GateResult {
+            module: Some(name.clone()),
+            label: label.to_string(),
+            pass,
+            key: current_gate_key(layout, Some(name), &lock),
+        };
+        lineage.upsert_gate(row.clone());
+        written.push(row);
+    }
+    lineage.save(&layout.specdev_root)?;
+    Ok(written)
 }
 
 /// Project-root-relative key with forward slashes on every platform.
@@ -384,6 +617,13 @@ impl GenPlanCategory {
 pub struct GenPlanModule {
     pub module: String,
     pub category: GenPlanCategory,
+    /// Second axis, independent of `category`: does a **passing** gate row
+    /// exist for this module at the *current* key (fresh `input_hash` ⊕
+    /// current lockfile hash)? `false` for a module that was never gated,
+    /// failed its gate, or whose spec or lockfile moved since it passed.
+    /// The skill's re-gate set is `category == unchanged && !verified`:
+    /// run the compile gate again, do not regenerate.
+    pub verified: bool,
     /// Affected output files — populated only for `edited` / `missing` so
     /// the skill can name them when it surfaces the module. Sorted; empty
     /// for the other categories.
@@ -391,10 +631,26 @@ pub struct GenPlanModule {
     pub files: Vec<String>,
 }
 
+/// The whole-tree gate state, one per recorded batch label.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GenPlanBatchGate {
+    pub label: String,
+    pub pass: bool,
+    /// Whether the row's key matches the current lockfile hash. A stale
+    /// batch row says nothing about today's tree.
+    pub current: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GenPlanReport {
     /// One verdict per module under `specs/modules/`, sorted by module name.
     pub modules: Vec<GenPlanModule>,
+    /// Batch (no-module) gate rows, sorted by label. Empty when no batch
+    /// gate was ever recorded. This is what tells the report whether the
+    /// tree built the last time a gate ran — a module can be `verified`
+    /// while a *later* module broke the build.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub batch: Vec<GenPlanBatchGate>,
 }
 
 impl GenPlanReport {
@@ -424,7 +680,37 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
     let module_names = crate::prompt::list_module_names(layout)?;
     let mut report = GenPlanReport::default();
 
+    // The lockfile half of the gate key, computed once per plan. Read at
+    // plan time it reflects the last gate that ran (or a `cargo update`
+    // since) — exactly the thing a recorded pass must be compared against.
+    let lock = lockfile_hash(layout)?;
+
+    // Batch rows: whole-tree state per label.
+    let batch_key = compose_gate_key(None, &lock);
+    let mut batch: Vec<GenPlanBatchGate> = lineage
+        .gates
+        .iter()
+        .filter(|g| g.module.is_none())
+        .map(|g| GenPlanBatchGate {
+            label: g.label.clone(),
+            pass: g.pass,
+            current: g.key == batch_key,
+        })
+        .collect();
+    batch.sort_by(|a, b| a.label.cmp(&b.label));
+    report.batch = batch;
+
     for name in &module_names {
+        // Second axis: a passing gate row at the current key. Computed for
+        // every category — a `new` or `stale` module is trivially
+        // unverified (its key moved with its inputs), and saying so keeps
+        // the field's meaning uniform.
+        let current_key = current_gate_key(layout, Some(name), &lock);
+        let verified = lineage
+            .gates
+            .iter()
+            .any(|g| g.module.as_deref() == Some(name.as_str()) && g.pass && g.key == current_key);
+
         // Files recorded for this module (project-level entries excluded).
         let entries: Vec<(&String, &GenEntry)> = lineage
             .files
@@ -436,6 +722,7 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
             report.modules.push(GenPlanModule {
                 module: name.clone(),
                 category: GenPlanCategory::New,
+                verified,
                 files: Vec::new(),
             });
             continue;
@@ -480,6 +767,7 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
         report.modules.push(GenPlanModule {
             module: name.clone(),
             category,
+            verified,
             files,
         });
     }

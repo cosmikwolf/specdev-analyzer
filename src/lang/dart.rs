@@ -34,6 +34,10 @@ impl LanguageAdapter for DartAdapter {
         Some(ITEMS_QUERY)
     }
 
+    fn lockfile_candidates(&self) -> &'static [&'static str] {
+        &["pubspec.lock"]
+    }
+
     fn item_is_public_name(&self, name: &str) -> bool {
         // Dart privacy is lexical: a `_`-prefixed identifier is
         // library-private. Qualified names (`Device.connect`) are private
