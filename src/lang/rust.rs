@@ -34,6 +34,14 @@ impl LanguageAdapter for RustAdapter {
         vec![format!("{snake}.rs"), format!("{snake}/mod.rs")]
     }
 
+    fn lockfile_candidates(&self) -> &'static [&'static str] {
+        &["Cargo.lock"]
+    }
+
+    fn toolchain_file_candidates(&self) -> &'static [&'static str] {
+        &["rust-toolchain.toml", "rust-toolchain"]
+    }
+
     fn default_visibility_floor(&self) -> Option<&'static str> {
         Some("pub")
     }

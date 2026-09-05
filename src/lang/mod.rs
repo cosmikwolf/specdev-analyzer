@@ -73,6 +73,26 @@ pub trait LanguageAdapter: Send + Sync {
         vec![format!("{snake}.{}", self.file_extension())]
     }
 
+    /// Lockfile names this language's package managers write, relative
+    /// to the directory that owns the manifest. A lockfile is a
+    /// package-manager fact, not a language fact — a language with
+    /// several managers lists every name — so callers hash *every*
+    /// candidate they find rather than picking one. Feeds the compile-gate
+    /// key in `gen-lineage.toml`: a dependency change must invalidate a
+    /// recorded gate pass. Default: none (the language has no lockfile).
+    fn lockfile_candidates(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Toolchain-pin files that make the build environment a *project*
+    /// fact (Rust: `rust-toolchain.toml`). Hashed into the gate key by the
+    /// same mechanism as the lockfile, so a toolchain pin change
+    /// invalidates a recorded pass without any `--version` subprocess
+    /// output entering committed state. Default: none.
+    fn toolchain_file_candidates(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// The visibility floor this language applies when the profile
     /// declares none (`items.visibility_floor` absent). `None` means the
     /// language has no visibility modifiers — every declared `.vis`
