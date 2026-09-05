@@ -112,10 +112,17 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
             .with_context(|| format!("reading {}", manifest.display()))?;
 
         // --- REF-COVERAGE-001: each declared case has a reference source ---
-        let ext = adapter.file_extension();
+        // A language may span several extensions; any of them satisfies
+        // the case. The message names the primary form.
+        let exts = adapter.file_extensions();
         for case in &cases {
-            let src = lang_dir.join("src").join(format!("{case}.{ext}"));
-            if !src.is_file() {
+            let found = exts
+                .iter()
+                .any(|ext| lang_dir.join("src").join(format!("{case}.{ext}")).is_file());
+            if !found {
+                let src = lang_dir
+                    .join("src")
+                    .join(format!("{case}.{}", adapter.file_extension()));
                 offenders.push(format!(
                     "{unit_name}: [REF-COVERAGE-001] reference_cases lists {case:?} \
                      but {} is missing",
@@ -309,16 +316,25 @@ fn reference_arity_map(
     if !src_dir.is_dir() {
         return Ok(map);
     }
-    let ext = adapter.file_extension();
+    let exts = adapter.file_extensions();
     let mut files: Vec<_> = std::fs::read_dir(&src_dir)?
         .filter_map(|r| r.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some(ext))
+        .filter(|p| {
+            p.extension()
+                .and_then(|s| s.to_str())
+                .map(|e| exts.contains(&e))
+                .unwrap_or(false)
+        })
         .collect();
     files.sort();
     for f in files {
         let src = std::fs::read_to_string(&f)?;
-        for (base, arity) in generic_arities(&src, adapter) {
+        let ext = f
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| adapter.file_extension());
+        for (base, arity) in generic_arities(&src, ext, adapter) {
             map.entry(base).or_insert(arity);
         }
     }
@@ -326,9 +342,13 @@ fn reference_arity_map(
 }
 
 /// Every `(terminal-name, arity)` for generic types in `src`, via tree-sitter.
-fn generic_arities(src: &str, adapter: &dyn LanguageAdapter) -> Vec<(String, usize)> {
+/// `ext` selects the grammar for languages that span several.
+fn generic_arities(src: &str, ext: &str, adapter: &dyn LanguageAdapter) -> Vec<(String, usize)> {
     let mut parser = Parser::new();
-    if parser.set_language(&adapter.tree_sitter_language()).is_err() {
+    if parser
+        .set_language(&adapter.tree_sitter_language_for(ext))
+        .is_err()
+    {
         return Vec::new();
     }
     let Some(tree) = parser.parse(src, None) else {
@@ -377,7 +397,8 @@ fn prose_generic_arities(prose: &str, adapter: &dyn LanguageAdapter) -> Vec<(Str
     for (i, c) in candidates.iter().enumerate() {
         wrapped.push_str(&format!("type _C{i} = {c};\n"));
     }
-    generic_arities(&wrapped, adapter)
+    // Prose fragments carry no file, so they parse under the primary grammar.
+    generic_arities(&wrapped, adapter.file_extension(), adapter)
 }
 
 /// Find `Ident<...>` (optionally path-scoped) substrings with balanced angle

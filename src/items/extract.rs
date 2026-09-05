@@ -39,15 +39,19 @@ pub fn profile_visibility_floor(specdev_root: &Path) -> Result<Option<String>> {
 
 /// Parse `source` with the language adapter, run the per-language items
 /// query, and produce one `ExtractedItem` per top-level item capture.
-/// `floor` is the profile-declared visibility floor; `None` falls back to
-/// the adapter's default.
+/// `ext` is the source file's extension and selects the grammar — a
+/// language may span several (`.ts` / `.tsx`), and `source_file` makes
+/// the extension per-module data, so the caller passes what the resolved
+/// path carries. `floor` is the profile-declared visibility floor; `None`
+/// falls back to the adapter's default.
 pub fn extract_items_from_source(
     source: &str,
+    ext: &str,
     adapter: &dyn LanguageAdapter,
     floor: Option<&str>,
 ) -> Result<Vec<ExtractedItem>> {
     let floor = floor.or_else(|| adapter.default_visibility_floor());
-    let ts_language = adapter.tree_sitter_language();
+    let ts_language = adapter.tree_sitter_language_for(ext);
     let mut parser = Parser::new();
     parser
         .set_language(&ts_language)
@@ -88,7 +92,13 @@ pub fn extract_items_from_path(
 ) -> Result<Vec<ExtractedItem>> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("reading source file {}", path.display()))?;
-    extract_items_from_source(&source, adapter, floor)
+    // Grammar selection keys off the resolved path, not the adapter's
+    // primary extension: `source_file` may name a `.tsx` for a `.ts` language.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_else(|| adapter.file_extension());
+    extract_items_from_source(&source, ext, adapter, floor)
 }
 
 fn match_to_item(
@@ -382,11 +392,11 @@ mod tests {
     use crate::lang::rust::RustAdapter;
 
     fn extract(source: &str) -> Vec<ExtractedItem> {
-        extract_items_from_source(source, &RustAdapter, None).expect("extract")
+        extract_items_from_source(source, "rs", &RustAdapter, None).expect("extract")
     }
 
     fn extract_with_floor(source: &str, floor: &str) -> Vec<ExtractedItem> {
-        extract_items_from_source(source, &RustAdapter, Some(floor)).expect("extract")
+        extract_items_from_source(source, "rs", &RustAdapter, Some(floor)).expect("extract")
     }
 
     fn names(items: &[ExtractedItem], kind: &str) -> Vec<String> {
