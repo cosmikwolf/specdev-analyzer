@@ -4,7 +4,8 @@ title: "profile manifest (Phase 16, D52 / doc 21 §3)"
 description: |
   Validates `profiles/<name>/profile.yaml`. Authored on the plugin side;
   byte-copied into a project at `specs/specdev/profile.yaml` during
-  bootstrap. Drives cargo-toml render dispatch, skeleton policy,
+  bootstrap. Drives manifest render dispatch (cargo_toml / pubspec_yaml /
+  package_json), skeleton policy,
   context-subcommand extras, and validate-pass surface flags. Does NOT
   participate in lineage (project-owned post-bootstrap, doc 15 §3.3).
 
@@ -225,6 +226,57 @@ properties:
           flutter:
             type: string
             minLength: 1
+
+  package_json:
+    description: |
+      package.json render dispatch. Required for `language: typescript`.
+      May be omitted for other languages. Third sibling of `cargo_toml`
+      and `pubspec_yaml` — the `manifest` subcommand dispatches on the
+      project language to whichever section applies.
+    type: object
+    additionalProperties: false
+    required: [shape]
+    properties:
+      shape:
+        description: |
+          PackageJsonShapeKind (closed enum): `app` emits `"private":
+          true` (an application, never published); `library` emits a
+          publishable package shape; `workspace` renders the pnpm
+          workspace root (`package.json` + `pnpm-workspace.yaml`) — the
+          `[workspace]` table presence in spec.toml is the actual
+          dispatch signal, mirroring the cargo and pub paths.
+        type: string
+        enum: [app, library, workspace]
+      package_manager:
+        description: |
+          Default `packageManager` field (corepack pin, e.g.
+          "pnpm@10.15.0"). architecture.toml's `[environment]
+          package_manager` overrides it.
+        type: string
+        minLength: 1
+      engines:
+        description: |
+          Default `engines` map. architecture.toml's `[environment] node`
+          overrides `node` key-by-key.
+        type: object
+        additionalProperties: false
+        properties:
+          node:
+            type: string
+            minLength: 1
+      type:
+        description: |
+          The package.json `type` field. Omitted when absent.
+        type: string
+        enum: [module, commonjs]
+      scripts:
+        description: |
+          Default `scripts` map. architecture.toml's `[scripts]` table
+          overrides key-by-key. Emitted lex-sorted.
+        type: object
+        additionalProperties:
+          type: string
+          minLength: 1
 
   items:
     description: |

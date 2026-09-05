@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 const SCHEMA_YAML: &str = include_str!("../embedded/profile.schema.yaml");
@@ -16,6 +17,8 @@ pub struct Profile {
     pub cargo_toml: Option<CargoTomlSection>,
     #[serde(default)]
     pub pubspec_yaml: Option<PubspecYamlSection>,
+    #[serde(default)]
+    pub package_json: Option<PackageJsonSection>,
     #[serde(default)]
     pub bootstrap: Option<BootstrapSection>,
     #[serde(default)]
@@ -99,6 +102,62 @@ pub enum PubShapeKind {
     /// Descriptive only — the `[workspace]` table in spec.toml is the
     /// actual dispatch signal, mirroring the cargo path.
     Workspace,
+}
+
+/// package.json render dispatch — third sibling of [`CargoTomlSection`]
+/// and [`PubspecYamlSection`].
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PackageJsonSection {
+    pub shape: PackageJsonShapeKind,
+    /// Default `packageManager` (corepack pin); architecture.toml's
+    /// `[environment] package_manager` overrides it.
+    #[serde(default)]
+    pub package_manager: Option<String>,
+    /// Default `engines` map; architecture.toml's `[environment] node`
+    /// overrides `node`.
+    #[serde(default)]
+    pub engines: Option<NpmEngines>,
+    /// The package.json `type` field; omitted when absent.
+    #[serde(default, rename = "type")]
+    pub module_type: Option<NpmModuleType>,
+    /// Default `scripts`; architecture.toml's `[scripts]` overrides
+    /// key-by-key.
+    #[serde(default)]
+    pub scripts: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageJsonShapeKind {
+    /// An application: emits `"private": true`.
+    App,
+    /// A publishable package.
+    Library,
+    /// The pnpm workspace root — the `[workspace]` table in spec.toml is
+    /// the actual dispatch signal, mirroring the cargo and pub paths.
+    Workspace,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+pub struct NpmEngines {
+    #[serde(default)]
+    pub node: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NpmModuleType {
+    Module,
+    Commonjs,
+}
+
+impl NpmModuleType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NpmModuleType::Module => "module",
+            NpmModuleType::Commonjs => "commonjs",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

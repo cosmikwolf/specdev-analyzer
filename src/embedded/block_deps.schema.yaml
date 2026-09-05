@@ -33,6 +33,16 @@ properties:
     items:
       $ref: "#/$defs/PubEntry"
 
+  npm:
+    description: |
+      npm package dependencies the block contributes to package.json when
+      inlined. Contributions are runtime `dependencies` — dev-dep routing
+      (`test_only`) is a spec-side external_deps concern, mirroring the
+      crates[] and pub[] rule.
+    type: array
+    items:
+      $ref: "#/$defs/NpmEntry"
+
   recommended_external_deps:
     description: |
       Non-injecting suggestions surfaced by /spec-design. NOT auto-merged
@@ -194,4 +204,78 @@ $defs:
           - required: [git]
           - required: [path]
           - required: [sdk]
+          - required: [version]
+
+  NpmEntry:
+    description: |
+      One package.json dep entry. Mirrors the NpmReference shape the
+      package.json emitter parses from spec-side external_deps, minus
+      `test_only` (block/bridge contributions are runtime deps). A
+      package.json dependency value is ONE string, so exactly one shape
+      applies:
+        version: "^1.2.3"              — registry dep (range emitted verbatim)
+        git: { url, ref? }             — `<url>#<ref>`
+        path: "../x"                   — `file:../x` (copy + install target deps)
+        link: "../x"                   — `link:../x` (symlink, install nothing)
+        workspace: "*"                 — `workspace:*`
+      `version` is required for a registry dep and FORBIDDEN beside any
+      source key (no sibling-version slot, unlike pubspec).
+    type: object
+    additionalProperties: false
+    required: [package]
+    properties:
+      package:
+        description: npm package name, scope included (`@scope/name`).
+        type: string
+        minLength: 1
+      version:
+        description: npm range string (e.g. "^1.2.3", ">=1.2.0 <2.0.0").
+        type: string
+        minLength: 1
+      git:
+        type: object
+        additionalProperties: false
+        required: [url]
+        properties:
+          url:
+            type: string
+            minLength: 1
+          ref:
+            type: string
+            minLength: 1
+      path:
+        description: Local directory dep → `file:<path>`.
+        type: string
+        minLength: 1
+      link:
+        description: Local directory dep → `link:<path>`.
+        type: string
+        minLength: 1
+      workspace:
+        description: Workspace-protocol range → `workspace:<range>`.
+        type: string
+        minLength: 1
+    allOf:
+      # At most one source key.
+      - not:
+          anyOf:
+            - required: [git, path]
+            - required: [git, link]
+            - required: [git, workspace]
+            - required: [path, link]
+            - required: [path, workspace]
+            - required: [link, workspace]
+      # A version is forbidden beside any source key.
+      - not:
+          anyOf:
+            - required: [version, git]
+            - required: [version, path]
+            - required: [version, link]
+            - required: [version, workspace]
+      # A registry dep (no source key) must carry a version.
+      - anyOf:
+          - required: [git]
+          - required: [path]
+          - required: [link]
+          - required: [workspace]
           - required: [version]

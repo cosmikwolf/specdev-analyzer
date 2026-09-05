@@ -1,8 +1,13 @@
 //! Deterministic pubspec.yaml emission from spec metadata.
 //!
-//! The Dart sibling of `cargo_toml.rs` (deliberately a concrete sibling
-//! emitter, not a shared rendering abstraction — the two share merge
-//! *discipline*, not code; revisit if a third language emitter lands).
+//! The Dart sibling of `cargo_toml.rs` and `package_json.rs`. Deliberately
+//! a concrete sibling emitter, not a shared rendering abstraction: the
+//! three share merge *discipline* (user > blocks > bridges, first wins,
+//! version and source conflicts warn, `test_only` routes to the dev
+//! section), not rendering code. The "revisit at the third emitter"
+//! trigger fired when the TypeScript emitter landed and was answered
+//! with a *no*: the merge policy is held in lockstep by a table-driven
+//! conformance test across all three emitters, not by an abstraction.
 //! Reads `spec.toml` `[project]` + `architecture.toml` (`[environment]`,
 //! `[[external_deps]]`, `[[dependency_overrides]]`) + module-level
 //! `external_deps[]` + inlined block/bridge `deps.yaml` `pub:`
@@ -26,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::layout::LayoutContext;
 use crate::manifest::block_deps as bd_module;
-use crate::manifest::{BlockDeps, Profile, PubShapeKind, PubSource};
+use crate::manifest::{has_workspace_ancestor, BlockDeps, Profile, PubShapeKind, PubSource};
 
 /// One pubspec dependency entry, normalized. Spec-side twin of the
 /// manifest loader's `PubEntry` (which lacks `test_only` — block/bridge
@@ -72,53 +77,8 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedPubspec> {
     if layout.spec.workspace.is_some() {
         return render_workspace_root(layout, pubspec);
     }
-    let is_member = has_workspace_ancestor(layout)?;
+    let is_member = has_workspace_ancestor(layout.project_root.as_path())?;
     render_package(layout, pubspec, is_member)
-}
-
-/// True when an ancestor spec.toml carries a `[workspace]` whose
-/// `members[].path` includes this project's directory. Deliberately NOT
-/// the cargo path's `WorkspaceContext` — that walker also parses the
-/// workspace's `[[workspace_dependencies]]` as *cargo* refs, which
-/// would fail with cargo-vocabulary errors on a Dart workspace. Pub
-/// member mode needs only the membership boolean.
-fn has_workspace_ancestor(layout: &LayoutContext) -> Result<bool> {
-    let member_dir = layout.project_root.as_path();
-    let mut cursor = match member_dir.parent() {
-        Some(p) => p,
-        None => return Ok(false),
-    };
-    loop {
-        let candidate = cursor.join("spec.toml");
-        if candidate.is_file() {
-            let text = std::fs::read_to_string(&candidate)
-                .with_context(|| format!("reading {}", candidate.display()))?;
-            if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
-                let members = parsed
-                    .get("workspace")
-                    .and_then(|w| w.get("members"))
-                    .and_then(|m| m.as_array());
-                if let Some(members) = members {
-                    let root = candidate.parent().unwrap_or(&candidate);
-                    if let Ok(rel) = member_dir.strip_prefix(root) {
-                        let rel = rel.to_string_lossy().replace('\\', "/");
-                        if members.iter().any(|m| {
-                            m.get("path")
-                                .and_then(|p| p.as_str())
-                                .map(|p| p.trim_end_matches('/') == rel)
-                                .unwrap_or(false)
-                        }) {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
-        }
-        match cursor.parent() {
-            Some(p) => cursor = p,
-            None => return Ok(false),
-        }
-    }
 }
 
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Profile> {

@@ -3,8 +3,14 @@
 //! Three runtime-loaded YAML manifests drive the analyzer's
 //! profile/block/bridge dispatch. This module ships the
 //! deserialization + validation surface; dispatch wiring lives in the
-//! consumer modules (`cargo_toml.rs`, `skeleton.rs`, `context.rs`,
-//! `bootstrap.rs`, `reduction.rs`, `validate.rs`).
+//! consumer modules (`cargo_toml.rs`, `pubspec_yaml.rs`,
+//! `package_json.rs`, `skeleton.rs`, `context.rs`, `bootstrap.rs`,
+//! `reduction.rs`, `validate.rs`).
+//!
+//! [`has_workspace_ancestor`] is the one piece of dispatch logic that
+//! lives here: the pub and npm emitters both need "is this directory a
+//! member of an enclosing spec.toml `[workspace]`?" and nothing else
+//! about the workspace.
 //!
 //! Each manifest:
 //!   - has its YAML JSON Schema under `src/embedded/`
@@ -25,15 +31,15 @@ pub mod profile;
 
 pub use profile::{CrateType as ProfileCrateType, LibSection};
 pub use block_deps::{
-    BlockDeps, CrateEntry, CrateSource, CrateSourceTag, PubEntry, PubGit, PubSource,
-    RecommendedDep,
+    BlockDeps, CrateEntry, CrateSource, CrateSourceTag, NpmEntry, NpmGit, NpmSource, PubEntry,
+    PubGit, PubSource, RecommendedDep,
 };
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
-    BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection,
-    ContextExtra, ContextSection, FeaturesSection, ItemsSection, PairedStub,
-    Profile, PubEnvironment, PubShapeKind, PubspecYamlSection, ReverseSection,
-    ReverseVocabulary, ShapeKind, SurfaceSection,
+    BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection, ContextExtra,
+    ContextSection, FeaturesSection, ItemsSection, NpmEngines, NpmModuleType, PackageJsonSection,
+    PackageJsonShapeKind, PairedStub, Profile, PubEnvironment, PubShapeKind, PubspecYamlSection,
+    ReverseSection, ReverseVocabulary, ShapeKind, SurfaceSection,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -94,4 +100,48 @@ fn load_yaml_validated(
         return Err(anyhow!(msg));
     }
     Ok(value)
+}
+
+/// True when an ancestor spec.toml carries a `[workspace]` whose
+/// `members[].path` includes `member_dir`. Deliberately NOT the cargo
+/// path's `WorkspaceContext` — that walker also parses the workspace's
+/// `[[workspace_dependencies]]` as *cargo* refs, which would fail with
+/// cargo-vocabulary errors on a Dart or TypeScript workspace. Member
+/// mode needs only the membership boolean.
+pub fn has_workspace_ancestor(member_dir: &Path) -> Result<bool> {
+    let mut cursor = match member_dir.parent() {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+    loop {
+        let candidate = cursor.join("spec.toml");
+        if candidate.is_file() {
+            let text = std::fs::read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
+                let members = parsed
+                    .get("workspace")
+                    .and_then(|w| w.get("members"))
+                    .and_then(|m| m.as_array());
+                if let Some(members) = members {
+                    let root = candidate.parent().unwrap_or(&candidate);
+                    if let Ok(rel) = member_dir.strip_prefix(root) {
+                        let rel = rel.to_string_lossy().replace('\\', "/");
+                        if members.iter().any(|m| {
+                            m.get("path")
+                                .and_then(|p| p.as_str())
+                                .map(|p| p.trim_end_matches('/') == rel)
+                                .unwrap_or(false)
+                        }) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+        match cursor.parent() {
+            Some(p) => cursor = p,
+            None => return Ok(false),
+        }
+    }
 }
