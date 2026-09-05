@@ -132,6 +132,18 @@ pub trait LanguageAdapter: Send + Sync {
         captured.map(str::trim) == Some(floor)
     }
 
+    /// [`visibility_at_least`](Self::visibility_at_least) with the capture
+    /// prefix (`fn`, `inherent_fn`, `inherent_function`, …) in hand, for
+    /// languages whose "no modifier written" means different things at
+    /// different positions: in TypeScript an absent `export` on a
+    /// top-level declaration is private, while an absent accessibility
+    /// modifier on a class member is public. Rust's lattice is uniform,
+    /// so the default ignores the prefix and delegates. The extractor
+    /// calls this one; `visibility_at_least` remains the lattice itself.
+    fn visibility_at_least_for(&self, _prefix: &str, captured: Option<&str>, floor: &str) -> bool {
+        self.visibility_at_least(captured, floor)
+    }
+
     /// Map a re-export's captured visibility modifier to the spec-side
     /// `re_export.visibility` enum value, or `None` when the spec cannot
     /// express it (the item then drops). Rust: `pub` → `pub`,
