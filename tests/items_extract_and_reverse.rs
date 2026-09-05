@@ -71,7 +71,7 @@ extern \"C\" {
     fn extern_fn() -> u32;
 }
 ";
-    let items = extract_items_from_source(source, &RustAdapter, None).unwrap();
+    let items = extract_items_from_source(source, "rs", &RustAdapter, None).unwrap();
     let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
 
     // 11 of the 12 kinds covered by this fixture (no union, no macro).
@@ -127,7 +127,7 @@ impl Resettable for Counter {
 
 pub fn free_function() {}
 ";
-    let items = extract_items_from_source(source, &RustAdapter, None).unwrap();
+    let items = extract_items_from_source(source, "rs", &RustAdapter, None).unwrap();
     let names: Vec<_> = items
         .iter()
         .map(|i| (i.kind.clone(), i.name.clone()))

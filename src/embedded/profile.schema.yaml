@@ -26,7 +26,7 @@ properties:
       language is admitted to both enums in the same change, alongside
       its adapter.
     type: string
-    enum: [rust, c, cpp, dart]
+    enum: [rust, c, cpp, dart, typescript]
 
   cargo_toml:
     description: |

@@ -9,6 +9,7 @@ pub mod c;
 pub mod cpp;
 pub mod dart;
 pub mod rust;
+pub mod typescript;
 
 use tree_sitter::{Language, Node};
 
@@ -24,8 +25,28 @@ pub trait LanguageAdapter: Send + Sync {
     /// Canonical name — must match `spec.toml`'s `project.language`.
     fn name(&self) -> &'static str;
 
-    /// Source file extension used when resolving modules to files.
+    /// Primary source file extension — the one `<snake>.<ext>` module
+    /// resolution tries first and the one authoring prose names.
     fn file_extension(&self) -> &'static str;
+
+    /// Every source extension this language spans. Default: the primary
+    /// one. A language with several (TypeScript: `ts` + `tsx`) lists them
+    /// all; walks over reference sources and candidate paths take the
+    /// list, never the primary alone.
+    fn file_extensions(&self) -> Vec<&'static str> {
+        vec![self.file_extension()]
+    }
+
+    /// Tree-sitter grammar for a source file with extension `ext`. A
+    /// language may span several grammars (TypeScript ships one for `.ts`
+    /// and one for `.tsx`; the TSX grammar cannot parse `<T>x` type
+    /// assertions, so the choice is real). Default: the single grammar
+    /// from [`tree_sitter_language`](Self::tree_sitter_language),
+    /// whatever the extension. Extraction keys this off the *resolved*
+    /// path, because `source_file` makes the extension per-module data.
+    fn tree_sitter_language_for(&self, _ext: &str) -> Language {
+        self.tree_sitter_language()
+    }
 
     /// Segment separator for qualified paths in this language
     /// (`::` for Rust/C++, `.` for Dart). Anything that splits or joins
@@ -177,6 +198,7 @@ pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
         "c" => Some(Box::new(c::CAdapter)),
         "cpp" | "c++" => Some(Box::new(cpp::CppAdapter)),
         "dart" => Some(Box::new(dart::DartAdapter)),
+        "typescript" => Some(Box::new(typescript::TypeScriptAdapter)),
         _ => None,
     }
 }
