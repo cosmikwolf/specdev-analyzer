@@ -34,6 +34,42 @@ paired_files:
   - { template_file: templates/gitignore.template,            target: .gitignore }
   - { template_file: templates/gitkeep.template,              target: app/.gitkeep }
 
+# Route files derived per module by `specdev-analyzer derive --write`
+# (run by /spec-gen after the manifest, for every module on every gen).
+# A shim re-exports the module body; the body is looked up under `src/`
+# by the module's snake_case name, and a module with no body is skipped.
+# Rules match in declared order, first match wins, so the two error kinds
+# (which need the client directive in the route file itself) come before
+# the general boundary rule. `exclusive: segment` refuses a page and a
+# route handler in one directory before anything is written. Every
+# derived file is recorded with `derived = true`; a shim no rule produces
+# any more is deleted on the next derive. Never hand-edit a shim:
+# `derive --write --accept-edits` is the only exit.
+derived_files:
+  - when: { role: boundary, boundary_kind: error }
+    path: "app${.app_path}/error.tsx"
+    template: templates/shim-client.tsx.template
+  - when: { role: boundary, boundary_kind: global-error }
+    path: "app${.app_path}/global-error.tsx"
+    template: templates/shim-client.tsx.template
+  - when: { role: boundary }
+    path: "app${.app_path}/${.boundary_kind}.tsx"
+    template: templates/shim-default.tsx.template
+  - when: { role: page }
+    path: "app${.app_path}/page.tsx"
+    template: templates/shim-default.tsx.template
+    exclusive: segment
+  - when: { role: layout }
+    path: "app${.app_path}/layout.tsx"
+    template: templates/shim-default.tsx.template
+  - when: { role: app }
+    path: app/layout.tsx
+    template: templates/shim-default.tsx.template
+  - when: { role: route_handler }
+    path: "app${.app_path}/route.ts"
+    template: templates/shim-star.ts.template
+    exclusive: segment
+
 bootstrap:
   steps: []                       # standalone app; no workspace machinery
 

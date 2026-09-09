@@ -34,6 +34,11 @@ pub struct Profile {
     /// manifest runner merges them with the rust arm's `[[bin]]` stub.
     #[serde(default)]
     pub paired_files: Vec<PairedFile>,
+    /// Rules for files derived per module by `derive --write` (route
+    /// shims). Declared order is match order; the first match wins.
+    /// Empty for a profile with no derived files.
+    #[serde(default)]
+    pub derived_files: Vec<DerivedRule>,
 }
 
 /// One `paired_files` row: a template under the profile's `templates/`
@@ -43,6 +48,20 @@ pub struct Profile {
 pub struct PairedFile {
     pub template_file: String,
     pub target: String,
+}
+
+/// One `derived_files` rule. `when` is a set of attribute equalities on
+/// the module document (ANDed; values compare as rendered scalars);
+/// `path` is a template over the module document; `template` is the
+/// body file under the profile's `templates/`; `exclusive` names a
+/// group whose targets may not share a directory.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct DerivedRule {
+    pub when: BTreeMap<String, serde_json::Value>,
+    pub path: String,
+    pub template: String,
+    #[serde(default)]
+    pub exclusive: Option<String>,
 }
 
 /// `items` — extraction policy (#101(b)). The floor is an opaque string

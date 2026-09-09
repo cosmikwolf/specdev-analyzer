@@ -16,6 +16,8 @@
 //! public). The floor string is `export`; it is the only floor the
 //! language has, so a profile has nothing to declare.
 
+use std::path::Path;
+
 use tree_sitter::{Language, Node};
 
 use super::{LanguageAdapter, ParsedParameter};
@@ -94,6 +96,26 @@ impl LanguageAdapter for TypeScriptAdapter {
             format!("{snake}/index.ts"),
             format!("{snake}/index.tsx"),
         ]
+    }
+
+    fn import_specifier(&self, from_dir: &Path, to_file: &Path) -> String {
+        // ESM resolution under `moduleResolution: bundler`: the specifier
+        // carries no `.ts`/`.tsx` extension, and a `<dir>/index.ts(x)`
+        // module is imported as `<dir>`.
+        let mut spec = super::relative_import_path(from_dir, to_file);
+        for ext in [".tsx", ".ts"] {
+            if let Some(stem) = spec.strip_suffix(ext) {
+                spec = stem.to_string();
+                break;
+            }
+        }
+        if spec == "./index" {
+            return ".".to_string();
+        }
+        if let Some(dir) = spec.strip_suffix("/index") {
+            spec = dir.to_string();
+        }
+        spec
     }
 
     fn lockfile_candidates(&self) -> &'static [&'static str] {

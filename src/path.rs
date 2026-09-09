@@ -291,7 +291,7 @@ fn pick_to_string(picks: &[Pick], expr: &str) -> Result<String> {
     }
 }
 
-fn render_scalar(v: &Value) -> String {
+pub(crate) fn render_scalar(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Null => String::new(),

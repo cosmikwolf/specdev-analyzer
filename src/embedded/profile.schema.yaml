@@ -309,6 +309,59 @@ properties:
           type: string
           minLength: 1
 
+  derived_files:
+    description: |
+      Rules for files the analyzer derives from a module document and
+      writes with `specdev-analyzer derive --write` — one small file per
+      matching module (a route shim that re-exports the module body).
+      Profile data, never source. Rules are tried **in declared order**
+      and the first match wins; a rule whose `when` set is a subset of a
+      later rule's `when` set makes that later rule unreachable and the
+      whole set is refused. Each derived file is recorded in
+      `gen-lineage.toml` with `derived = true` under its module; a row
+      no rule produces any more is stale and its file is deleted when
+      the bytes still match the record.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [when, path, template]
+      properties:
+        when:
+          description: |
+            Attribute equalities on the module document, ANDed. Values
+            compare as rendered scalars (`true` matches a TOML `true`).
+            An absent attribute matches nothing. `{}` matches every
+            module.
+          type: object
+          additionalProperties:
+            type: [string, number, boolean]
+        path:
+          description: |
+            Project-root-relative target, a template over the module
+            document (`app${.app_path}/page.tsx`). Duplicate slashes
+            collapse after evaluation. Two modules on one target (case
+            folded) are refused.
+          type: string
+          minLength: 1
+        template:
+          description: |
+            Path under `profiles/<name>/` read from the inlined
+            `<specdev_root>/templates/` copy. Body tokens are
+            `{source_relative}` (the module body's import specifier
+            relative to the target's directory, from the language
+            adapter) and `{project_name}` — exact-string replacement,
+            no other braces are tokens.
+          type: string
+          minLength: 1
+        exclusive:
+          description: |
+            Group name. Two produced targets in one directory from rules
+            of the same group are refused (Next.js: `page.tsx` and
+            `route.ts` in one segment conflict at build).
+          type: string
+          minLength: 1
+
   items:
     description: |
       items[] extraction policy (#101(b)). Read by `extract-items`,

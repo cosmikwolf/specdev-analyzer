@@ -128,6 +128,54 @@ pub struct GenEntry {
     /// assembled at record time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_hash: Option<String>,
+    /// `true` when the file was derived by `derive --write` from a
+    /// profile `derived_files` rule, not emitted by the codegen skill.
+    /// A derived row is owned by `derive`: `gen-record` refuses it, a
+    /// missing or edited derived file never changes its module's
+    /// `gen-plan` verdict, and a derived row no rule produces any more is
+    /// stale (file and row removed when the bytes still match). Absent
+    /// (`false`) in lineage files written before derived files existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub derived: bool,
+}
+
+/// Ownership rule for a lineage path, shared by `gen-record` and
+/// `derive`: a path already recorded under a **different module that
+/// still exists in the spec set** belongs to that module and is refused.
+/// A stale owner (a deleted or renamed module) is reassigned; the caller
+/// gets the old name back to print a note. `None` when nothing changes
+/// hands. `writer` names the command in the error.
+pub(crate) fn check_ownership(
+    existing: Option<&GenEntry>,
+    key: &str,
+    new_module: Option<&str>,
+    live_modules: &[String],
+    writer: &str,
+) -> Result<Option<String>> {
+    let Some(row) = existing else {
+        return Ok(None);
+    };
+    let Some(old) = row.module.as_deref() else {
+        // A project-level row has no module to be alive; the new writer
+        // takes it.
+        return Ok(None);
+    };
+    if Some(old) == new_module {
+        return Ok(None);
+    }
+    if live_modules.iter().any(|m| m == old) {
+        bail!(
+            "{writer}: `{key}` is already recorded for module `{old}`, which still \
+             exists in specs/modules/; one path has one owner. Remove the file \
+             from `{old}`'s emission (or delete that module's spec) before \
+             recording it for {}",
+            match new_module {
+                Some(m) => format!("module `{m}`"),
+                None => "the project".to_string(),
+            }
+        );
+    }
+    Ok(Some(old.to_string()))
 }
 
 impl GenLineage {
@@ -309,6 +357,7 @@ fn record_files_inner(
     };
 
     let mut lineage = GenLineage::load(&layout.specdev_root)?;
+    let live_modules = crate::prompt::list_module_names(layout)?;
     let mut recorded = Vec::with_capacity(files.len());
     for file in files {
         let abs = file
@@ -322,6 +371,24 @@ fn record_files_inner(
             )
         })?;
         let key = rel_key(rel);
+        let existing = lineage.files.get(&key);
+        // A derived row is `derive`'s: a plain record would drop the flag
+        // and stale deletion would stop for that file.
+        if existing.is_some_and(|e| e.derived) {
+            bail!(
+                "gen-record: `{key}` is a derived file (written by `specdev-analyzer \
+                 derive` from a profile `derived_files` rule); it is never listed \
+                 for gen-record. Run `derive --write` to refresh it."
+            );
+        }
+        if let Some(old) = check_ownership(existing, &key, module, &live_modules, "gen-record")? {
+            tracing::warn!(
+                target: "specdev_analyzer::gen_lineage",
+                "gen-record: `{key}` was recorded for module `{old}`, which no longer \
+                 exists in specs/modules/; reassigned to {}",
+                module.map(|m| format!("module `{m}`")).unwrap_or_else(|| "the project".into())
+            );
+        }
         let bytes = std::fs::read(&abs).with_context(|| format!("reading {}", abs.display()))?;
         lineage.files.insert(
             key.clone(),
@@ -330,6 +397,7 @@ fn record_files_inner(
                 generated_at: generated_at.to_string(),
                 content_hash: content_hash(&bytes),
                 input_hash: input_hash.clone(),
+                derived: false,
             },
         );
         recorded.push(key);
@@ -496,7 +564,7 @@ pub fn record_gate(
 }
 
 /// Project-root-relative key with forward slashes on every platform.
-fn rel_key(rel: &Path) -> String {
+pub(crate) fn rel_key(rel: &Path) -> String {
     rel.components()
         .map(|c| c.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
@@ -712,10 +780,18 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
             .any(|g| g.module.as_deref() == Some(name.as_str()) && g.pass && g.key == current_key);
 
         // Files recorded for this module (project-level entries excluded).
+        // Derived rows are excluded too: a shim is not evidence the module
+        // was generated (a module with only derived rows reads `new`); a
+        // missing derived file comes back for free on the next `derive`,
+        // so it never makes the module `missing`; an edited derived file
+        // is `derive`'s to report and never changes the verdict; and a
+        // derived row's `input_hash` cannot be fresher than the body
+        // row's (derive runs after emission in the same gen), so it adds
+        // nothing to the input-side test.
         let entries: Vec<(&String, &GenEntry)> = lineage
             .files
             .iter()
-            .filter(|(_, e)| e.module.as_deref() == Some(name.as_str()))
+            .filter(|(_, e)| e.module.as_deref() == Some(name.as_str()) && !e.derived)
             .collect();
 
         if entries.is_empty() {
@@ -807,6 +883,7 @@ mod tests {
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:abc123".into(),
                 input_hash: Some("sha256:in123".into()),
+                derived: false,
             },
         );
         l.files.insert(
@@ -816,6 +893,7 @@ mod tests {
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:def456".into(),
                 input_hash: None,
+                derived: false,
             },
         );
         l.save(&dir).unwrap();
@@ -836,6 +914,7 @@ mod tests {
                         generated_at: "2026-06-12T10:00:00Z".into(),
                         content_hash: (*hash).into(),
                         input_hash: None,
+                        derived: false,
                     },
                 );
             }
@@ -865,6 +944,7 @@ mod tests {
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:abc".into(),
                 input_hash: None,
+                derived: false,
             },
         );
         let text = l.to_toml_string().unwrap();
@@ -882,6 +962,7 @@ mod tests {
                 generated_at: "2026-06-12T10:00:00Z".into(),
                 content_hash: "sha256:abc".into(),
                 input_hash: Some("sha256:in".into()),
+                derived: false,
             },
         );
         let text = l.to_toml_string().unwrap();
