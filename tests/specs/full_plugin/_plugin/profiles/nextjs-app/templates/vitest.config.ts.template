@@ -1,0 +1,30 @@
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
+
+// Written once by `specdev-analyzer manifest --write` when absent, then
+// externally owned.
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: {
+      // `server-only@0.0.1` throws on its default export condition, and
+      // Vitest resolves that condition, so any `environment = "server"`
+      // service would fail to import under test. Alias the package to the
+      // empty module it ships for the `react-server` condition. Setting
+      // `resolve.conditions: ["react-server"]` does not work here; only
+      // `ssr.resolve.conditions` or this alias does (measured, Vitest 5).
+      "server-only": fileURLToPath(
+        new URL("./node_modules/server-only/empty.js", import.meta.url),
+      ),
+    },
+  },
+  test: {
+    environment: "node",
+    // Tests live beside their module under `[paths] source`:
+    // `src/<snake>.test.ts(x)`. A wrong glob here passes silently under
+    // `--passWithNoTests`; keep it pinned to the source root.
+    include: ["src/**/*.test.{ts,tsx}"],
+    passWithNoTests: true,
+  },
+});

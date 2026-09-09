@@ -1,0 +1,244 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/nextjs-app/module.schema.yaml"
+title: "nextjs-app module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module per
+  file; filename should match the `name` field; source resolves to
+  `src/<snake>.ts` or `src/<snake>.tsx`. nextjs-app targets Next.js App
+  Router applications where the load-bearing concerns are each module's
+  architectural role, where its route file lives under `app/`, which side
+  of the client/server boundary its body runs on, and its npm
+  dependencies. Route files (`page.tsx`, `layout.tsx`, `route.ts`, the
+  boundary files) are derived from these fields — two-line shims that
+  re-export the module body — never modules themselves.
+type: object
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas even when
+# those are valid via the aggregator `allOf:` slot. unevaluatedProperties
+# IS allOf-aware.
+unevaluatedProperties: false
+required: [name, role]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  role:
+    $ref: "enums.schema.yaml#/$defs/Role"
+  description:
+    type: string
+  boundary_kind:
+    description: >
+      Required on `role = "boundary"`, forbidden on every other role:
+      which auxiliary route file this module is. The derived route file
+      is `app<app_path>/<boundary_kind>.tsx`. `error` and `global-error`
+      require `client_component = true` (Next.js checks the directive in
+      the route file itself; `next typegen` and `tsc` are blind to it,
+      only `next build` catches a missing one). `global-error` requires
+      `app_path = "/"` — a nested one builds and never renders. `default`
+      needs no `@slot` in its path: `app/x/default.tsx` is the documented
+      form for the implicit `children` slot.
+    $ref: "enums.schema.yaml#/$defs/BoundaryKind"
+  app_path:
+    description: >
+      Required on `layout`, `page`, `route_handler` and `boundary`;
+      forbidden on `app`, `component`, `server_action`, `service` and
+      `model`. The directory under `app/` where this module's route file
+      is derived, e.g. `/(marketing)/events/[id]`. The `app` module owns
+      `app/layout.tsx` without an `app_path`; a `layout` at `/` is
+      therefore a schema error. Two `page` modules on one URL through
+      different route groups, and `[id]` vs `[slug]` at one depth, are
+      Next build errors, not schema errors. A `page` and a
+      `route_handler` at one `app_path` are refused when the route files
+      are derived.
+    $ref: "enums.schema.yaml#/$defs/AppPath"
+  client_component:
+    description: >
+      Allowed on `page`, `layout`, `boundary` and `component`; forbidden
+      elsewhere. `true` emits `"use client"` as the first line of the
+      module body (and of the derived route file for the two error
+      kinds). It marks a boundary: every module this one imports joins
+      the client graph. A `client_component` `page` or `layout` body must
+      export no `metadata` or `generateMetadata` — `next build` fails
+      with a `$$typeof` error and nothing earlier catches it. Not allowed
+      on `service`: a `"use client"` module of plain functions cannot be
+      called from a server page (measured). Use `environment = "client"`
+      for a browser-only service.
+    type: boolean
+  environment:
+    description: >
+      Required on `service`, forbidden elsewhere. `server` opens the body
+      with `import "server-only"`; `client` opens it with
+      `import "client-only"`; `universal` emits nothing. The guard import
+      is what makes a wrong client/server chain fail `next build` — no
+      validate-time rule duplicates it in v1. A `model` carries no
+      environment by definition: it holds pure data and domain logic; a
+      module that needs Node or browser APIs is a `service`.
+    $ref: "enums.schema.yaml#/$defs/Environment"
+  depends_on:
+    description: >
+      Other modules within this app this module depends on. The
+      `modules_acyclic` graph check enforces no cycles; the
+      `role_dependency` check warns on upward dependencies against the
+      role ordering (app > layout > page > route_handler > boundary >
+      component > server_action > service > model). A client component
+      depending on a `server_action` is the canonical form pattern and is
+      legal; a client component reaching a `server` service through any
+      chain without a `server_action` in between fails `next build`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  satisfies:
+    description: >
+      Requirement ids this module satisfies. The
+      `module_satisfies_resolves` graph check verifies each id exists.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  external_deps:
+    description: >
+      npm package dependencies this module needs. Each entry becomes a
+      package.json `dependencies` line (`devDependencies` when
+      `test_only = true`); the union across modules, architecture-level
+      `[[external_deps]]`, and block/bridge contributions determines the
+      full dep set `manifest` emits. User-declared versions win on
+      conflict. The NpmReference shape is embedded in the analyzer (the
+      $ref below resolves internally, not to a file on disk); the
+      architecture template's dep comment block documents the accepted
+      shapes readably.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/npm_reference.schema.yaml#/$defs/NpmReference"
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Open in v1.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Exported TypeScript declarations that carry spec significance — an
+      items[] entry per exported function, class, interface, type alias,
+      enum, const, or public member of an exported class (named
+      `<Class>.<member>`), plus re-exports. Visibility is `export`: a
+      non-exported declaration is module-private and never an item; a
+      `private`/`protected`/`#` member is never an item. A `page`,
+      `layout` or `boundary` module's default export is its component and
+      is an item named after the module. Sparseness rule (enforced by the
+      language schema): every item carries `satisfies` (≥1 requirement
+      id) unless it is a test (`test = true`, which carries `verifies`
+      instead) or a re-export. Consumed by `/spec-gen` for symbol emission
+      and by the three-stage agentic sync (`items diff` / `items propose`
+      / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
+  source_file:
+    description: >
+      Explicit source-file override for items[] extraction and sync
+      (#101(a)). Project-root-relative path (the same base as
+      `[paths].source`), e.g. `src/events/event_card.tsx`. When absent
+      the analyzer resolves by convention:
+      `<paths.source>/<snake_case(name)>.ts`, then `.tsx`, then the
+      `<snake_case(name)>/index.ts(x)` forms. Precedence: this override,
+      then the adapter candidates, then no source (pre-implementation
+      module — no items extracted, never an error). A declared file that
+      does not exist on disk resolves to no source as well.
+    type: string
+    minLength: 1
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are not supported.
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/DecisionId" }
+    uniqueItems: true
+
+# Role-conditional field rules. Every `if` carries `required: [role]`
+# (or `[boundary_kind]`) because a bare `properties` subschema is
+# vacuously true when the key is absent — without the guard the rule
+# would never fire. `then: { properties: { x: false } }` forbids a key
+# and anchors the error at the field to remove; `then: { required: [x] }`
+# demands it. Seven rules; each names the field it constrains.
+allOf:
+  # 1. boundary_kind: required on boundary, forbidden elsewhere.
+  - if:
+      required: [role]
+      properties:
+        role: { const: boundary }
+    then:
+      required: [boundary_kind]
+    else:
+      properties:
+        boundary_kind: false
+  # 2. app_path: required on the four route roles, forbidden elsewhere.
+  - if:
+      required: [role]
+      properties:
+        role: { enum: [layout, page, route_handler, boundary] }
+    then:
+      required: [app_path]
+    else:
+      properties:
+        app_path: false
+  # 3. A nested layout never sits at `/` — the `app` module owns the root
+  #    layout (app/layout.tsx).
+  - if:
+      required: [role]
+      properties:
+        role: { const: layout }
+    then:
+      properties:
+        app_path: { not: { const: "/" } }
+  # 4. global-error lives only at the root.
+  - if:
+      required: [boundary_kind]
+      properties:
+        boundary_kind: { const: global-error }
+    then:
+      properties:
+        app_path: { const: "/" }
+  # 5. The two error kinds are Client Components, stated not implied
+  #    (reduction attrs have no defaults; the emitter reads the attr).
+  - if:
+      required: [boundary_kind]
+      properties:
+        boundary_kind: { enum: [error, global-error] }
+    then:
+      required: [client_component]
+      properties:
+        client_component: { const: true }
+  # 6. client_component only on the four component-bearing roles.
+  - if:
+      required: [role]
+      properties:
+        role: { not: { enum: [page, layout, boundary, component] } }
+    then:
+      properties:
+        client_component: false
+  # 7. environment: required on service, forbidden elsewhere.
+  - if:
+      required: [role]
+      properties:
+        role: { const: service }
+    then:
+      required: [environment]
+    else:
+      properties:
+        environment: false

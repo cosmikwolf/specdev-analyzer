@@ -681,6 +681,25 @@ fn run_manifest(
         eprintln!("warning: {w}");
     }
 
+    // Profile-declared `paired_files` — language-neutral, written
+    // once when absent through the same loop as the rust `[[bin]]` stub.
+    let mut extra_files = extra_files;
+    match specdev_analyzer::paired_files::paired_files_from_profile(&layout) {
+        Ok(mut rows) => extra_files.append(&mut rows),
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(1);
+        }
+    }
+    if let Err(e) = specdev_analyzer::paired_files::refuse_collisions(
+        &extra_files,
+        default_filename,
+        &sibling_files,
+    ) {
+        report_error(&e);
+        return ExitCode::from(1);
+    }
+
     let target = output.or_else(|| write.then(|| layout.project_root.join(default_filename)));
     match target {
         Some(path) => match std::fs::write(&path, &text) {
@@ -708,25 +727,44 @@ fn run_manifest(
                         names.join(", ")
                     );
                 }
-                // F-016: pair `[[bin]]` rows with their stub source
-                // files. Skip writes when the path already exists —
-                // hand-edited bins are never overwritten.
-                for (rel, body) in &extra_files {
-                    let dst = project_root.join(rel);
-                    if dst.exists() {
-                        continue;
-                    }
-                    if let Some(parent) = dst.parent() {
-                        if let Err(e) = std::fs::create_dir_all(parent) {
-                            eprintln!("failed to create {}: {e}", parent.display());
+                // Paired files — the rust `[[bin]]` stub (F-016) and the
+                // profile's `paired_files` rows. Written only
+                // when absent: an existing file is the user's and is
+                // never overwritten. Gated on `--write` like the
+                // siblings — `--output <file>` redirects the manifest
+                // text alone and must not touch the project root.
+                if write {
+                    let mut kept: Vec<String> = Vec::new();
+                    for (rel, body) in &extra_files {
+                        let dst = project_root.join(rel);
+                        if dst.exists() {
+                            kept.push(rel.display().to_string());
+                            continue;
+                        }
+                        if let Some(parent) = dst.parent() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                eprintln!("failed to create {}: {e}", parent.display());
+                                return ExitCode::from(2);
+                            }
+                        }
+                        if let Err(e) = std::fs::write(&dst, body) {
+                            eprintln!("failed to write {}: {e}", dst.display());
                             return ExitCode::from(2);
                         }
+                        eprintln!("wrote paired file {}", dst.display());
                     }
-                    if let Err(e) = std::fs::write(&dst, body) {
-                        eprintln!("failed to write {}: {e}", dst.display());
-                        return ExitCode::from(2);
+                    if !kept.is_empty() {
+                        eprintln!(
+                            "kept {} existing paired file(s): {}",
+                            kept.len(),
+                            kept.join(", ")
+                        );
                     }
-                    eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
+                } else if !extra_files.is_empty() {
+                    eprintln!(
+                        "note: {} paired file(s) not written under --output; use --write",
+                        extra_files.len()
+                    );
                 }
                 ExitCode::SUCCESS
             }

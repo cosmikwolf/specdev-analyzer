@@ -1,0 +1,53 @@
+# Manifest — drives analyzer dispatch for nextjs-app projects.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+name: nextjs-app
+language: typescript
+
+package_json:
+  shape: app                      # "private": true — an application, never published
+  package_manager: "pnpm@10.15.0" # architecture.toml [environment] package_manager overrides
+  engines:
+    node: ">=22.18.0"             # architecture.toml [environment] node overrides
+  type: module
+  scripts:                        # architecture.toml [scripts] overrides key-by-key
+    dev: next dev
+    build: next build
+    start: next start
+    typegen: next typegen
+    check: tsc --noEmit
+    test: vitest run --passWithNoTests
+    e2e: playwright test
+
+# Config files written once when absent by `specdev-analyzer manifest
+# --write`, then externally owned: never rewritten, never gen-recorded.
+# `next build` rewrites tsconfig.json on its first run when Next's keys
+# are missing; the template is authored in the post-build shape so the
+# file stays byte-identical. A deleted config comes back on the next
+# write — that is the "written when absent" rule, not a bug.
+paired_files:
+  - { template_file: templates/tsconfig.json.template,        target: tsconfig.json }
+  - { template_file: templates/next.config.ts.template,       target: next.config.ts }
+  - { template_file: templates/vitest.config.ts.template,     target: vitest.config.ts }
+  - { template_file: templates/playwright.config.ts.template, target: playwright.config.ts }
+  - { template_file: templates/gitignore.template,            target: .gitignore }
+  - { template_file: templates/gitkeep.template,              target: app/.gitkeep }
+
+bootstrap:
+  steps: []                       # standalone app; no workspace machinery
+
+context:
+  module_fields_for_prompt:
+    [items, satisfies, depends_on, context_files, external_deps, app_path, boundary_kind, client_component, environment]
+  context_subcommand_extras:
+    - field: role
+      from_attr: role
+
+reverse:
+  vocabulary: profile             # the profile's own schema is the reverse vocabulary
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

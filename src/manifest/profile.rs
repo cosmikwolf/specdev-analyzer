@@ -29,6 +29,20 @@ pub struct Profile {
     pub items: Option<ItemsSection>,
     #[serde(default)]
     pub reverse: Option<ReverseSection>,
+    /// Config files written once when absent by `manifest
+    /// --write`, then externally owned. Language-neutral; the shared
+    /// manifest runner merges them with the rust arm's `[[bin]]` stub.
+    #[serde(default)]
+    pub paired_files: Vec<PairedFile>,
+}
+
+/// One `paired_files` row: a template under the profile's `templates/`
+/// (read from the inlined copy at render time) and its
+/// project-root-relative target.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PairedFile {
+    pub template_file: String,
+    pub target: String,
 }
 
 /// `items` — extraction policy (#101(b)). The floor is an opaque string
