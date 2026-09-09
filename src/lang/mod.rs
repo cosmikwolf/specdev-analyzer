@@ -11,7 +11,42 @@ pub mod dart;
 pub mod rust;
 pub mod typescript;
 
+use std::path::{Component, Path};
+
 use tree_sitter::{Language, Node};
+
+/// Relative path from directory `from_dir` to file `to_file` (both
+/// project-root-relative, `Normal` components only), joined with `/`.
+/// `./`-prefixed when the result does not start with `..`, so the string
+/// is always a relative import and never a bare package name.
+pub fn relative_import_path(from_dir: &Path, to_file: &Path) -> String {
+    let normal = |p: &Path| -> Vec<String> {
+        p.components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    let from = normal(from_dir);
+    let to = normal(to_file);
+    let common = from
+        .iter()
+        .zip(to.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut parts: Vec<String> = Vec::new();
+    for _ in common..from.len() {
+        parts.push("..".to_string());
+    }
+    parts.extend(to[common..].iter().cloned());
+    let joined = parts.join("/");
+    if joined.starts_with("..") {
+        joined
+    } else {
+        format!("./{joined}")
+    }
+}
 
 /// A parsed function parameter, as observed in source code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +127,19 @@ pub trait LanguageAdapter: Send + Sync {
     /// the language name to add a layout (#101(a)).
     fn module_file_candidates(&self, snake: &str) -> Vec<String> {
         vec![format!("{snake}.{}", self.file_extension())]
+    }
+
+    /// The import specifier a file in `from_dir` uses to import `to_file`
+    /// — both project-root-relative. Used by `derive` for the
+    /// `{source_relative}` token in a derived file's body. Default: the
+    /// relative **file path** with its extension, forward slashes, `./`
+    /// prefixed when it does not start with `..` (Dart imports keep
+    /// `.dart`). A language whose import grammar is not a relative path
+    /// (Rust `use`) must override before a profile of that language
+    /// declares `derived_files` rules. TypeScript overrides to drop the
+    /// extension and the `/index` directory-module suffix.
+    fn import_specifier(&self, from_dir: &Path, to_file: &Path) -> String {
+        relative_import_path(from_dir, to_file)
     }
 
     /// Lockfile names this language's package managers write, relative

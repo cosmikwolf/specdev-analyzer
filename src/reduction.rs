@@ -725,7 +725,7 @@ fn relpath(full: &Path, root: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn load_toml_as_json(path: &Path) -> Result<Value> {
+pub(crate) fn load_toml_as_json(path: &Path) -> Result<Value> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let raw: toml::Value =

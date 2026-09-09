@@ -341,6 +341,28 @@ pub enum Command {
         #[arg(long)]
         accept_edits: bool,
     },
+    /// Derive per-module files from the profile's `derived_files` rules
+    /// (route shims that re-export a module body) and record them in
+    /// `specs/specdev/gen-lineage.toml` as `derived` rows. Run by the
+    /// `/spec-gen` skill after the manifest and before lineage recording,
+    /// for every module on every gen. Without `--write` every line is a
+    /// preview. One line per path: `wrote` / `kept` / `edited` /
+    /// `conflict` / `deleted` / `skipped`. A hand-edited target
+    /// (`edited`) or an unrecorded file at a target (`conflict`) is never
+    /// overwritten without `--accept-edits`.
+    Derive {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write the derived files, delete stale ones and record the rows.
+        #[arg(long)]
+        write: bool,
+        /// Overwrite `edited` and `conflict` targets and delete stale
+        /// files that carry a hand edit. Run by hand after such a line;
+        /// the codegen skill never passes it.
+        #[arg(long)]
+        accept_edits: bool,
+    },
     /// Record a compile-gate result in `specs/specdev/gen-lineage.toml`.
     /// Invoked by the `/spec-gen` skill AFTER the compile gate (Step 8) —
     /// never before it, because the gate itself writes the lockfile that
@@ -568,6 +590,17 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             files,
             accept_edits,
         } => run_gen_record(project, spec_path.as_deref(), module, files, accept_edits),
+        Command::Derive {
+            project,
+            write,
+            accept_edits,
+        } => run_derive(
+            project,
+            spec_path.as_deref(),
+            plugin_flag,
+            write,
+            accept_edits,
+        ),
         Command::GenRecordGate {
             project,
             module,
@@ -1803,6 +1836,42 @@ fn run_gen_record(
         Err(e) => {
             report_error(&e);
             ExitCode::from(2)
+        }
+    }
+}
+
+fn run_derive(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    write: bool,
+    accept_edits: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // The plugin root is read only when the inlined profile declares no
+    // rules (to catch a stale inlined profile); resolve it lazily.
+    let layout_ref = &layout;
+    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    let opts = specdev_analyzer::derive::DeriveOptions {
+        write,
+        accept_edits,
+    };
+    match specdev_analyzer::derive::run_derive(&layout, &resolve, opts) {
+        Ok(report) => {
+            for line in &report.lines {
+                println!("{}", line.render());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
         }
     }
 }
