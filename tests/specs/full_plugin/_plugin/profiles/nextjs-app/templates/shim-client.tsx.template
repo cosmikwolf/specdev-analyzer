@@ -1,0 +1,3 @@
+"use client";
+export * from "{source_relative}";
+export { default } from "{source_relative}";

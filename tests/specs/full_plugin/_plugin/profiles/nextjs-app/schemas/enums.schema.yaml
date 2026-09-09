@@ -1,0 +1,107 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/nextjs-app/enums.schema.yaml"
+title: "nextjs-app enums (v1)"
+description: >
+  Shared closed vocabularies used across the nextjs-app profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+$defs:
+  Role:
+    description: >
+      The module's architectural role in a Next.js App Router application.
+      `app` — the composition root: owns the one root layout
+      (`app/layout.tsx`), global providers, fonts, metadata defaults;
+      exactly one per project. `layout` — a nested layout at an
+      `app_path`. `page` — the UI for one route segment. `route_handler`
+      — an HTTP handler (`route.ts`) at an `app_path`. `boundary` — one of
+      the auxiliary route files (loading / error / not-found / template /
+      default / global-error), named by `boundary_kind`. `component` — a
+      reusable UI piece below page level (server or client, see
+      `client_component`). `server_action` — a `"use server"` module of
+      form/mutation actions. `service` — non-UI logic and state; carries
+      a required `environment`. `model` — pure data types and domain
+      logic with no environment-dependent code. Drives the
+      `role_dependency` ordering check (warning severity): an upward
+      dependency against the ordering app > layout > page > route_handler
+      > boundary > component > server_action > service > model is
+      flagged.
+    type: string
+    enum: [app, layout, page, route_handler, boundary, component, server_action, service, model]
+
+  BoundaryKind:
+    description: >
+      Which auxiliary route file a `boundary` module is. Mirrors the
+      Next.js file convention on purpose — this is a wiring field, the
+      same species as `app_path`. `error` and `global-error` must be
+      Client Components (Next.js requires the directive in the route file
+      itself); `global-error` lives only at `app_path = "/"`. Excluded in
+      v1 because they build and never render without an experimental
+      flag: `global-not-found`, `forbidden`, `unauthorized`.
+    type: string
+    enum: [loading, error, not-found, template, default, global-error]
+
+  Environment:
+    description: >
+      Where a `service` module's body may run. `server` — Node only; the
+      body opens with `import "server-only"`, so a client import fails
+      `next build`. `client` — browser only (localStorage, window, a
+      client-side store); the body opens with `import "client-only"`, so
+      a server import fails `next build`. `universal` — imported from
+      both sides; the body contains no browser API and no Node API call.
+      `universal` emits no guard import and is documentation, not
+      enforcement: choose `server` or `client` unless both sides import
+      the module today.
+    type: string
+    enum: [server, client, universal]
+
+  AppPath:
+    description: >
+      Directory of a route module under `app/`, with a leading slash and
+      no trailing slash; `/` is the root. Every Next.js marker is a legal
+      segment as text — `[id]`, `[...slug]`, `[[...slug]]`, `(group)`,
+      `@slot`, `(.)`, `(..)`, `(...)`, `%5F` — and their placement rules
+      are Next's, checked by `next build`. Rejected: whitespace inside a
+      segment (builds, unreachable), a segment over 200 characters (the
+      shim filename must fit a 255-byte filesystem component), `.` and
+      `..` segments, and a segment starting with `_` (builds, never
+      routes). No case rule: two modules whose targets differ only by
+      letter case are refused when the route files are derived. The URL is
+      derived for reports by dropping `(group)` and `@slot` segments; it
+      is never stored.
+    type: string
+    pattern: "^/$|^(?:/(?!\\.\\.?(?:/|$))(?!_)[^/\\s]{1,200})+$"
+
+  Identifier:
+    description: >
+      Module name: a PascalCase or snake_case identifier usable in
+      TypeScript source. Each module emits to `src/<snake_case(name)>.ts`
+      or `.tsx`.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier. nextjs-app is a
+      single-package profile — there is no package-qualified form.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-UI-001, APP-001, STORY-7-12).
+      The leading prefix is open: projects can adopt their published
+      requirement scheme (REQ-, APP-, RFC-, STORY-, …) without rename
+      ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+
+  DecisionId:
+    description: >
+      Identifier of a decision defined under specs/decisions.toml
+      (e.g. DEC-001). Shares the requirement id grammar — the open
+      PREFIX-(AREA-)*NUMBER form — but names a Decision, not a
+      Requirement.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

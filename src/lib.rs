@@ -82,6 +82,7 @@ pub mod canonical;
 pub mod cargo_toml;
 pub mod pubspec_yaml;
 pub mod package_json;
+pub mod paired_files;
 pub mod cli;
 pub mod config;
 pub mod context;

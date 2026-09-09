@@ -1,0 +1,97 @@
+# Project decisions — the *how & why*.
+#
+# A decision pins an implementation choice over the alternatives that
+# were considered. Each decision has:
+#   - a stable id (e.g. DEC-001), shared id grammar with requirements
+#     and open questions
+#   - a status: `accepted` (drives current behavior) or `superseded`
+#     (kept as reasoning trail; codegen prompt walks skip these)
+#   - a one-line `title` and full `text` body
+#   - optional prose: `context` (why we needed to decide),
+#     `consequences` (what follows), `alternatives` (what we rejected),
+#     `verification` (how we'll know we got it right)
+#
+# Decisions cross-reference the rest of the spec via:
+#   - requirement.decided_by[]   — pin the *how* of a requirement
+#   - module.guided_by[]         — inform a module without pinning a req
+#   - architecture.project_decisions[] — shape the project as a whole
+#   - decisions.toml's own closes_questions[] / defaults_for[] —
+#     resolve open questions or commit working defaults
+#
+# Authoring convention — pick ONE direction per cross-reference:
+#   closes_questions[] / closed_by — author one side, not both.
+#   defaults_for[]     / default_via — author one side, not both.
+# The proposal allows both directions for audit-trail symmetry, but
+# graph checks only verify the single direction you author. Authoring
+# both forces you to keep them in sync by hand for no extra
+# verification benefit. Convention: prefer the OQ-side pointer
+# (closed_by / default_via) — it travels with the OQ entry that the
+# codegen-gate walk reads, and the decision body stays focused on the
+# decision content rather than its bookkeeping.
+#
+# Supersession keeps both bodies. When DEC-N supersedes DEC-M:
+#   - DEC-M.status flips to `superseded`. No forward pointer.
+#   - DEC-N (status = accepted) lists `supersedes = ["DEC-M"]`.
+# The chain is one-way; the `decision_supersedes_chain_consistency`
+# graph check enforces orphan-freedom (every superseded entry is
+# pointed at by exactly one accepted entry's `supersedes[]`) and
+# acyclicity. The codegen prompt walk follows only `accepted` decisions.
+#
+# Delete the EXAMPLE entries below once the project has real decisions.
+
+# EXAMPLE: an accepted decision pinning a requirement's implementation.
+# [[decision]]
+# id = "DEC-001"
+# title = "Model event state as a discriminated union"
+# status = "accepted"
+# text = """
+# Model each page's data state as a discriminated union
+# (loading / loaded / error variants) narrowed exhaustively in the
+# component body. Variants map 1:1 to the states called out in
+# REQ-UI-001..004.
+# """
+# consequences = """
+# Every state transition is a new immutable instance; exhaustive
+# `switch` means adding a variant is a compile-visible change at every
+# consuming component.
+# """
+# alternatives = """
+# Untyped object state: rejected — no compile-time coverage.
+# Enum + optional payload fields: rejected — invalid-state
+# combinations become representable.
+# """
+# source = ["user-stories"]
+# source_ref = "STORY-4"
+
+# EXAMPLE: a decision that resolves an open question.
+# [[decision]]
+# id = "DEC-002"
+# title = "Ticket purchase runs as a Server Action"
+# status = "accepted"
+# text = """
+# The purchase flow posts through a `"use server"` action, never a
+# client fetch to a route handler; one code path, typed end to end.
+# """
+# closes_questions = ["OQ-001"]
+
+# EXAMPLE: a supersession pair — superseded entry kept as reasoning
+# trail, accepted successor names it in `supersedes[]`.
+# [[decision]]
+# id = "DEC-003"
+# title = "Fetch events with client-side SWR"
+# status = "superseded"
+# text = """
+# Original choice: fetch the events list in a client component with SWR.
+# Replaced by server-side fetching in the page (DEC-004) once SEO
+# became a requirement.
+# """
+#
+# [[decision]]
+# id = "DEC-004"
+# title = "Fetch events in the Server Component page"
+# status = "accepted"
+# text = """
+# Fetch the events list in the async page body and stream it; the
+# client component receives data as props. SEO was the trigger.
+# """
+# supersedes = ["DEC-003"]

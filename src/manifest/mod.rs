@@ -38,7 +38,7 @@ pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
     BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection, ContextExtra,
     ContextSection, FeaturesSection, ItemsSection, NpmEngines, NpmModuleType, PackageJsonSection,
-    PackageJsonShapeKind, PairedStub, Profile, PubEnvironment, PubShapeKind, PubspecYamlSection,
+    PackageJsonShapeKind, PairedFile, PairedStub, Profile, PubEnvironment, PubShapeKind, PubspecYamlSection,
     ReverseSection, ReverseVocabulary, ShapeKind, SurfaceSection,
 };
 

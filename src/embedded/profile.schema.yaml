@@ -278,6 +278,37 @@ properties:
           type: string
           minLength: 1
 
+  paired_files:
+    description: |
+      Profile-shipped config files written **once when absent**
+      by `manifest --write`, then externally owned — never rewritten,
+      never gen-recorded (the category `next build`'s `tsconfig.json`
+      rewrite forces). Language-neutral: applied by the shared manifest
+      runner for every language, merged with the rust arm's `[[bin]]`
+      paired stub. `template_file` is read from the inlined
+      `<specdev_root>/templates/` copy; the only token substituted is
+      `{project_name}`. `target` is project-root-relative; a target the
+      manifest emitter or a `bin.paired_stub` also writes is refused at
+      manifest time (two writers, one path).
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [template_file, target]
+      properties:
+        template_file:
+          description: |
+            Path under `profiles/<name>/`, e.g.
+            `templates/tsconfig.json.template`.
+          type: string
+          minLength: 1
+        target:
+          description: |
+            Project-root-relative path to write, e.g. `tsconfig.json`
+            or `app/.gitkeep`. Missing parent directories are created.
+          type: string
+          minLength: 1
+
   items:
     description: |
       items[] extraction policy (#101(b)). Read by `extract-items`,

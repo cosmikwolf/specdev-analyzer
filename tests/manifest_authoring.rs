@@ -54,6 +54,7 @@ const PROFILES: &[&str] = &[
     "rust-workspace",
     "flutter-app",
     "rust-app",
+    "nextjs-app",
 ];
 
 // (name, codegen language) — the deps manifest lives at
@@ -110,6 +111,9 @@ fn fixture_profiles_load_cleanly() {
         match m.language.as_str() {
             "rust" => assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml"),
             "dart" => assert!(m.pubspec_yaml.is_some(), "{name} must declare pubspec_yaml"),
+            "typescript" => {
+                assert!(m.package_json.is_some(), "{name} must declare package_json")
+            }
             other => panic!("profile {name} declares unexpected language `{other}`"),
         }
     }
