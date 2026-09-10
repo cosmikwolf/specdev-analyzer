@@ -181,7 +181,7 @@ fn pre_manifest_fixture_migrates_profile_block_bridge() {
     let bridge_hash_before = lineage_before.bridges["embassy+lvgl"].content_hash.clone();
 
     let synthetic = build_synthetic_manifest_plugin("pre-manifest-target");
-    let report = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let report = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
 
     assert!(target.join("specs/specdev/profile.yaml").is_file());
     assert!(target
@@ -242,7 +242,7 @@ fn already_migrated_project_is_noop() {
     run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
 
     let lineage_before = Lineage::load(&layout.specdev_root).unwrap();
-    let report = migrate::run_migrate(&layout, &full_plugin(), false).unwrap();
+    let report = migrate::run_migrate(&layout, &full_plugin(), false, false).unwrap();
 
     assert_eq!(report.total_files_written(), 0, "no-op must write zero files");
     assert!(report.migrated.is_empty(), "no migrated units expected");
@@ -277,7 +277,7 @@ fn dry_run_does_not_touch_disk() {
     // bytes). Dry-run must leave this set byte-stable.
     let snapshot_before = snapshot_specdev_tree(&target);
 
-    let report = migrate::run_migrate(&layout, &synthetic, true).unwrap();
+    let report = migrate::run_migrate(&layout, &synthetic, true, false).unwrap();
     assert!(report.dry_run);
     assert!(!report.profile_files_written.is_empty());
     assert!(!report.migrated.is_empty());
@@ -353,7 +353,7 @@ source = "src"
     .unwrap();
 
     let layout = LayoutContext::discover(&target, None).unwrap();
-    let err = migrate::run_migrate(&layout, &full_plugin(), false).unwrap_err();
+    let err = migrate::run_migrate(&layout, &full_plugin(), false, false).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
         msg.contains("MIGRATE-001"),
@@ -380,7 +380,7 @@ fn missing_plugin_unit_surfaces_migrate_002() {
     let synthetic = build_synthetic_manifest_plugin("missing-target");
     std::fs::remove_dir_all(synthetic.join("blocks/lvgl")).unwrap();
 
-    let report = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let report = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
 
     assert!(
         report
@@ -427,7 +427,7 @@ fn local_bridges_skipped() {
     .unwrap();
 
     let synthetic = build_synthetic_manifest_plugin("local-bridges-target");
-    let report = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let report = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
 
     // Migrate touches the canonical bridge but not the local one — lineage
     // is the authoritative source of "what to migrate" and local bridges
@@ -481,7 +481,7 @@ fn audio_plugin_templates_copied() {
         .exists());
 
     // Migrate against the real full_plugin tree.
-    let report = migrate::run_migrate(&layout, &full_plugin(), false).unwrap();
+    let report = migrate::run_migrate(&layout, &full_plugin(), false, false).unwrap();
     assert!(report.missing_in_plugin.is_empty());
 
     let template_dst = target.join("specs/specdev/templates/standalone-stub.rs.template");
@@ -508,7 +508,7 @@ fn migrate_is_idempotent() {
 
     let synthetic = build_synthetic_manifest_plugin("idempotent-target");
 
-    let r1 = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let r1 = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
     assert!(r1.total_files_written() > 0, "first migrate must do work");
     assert!(!r1.migrated.is_empty());
 
@@ -516,7 +516,7 @@ fn migrate_is_idempotent() {
     let lineage_after_first = Lineage::load(&layout.specdev_root).unwrap();
     let tree_after_first = snapshot_specdev_tree(_target_root(&layout));
 
-    let r2 = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let r2 = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
     assert_eq!(
         r2.total_files_written(),
         0,
@@ -551,7 +551,7 @@ fn migrate_updates_upstream_snapshot() {
     assert!(!upstream_dir.join("codegen/rust/deps.yaml").exists());
 
     let synthetic = build_synthetic_manifest_plugin("upstream-target");
-    let report: MigrateReport = migrate::run_migrate(&layout, &synthetic, false).unwrap();
+    let report: MigrateReport = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
     assert!(report.migrated.iter().any(|m| m.name == "embassy"));
 
     // Post-migrate upstream snapshot includes deps.yaml.

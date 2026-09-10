@@ -2,6 +2,10 @@
 # Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
 # Inlined to project at specs/specdev/profile.yaml during bootstrap.
 
+# Contract this manifest is authored against; compared to the
+# analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
+contract_version: 1
+
 name: library-api
 language: rust
 

@@ -3,11 +3,31 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 const SCHEMA_YAML: &str = include_str!("../embedded/profile.schema.yaml");
 const SCHEMA_LABEL: &str = "profile.schema.yaml";
+
+/// The `profile.schema.yaml` contract THIS binary understands.
+///
+/// Bump this in the same commit as any shape change to
+/// `src/embedded/profile.schema.yaml` — a new key, a widened enum, a new
+/// required field. `contract_pairing_guard` in `tests/profile_contract.rs`
+/// fails if the schema moves and this does not, so the bump is not a thing
+/// anyone has to remember.
+///
+/// Why a number here and not `plugin.json`'s `version`: that value moves
+/// when a skill changes, it says nothing about the schema, and
+/// `Profile::load` never reads it. This number describes exactly one
+/// contract and lives next to the schema it describes.
+pub const PROFILE_CONTRACT_VERSION: u64 = 1;
+
+/// A manifest with no `contract_version` predates the field. Every project
+/// bootstrapped before this release is in that state, so the absent value
+/// has to mean "the contract as it stood then" — which is 1.
+const IMPLIED_CONTRACT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Profile {
@@ -416,12 +436,104 @@ impl Profile {
     /// (typically `specs/specdev/profile.yaml` in the inlined tree, or
     /// `profiles/<name>/profile.yaml` in the plugin tree).
     pub fn load(path: &Path) -> Result<Self> {
-        let value = super::load_yaml_validated(path, SCHEMA_YAML, SCHEMA_LABEL)?;
+        let value = super::read_yaml(path)?;
+        check_contract_version(&value, path)?;
+        super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
         let parsed: Profile = serde_json::from_value(value)
             .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
         check_gate_labels_unique(&parsed.gates, path)?;
         Ok(parsed)
     }
+}
+
+/// Plugin-author lint: every `profiles/*/profile.yaml` in a plugin tree
+/// must declare `contract_version` equal to this binary's
+/// [`PROFILE_CONTRACT_VERSION`]. Emits pre-prefixed `PROFILE-LINT-001`
+/// lines, sorted; an empty vector means clean.
+///
+/// The schema treats the field as optional and this lint treats it as
+/// mandatory, on purpose. The schema also judges *project* trees, which
+/// may predate the field and must keep validating. The plugin tree has no
+/// such excuse: it is authored in lockstep with the analyzer, and a
+/// profile that declares nothing at a contract bump reopens #117 for
+/// every binary older than the bump.
+///
+/// Reads the raw YAML rather than [`Profile::load`] — a load would fail
+/// with `MANIFEST-002` on exactly the manifests this lint exists to
+/// describe.
+pub fn lint_plugin_profiles(plugin_root: &Path) -> Result<Vec<String>> {
+    let profiles_dir = plugin_root.join("profiles");
+    if !profiles_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut offenders = Vec::new();
+    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&profiles_dir)
+        .with_context(|| format!("reading {}", profiles_dir.display()))?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        let manifest = dir.join("profile.yaml");
+        if !manifest.is_file() {
+            // A profile with no manifest is a separate, pre-existing
+            // shape (the analyzer falls back to its built-in default);
+            // not this lint's business.
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("<unnamed>")
+            .to_string();
+        let value = super::read_yaml(&manifest)?;
+        match value.get("contract_version").and_then(|v| v.as_u64()) {
+            Some(v) if v == PROFILE_CONTRACT_VERSION => {}
+            Some(v) => offenders.push(format!(
+                "[PROFILE-LINT-001] profiles/{name}/profile.yaml declares contract_version {v}; \
+                 this analyzer's contract is {PROFILE_CONTRACT_VERSION}. The plugin tree and the \
+                 analyzer are one change unit — they must agree."
+            )),
+            None => offenders.push(format!(
+                "[PROFILE-LINT-001] profiles/{name}/profile.yaml has no contract_version; add \
+                 `contract_version: {PROFILE_CONTRACT_VERSION}`. Without it an analyzer older \
+                 than this contract reports the user's own file as invalid (#117)."
+            )),
+        }
+    }
+    offenders.sort();
+    Ok(offenders)
+}
+
+/// Compare the manifest's declared contract against the one this binary
+/// embeds, BEFORE the schema validator runs.
+///
+/// Order matters. Run the validator first and a plugin one contract ahead
+/// produces `MANIFEST-001` listing every unknown key against the path of
+/// the file in the *user's* project — the #117 failure, which names
+/// neither the analyzer nor a remedy. Run this first and the same skew
+/// produces one line that names both.
+///
+/// Only a manifest AHEAD of the binary is an error. A manifest behind it
+/// (or silent) is the normal state of every tree bootstrapped before the
+/// field existed, and the schema is the right judge of those: it accepts
+/// old shapes it still understands and rejects the rest by key.
+fn check_contract_version(value: &JsonValue, path: &Path) -> Result<()> {
+    let declared = value
+        .get("contract_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(IMPLIED_CONTRACT_VERSION);
+    if declared > PROFILE_CONTRACT_VERSION {
+        anyhow::bail!(
+            "[MANIFEST-002] {} declares contract_version {declared}; this specdev-analyzer \
+             understands {PROFILE_CONTRACT_VERSION}. The plugin tree is newer than the analyzer \
+             — nothing is wrong with the file. Re-install the analyzer from its checkout:\n  \
+             cargo install --path <specdev-analyzer checkout> --force",
+            path.display(),
+        );
+    }
+    Ok(())
 }
 
 /// Two `gates` rows with one label would write rows under one

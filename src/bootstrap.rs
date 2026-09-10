@@ -21,6 +21,7 @@
 //! Templates support a closed set of
 //! placeholder tokens; any unrecognized `{{...}}` is a fatal error.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -133,6 +134,72 @@ struct ProfileFile {
 /// and arbitrary `<artifact>.toml.template` files at the profile root
 /// (architecture / requirements / decisions / open_questions / future
 /// additions) without touching this code.
+/// Project-relative paths whose content the profile shares with another
+/// writer, and whose recorded hash therefore has to exclude the co-owned
+/// part. There is one: `inline` appends `$ref` entries to
+/// `module.schema.yaml`'s `allOf`.
+///
+/// Adding a member here is a real decision, not a convenience. A file on
+/// this list is only ever compared on its profile-owned remainder, so
+/// whatever is excluded must be reported by something else — the `allOf`
+/// array is covered by `drift`'s `units:` section.
+pub const CO_OWNED_AGGREGATORS: &[&str] = &["specs/specdev/schemas/module.schema.yaml"];
+
+/// The hash recorded for one profile file, and the one `drift` recomputes.
+///
+/// Plain files hash their bytes. A [`CO_OWNED_AGGREGATORS`] member hashes
+/// its profile-owned remainder instead, so that inlining a block does not
+/// present as drift and a stale template still does.
+pub fn profile_file_hash(rel: &str, bytes: &[u8]) -> Result<String> {
+    if CO_OWNED_AGGREGATORS.contains(&rel) {
+        crate::inline::aggregator_profile_hash(bytes, rel)
+    } else {
+        Ok(crate::hash::content_hash(bytes))
+    }
+}
+
+/// The exact bytes `bootstrap` writes for each profile-scaffolded file,
+/// keyed by project-relative destination path with `/` separators.
+///
+/// **One producer, three readers.** `run_bootstrap` writes these bytes and
+/// records their hashes; `drift` recomputes them to decide whether the
+/// plugin moved (#109); `migrate --refresh` writes them again. Before
+/// this seam existed `migrate::plan_profile_shell` re-implemented a
+/// *subset* of the list by hand — `profile.yaml` and `templates/*` only —
+/// which is why `migrate` could not repair the stale
+/// `architecture.schema.yaml` that #109 measured. Two enumerators of one
+/// file set is one enumerator too many.
+pub fn profile_expected_bytes(
+    profile_dir: &Path,
+    inputs: &BootstrapInputs,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let plan = profile_plan(profile_dir, &inputs.language)?;
+    let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    for f in &plan {
+        let src = profile_dir.join(&f.src_rel);
+        if !src.is_file() {
+            return Err(anyhow!(
+                "[BOOTSTRAP-001] profile {:?} is missing required source file: {}",
+                inputs.profile,
+                src.display(),
+            ));
+        }
+        // Substituted files are hashed and compared POST-substitution.
+        // The template text carries `{{project_name}}` / `{{language}}`,
+        // so a template-side hash would never match the file on disk and
+        // every templated file would report drift forever.
+        let bytes = if f.substitute {
+            let text = std::fs::read_to_string(&src)
+                .with_context(|| format!("reading {}", src.display()))?;
+            substitute(&text, inputs, &src.display().to_string())?.into_bytes()
+        } else {
+            std::fs::read(&src).with_context(|| format!("reading {}", src.display()))?
+        };
+        out.insert(f.dst_rel.to_string_lossy().replace('\\', "/"), bytes);
+    }
+    Ok(out)
+}
+
 fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> {
     let mut plan: Vec<ProfileFile> = vec![
         ProfileFile {
@@ -366,34 +433,26 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
         ));
     }
 
+    // Schema-check the profile manifest BEFORE any byte is written, and
+    // read it from the plugin tree (#117, #118). A stale analyzer meeting a
+    // newer plugin fails here, naming the plugin file, with the target
+    // directory still untouched. The steps are dispatched after the copy
+    // (they inspect the rendered `spec.toml`), but the *validation* that
+    // can fail is front-loaded.
+    let bootstrap_steps = manifest_bootstrap_steps(&profile_dir)?;
+
     // Copy files per the plan. Substitute templates; verbatim-copy schema
     // and codegen content (analyzer never re-emits YAML/Markdown).
-    let plan = profile_plan(&profile_dir, &inputs.language)?;
-    for f in &plan {
-        let src = profile_dir.join(&f.src_rel);
-        if !src.is_file() {
-            return Err(anyhow!(
-                "[BOOTSTRAP-001] profile {:?} is missing required source file: {}",
-                inputs.profile,
-                src.display(),
-            ));
-        }
-        let dst = inputs.target_dir.join(&f.dst_rel);
+    let expected = profile_expected_bytes(&profile_dir, inputs)?;
+    let mut profile_files: BTreeMap<String, String> = BTreeMap::new();
+    for (dst_rel, bytes) in &expected {
+        let dst = inputs.target_dir.join(dst_rel);
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
-        if f.substitute {
-            let text = std::fs::read_to_string(&src)
-                .with_context(|| format!("reading {}", src.display()))?;
-            let out = substitute(&text, inputs, &src.display().to_string())?;
-            std::fs::write(&dst, out).with_context(|| format!("writing {}", dst.display()))?;
-        } else {
-            // Byte-faithful copy.
-            let bytes =
-                std::fs::read(&src).with_context(|| format!("reading {}", src.display()))?;
-            std::fs::write(&dst, bytes).with_context(|| format!("writing {}", dst.display()))?;
-        }
+        std::fs::write(&dst, bytes).with_context(|| format!("writing {}", dst.display()))?;
+        profile_files.insert(dst_rel.clone(), profile_file_hash(dst_rel, bytes)?);
     }
 
     // Inline the language tier. `${PLUGIN_ROOT}/languages/<lang>/`
@@ -476,38 +535,70 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     // bootstrapped spec.toml; the other two are no-op v1 placeholders
     // so the dispatch shell exists without committing to per-member
     // scaffolding semantics until dogfood evidence informs them.
-    if let Some(steps) = manifest_bootstrap_steps(&specdev_root)? {
+    if let Some(steps) = bootstrap_steps {
         let target_spec_toml = inputs.target_dir.join("spec.toml");
         for step in steps {
             dispatch_bootstrap_step(step, &target_spec_toml)?;
         }
     }
 
-    // Write the lineage [meta] stamp. Profiles get no entry of their own;
-    // only `[meta]` records "this project was bootstrapped
-    // from plugin X at version Y with profile Z."
+    // Write the lineage stamp. `[meta]` records "this project was
+    // bootstrapped from plugin X at version Y with profile Z";
+    // `[profile_files]` records the substrate that stamp used to leave
+    // unaccounted for (#109).
+    //
+    // `[meta].plugin_version` is an AUDIT STAMP WITH NO READER. It is not
+    // a handshake and must not be mistaken for one: nothing compares it,
+    // and it does not move when the manifest contract does. The contract
+    // handshake is `profile.yaml`'s `contract_version` against
+    // `manifest::profile::PROFILE_CONTRACT_VERSION` (#117).
     let mut lineage = Lineage::default();
     lineage.meta = Some(MetaSection {
         plugin_version: plugin_version(plugin_root)?,
         bootstrapped_at: now_iso8601(),
         profile: inputs.profile.clone(),
     });
+    lineage.profile_files = profile_files;
     lineage.save(&specdev_root)?;
     Ok(())
 }
 
-/// Load the just-copied `profile.yaml` from the
-/// bootstrapped tree and return its `bootstrap.steps`. `Ok(None)` when the
-/// manifest is absent (profiles without a manifest) or when
-/// `bootstrap.steps` is empty (the closed-set non-workspace profiles —
-/// library-api, firmware-layered, audio-plugin all author `steps: []`).
-/// `Err` only on a malformed manifest; surfaces as `MANIFEST-001`.
-fn manifest_bootstrap_steps(specdev_root: &Path) -> Result<Option<Vec<BootstrapStep>>> {
-    let manifest_path = specdev_root.join("profile.yaml");
+/// Load the profile manifest from the **plugin** tree and return its
+/// `bootstrap.steps`. `Ok(None)` when the manifest is absent (profiles
+/// without a manifest) or when `bootstrap.steps` is empty (the closed-set
+/// non-workspace profiles — library-api, firmware-layered, audio-plugin
+/// all author `steps: []`). `Err` only on a malformed manifest; surfaces
+/// as `MANIFEST-001` or `MANIFEST-002`.
+///
+/// **Reads the plugin source, not the bootstrapped copy** (#117/#118).
+/// `profile_plan` copies `profile.yaml` verbatim (`substitute: false`), so
+/// the two files are byte-identical and validating either one is the same
+/// check — but only the plugin path is a file the *user* did not write.
+/// Called before the copy loop, so a schema failure names the plugin and
+/// leaves no partial tree behind.
+fn manifest_bootstrap_steps(profile_dir: &Path) -> Result<Option<Vec<BootstrapStep>>> {
+    let manifest_path = profile_dir.join("profile.yaml");
     if !manifest_path.is_file() {
         return Ok(None);
     }
-    let profile = Profile::load(&manifest_path)?;
+    // Provenance is attached HERE, not in the shared loader: only this
+    // caller knows the file it just read belongs to the plugin. The same
+    // loader serves the project-owned copy, where `MANIFEST-001` naming
+    // the user's path is correct.
+    let profile = Profile::load(&manifest_path).map_err(|e| {
+        let text = format!("{e}");
+        // `MANIFEST-002` already names the remedy — repeating it here read
+        // as two different instructions. Only the version-blind
+        // `MANIFEST-001` path needs the hint appended.
+        let remedy = if text.contains("cargo install") {
+            String::new()
+        } else {
+            " If you updated the plugin recently, the analyzer is older than the plugin: \
+             re-install it with `cargo install --path <specdev-analyzer checkout> --force`."
+                .to_string()
+        };
+        anyhow!("{text}\nThat file is in the PLUGIN tree, not in your project — nothing was written.{remedy}")
+    })?;
     let steps = profile
         .bootstrap
         .map(|b| b.steps)
