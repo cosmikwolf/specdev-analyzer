@@ -354,6 +354,34 @@ pub(crate) fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Resul
 /// running the same insertion twice produces a single entry. Callers
 /// always run this on a fresh inline (caller has already refused
 /// re-inline); idempotency guards against double-runs from test harnesses.
+/// Hash of an aggregator schema with its `allOf` array removed.
+///
+/// `module.schema.yaml` has two writers: `bootstrap` lays down the
+/// profile's template, then every `inline` appends a `$ref` to `allOf`
+/// (through [`aggregator_add_ref`], which re-emits the whole document via
+/// `serde_yaml`). A single recorded hash of the file therefore cannot
+/// separate "the plugin's template moved" from "I inlined a block" — and
+/// the second is not drift at all; `drift`'s `units:` section already
+/// reports it.
+///
+/// Dropping `allOf` before hashing splits the two cleanly. What remains is
+/// exactly the profile-owned part, and it is invariant under any number of
+/// `$ref` appends. Both sides of the comparison go through the same
+/// re-emission, so `serde_yaml` stripping comments costs nothing: it
+/// strips them identically on each side.
+pub fn aggregator_profile_hash(bytes: &[u8], label: &str) -> Result<String> {
+    let text = std::str::from_utf8(bytes)
+        .with_context(|| format!("{label} is not valid UTF-8"))?;
+    let mut value: serde_yaml::Value =
+        serde_yaml::from_str(text).with_context(|| format!("parsing {label}"))?;
+    if let Some(map) = value.as_mapping_mut() {
+        map.remove(serde_yaml::Value::from("allOf"));
+    }
+    let normalized =
+        serde_yaml::to_string(&value).with_context(|| format!("re-emitting {label}"))?;
+    Ok(crate::hash::content_hash(normalized.as_bytes()))
+}
+
 fn aggregator_add_ref(module_schema_path: &Path, ref_path: &str) -> Result<()> {
     let text = std::fs::read_to_string(module_schema_path)
         .with_context(|| format!("reading {}", module_schema_path.display()))?;

@@ -10,6 +10,7 @@ use crate::{
     cargo_toml as cargo_toml_mod, drift, extract, inline, package_json as package_json_mod,
     pubspec_yaml as pubspec_yaml_mod,
     layout::LayoutContext,
+    manifest::profile as profile_mod,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
     prompt, prose_lint, reduction, reference_lint, resolve, validate,
@@ -264,6 +265,17 @@ pub enum Command {
         /// without touching disk.
         #[arg(long)]
         dry_run: bool,
+        /// Also rewrite profile-scaffolded files that are STALE, not just
+        /// missing — schemas, templates and `profile.yaml` the plugin has
+        /// moved since this project was bootstrapped (#109).
+        ///
+        /// Only files whose on-disk hash still matches the hash bootstrap
+        /// recorded are rewritten: matching proves nobody hand-edited
+        /// them. A file you have edited is reported and left alone —
+        /// profile files keep no merge base, so there is nothing to merge
+        /// against. Run `drift` to see them.
+        #[arg(long)]
+        refresh: bool,
     },
     /// Observational drift report — classify each inlined file as
     /// clean / plugin-moved / locally-edited / both. Pure reporter.
@@ -603,8 +615,12 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             module,
             output,
         } => run_context(project, spec_path.as_deref(), module, output),
-        Command::Migrate { project, dry_run } => {
-            run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run)
+        Command::Migrate {
+            project,
+            dry_run,
+            refresh,
+        } => {
+            run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh)
         }
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gen {
@@ -1572,6 +1588,7 @@ fn run_migrate(
     spec_path: Option<&std::path::Path>,
     plugin_flag: Option<PathBuf>,
     dry_run: bool,
+    refresh: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1587,7 +1604,7 @@ fn run_migrate(
             return ExitCode::from(2);
         }
     };
-    let report = match migrate::run_migrate(&layout, &plugin, dry_run) {
+    let report = match migrate::run_migrate(&layout, &plugin, dry_run, refresh) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
@@ -1604,6 +1621,41 @@ fn run_migrate(
         }
     } else if report.profile_skipped {
         eprintln!("profile shell: {skip_phrase}");
+    }
+    let refresh_verb = if dry_run { "would refresh" } else { "refreshed" };
+    for rel in &report.profile_files_refreshed {
+        eprintln!("profile shell: {refresh_verb} {} (was stale)", rel.display());
+    }
+    if !report.profile_files_locally_edited.is_empty() {
+        // Not a failure. The user's edit is the more valuable artifact and
+        // there is no merge base for these files, so refresh declines and
+        // hands the decision back with the command that shows the diff.
+        for rel in &report.profile_files_locally_edited {
+            eprintln!(
+                "profile shell: KEPT {} — diverges from the hash bootstrap recorded",
+                rel.display()
+            );
+        }
+        eprintln!(
+            "{} profile file(s) left as-is because you changed them; `specdev-analyzer drift` \
+             classifies each one",
+            report.profile_files_locally_edited.len()
+        );
+    }
+    for rel in &report.profile_files_needs_manual {
+        eprintln!(
+            "profile shell: MANUAL {} — the plugin's template moved, but this file also holds \
+             the `$ref` list `inline` appended; rewriting it would drop them. Re-apply the \
+             upstream change by hand.",
+            rel.display()
+        );
+    }
+    if report.profile_refresh_unavailable {
+        eprintln!(
+            "profile shell: --refresh cannot run — this project has no [profile_files] in \
+             lineage.toml, so no file can be proven untouched since bootstrap. Missing files \
+             are still written; stale ones are not. (Projects bootstrapped before #109.)"
+        );
     }
 
     for m in &report.migrated {
@@ -2170,6 +2222,15 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Every shipped profile must declare the manifest contract it was
+    // authored against (`PROFILE-LINT-001`); see #117.
+    let profile_offenders = match profile_mod::lint_plugin_profiles(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
     // Inlined codegen prose must be profile-agnostic (`PROSE-PROFILE-001`):
     // a block/bridge `codegen/<lang>/README.md` must not name a profile.
     let prose_offenders = match prose_lint::lint_codegen_prose_profiles(&plugin) {
@@ -2195,6 +2256,10 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &reference_offenders {
         eprintln!("{o}");
     }
+    // Profile offenders carry their own `PROFILE-LINT-NNN` code.
+    for o in &profile_offenders {
+        eprintln!("{o}");
+    }
     // Prose offenders carry their own `PROSE-PROFILE-NNN` code.
     for o in &prose_offenders {
         eprintln!("{o}");
@@ -2203,16 +2268,18 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     let total = bridge_offenders.len()
         + block_offenders.len()
         + reference_offenders.len()
+        + profile_offenders.len()
         + prose_offenders.len();
     if total == 0 {
         eprintln!("plugin lint OK at {}", plugin.display());
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} prose)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} prose)",
             bridge_offenders.len(),
             block_offenders.len(),
             reference_offenders.len(),
+            profile_offenders.len(),
             prose_offenders.len()
         );
         ExitCode::from(1)

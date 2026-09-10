@@ -1,6 +1,5 @@
 ---
 source: tests/merge_and_drift.rs
-assertion_line: 427
 expression: report.to_yaml().unwrap()
 ---
 units:
@@ -14,3 +13,34 @@ units:
   - rel_in_unit: schema.yaml
     category: Clean
 invariants: []
+profile:
+  profile: firmware-layered
+  status: recorded
+  files:
+  - path: spec.toml
+    category: Clean
+    comparison: full
+  - path: specs/architecture.toml
+    category: Clean
+    comparison: full
+  - path: specs/requirements.toml
+    category: Clean
+    comparison: full
+  - path: specs/specdev/codegen/rust/module.conventions.md
+    category: Clean
+    comparison: full
+  - path: specs/specdev/domain.toml
+    category: Clean
+    comparison: full
+  - path: specs/specdev/reductions/project.yaml
+    category: Clean
+    comparison: full
+  - path: specs/specdev/schemas/architecture.schema.yaml
+    category: Clean
+    comparison: full
+  - path: specs/specdev/schemas/module.schema.yaml
+    category: Clean
+    comparison: excludes_unit_refs
+  - path: specs/specdev/schemas/requirements.schema.yaml
+    category: Clean
+    comparison: full
