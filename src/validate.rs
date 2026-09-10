@@ -1667,7 +1667,10 @@ pub fn validate_items_present(
                     Severity::Info,
                     format!(
                         "module `{name}` has 0 items[] entries — `gen` has nothing to \
-                         anchor codegen to. Add items[] before running codegen."
+                         anchor codegen to. Add items[] before running codegen. Every \
+                         ordinary item also needs `satisfies = [\"REQ-...\"]` (≥1 id); \
+                         only a test item (`test = true`, which carries `verifies`) or \
+                         a re-export is exempt."
                     ),
                 )
                 .with_file(module_path.display().to_string()),
