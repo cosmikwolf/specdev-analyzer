@@ -1,7 +1,7 @@
 # nih-plug — Rust codegen conventions
 
 These conventions describe how a `nih-plug` block table on a module
-spec maps to Rust source. They layer on top of the audio-plugin
+spec maps to Rust source. They layer on top of the project's
 profile's `module.conventions.md`; concerns specific to the nih-plug
 framework (parameter-derive, range constructors, smoothers, export
 macros, process-callback shape) live here.
@@ -190,12 +190,12 @@ impl Plugin for MyPlugin {
         // populated from [audio] + [[nih_plug.audio_ports]] (see below)
     ];
 
-    const MIDI_INPUT: MidiConfig  = /* [nih_plug.midi].input ? Basic : None */;
-    const MIDI_OUTPUT: MidiConfig = /* [nih_plug.midi].output ? Basic : None */;
+    const MIDI_INPUT: MidiConfig  = /* [nih_plug.midi].input_level  → None|Basic|MidiCCs */;
+    const MIDI_OUTPUT: MidiConfig = /* [nih_plug.midi].output_level → None|Basic|MidiCCs */;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
-    type SysExMessage = ();
+    type SysExMessage = ();  /* or the sysex message type — see "SysEx message handling" */
     type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
@@ -275,7 +275,7 @@ VST3 SDK code that bloats the binary.
 ## process() body shape
 
 The `process()` callback runs on the host's audio thread under the
-realtime contract spelled out in the audio-plugin profile prose
+realtime contract spelled out in the project's profile prose
 (no alloc, no lock, no log on the hot path). This block adds two
 nih-plug-specific patterns:
 
@@ -323,6 +323,127 @@ Two rules:
 note release) needs to keep running after note-off. nih-plug uses
 this to prevent the host from sleeping the plugin.
 
+## MIDI input / output levels
+
+`[nih_plug.midi].input_level` / `output_level` map 1:1 to nih-plug's
+`MidiConfig` (three levels — there is no `MidiAndMpe` / `MidiSysEx`
+variant):
+
+| level      | `MidiConfig` const   | delivers                                    |
+|------------|----------------------|---------------------------------------------|
+| `none`     | `MidiConfig::None`   | nothing (no MIDI port on this direction)    |
+| `basic`    | `MidiConfig::Basic`  | note on/off/choke + pressure; SysEx capable |
+| `midi_ccs` | `MidiConfig::MidiCCs`| `basic` + full MIDI CC + pitch-bend events  |
+
+```rust
+const MIDI_INPUT: MidiConfig  = MidiConfig::MidiCCs; // from input_level
+const MIDI_OUTPUT: MidiConfig = MidiConfig::None;    // from output_level
+```
+
+CC and pitch-bend events are delivered in `process()` **only** at
+`midi_ccs` (they do not arrive at `basic`). Drain them alongside notes:
+
+```rust
+while let Some(event) = context.next_event() {
+    match event {
+        NoteEvent::MidiCC { timing, channel, cc, value } => {
+            // `value` is normalized to [0, 1] (× 127 for the raw 0..=127).
+            // See nih_plug::midi::control_change for named CC numbers.
+        }
+        NoteEvent::MidiPitchBend { timing, channel, value } => { /* ... */ }
+        NoteEvent::NoteOn { .. } => { /* ... */ }
+        _ => {}
+    }
+}
+```
+
+If the spec sets `midi_ccs`, the plugin author is responsible for the
+CC-handling body — codegen wires the level and the drain skeleton, the
+mapping of CC → engine state is user code (the `process()` body rule).
+
+## SysEx message handling
+
+By default `type SysExMessage = ();` — the plugin ignores system-
+exclusive messages. When the plugin shell module declares a
+`[nih_plug.midi.sysex]` subtable, codegen emits a real SysEx message
+type and wires it into the plugin trait.
+
+Two facts fix the shape (verified against pinned nih-plug's
+`src/midi.rs` / `src/midi/sysex.rs`):
+
+- **`MidiConfig::Basic` is the level that carries SysEx** — there is no
+  `MidiAndMpe` or `MidiSysEx` variant. Receiving SysEx needs
+  `input_level = "basic"` (or `"midi_ccs"`); sending needs
+  `output_level` at `"basic"` or higher. The schema enforces that at
+  least one direction is `basic`+ whenever `sysex` is present.
+- **The `SysExMessage::Buffer` associated type is `[u8; N]`** with `N` a
+  compile-time constant — hence `max_message_len` is a required spec
+  field, not a codegen placeholder.
+
+Emit a message type named by `sysex.message_type` (default
+`<PluginType>SysEx`) implementing `nih_plug::midi::SysExMessage`. The
+byte buffer is the RAW SysEx frame — it includes the `0xF0` start and
+`0xF7` end bytes:
+
+```rust
+use nih_plug::prelude::*;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dx7Dump {
+    /// Raw frame, 0xF0 … 0xF7 inclusive.
+    pub raw: [u8; 4104],   // = sysex.max_message_len
+    pub len: usize,
+}
+
+impl SysExMessage for Dx7Dump {
+    // From sysex.max_message_len — must be a const array length.
+    type Buffer = [u8; 4104];
+
+    fn from_buffer(buffer: &[u8]) -> Option<Self> {
+        // Cheaply recognize + copy the frame; return None for SysEx you
+        // don't handle so nih-plug leaves it untouched. Do NOT do the
+        // real DX7 voice/bank decode here — that belongs in the engine
+        // crate, off the audio thread (see below).
+        let mut raw = [0u8; 4104];
+        let len = buffer.len().min(raw.len());
+        raw[..len].copy_from_slice(&buffer[..len]);
+        Some(Self { raw, len })
+    }
+
+    fn to_buffer(self) -> (Self::Buffer, usize) {
+        (self.raw, self.len)
+    }
+}
+```
+
+Set the associated type on the plugin impl (replacing the `()` default):
+
+```rust
+type SysExMessage = Dx7Dump;
+```
+
+Drain SysEx alongside notes at the top of `process()`. Incoming/outgoing
+events are `PluginNoteEvent<Self>` = `NoteEvent<Self::SysExMessage>`, so
+the `message` field is your message type:
+
+```rust
+while let Some(event) = context.next_event() {
+    match event {
+        NoteEvent::MidiSysEx { timing, message } => {
+            // `message: Dx7Dump` — hand the raw bytes to the engine.
+            // If the parse allocates, post it to a background task
+            // rather than decoding on the audio thread.
+        }
+        NoteEvent::NoteOn { .. } => { /* ... */ }
+        _ => {}
+    }
+}
+```
+
+To **send** SysEx, construct the message and push it with
+`context.send_event(NoteEvent::MidiSysEx { timing, message })`; nih-plug
+serializes it via `to_buffer`.
+
 ## initialize() for preallocation
 
 When `[nih_plug.process].block_size_max` is set, the plugin should
@@ -356,9 +477,9 @@ implementing `extra_state`/`load_state` manually; out of scope for
 v1 codegen prose. When a project needs custom state, add the impl
 manually in the plugin shell module.
 
-## Interaction with audio-plugin profile conventions
+## Interaction with the project profile conventions
 
-The audio-plugin profile's `module.conventions.md` covers crate-shape
+The project's profile's `module.conventions.md` covers crate-shape
 (cdylib + standalone bin), per-format constants (VST3_CATEGORIES /
 CLAP_FEATURES table per `[plugin].category`), and realtime path
 discipline. This block extends those:

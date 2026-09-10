@@ -298,6 +298,65 @@ The Flutter SDK dependency itself (`{ package = "flutter", sdk =
 - Follow Effective Dart naming: types `UpperCamelCase`, members and
   files `lowerCamelCase`/`snake_case.dart`.
 
+## Terminal-state guards
+
+A module that tracks an operation in flight (`_inFlight`, `_busy`, a
+state enum) usually has one method that ends the attempt and emits the
+terminal state. **Guard that method on the in-flight flag alone.**
+
+```dart
+// CORRECT — one attempt emits one terminal state.
+void _fail(SomeError? error) {
+  if (!_inFlight) return;      // already ended; nothing to emit
+  _inFlight = false;
+  …
+}
+```
+
+Do **not** add the error value to the guard:
+
+```dart
+// WRONG — a null error skips the early return, so a normal completion
+// falls through into the failure path.
+if (!_inFlight && error != null) return;
+```
+
+The flag answers "has this attempt already ended?". The error answers
+"how did it end?". Mixing them means the guard stops working for exactly
+the case where `error` is absent — the success path. This shipped once
+and was caught only on hardware, because both branches type-check and no
+test covered a null-error completion.
+
+Where a method must distinguish success from failure, branch on the
+error *after* the guard, never inside it.
+
+## Widget APIs move — check them, do not recall them
+
+Flutter deprecates and replaces widget APIs between releases, and code
+written from memory compiles against an SDK that no longer exists. Before
+emitting any widget you have not verified this session, check its current
+constructor against the installed SDK (`flutter --version`, then the
+package documentation for that version).
+
+One concrete case that shipped wrong: selection controls no longer take
+per-tile `groupValue`/`onChanged`. Wrap them in an ancestor `RadioGroup`:
+
+```dart
+// CORRECT — current Flutter.
+RadioGroup<FirmwareImage>(
+  groupValue: _selected,
+  onChanged: (FirmwareImage? v) { if (v != null) setState(() => _selected = v); },
+  child: Column(children: [ for (final i in items) RadioListTile(value: i, title: …) ]),
+)
+
+// WRONG — deprecated per-tile form.
+RadioListTile<FirmwareImage>(value: i, groupValue: _selected, onChanged: …)
+```
+
+Treat this as one instance of a general rule, not a single fix: a widget
+whose shape you are recalling rather than reading is a defect waiting to
+surface at run time.
+
 ## Refusal rule
 
 Emitting `throw UnimplementedError()` (or `UnimplementedError` in any

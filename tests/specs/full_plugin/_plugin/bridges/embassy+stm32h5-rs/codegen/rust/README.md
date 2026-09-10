@@ -322,6 +322,18 @@ forbid holding a non-`Send` borrow across `.await`. embassy_sync's
   (e.g. `&mut I2c<'static, Async, Master>`). Author the
   peripheral/pins/task/binding on the task-owning module, not on the driver.
 
+- **Multi-package consequence (separate driver crate).** When the pure-logic
+  driver lives in a *separate package* (its own `specs/specdev/`), it borrows
+  the bus type `I2c<'static, Async, Master>` but owns no peripheral/binding —
+  so this bridge (which contributes `embassy-stm32` only where it is inlined +
+  bound) does **not** add `embassy-stm32` to the driver package's generated
+  `Cargo.toml`. The driver package must wire it explicitly via
+  `[[external_deps]]` in its `architecture.toml`, mirroring the bridge's
+  join-product (`crate = "embassy-stm32"`, same version + chip features). The
+  binding-owning application package gets it automatically from the inlined
+  bridge. This is correct per-package behavior (dep contribution follows the
+  binding), but the driver author must hand-replicate the one dep.
+
 - **Interrupt binding lives at the entry point.** Async peripherals
   require `bind_interrupts!` (see "Entry-point integration"); the
   bridge emits that binding once at crate root, NOT per module. Raw

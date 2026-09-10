@@ -54,7 +54,7 @@ to Rust: tasks become `#[embassy_executor::task]` free fns, channels
 become `static CHANNEL: Channel<...>` declarations, init wires them
 together at spawn time.
 
-## Sharp-test rationale (doc 15 §3.1)
+## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific Rust crate (`embassy-executor`
   + `embassy-sync`), not the abstract concept of "async runtime."
@@ -65,7 +65,7 @@ together at spawn time.
 - **No cross-block reach:** ✓ — codegen prose explicitly excludes
   `embassy-stm32` and other peripheral-HAL crates. Tasks and channels
   are named by their own qualified paths; peripheral wiring is the
-  job of the `embassy+<peripheral-block>` bridge (Phase 7+).
+  job of the `embassy+<peripheral-block>` bridge.
 
 ## Deferred (revisit triggers per §12)
 
@@ -75,11 +75,10 @@ together at spawn time.
 - **Timers / delays** — currently captured as task body content (the
   user writes `embassy_time::Timer::after(...)` inside the task). A
   typed `[[embassy.timers]]` entry could promote this; defer until
-  Phase 8.5 dogfood + Phase 12 firmware integration test reveal the
-  need.
+  dogfood evidence reveals the need.
 - **Multi-core / SMP** — embassy supports it, but the task/channel
   shape doesn't change; the bridge to a specific MCU block (e.g.
   `embassy+rp2040`) handles core-affinity wiring.
-- **Cross-block wiring with peripheral blocks** — the `embassy+<X>`
-  bridges are Phase 7+ work. Until they ship, projects can author the
-  glue manually inside task bodies.
+- **Cross-block wiring with peripheral blocks** — handled by the
+  `embassy+<X>` bridges. Until a needed bridge ships, projects can
+  author the glue manually inside task bodies.
