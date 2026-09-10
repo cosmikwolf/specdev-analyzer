@@ -395,7 +395,7 @@ fn firmware_test_target_rejects_keys_outside_the_subset() {
 fn firmware_features_render_with_default_line_and_optional_slot_dep() {
     let (target, layout) = fresh_project("firmware-layered", "demo", "fw-features");
     let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
-    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^0.3\"\nfeatures = [\"print-defmt\"]\n";
+    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^1\"\nfeatures = [\"print-defmt\"]\n";
     assert!(arch.contains(anchor), "template shape changed; update this test's anchor");
     let arch = arch.replace(anchor, &format!("{anchor}optional = true\n"));
     let augmented = format!(
@@ -415,7 +415,7 @@ fn firmware_features_render_with_default_line_and_optional_slot_dep() {
     assert!(t.contains(features), "{t}");
     assert!(
         t.contains(
-            "panic-probe = { version = \"^0.3\", features = [\"print-defmt\"], optional = true }\n"
+            "panic-probe = { version = \"^1\", features = [\"print-defmt\"], optional = true }\n"
         ),
         "an optional typed-slot dep renders `optional = true`:\n{t}"
     );
