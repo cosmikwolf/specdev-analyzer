@@ -685,12 +685,16 @@ impl GenPlanCategory {
 pub struct GenPlanModule {
     pub module: String,
     pub category: GenPlanCategory,
-    /// Second axis, independent of `category`: does a **passing** gate row
-    /// exist for this module at the *current* key (fresh `input_hash` ⊕
-    /// current lockfile hash)? `false` for a module that was never gated,
-    /// failed its gate, or whose spec or lockfile moved since it passed.
-    /// The skill's re-gate set is `category == unchanged && !verified`:
-    /// run the compile gate again, do not regenerate.
+    /// Second axis, independent of `category`: does **every** module-scope
+    /// gate the inlined profile declares have a **passing** row for this
+    /// module at the *current* key (fresh `input_hash` ⊕ current lockfile
+    /// hash)? `false` for a module that was never gated, failed a gate,
+    /// passed only some of the declared gates, or whose spec or lockfile
+    /// moved since it passed — and `false` for every module when no
+    /// module-scope gate is declared (`gates_declared: false`). Rows
+    /// under labels the registry no longer declares are ignored. The
+    /// skill's re-gate set is `category == unchanged && !verified`: run
+    /// the compile gate again, do not regenerate.
     pub verified: bool,
     /// Affected output files — populated only for `edited` / `missing` so
     /// the skill can name them when it surfaces the module. Sorted; empty
@@ -711,6 +715,12 @@ pub struct GenPlanBatchGate {
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GenPlanReport {
+    /// Whether the inlined `profile.yaml` declares at least one
+    /// `scope: module` gate. When false, `verified` cannot be computed
+    /// and reads `false` for every module — never `true` over zero
+    /// gates. A report field only: the refusal lives in `gen --tail`,
+    /// which runs in every codegen mode.
+    pub gates_declared: bool,
     /// One verdict per module under `specs/modules/`, sorted by module name.
     pub modules: Vec<GenPlanModule>,
     /// Batch (no-module) gate rows, sorted by label. Empty when no batch
@@ -748,6 +758,14 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
     let module_names = crate::prompt::list_module_names(layout)?;
     let mut report = GenPlanReport::default();
 
+    // The declared module-scope gate labels: the set a module must have
+    // a current pass row for, from each, to read `verified`. An absent
+    // inlined profile is "nothing declared", the same as an empty key.
+    let declared: Vec<String> = crate::manifest::Profile::load_inlined(&layout.specdev_root)?
+        .map(|p| p.module_gates().map(|g| g.label.clone()).collect())
+        .unwrap_or_default();
+    report.gates_declared = !declared.is_empty();
+
     // The lockfile half of the gate key, computed once per plan. Read at
     // plan time it reflects the last gate that ran (or a `cargo update`
     // since) — exactly the thing a recorded pass must be compared against.
@@ -774,10 +792,15 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
         // unverified (its key moved with its inputs), and saying so keeps
         // the field's meaning uniform.
         let current_key = current_gate_key(layout, Some(name), &lock);
-        let verified = lineage
-            .gates
-            .iter()
-            .any(|g| g.module.as_deref() == Some(name.as_str()) && g.pass && g.key == current_key);
+        let verified = report.gates_declared
+            && declared.iter().all(|label| {
+                lineage.gates.iter().any(|g| {
+                    g.module.as_deref() == Some(name.as_str())
+                        && &g.label == label
+                        && g.pass
+                        && g.key == current_key
+                })
+            });
 
         // Files recorded for this module (project-level entries excluded).
         // Derived rows are excluded too: a shim is not evidence the module

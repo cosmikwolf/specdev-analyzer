@@ -583,7 +583,14 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             module,
             preamble,
             tail,
-        } => run_gen(project, spec_path.as_deref(), module, preamble, tail),
+        } => run_gen(
+            project,
+            spec_path.as_deref(),
+            plugin_flag,
+            module,
+            preamble,
+            tail,
+        ),
         Command::GenRecord {
             project,
             module,
@@ -1682,6 +1689,7 @@ fn run_drift(
 fn run_gen(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
     module: Vec<String>,
     preamble: bool,
     tail: bool,
@@ -1691,6 +1699,24 @@ fn run_gen(
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
+        }
+    };
+    // The gate-registry check for the two gated paths below. The plugin
+    // root is read only when the inlined profile declares no registry
+    // (to print the block to paste); resolve it lazily.
+    let layout_ref = &layout;
+    let resolve_plugin = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    let registry_refusal = |layout: &LayoutContext| -> Option<ExitCode> {
+        match specdev_analyzer::gates::refuse_without_module_gate(layout, &resolve_plugin) {
+            Ok(None) => None,
+            Ok(Some(message)) => {
+                eprintln!("{message}");
+                Some(ExitCode::from(1))
+            }
+            Err(e) => {
+                report_error(&e);
+                Some(ExitCode::from(1))
+            }
         }
     };
 
@@ -1733,6 +1759,11 @@ fn run_gen(
                 return ExitCode::from(2);
             }
         };
+        // Project-wide precondition first (one fix serves every module),
+        // then the per-module open-question gate.
+        if let Some(code) = registry_refusal(&layout) {
+            return code;
+        }
         match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
             Ok(Some(refusal)) => {
                 eprint!("{}", refusal.message);
@@ -1763,6 +1794,9 @@ fn run_gen(
     match module.as_slice() {
         [name] => {
             let name = name.clone();
+            if let Some(code) = registry_refusal(&layout) {
+                return code;
+            }
             match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
                 Ok(Some(refusal)) => {
                     eprint!("{}", refusal.message);

@@ -70,6 +70,29 @@ derived_files:
     template: templates/shim-star.ts.template
     exclusive: segment
 
+# Compile gates, as data: the codegen skill runs each `steps` argv in
+# order in the project root and records rows under `label`. `fast` is the
+# per-module gate (one row per module in the run): install without
+# `--frozen-lockfile` on purpose (a new dependency must be able to move
+# the lockfile), then route types, then the type check, then the unit
+# tests (`--passWithNoTests`: an app with no test items yet is not a
+# failure). `next-build` is the whole-tree gate (one batch row, no
+# module): it is the only check that catches a client-component rule
+# violation in a route file (`typegen` and `tsc` are blind to it) and
+# it prerenders every static route.
+gates:
+  - label: fast
+    scope: module
+    steps:
+      - [pnpm, install]
+      - [pnpm, exec, next, typegen]
+      - [pnpm, exec, tsc, --noEmit]
+      - [pnpm, exec, vitest, run, --passWithNoTests]
+  - label: next-build
+    scope: batch
+    steps:
+      - [pnpm, exec, next, build]
+
 bootstrap:
   steps: []                       # standalone app; no workspace machinery
 

@@ -362,6 +362,60 @@ properties:
           type: string
           minLength: 1
 
+  gates:
+    description: |
+      The compile-gate registry: every gate the codegen skill runs after
+      emission, as data. Each gate is an opaque `label` (the row key in
+      `gen-lineage.toml`, with the module), a `scope`, and `steps` — a
+      list of argv lists run in order in the project root, never a shell
+      string (one exit code per step; no second grammar for quoting).
+      `scope: module` means one execution per run and one recorded row
+      per module in the run; `scope: batch` means one row with no
+      module (a whole-tree build). A `${root.<table>.<field>}` token in a
+      step resolves against `specs/architecture.toml`; a missing field
+      is an error, never an empty string. Optional as a key, but not
+      optional for codegen: with no module-scope gate declared, `report
+      gen-plan` reports `gates_declared: false` and every module
+      `verified: false`, and `gen --tail` refuses with the block to
+      paste — a gate that skips when its precondition is missing is the
+      bug the registry exists to remove. One row per label; a second
+      row with the same label is refused at load (two results would
+      share one key). Labels are opaque to the analyzer.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [label, scope, steps]
+      properties:
+        label:
+          description: |
+            Opaque gate name, e.g. `cargo-check` or `fast`. Becomes the
+            `label` of every row the gate writes and the value the
+            runner is invoked with; no whitespace.
+          type: string
+          minLength: 1
+          pattern: "^\\S+$"
+        scope:
+          description: |
+            `module` — one row per module in the run; `verified` for a
+            module needs a pass row from every module-scope gate.
+            `batch` — one whole-tree row, no module; reported per label.
+          type: string
+          enum: [module, batch]
+        steps:
+          description: |
+            Argv lists, run in order; the first non-zero exit stops the
+            gate and fails it. Each list is one process: executable
+            first, then its arguments, one string per argument.
+          type: array
+          minItems: 1
+          items:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              minLength: 1
+
   items:
     description: |
       items[] extraction policy (#101(b)). Read by `extract-items`,

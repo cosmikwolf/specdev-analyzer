@@ -93,6 +93,7 @@ pub mod domain;
 pub mod drift;
 pub mod embedded_schemas;
 pub mod extract;
+pub mod gates;
 pub mod gen_lineage;
 pub mod graph;
 pub mod hash;
