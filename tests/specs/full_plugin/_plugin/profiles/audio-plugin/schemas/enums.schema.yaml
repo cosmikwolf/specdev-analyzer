@@ -6,10 +6,10 @@ description: >
   enum is a $defs entry; module/architecture/requirements schemas
   reference these via $ref.
 
-  Per Phase 15-A spike (D44–D49): the layer enum carries four tiers,
-  with `host_interface` reserved for nih-plug-provided types (no user
-  modules at this layer in v1). PluginFormat / PluginCategory are the
-  closed enums driving codegen-time per-format constant emission (D46).
+  The layer enum carries four tiers, with `host_interface` reserved
+  for nih-plug-provided types (no user modules at this layer in v1).
+  PluginFormat / PluginCategory are the closed enums driving
+  codegen-time per-format constant emission.
 
 $defs:
   LayerKind:
@@ -32,7 +32,7 @@ $defs:
     description: >
       Plugin distribution format. Drives which `nih_export_*!` macro
       emits and which target-type the plugin crate's Cargo.toml
-      declares (D45). At least one format must be selected. AU is out
+      declares. At least one format must be selected. AU is out
       of scope for v1 (separate API surface in nih-plug).
     type: string
     enum:
@@ -43,7 +43,7 @@ $defs:
   PluginCategory:
     description: >
       Plugin category. Maps to per-format constants via codegen prose
-      (D46): VST3_CATEGORIES (a `&str`) and CLAP_FEATURES (a slice of
+      VST3_CATEGORIES (a `&str`) and CLAP_FEATURES (a slice of
       `ClapFeature`). Standalone is uncategorized.
     type: string
     enum:

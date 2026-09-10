@@ -27,9 +27,9 @@ Don't use this block if:
   separate blocks (`vst3-sdk-rs`, etc.); the conceptual shape overlaps
   but the codegen mappings differ.
 
-This block is silent on UI. Pair with a UI block (Phase 15-D ships
-`egui`) plus the matching bridge (`egui+nih-plug`, Phase 15-E) for
-parameter→widget rendering. You CAN use nih-plug without an editor —
+This block is silent on UI. Pair with a UI block (`egui` ships in v1)
+plus the matching bridge (`egui+nih-plug`) for parameter→widget
+rendering. You CAN use nih-plug without an editor —
 hosts fall back to a generic parameter list — but most plugins ship
 a custom editor.
 
@@ -66,10 +66,14 @@ channel_count = 2
 kind          = "main"         # main | aux | sidechain
 
 [nih_plug.midi]
-input       = true
-output      = false
-note_events = true
-cc_events   = false
+input_level  = "midi_ccs"   # none | basic | midi_ccs
+output_level = "none"       # (midi_ccs delivers CC + pitch-bend events)
+
+# Optional — only when the plugin handles SysEx (e.g. patch dumps).
+# Requires input_level or output_level at "basic" or higher.
+[nih_plug.midi.sysex]
+max_message_len = 4104        # bytes, incl. 0xF0…0xF7 (DX7 bank dump)
+message_type    = "Dx7Dump"   # optional; default <PluginType>SysEx
 
 [nih_plug.process]
 mode             = "realtime"  # realtime | offline_capable
@@ -85,7 +89,9 @@ Reduction kinds (after inline):
   `[[nih_plug.audio_ports]]`.
 - `nih-plug.MidiConfig` (extends `Module`) — at most one per module
   (the `[nih_plug.midi]` singleton). Qualified name is
-  `<ModuleName>.midi`.
+  `<ModuleName>.midi`. Its optional `sysex` subtable is NOT surfaced as
+  graph attributes — like `ProcessConfig`, it's a nameless config
+  singleton that only codegen reads.
 - `ProcessConfig` is intentionally NOT materialized as an entity —
   it carries no name and no graph check needs to reach into it;
   codegen prose reads it directly from the module's TOML.
@@ -97,7 +103,7 @@ populate the plugin's `AUDIO_IO_LAYOUTS` constant; MIDI flags drive
 `MIDI_INPUT` / `MIDI_OUTPUT` constants; process metadata drives
 preallocation patterns in `initialize()`.
 
-## Sharp-test rationale (doc 15 §3.1)
+## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific Rust framework (`nih_plug`),
   not the abstract concept of "audio plugin framework."
@@ -112,15 +118,14 @@ preallocation patterns in `initialize()`.
   the job of the `nih-plug+<ui-block>` bridge; DSP code lives in the
   user's engine module(s) (or a sibling `library-api` crate).
 
-## Deferred (revisit triggers per §12 + spike §7)
+## Deferred (revisit triggers per §12)
 
-- **Sysex handling.** v1 wires `MIDI_INPUT::Basic`; sysex requires
-  `MIDI_INPUT::MidiAndMpe` or `MidiSysEx` plus `type SysExMessage`
-  beyond `()`. Promote when a real sysex-needing plugin shows up.
 - **Background tasks.** `type BackgroundTask` is `()` in v1; nih-plug
   supports per-plugin background-thread work for things like preset
   loading. Promote when authoring a plugin with non-trivial deferred
-  work.
+  work. (This is the natural home for decoding a SysEx patch dump off
+  the audio thread — see `[nih_plug.midi.sysex]` below, whose codegen
+  hands the raw frame to the engine but leaves the parse to the user.)
 - **Custom state save/load.** `extra_state` / `load_state` for state
   beyond the parameter set is hand-authored in the plugin shell
   module today. Promote to a typed `[nih_plug.state]` subtable when
@@ -128,8 +133,8 @@ preallocation patterns in `initialize()`.
 - **Per-platform realtime audit.** Schema captures `process.mode`;
   the `realtime_audit` boolean lives at the architecture level. A
   future graph-check primitive that statically detects alloc on the
-  audio path is a Phase 15.x deliverable, gated on 15-G dogfood
-  evidence (D48).
+  audio path is a bounded follow-up, gated on dogfood evidence
+  (`realtime_path_no_alloc`).
 - **Polyphonic-mod id uniqueness check.** `poly_modulation_id` is a
   CLAP feature that needs project-wide unique ids; v1 doesn't
   graph-check this. Promote when CLAP-poly-mod authoring lands.

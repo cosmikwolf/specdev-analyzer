@@ -5,10 +5,16 @@ TypeScript, pnpm, Vitest and Playwright: modules classified by
 architectural role, route files derived from the spec, and the
 client/server boundary carried as two fields the compiler enforces.
 
-**Status:** this profile bootstraps, validates and emits `package.json`
-plus its config files. Route-file derivation (`specdev-analyzer derive`)
-and the gate runner (`specdev-analyzer gate`) are not yet shipped; until
-they are, `/spec-gen` cannot complete a nextjs-app tree.
+**Status:** this profile bootstraps, validates, emits `package.json`
+plus its config files, and derives the route files under `app/`
+(`specdev-analyzer derive --write`, run by `/spec-gen` on every gen).
+Its two compile gates are declared as data in `profile.yaml` (`gates:`):
+`fast` (`scope: module` — `pnpm install`, `next typegen`, `tsc
+--noEmit`, `vitest run --passWithNoTests`) and `next-build` (`scope:
+batch` — `next build`). `/spec-gen` reads the registry and runs each
+step; a module is `verified` only with a current pass row from every
+module-scope gate. The analyzer-run gate (`specdev-analyzer gate`),
+which executes the steps and writes the rows itself, is not yet shipped.
 
 ## When to use this profile
 
@@ -112,7 +118,26 @@ the directive in the route file itself); and a one-line `export *` for
 `route_handler` (`route.ts` has no default export). Route segment
 config (`dynamic`, `revalidate`, `metadata`, `generateStaticParams`,
 `generateMetadata`) lives in the body and is carried through `export *`;
-a named re-export is a hard build error. Never hand-edit a shim.
+a named re-export is a hard build error.
+
+The rules live in `profile.yaml` under `derived_files:` and the three
+bodies under `templates/shim-*.template`; `specdev-analyzer derive`
+matches each module against the rules in order (first match wins),
+looks the body up under `src/` by the module's snake_case name, and
+writes the shim with its import specifier. A module with no body yet is
+skipped, so a shim never points at a file that does not exist. Two
+modules on one target, or a page and a route handler in one segment,
+are refused before anything is written. When a module's `app_path`
+changes or the module is deleted, the old shim is deleted on the next
+derive. Every shim is recorded in `gen-lineage.toml` with `derived =
+true`; `gen-record` refuses such a path.
+
+**Never hand-edit a shim.** A hand-edited shim is reported `edited` on
+every gen and kept; `specdev-analyzer derive --write --accept-edits` is
+the only exit. Shims are written in prettier's default shape (double
+quotes, semicolons) and the gen flow never formats `app/`; a project
+`.prettierrc` that changes quotes makes a later manual `prettier --write
+.` flip every shim to `edited`.
 
 ## The client/server boundary
 

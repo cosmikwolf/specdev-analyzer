@@ -1,11 +1,11 @@
 # embassy — Rust codegen conventions
 
 These conventions describe how an `embassy` block table on a module spec
-maps to Rust source. They layer on top of the firmware-layered profile's
+maps to Rust source. They layer on top of the project's profile's
 `module.conventions.md`; concerns specific to async runtimes (task
 attributes, static channel declarations, spawning) live here.
 
-embassy's codegen departs from the firmware-layered convention that
+embassy's codegen departs from the project profile's convention that
 "actions become methods on the module struct" — embassy tasks are free
 async functions, not methods. This is intentional and discussed in §6.
 
@@ -37,8 +37,8 @@ as follows:
 - **Panic handler.** `[runtime].panic_handler` is the user's pick
   (panic-probe, panic-halt, panic-rtt-target, etc.). The module's init
   side does nothing; the panic handler crate registers itself via
-  `use <crate> as _;` at crate root, emitted by the firmware-layered
-  profile's main.rs scaffolding.
+  `use <crate> as _;` at crate root, emitted by the project's profile's
+  main.rs scaffolding.
 - **Critical section.** embassy uses `critical-section` for ISR-safe
   primitives, which needs a registered implementation or the link fails
   with `undefined symbol: _critical_section_1_0_acquire`. On
@@ -184,16 +184,16 @@ authoring mistake (every spawned instance does identical work).
 
 ## Interaction with module conventions
 
-The firmware-layered profile's `module.conventions.md` says "actions
+The project's profile's `module.conventions.md` says "actions
 become methods on the module struct." embassy tasks are NOT actions in
 that sense — they're long-lived async fns owned by the runtime, not
 method calls on a value. Coexistence rules:
 
-- A module may have BOTH `actions` (firmware-layered's convention) AND
+- A module may have BOTH `actions` (the project profile's convention) AND
   `embassy.tasks` (this block's convention). Actions are synchronous
   methods; tasks are async free functions. They don't conflict.
 - A module's `init(spawner)` function (this block's convention)
-  REPLACES firmware-layered's notion of a constructor when embassy is
+  REPLACES the project profile's notion of a constructor when embassy is
   inlined. The module struct itself may not exist at all — embassy's
   data lives in statics + channels, not in struct fields.
 

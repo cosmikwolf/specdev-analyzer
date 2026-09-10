@@ -146,7 +146,7 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Test-item → Requirement (D60): `[[items]]` entries with `test = true`
+  # Test-item → Requirement: `[[items]]` entries with `test = true`
   # carry `verifies[]`; reduce into Module → Requirement edges so
   # `test_requirements_have_verifiers` confirms every `nature = "test"`
   # requirement has a verifier. `${root.name}` is the declaring module
@@ -251,7 +251,7 @@ relations:
       to: "${.}"
 
   # Module → Parameter: each `[[parameter_bindings]]` row wires one
-  # nih-plug parameter to an engine-side write (D58/D59). Co-resident
+  # nih-plug parameter to an engine-side write. Co-resident
   # with `[nih_plug]` on the plugin_shell module, so `${root.name}`
   # (the binding module) is the same module that declares the
   # parameter — the `to` endpoint resolves locally, exactly like the
@@ -261,7 +261,7 @@ relations:
   # check: `parameter` must resolve to a Parameter entity on this
   # module (surfaces as `references unknown nih-plug.Parameter`). The
   # orphan check `parameters_have_bindings` walks the inbound edges
-  # this relation contributes. Multi-target (D58) is fine — two rows
+  # this relation contributes. Multi-target is fine — two rows
   # for one parameter materialize two edges to the same Parameter; the
   # orphan check still passes and codegen emits both arms in order.
   - kind: parameter_binding
