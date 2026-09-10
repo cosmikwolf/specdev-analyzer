@@ -363,6 +363,35 @@ pub enum Command {
         #[arg(long)]
         accept_edits: bool,
     },
+    /// Run one declared compile gate and record its result.
+    ///
+    /// Looks `--label` up in the `gates:` registry of the inlined
+    /// `specs/specdev/profile.yaml`, resolves any
+    /// `${root.<table>.<field>}` token against `specs/architecture.toml`,
+    /// and runs the gate's `steps` in order in the project root — one
+    /// process per argv list, inherited environment, stdin closed, the
+    /// first non-zero exit stops the gate. Output is printed: everything
+    /// on a failure, a step's stderr on a pass when it is non-empty.
+    /// Then it hashes the key (AFTER the run — the gate rewrites the
+    /// lockfile) and writes the rows: always the batch row, plus one row
+    /// per `--module` for a `scope: module` gate. Exits with the gate's
+    /// own exit code; exit 2 means the gate did not run (a step could not
+    /// start, a token resolved to nothing, the registry is missing) or
+    /// its rows could not be written.
+    Gate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// The gate's `label` from the registry, verbatim. It is also the
+        /// row key, so a near miss writes rows nothing reads — an
+        /// undeclared label is refused.
+        #[arg(long)]
+        label: String,
+        /// Module(s) this run covers. Repeatable. Required for a
+        /// `scope: module` gate; ignored for a `scope: batch` gate.
+        #[arg(long)]
+        module: Vec<String>,
+    },
     /// Record a compile-gate result in `specs/specdev/gen-lineage.toml`.
     /// Invoked by the `/spec-gen` skill AFTER the compile gate (Step 8) —
     /// never before it, because the gate itself writes the lockfile that
@@ -608,6 +637,11 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             write,
             accept_edits,
         ),
+        Command::Gate {
+            project,
+            label,
+            module,
+        } => run_gate(project, spec_path.as_deref(), plugin_flag, &label, module),
         Command::GenRecordGate {
             project,
             module,
@@ -1707,7 +1741,7 @@ fn run_gen(
     let layout_ref = &layout;
     let resolve_plugin = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
     let registry_refusal = |layout: &LayoutContext| -> Option<ExitCode> {
-        match specdev_analyzer::gates::refuse_without_module_gate(layout, &resolve_plugin) {
+        match specdev_analyzer::gates::refuse_without_module_gate(layout, &resolve_plugin, "gen") {
             Ok(None) => None,
             Ok(Some(message)) => {
                 eprintln!("{message}");
@@ -1906,6 +1940,56 @@ fn run_derive(
         Err(e) => {
             report_error(&e);
             ExitCode::from(1)
+        }
+    }
+}
+
+fn run_gate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    label: &str,
+    modules: Vec<String>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // The plugin root is read only when the inlined registry declares no
+    // module-scope gate, to print the block to paste; resolve it lazily.
+    let layout_ref = &layout;
+    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    match specdev_analyzer::gates::run_gate(&layout, &resolve, label, &modules) {
+        Ok(run) => {
+            for row in &run.record.pruned {
+                match &row.module {
+                    Some(m) => println!("pruned {} module {m} (label undeclared)", row.label),
+                    None => println!("pruned {} batch (label undeclared)", row.label),
+                }
+            }
+            for row in &run.record.written {
+                let verdict = if row.pass { "pass" } else { "fail" };
+                match &row.module {
+                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
+                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
+                }
+            }
+            if run.pass {
+                ExitCode::SUCCESS
+            } else {
+                // The gate's own exit code, per the decision. A tool that
+                // exits 2 is then indistinguishable from this command's
+                // own exit-2 classes by code alone — the rows on stdout
+                // are what separate "ran and failed" from "did not run".
+                ExitCode::from(u8::try_from(run.code).unwrap_or(1))
+            }
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
         }
     }
 }

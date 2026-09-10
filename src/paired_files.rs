@@ -24,6 +24,46 @@ use anyhow::{bail, Context, Result};
 use crate::layout::LayoutContext;
 use crate::manifest::Profile;
 
+/// The declared `paired_files` targets as project-root-relative paths, in
+/// declared order, with no template read at all.
+///
+/// The gate key hashes these targets (see
+/// [`crate::gen_lineage::profile_hash`]): what the gate ran against is the
+/// config file on disk, not the template it was first copied from, and a
+/// template file that has since gone missing must not fail the hash.
+/// Same target validation as [`paired_files_from_profile`], because a
+/// target that escapes the project root must never be read.
+pub fn paired_targets(layout: &LayoutContext) -> Result<Vec<PathBuf>> {
+    let Some(profile) = Profile::load_inlined(&layout.specdev_root)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(profile.paired_files.len());
+    for row in &profile.paired_files {
+        out.push(check_target(&row.target)?);
+    }
+    Ok(out)
+}
+
+/// A `paired_files` target must be a relative path inside the project
+/// root. Returns it as a `PathBuf`.
+fn check_target(target: &str) -> Result<PathBuf> {
+    let path = Path::new(target);
+    let escapes = path.is_absolute()
+        || path.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        });
+    if escapes || target.trim().is_empty() {
+        bail!(
+            "profile.yaml paired_files target `{target}` must be a relative path inside \
+             the project root (no leading `/`, no `..`)"
+        );
+    }
+    Ok(path.to_path_buf())
+}
+
 /// Read the inlined profile's `paired_files` rows into `(target, body)`
 /// pairs. `Ok(empty)` when there is no inlined profile or the profile
 /// declares none. Errors: a target that is absolute or escapes the
@@ -34,21 +74,7 @@ pub fn paired_files_from_profile(layout: &LayoutContext) -> Result<Vec<(PathBuf,
     };
     let mut out = Vec::with_capacity(profile.paired_files.len());
     for row in &profile.paired_files {
-        let target = Path::new(&row.target);
-        let escapes = target.is_absolute()
-            || target.components().any(|c| {
-                matches!(
-                    c,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            });
-        if escapes || row.target.trim().is_empty() {
-            bail!(
-                "profile.yaml paired_files target `{}` must be a relative path inside \
-                 the project root (no leading `/`, no `..`)",
-                row.target
-            );
-        }
+        let target = check_target(&row.target)?;
         let template_path = layout.specdev_root.join(&row.template_file);
         let body = std::fs::read_to_string(&template_path).with_context(|| {
             format!(
@@ -57,7 +83,7 @@ pub fn paired_files_from_profile(layout: &LayoutContext) -> Result<Vec<(PathBuf,
             )
         })?;
         out.push((
-            target.to_path_buf(),
+            target,
             body.replace("{project_name}", &layout.spec.project.name),
         ));
     }
