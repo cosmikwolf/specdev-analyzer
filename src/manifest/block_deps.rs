@@ -1,5 +1,6 @@
-//! `codegen/<lang>/deps.yaml` — per (block, language) Cargo dep
-//! contributions. Schema: `src/embedded/block_deps.schema.yaml`.
+//! `codegen/<lang>/deps.yaml` — per (block, language) manifest dep
+//! contributions (`crates:` → Cargo.toml, `pub:` → pubspec.yaml,
+//! `npm:` → package.json). Schema: `src/embedded/block_deps.schema.yaml`.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -18,6 +19,11 @@ pub struct BlockDeps {
     /// the crates[] rule.
     #[serde(rename = "pub", default)]
     pub pub_packages: Vec<PubEntry>,
+    /// npm package contributions to package.json (`npm:` key). Runtime
+    /// `dependencies` only; dev-dep routing is a spec-side
+    /// external_deps concern, mirroring the crates[] and pub[] rule.
+    #[serde(default)]
+    pub npm: Vec<NpmEntry>,
     #[serde(default)]
     pub recommended_external_deps: Vec<RecommendedDep>,
 }
@@ -64,6 +70,49 @@ pub struct PubGit {
     pub path: Option<String>,
     #[serde(default)]
     pub tag_pattern: Option<String>,
+}
+
+/// One package.json dep entry. A package.json dependency value is one
+/// string, so exactly one shape applies: a registry range in `version`,
+/// or one source key that owns the whole value. The emitter dispatches
+/// on the variant — no silent drops.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct NpmEntry {
+    pub package: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(flatten, default)]
+    pub source: Option<NpmSource>,
+}
+
+/// package.json dep source. Untagged over structurally disjoint required
+/// keys (`git` / `path` / `link` / `workspace`), so declaration order is
+/// not load-bearing.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum NpmSource {
+    Git {
+        git: NpmGit,
+    },
+    /// `file:<path>` — copied (hard-linked) with its deps installed.
+    Path {
+        path: String,
+    },
+    /// `link:<path>` — symlinked; nothing installed for the target.
+    Link {
+        link: String,
+    },
+    /// `workspace:<range>`.
+    Workspace {
+        workspace: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct NpmGit {
+    pub url: String,
+    #[serde(default)]
+    pub r#ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

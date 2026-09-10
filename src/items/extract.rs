@@ -10,6 +10,14 @@
 //! path separator. Three capture prefixes keep dedicated builders for
 //! their synthesized names (`impl`, `re_export`, `extern_block` — Rust
 //! conventions; a language that doesn't declare them never hits them).
+//!
+//! Visibility (#101(b)): a kind whose query declares `<kind>.vis` is
+//! compared against a *floor* — the profile's `items.visibility_floor`
+//! when declared, else the adapter's default. The floor is an opaque
+//! string; only [`LanguageAdapter::visibility_at_least`] reads it, so no
+//! visibility literal lives here. `re_export` is the exception: the spec's
+//! own `visibility` enum decides per item, via
+//! [`LanguageAdapter::re_export_visibility`] (#104).
 
 use std::path::Path;
 
@@ -17,16 +25,33 @@ use anyhow::{Context, Result};
 use tree_sitter::{Node, Parser, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 use crate::lang::LanguageAdapter;
+use crate::manifest::Profile;
 
 use super::{ExtractedItem, Span};
 
+/// Read the profile-declared visibility floor from the project's inlined
+/// `profile.yaml` (`items.visibility_floor`). `Ok(None)` when the manifest
+/// or the key is absent — the adapter default then applies.
+pub fn profile_visibility_floor(specdev_root: &Path) -> Result<Option<String>> {
+    Ok(Profile::load_inlined(specdev_root)?
+        .and_then(|p| p.visibility_floor().map(str::to_string)))
+}
+
 /// Parse `source` with the language adapter, run the per-language items
 /// query, and produce one `ExtractedItem` per top-level item capture.
+/// `ext` is the source file's extension and selects the grammar — a
+/// language may span several (`.ts` / `.tsx`), and `source_file` makes
+/// the extension per-module data, so the caller passes what the resolved
+/// path carries. `floor` is the profile-declared visibility floor; `None`
+/// falls back to the adapter's default.
 pub fn extract_items_from_source(
     source: &str,
+    ext: &str,
     adapter: &dyn LanguageAdapter,
+    floor: Option<&str>,
 ) -> Result<Vec<ExtractedItem>> {
-    let ts_language = adapter.tree_sitter_language();
+    let floor = floor.or_else(|| adapter.default_visibility_floor());
+    let ts_language = adapter.tree_sitter_language_for(ext);
     let mut parser = Parser::new();
     parser
         .set_language(&ts_language)
@@ -52,7 +77,7 @@ pub fn extract_items_from_source(
 
     let mut items = Vec::new();
     while let Some(m) = matches.next() {
-        if let Some(item) = match_to_item(&query, m, source, adapter) {
+        if let Some(item) = match_to_item(&query, m, source, adapter, floor) {
             items.push(item);
         }
     }
@@ -63,10 +88,17 @@ pub fn extract_items_from_source(
 pub fn extract_items_from_path(
     path: &Path,
     adapter: &dyn LanguageAdapter,
+    floor: Option<&str>,
 ) -> Result<Vec<ExtractedItem>> {
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("reading source file {}", path.display()))?;
-    extract_items_from_source(&source, adapter)
+    // Grammar selection keys off the resolved path, not the adapter's
+    // primary extension: `source_file` may name a `.tsx` for a `.ts` language.
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_else(|| adapter.file_extension());
+    extract_items_from_source(&source, ext, adapter, floor)
 }
 
 fn match_to_item(
@@ -74,6 +106,7 @@ fn match_to_item(
     m: &QueryMatch,
     source: &str,
     adapter: &dyn LanguageAdapter,
+    floor: Option<&str>,
 ) -> Option<ExtractedItem> {
     // Each query pattern carries exactly one `.def` capture; its prefix is
     // the kind (or `inherent_<kind>` for member items).
@@ -83,25 +116,41 @@ fn match_to_item(
 
     match prefix {
         "impl" => build_impl(query, m, source),
-        "re_export" => build_re_export(query, m, source),
+        "re_export" => build_re_export(query, m, source, adapter),
         "extern_block" => build_extern_block(query, m, source),
-        p if p.starts_with("inherent_") => build_member(query, m, source, adapter, p),
-        p => build_named(query, m, source, adapter, p),
+        p if p.starts_with("inherent_") => build_member(query, m, source, adapter, p, floor),
+        p => build_named(query, m, source, adapter, p, floor),
     }
 }
 
-/// True when the query itself declares a `<prefix>.vis` capture. A
-/// declared-but-absent visibility on a match means the construct has no
-/// visibility modifier — private in languages (Rust) whose queries opt
-/// into visibility filtering. Queries that declare no `.vis` capture for
-/// a kind (Rust structs; every Dart kind) get no visibility gate here —
-/// their filter, if any, is the adapter's name-based rule.
-fn vis_gate_passes(query: &Query, m: &QueryMatch, source: &str, prefix: &str) -> bool {
+/// True when the match's visibility is at or above the floor. Three
+/// early-outs: the query declares no `<prefix>.vis` capture for this kind
+/// (Rust `macro`; every Dart kind) — no gate, the adapter's name rule is
+/// the only filter; or the language has no floor at all (`None`) — same.
+/// Otherwise a declared-but-absent capture means "no modifier written",
+/// and the adapter decides whether that clears the floor (in Rust it never
+/// does). `prefix` is the capture prefix (`fn`, `inherent_fn`, `struct`),
+/// not the schema kind.
+fn vis_gate_passes(
+    query: &Query,
+    m: &QueryMatch,
+    source: &str,
+    prefix: &str,
+    adapter: &dyn LanguageAdapter,
+    floor: Option<&str>,
+) -> bool {
     let vis_capture = format!("{prefix}.vis");
     if !query.capture_names().iter().any(|n| *n == vis_capture) {
         return true;
     }
-    capture_text(query, m, source, &vis_capture).map(str::trim) == Some("pub")
+    let Some(floor) = floor else {
+        return true;
+    };
+    adapter.visibility_at_least_for(
+        prefix,
+        capture_text(query, m, source, &vis_capture).map(str::trim),
+        floor,
+    )
 }
 
 /// Build an item for a plain `<kind>.def` / `<kind>.name` capture pair.
@@ -115,8 +164,9 @@ fn build_named(
     source: &str,
     adapter: &dyn LanguageAdapter,
     prefix: &str,
+    floor: Option<&str>,
 ) -> Option<ExtractedItem> {
-    if !vis_gate_passes(query, m, source, prefix) {
+    if !vis_gate_passes(query, m, source, prefix, adapter, floor) {
         return None;
     }
     let def_node = capture_node(query, m, &format!("{prefix}.def"))?;
@@ -166,9 +216,10 @@ fn build_member(
     source: &str,
     adapter: &dyn LanguageAdapter,
     prefix: &str,
+    floor: Option<&str>,
 ) -> Option<ExtractedItem> {
     let kind = prefix.strip_prefix("inherent_").expect("checked starts_with");
-    if !vis_gate_passes(query, m, source, prefix) {
+    if !vis_gate_passes(query, m, source, prefix, adapter, floor) {
         return None;
     }
     // Members whose captured annotations mark them as inherited contract
@@ -201,15 +252,28 @@ fn build_member(
     })
 }
 
-fn build_re_export(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
+/// A re-export is gated by the spec's own `re_export.visibility` enum,
+/// not by the floor: when the query declares `re_export.vis`, the adapter
+/// maps the captured modifier to a spec value or `None` (drop) — #104.
+fn build_re_export(
+    query: &Query,
+    m: &QueryMatch,
+    source: &str,
+    adapter: &dyn LanguageAdapter,
+) -> Option<ExtractedItem> {
+    if query.capture_names().iter().any(|n| *n == "re_export.vis") {
+        let vis = capture_text(query, m, source, "re_export.vis")?.trim();
+        adapter.re_export_visibility(vis)?;
+    }
     let def_node = capture_node(query, m, "re_export.def")?;
     let target = capture_text(query, m, source, "re_export.target")?
         .trim()
         .to_string();
     // Extract a short name for matching purposes: the last segment of the
-    // target path, after `::` or `as`. `pub use foo::bar as Baz;` →
-    // name = "Baz". `pub use foo::bar;` → name = "bar".
-    let name = re_export_name(&target);
+    // target path, after the language's separator or `as`.
+    // `pub use foo::bar as Baz;` → "Baz"; `pub use foo::bar;` → "bar";
+    // TypeScript `export { a as b }` → "b"; `export * from "./x"` → "./x".
+    let name = re_export_name(&target, adapter.path_separator());
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
     Some(ExtractedItem {
@@ -221,18 +285,37 @@ fn build_re_export(query: &Query, m: &QueryMatch, source: &str) -> Option<Extrac
     })
 }
 
-fn re_export_name(target: &str) -> String {
-    // Handle `path::to::thing as Alias` — after `as`.
-    if let Some(idx) = target.rfind(" as ") {
-        return target[idx + 4..].trim().trim_end_matches(';').to_string();
+fn re_export_name(target: &str, separator: &str) -> String {
+    let trimmed = target.trim().trim_end_matches(';').trim();
+    // A quoted module specifier (`"./barrel"`, `'./x'`) names the whole
+    // module: strip the quotes and never split it — a `.` separator would
+    // otherwise cut a relative path in half.
+    if let Some(inner) = quoted_inner(trimmed) {
+        return inner.to_string();
     }
-    // Otherwise the last `::` segment. Strip trailing `;` defensively.
-    let trimmed = target.trim().trim_end_matches(';');
+    // Handle `path::to::thing as Alias` — after `as`.
+    if let Some(idx) = trimmed.rfind(" as ") {
+        return trimmed[idx + 4..].trim().to_string();
+    }
+    // Otherwise the last separator segment.
     trimmed
-        .rsplit("::")
+        .rsplit(separator)
         .next()
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+/// The text inside a matching pair of `"` or `'` quotes, if `s` is exactly
+/// one quoted string.
+fn quoted_inner(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let q = bytes[0];
+        if (q == b'"' || q == b'\'') && bytes[bytes.len() - 1] == q {
+            return Some(&s[1..s.len() - 1]);
+        }
+    }
+    None
 }
 
 fn build_extern_block(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
@@ -333,7 +416,69 @@ mod tests {
     use crate::lang::rust::RustAdapter;
 
     fn extract(source: &str) -> Vec<ExtractedItem> {
-        extract_items_from_source(source, &RustAdapter).expect("extract")
+        extract_items_from_source(source, "rs", &RustAdapter, None).expect("extract")
+    }
+
+    fn extract_with_floor(source: &str, floor: &str) -> Vec<ExtractedItem> {
+        extract_items_from_source(source, "rs", &RustAdapter, Some(floor)).expect("extract")
+    }
+
+    fn names(items: &[ExtractedItem], kind: &str) -> Vec<String> {
+        items
+            .iter()
+            .filter(|i| i.kind == kind)
+            .map(|i| i.name.clone())
+            .collect()
+    }
+
+    // #103: the eight top-level kinds that used to carry no `.vis` capture
+    // extracted private items as public. Under the default floor they drop.
+    #[test]
+    fn private_top_level_data_items_are_not_items() {
+        let source = "const A: u8 = 1;\nstatic B: u8 = 2;\nstruct S;\nenum E { X }\n\
+                      union U { a: u8 }\ntrait T {}\ntype Y = u8;\n\
+                      pub const PA: u8 = 1;\npub static PB: u8 = 2;\npub struct PS;\n\
+                      pub enum PE { X }\npub union PU { a: u8 }\npub trait PT {}\npub type PY = u8;\n";
+        let items = extract(source);
+        let mut got: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        got.sort();
+        assert_eq!(got, vec!["PA", "PB", "PE", "PS", "PT", "PU", "PY"]);
+    }
+
+    // `macro_rules!` takes no visibility modifier in the grammar; its
+    // export is `#[macro_export]`. It carries no `.vis` capture, so every
+    // macro extracts — unchanged by #103.
+    #[test]
+    fn macro_rules_has_no_visibility_gate() {
+        let items = extract("macro_rules! m { () => {} }\n");
+        assert_eq!(names(&items, "macro"), vec!["m"]);
+    }
+
+    // #101(b): a `pub(crate)` floor admits `pub` and `pub(crate)`, still
+    // drops `pub(super)` and private, for free fns, data items and
+    // inherent members alike.
+    #[test]
+    fn pub_crate_floor_admits_crate_wide_surface() {
+        let source = "pub fn a() {}\npub(crate) fn b() {}\npub(super) fn c() {}\nfn d() {}\n\
+                      pub(crate) const K: u8 = 1;\nconst P: u8 = 2;\n\
+                      pub struct H;\nimpl H { pub fn m1(&self) {} pub(crate) fn m2(&self) {} fn m3(&self) {} }\n";
+        let items = extract_with_floor(source, "pub(crate)");
+        assert_eq!(names(&items, "fn"), vec!["a", "b", "H::m1", "H::m2"]);
+        assert_eq!(names(&items, "const"), vec!["K"]);
+        // The same source under the default (`pub`) floor keeps only `pub`.
+        let items = extract(source);
+        assert_eq!(names(&items, "fn"), vec!["a", "H::m1"]);
+        assert!(names(&items, "const").is_empty());
+    }
+
+    // #104: `re_export` follows the spec enum (`pub` | `crate`), not the
+    // floor — `pub(crate) use` stays under a `pub` floor, `pub(super) use`
+    // drops under any floor, bare `use` never matches.
+    #[test]
+    fn re_export_admits_what_the_spec_enum_admits() {
+        let source = "pub use a::B;\npub(crate) use a::C;\npub(super) use a::D;\nuse a::E;\n";
+        assert_eq!(names(&extract(source), "re_export"), vec!["B", "C"]);
+        assert_eq!(names(&extract_with_floor(source, "pub(crate)"), "re_export"), vec!["B", "C"]);
     }
 
     #[test]
@@ -453,9 +598,9 @@ impl Show for T { fn show(&self) {} }
 
     #[test]
     fn re_export_name_from_alias() {
-        assert_eq!(re_export_name("foo::bar as Baz"), "Baz");
-        assert_eq!(re_export_name("foo::bar"), "bar");
-        assert_eq!(re_export_name("crate::Inner;"), "Inner");
+        assert_eq!(re_export_name("foo::bar as Baz", "::"), "Baz");
+        assert_eq!(re_export_name("foo::bar", "::"), "bar");
+        assert_eq!(re_export_name("crate::Inner;", "::"), "Inner");
     }
 
     #[test]

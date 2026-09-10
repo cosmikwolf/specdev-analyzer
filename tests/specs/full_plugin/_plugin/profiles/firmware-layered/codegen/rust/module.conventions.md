@@ -380,6 +380,47 @@ Every entry lands in Cargo.toml `[dependencies]` with its `crate`,
 project author already knows how to use the crate; the spec just
 records what it is so the build is reproducible.
 
+### `[[features]]` → `[features]`
+
+Each `[[features]]` entry in `architecture.toml` lands in Cargo.toml
+`[features]`, in name order, after the crate target (and any `[[test]]`
+rows) and before `[dependencies]`. The section always opens with a
+synthesized `default = [...]` line listing the entries marked
+`default = true` (empty when none). A feature's line carries its
+`depends_on` entries and its `cargo_deps` strings, sorted; a feature
+with neither is a plain cfg switch and renders `name = []`. A
+`cargo_deps` entry of the form `dep:<crate>` enables a dep whose
+CrateReference carries `optional = true` — that dep renders with
+`optional = true` in `[dependencies]`, and Cargo refuses a `dep:` that
+names a non-optional crate (Cargo's error; the spec does not re-check
+it). Every `#[cfg(feature = "...")]` site in a module must name a
+declared feature.
+
+### `[[test_targets]]` → `[[test]]` rows
+
+Each `[[test_targets]]` entry in `architecture.toml` lands in Cargo.toml
+as one `[[test]]` row, in declaration order, after the crate target and
+before `[dependencies]`: `name`, then `path` when the spec gives one,
+then `harness = false` only when the spec says so (Cargo's default is
+`true`, so it is never written). Cargo still auto-discovers
+`tests/<name>.rs` targets the spec does not list; list a target only
+when it needs a non-default setting. A test target is the binary that
+hosts test items; it is not a test item and carries no `verifies[]`.
+
+### `[profiles.<name>]` → `[profile.<name>]` (standalone crate only)
+
+A standalone firmware crate's build profiles come from `architecture.toml`
+`[profiles.<name>]` and land after `[dependencies]` as `[profile.<name>]`
+tables — dev, release, test, bench in that order, then custom profiles
+lex-sorted, keys in a fixed order, each `[profile.<name>.package.<crate>]`
+override right after its parent with crates lex-sorted. The subset is
+closed (`opt-level`, `debug`, `lto`, `codegen-units`, `panic`, `strip`,
+`overflow-checks`, `debug-assertions`, `incremental`; overrides without
+`panic` / `lto`). In a workspace the profiles belong to the root's
+architecture.toml: Cargo ignores them in a member manifest, `validate`
+rejects them on a member (`PROFILES-ROOT-ONLY`), and the member render
+emits nothing for them.
+
 ### Determinism
 
 Cargo.toml entries emit in lex-order by crate name. Within `[features]`

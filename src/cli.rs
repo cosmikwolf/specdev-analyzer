@@ -2,11 +2,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
+use crate::lineage::Lineage;
 use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
     diagnostics::report_error,
-    cargo_toml as cargo_toml_mod, drift, extract, inline, pubspec_yaml as pubspec_yaml_mod,
+    cargo_toml as cargo_toml_mod, drift, extract, inline, package_json as package_json_mod,
+    pubspec_yaml as pubspec_yaml_mod,
     layout::LayoutContext,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
@@ -339,6 +341,84 @@ pub enum Command {
         #[arg(long)]
         accept_edits: bool,
     },
+    /// Derive per-module files from the profile's `derived_files` rules
+    /// (route shims that re-export a module body) and record them in
+    /// `specs/specdev/gen-lineage.toml` as `derived` rows. Run by the
+    /// `/spec-gen` skill after the manifest and before lineage recording,
+    /// for every module on every gen. Without `--write` every line is a
+    /// preview. One line per path: `wrote` / `kept` / `edited` /
+    /// `conflict` / `deleted` / `skipped`. A hand-edited target
+    /// (`edited`) or an unrecorded file at a target (`conflict`) is never
+    /// overwritten without `--accept-edits`.
+    Derive {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Write the derived files, delete stale ones and record the rows.
+        #[arg(long)]
+        write: bool,
+        /// Overwrite `edited` and `conflict` targets and delete stale
+        /// files that carry a hand edit. Run by hand after such a line;
+        /// the codegen skill never passes it.
+        #[arg(long)]
+        accept_edits: bool,
+    },
+    /// Run one declared compile gate and record its result.
+    ///
+    /// Looks `--label` up in the `gates:` registry of the inlined
+    /// `specs/specdev/profile.yaml`, resolves any
+    /// `${root.<table>.<field>}` token against `specs/architecture.toml`,
+    /// and runs the gate's `steps` in order in the project root — one
+    /// process per argv list, inherited environment, stdin closed, the
+    /// first non-zero exit stops the gate. Output is printed: everything
+    /// on a failure, a step's stderr on a pass when it is non-empty.
+    /// Then it hashes the key (AFTER the run — the gate rewrites the
+    /// lockfile) and writes the rows: always the batch row, plus one row
+    /// per `--module` for a `scope: module` gate. Exits with the gate's
+    /// own exit code; exit 2 means the gate did not run (a step could not
+    /// start, a token resolved to nothing, the registry is missing) or
+    /// its rows could not be written.
+    Gate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// The gate's `label` from the registry, verbatim. It is also the
+        /// row key, so a near miss writes rows nothing reads — an
+        /// undeclared label is refused.
+        #[arg(long)]
+        label: String,
+        /// Module(s) this run covers. Repeatable. Required for a
+        /// `scope: module` gate; ignored for a `scope: batch` gate.
+        #[arg(long)]
+        module: Vec<String>,
+    },
+    /// Record a compile-gate result in `specs/specdev/gen-lineage.toml`.
+    /// Invoked by the `/spec-gen` skill AFTER the compile gate (Step 8) —
+    /// never before it, because the gate itself writes the lockfile that
+    /// becomes part of the result's key. Writes one batch row (the
+    /// whole-tree result) plus one row per `--module`; rows replace by
+    /// `(module, label)`. `report gen-plan` reads them to decide which
+    /// `unchanged` modules still need a re-gate.
+    GenRecordGate {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Module(s) generated in this run. Repeatable. Omit to record a
+        /// batch row only.
+        #[arg(long)]
+        module: Vec<String>,
+        /// Opaque gate label (e.g. `cargo-check`, `flutter-analyze`,
+        /// `next-build`). The analyzer never interprets it.
+        #[arg(long)]
+        label: String,
+        /// The gate passed.
+        #[arg(long, conflicts_with = "fail", required_unless_present = "fail")]
+        pass: bool,
+        /// The gate failed. Every named module and the batch get a fail
+        /// row, so none of them can be skipped as verified next run.
+        #[arg(long, conflicts_with = "pass", required_unless_present = "pass")]
+        fail: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -532,13 +612,43 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             module,
             preamble,
             tail,
-        } => run_gen(project, spec_path.as_deref(), module, preamble, tail),
+        } => run_gen(
+            project,
+            spec_path.as_deref(),
+            plugin_flag,
+            module,
+            preamble,
+            tail,
+        ),
         Command::GenRecord {
             project,
             module,
             files,
             accept_edits,
         } => run_gen_record(project, spec_path.as_deref(), module, files, accept_edits),
+        Command::Derive {
+            project,
+            write,
+            accept_edits,
+        } => run_derive(
+            project,
+            spec_path.as_deref(),
+            plugin_flag,
+            write,
+            accept_edits,
+        ),
+        Command::Gate {
+            project,
+            label,
+            module,
+        } => run_gate(project, spec_path.as_deref(), plugin_flag, &label, module),
+        Command::GenRecordGate {
+            project,
+            module,
+            label,
+            pass,
+            fail: _,
+        } => run_gen_record_gate(project, spec_path.as_deref(), module, &label, pass),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -601,17 +711,32 @@ fn run_manifest(
         return ExitCode::from(2);
     }
 
-    // (rendered manifest text, warnings, paired extra files, canonical filename)
-    let (text, warnings, extra_files, default_filename) = match language.as_str() {
+    // (rendered manifest text, warnings, paired extra files written only
+    // when absent, gen-owned sibling files overwritten on every write,
+    // canonical filename)
+    let (text, warnings, extra_files, sibling_files, default_filename) = match language.as_str() {
         "rust" => match cargo_toml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, r.extra_files, "Cargo.toml"),
+            Ok(r) => (r.text, r.warnings, r.extra_files, Vec::new(), "Cargo.toml"),
             Err(e) => {
                 report_error(&e);
                 return ExitCode::from(1);
             }
         },
         "dart" => match pubspec_yaml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, Vec::new(), "pubspec.yaml"),
+            Ok(r) => (r.text, r.warnings, Vec::new(), Vec::new(), "pubspec.yaml"),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
+            }
+        },
+        "typescript" => match package_json_mod::render(&layout) {
+            Ok(r) => (
+                r.text,
+                r.warnings,
+                Vec::new(),
+                r.sibling_files,
+                "package.json",
+            ),
             Err(e) => {
                 report_error(&e);
                 return ExitCode::from(1);
@@ -620,7 +745,7 @@ fn run_manifest(
         other => {
             eprintln!(
                 "error: manifest emission for language `{other}` is not \
-                 implemented; supported: rust, dart"
+                 implemented; supported: rust, dart, typescript"
             );
             return ExitCode::from(1);
         }
@@ -630,31 +755,90 @@ fn run_manifest(
         eprintln!("warning: {w}");
     }
 
+    // Profile-declared `paired_files` — language-neutral, written
+    // once when absent through the same loop as the rust `[[bin]]` stub.
+    let mut extra_files = extra_files;
+    match specdev_analyzer::paired_files::paired_files_from_profile(&layout) {
+        Ok(mut rows) => extra_files.append(&mut rows),
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(1);
+        }
+    }
+    if let Err(e) = specdev_analyzer::paired_files::refuse_collisions(
+        &extra_files,
+        default_filename,
+        &sibling_files,
+    ) {
+        report_error(&e);
+        return ExitCode::from(1);
+    }
+
     let target = output.or_else(|| write.then(|| layout.project_root.join(default_filename)));
     match target {
         Some(path) => match std::fs::write(&path, &text) {
             Ok(()) => {
                 eprintln!("wrote {default_filename} to {}", path.display());
-                // F-016: pair `[[bin]]` rows with their stub source
-                // files. Skip writes when the path already exists —
-                // hand-edited bins are never overwritten.
                 let project_root = layout.project_root.as_path();
-                for (rel, body) in &extra_files {
-                    let dst = project_root.join(rel);
-                    if dst.exists() {
-                        continue;
-                    }
-                    if let Some(parent) = dst.parent() {
-                        if let Err(e) = std::fs::create_dir_all(parent) {
-                            eprintln!("failed to create {}: {e}", parent.display());
+                // Gen-owned sibling files (e.g. the pnpm workspace
+                // root's `pnpm-workspace.yaml`) are output like the
+                // manifest itself: written beside it and overwritten on
+                // every `--write`. They are skipped under `--output`,
+                // which redirects the manifest text alone.
+                if write {
+                    for (rel, body) in &sibling_files {
+                        let dst = project_root.join(rel);
+                        if let Err(e) = std::fs::write(&dst, body) {
+                            eprintln!("failed to write {}: {e}", dst.display());
                             return ExitCode::from(2);
                         }
+                        eprintln!("wrote {rel} to {}", dst.display());
                     }
-                    if let Err(e) = std::fs::write(&dst, body) {
-                        eprintln!("failed to write {}: {e}", dst.display());
-                        return ExitCode::from(2);
+                } else if !sibling_files.is_empty() {
+                    let names: Vec<&str> = sibling_files.iter().map(|(r, _)| r.as_str()).collect();
+                    eprintln!(
+                        "note: sibling file(s) {} not written under --output; use --write",
+                        names.join(", ")
+                    );
+                }
+                // Paired files — the rust `[[bin]]` stub (F-016) and the
+                // profile's `paired_files` rows. Written only
+                // when absent: an existing file is the user's and is
+                // never overwritten. Gated on `--write` like the
+                // siblings — `--output <file>` redirects the manifest
+                // text alone and must not touch the project root.
+                if write {
+                    let mut kept: Vec<String> = Vec::new();
+                    for (rel, body) in &extra_files {
+                        let dst = project_root.join(rel);
+                        if dst.exists() {
+                            kept.push(rel.display().to_string());
+                            continue;
+                        }
+                        if let Some(parent) = dst.parent() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                eprintln!("failed to create {}: {e}", parent.display());
+                                return ExitCode::from(2);
+                            }
+                        }
+                        if let Err(e) = std::fs::write(&dst, body) {
+                            eprintln!("failed to write {}: {e}", dst.display());
+                            return ExitCode::from(2);
+                        }
+                        eprintln!("wrote paired file {}", dst.display());
                     }
-                    eprintln!("wrote stub {} (paired with [[bin]])", dst.display());
+                    if !kept.is_empty() {
+                        eprintln!(
+                            "kept {} existing paired file(s): {}",
+                            kept.len(),
+                            kept.join(", ")
+                        );
+                    }
+                } else if !extra_files.is_empty() {
+                    eprintln!(
+                        "note: {} paired file(s) not written under --output; use --write",
+                        extra_files.len()
+                    );
                 }
                 ExitCode::SUCCESS
             }
@@ -799,6 +983,15 @@ fn run_extract_items(
     };
 
     let source_root = layout.spec.paths.source.as_str();
+    // #101(b): the profile-declared floor, if any; the adapter default
+    // applies when absent.
+    let floor = match extract::profile_visibility_floor(&layout.specdev_root) {
+        Ok(f) => f,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
 
     let mut modules_out: Vec<ModuleItems> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
@@ -817,10 +1010,18 @@ fn run_extract_items(
             }
         }
 
-        let source_file =
-            source_map::resolve_source_path(&name, adapter.as_ref(), &project, source_root);
+        // #101(a): the module spec's `source_file` override wins over the
+        // adapter's layout candidates.
+        let override_path = source_map::load_source_file_override(module_path);
+        let source_file = source_map::resolve_source_path(
+            &name,
+            override_path.as_deref(),
+            adapter.as_ref(),
+            &project,
+            source_root,
+        );
         let items = match &source_file {
-            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref()) {
+            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref(), floor.as_deref()) {
                 Ok(v) => v,
                 Err(e) => {
                     errors.push(format!("{name}: {e}"));
@@ -871,23 +1072,34 @@ fn run_reverse(
         }
     };
 
-    // Enumerate inlined block names: each immediate subdirectory of
-    // <specs_dir>/schemas/inlined/blocks/ whose name maps to a block.
-    let mut inlined_blocks: Vec<String> = Vec::new();
-    if layout.inlined_blocks_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(&layout.inlined_blocks_dir) {
-            for e in entries.flatten() {
-                if let Ok(ft) = e.file_type() {
-                    if ft.is_dir() {
-                        if let Some(name) = e.file_name().to_str() {
-                            inlined_blocks.push(name.to_string());
-                        }
-                    }
-                }
-            }
+    // Enumerate inlined block names from lineage.toml — the record `inline`
+    // writes. (An earlier version listed subdirectories of
+    // <specs_dir>/schemas/inlined/blocks/, but `inline` writes flat
+    // `<block>.schema.yaml` files there, so it never saw a real block.)
+    let inlined_blocks: Vec<String> = match Lineage::load(&layout.specdev_root) {
+        Ok(l) => l.blocks.keys().cloned().collect(),
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
         }
-    }
-    inlined_blocks.sort();
+    };
+
+    // #102: a profile may declare its own schema as the reverse vocabulary
+    // (`reverse.vocabulary: profile`); zero inlined blocks is then info,
+    // not an error. Keyed on the declaration, never on the profile name.
+    let profile_vocabulary: Option<String> =
+        match specdev_analyzer::manifest::Profile::load_inlined(&layout.specdev_root) {
+            Ok(p) => p
+                .filter(|p| {
+                    p.reverse.as_ref().map(|r| r.vocabulary)
+                        == Some(specdev_analyzer::manifest::ReverseVocabulary::Profile)
+                })
+                .map(|p| p.name),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(2);
+            }
+        };
 
     // Parse --into.
     let into_blocks: Vec<String> = into
@@ -918,15 +1130,24 @@ fn run_reverse(
     // - 1 inlined block, no --into → fine; coarse warning skipped.
     // - 2+ inlined blocks, no --into → coarse ambiguity warning.
     let mut warnings: Vec<String> = Vec::new();
+    let mut infos: Vec<String> = Vec::new();
     if inlined_blocks.is_empty() && into_blocks.is_empty() {
-        errors.push(
-            "[REVERSE-002] no blocks inlined and no --into specified; \
-             reverse engineering requires a chosen vocabulary. Either run \
-             `specdev-analyzer inline <block>` first, or pass --into \
-             <block,...> naming the blocks whose vocabulary should govern \
-             the output."
-                .to_string(),
-        );
+        if let Some(name) = &profile_vocabulary {
+            infos.push(format!(
+                "[REVERSE-004] no blocks inlined; profile `{name}` declares \
+                 `reverse.vocabulary: profile`, so its own schema is the \
+                 vocabulary. Proceed."
+            ));
+        } else {
+            errors.push(
+                "[REVERSE-002] no blocks inlined and no --into specified; \
+                 reverse engineering requires a chosen vocabulary. Either run \
+                 `specdev-analyzer inline <block>` first, or pass --into \
+                 <block,...> naming the blocks whose vocabulary should govern \
+                 the output."
+                    .to_string(),
+            );
+        }
     } else if inlined_blocks.len() >= 2 && into_blocks.is_empty() {
         warnings.push(format!(
             "[REVERSE-003] {} blocks inlined ({:?}) and --into not \
@@ -939,9 +1160,15 @@ fn run_reverse(
         ));
     }
 
-    // Effective vocabulary: --into if specified, else all inlined.
+    // Effective vocabulary: --into if specified, else all inlined, else
+    // the profile itself when it declares so (`profile:<name>`).
     let vocab: Vec<String> = if !into_blocks.is_empty() {
         into_blocks
+    } else if inlined_blocks.is_empty() {
+        profile_vocabulary
+            .iter()
+            .map(|n| format!("profile:{n}"))
+            .collect()
     } else {
         inlined_blocks.clone()
     };
@@ -950,12 +1177,14 @@ fn run_reverse(
     struct ReverseReport<'a> {
         inlined_blocks: &'a [String],
         vocabulary: &'a [String],
+        infos: &'a [String],
         warnings: &'a [String],
         errors: &'a [String],
     }
     let report = ReverseReport {
         inlined_blocks: &inlined_blocks,
         vocabulary: &vocab,
+        infos: &infos,
         warnings: &warnings,
         errors: &errors,
     };
@@ -973,6 +1202,9 @@ fn run_reverse(
             eprintln!("{e}");
         }
         return ExitCode::from(1);
+    }
+    for i in &infos {
+        eprintln!("{i}");
     }
     if !warnings.is_empty() {
         for w in &warnings {
@@ -1491,6 +1723,7 @@ fn run_drift(
 fn run_gen(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
     module: Vec<String>,
     preamble: bool,
     tail: bool,
@@ -1500,6 +1733,24 @@ fn run_gen(
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
+        }
+    };
+    // The gate-registry check for the two gated paths below. The plugin
+    // root is read only when the inlined profile declares no registry
+    // (to print the block to paste); resolve it lazily.
+    let layout_ref = &layout;
+    let resolve_plugin = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    let registry_refusal = |layout: &LayoutContext| -> Option<ExitCode> {
+        match specdev_analyzer::gates::refuse_without_module_gate(layout, &resolve_plugin, "gen") {
+            Ok(None) => None,
+            Ok(Some(message)) => {
+                eprintln!("{message}");
+                Some(ExitCode::from(1))
+            }
+            Err(e) => {
+                report_error(&e);
+                Some(ExitCode::from(1))
+            }
         }
     };
 
@@ -1542,6 +1793,11 @@ fn run_gen(
                 return ExitCode::from(2);
             }
         };
+        // Project-wide precondition first (one fix serves every module),
+        // then the per-module open-question gate.
+        if let Some(code) = registry_refusal(&layout) {
+            return code;
+        }
         match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
             Ok(Some(refusal)) => {
                 eprint!("{}", refusal.message);
@@ -1572,6 +1828,9 @@ fn run_gen(
     match module.as_slice() {
         [name] => {
             let name = name.clone();
+            if let Some(code) = registry_refusal(&layout) {
+                return code;
+            }
             match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
                 Ok(Some(refusal)) => {
                     eprint!("{}", refusal.message);
@@ -1639,6 +1898,124 @@ fn run_gen_record(
         Ok(recorded) => {
             for path in &recorded {
                 println!("recorded {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_derive(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    write: bool,
+    accept_edits: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // The plugin root is read only when the inlined profile declares no
+    // rules (to catch a stale inlined profile); resolve it lazily.
+    let layout_ref = &layout;
+    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    let opts = specdev_analyzer::derive::DeriveOptions {
+        write,
+        accept_edits,
+    };
+    match specdev_analyzer::derive::run_derive(&layout, &resolve, opts) {
+        Ok(report) => {
+            for line in &report.lines {
+                println!("{}", line.render());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_gate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
+    label: &str,
+    modules: Vec<String>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    // The plugin root is read only when the inlined registry declares no
+    // module-scope gate, to print the block to paste; resolve it lazily.
+    let layout_ref = &layout;
+    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
+    match specdev_analyzer::gates::run_gate(&layout, &resolve, label, &modules) {
+        Ok(run) => {
+            for row in &run.record.pruned {
+                match &row.module {
+                    Some(m) => println!("pruned {} module {m} (label undeclared)", row.label),
+                    None => println!("pruned {} batch (label undeclared)", row.label),
+                }
+            }
+            for row in &run.record.written {
+                let verdict = if row.pass { "pass" } else { "fail" };
+                match &row.module {
+                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
+                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
+                }
+            }
+            if run.pass {
+                ExitCode::SUCCESS
+            } else {
+                // The gate's own exit code, per the decision. A tool that
+                // exits 2 is then indistinguishable from this command's
+                // own exit-2 classes by code alone — the rows on stdout
+                // are what separate "ran and failed" from "did not run".
+                ExitCode::from(u8::try_from(run.code).unwrap_or(1))
+            }
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_gen_record_gate(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    modules: Vec<String>,
+    label: &str,
+    pass: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match specdev_analyzer::gen_lineage::record_gate(&layout, &modules, label, pass) {
+        Ok(rows) => {
+            for row in &rows {
+                let verdict = if row.pass { "pass" } else { "fail" };
+                match &row.module {
+                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
+                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
+                }
             }
             ExitCode::SUCCESS
         }

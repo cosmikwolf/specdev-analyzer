@@ -14,6 +14,8 @@ use std::process::Command;
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
+    inline,
+    layout::LayoutContext,
     items::extract::extract_items_from_source,
     lang::rust::RustAdapter,
 };
@@ -69,7 +71,7 @@ extern \"C\" {
     fn extern_fn() -> u32;
 }
 ";
-    let items = extract_items_from_source(source, &RustAdapter).unwrap();
+    let items = extract_items_from_source(source, "rs", &RustAdapter, None).unwrap();
     let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
 
     // 11 of the 12 kinds covered by this fixture (no union, no macro).
@@ -125,7 +127,7 @@ impl Resettable for Counter {
 
 pub fn free_function() {}
 ";
-    let items = extract_items_from_source(source, &RustAdapter).unwrap();
+    let items = extract_items_from_source(source, "rs", &RustAdapter, None).unwrap();
     let names: Vec<_> = items
         .iter()
         .map(|i| (i.kind.clone(), i.name.clone()))
@@ -184,9 +186,46 @@ pub fn free_function() {}
 // reverse pre-flight
 // ---------------------------------------------------------------------------
 
+// A profile WITHOUT `reverse.vocabulary: profile` (firmware-layered) still
+// stops on REVERSE-002 when nothing is inlined.
 #[test]
 fn reverse_no_blocks_inlined_emits_reverse_002() {
     let dir = tmp_dir("reverse-no-blocks");
+    let target = dir.join("proj");
+    std::fs::create_dir_all(&target).unwrap();
+    bootstrap::run_bootstrap(
+        &full_plugin(),
+        &BootstrapInputs {
+            profile: "firmware-layered".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap();
+
+    let out = Command::new(analyzer_bin())
+        .arg("reverse")
+        .arg("--project")
+        .arg(&target)
+        .output()
+        .expect("run reverse");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "expected failure with no blocks inlined; stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(stderr.contains("REVERSE-002"), "stderr: {stderr}");
+}
+
+// #102: library-api declares `reverse.vocabulary: profile`, so zero inlined
+// blocks is REVERSE-004 (info) and the run succeeds with the profile as
+// the vocabulary. Keyed on the declaration the fixture profile.yaml
+// carries, not on the profile name.
+#[test]
+fn reverse_profile_vocabulary_emits_reverse_004_and_succeeds() {
+    let dir = tmp_dir("reverse-profile-vocab");
     let target = dir.join("proj");
     std::fs::create_dir_all(&target).unwrap();
     bootstrap::run_bootstrap(
@@ -208,11 +247,10 @@ fn reverse_no_blocks_inlined_emits_reverse_002() {
         .expect("run reverse");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        !out.status.success(),
-        "expected failure with no blocks inlined; stdout: {stdout}\nstderr: {stderr}"
-    );
-    assert!(stderr.contains("REVERSE-002"), "stderr: {stderr}");
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("REVERSE-004"), "stdout: {stdout}");
+    assert!(stdout.contains("- profile:library-api"), "stdout: {stdout}");
+    assert!(!stderr.contains("REVERSE-002"), "stderr: {stderr}");
 }
 
 #[test]
@@ -262,12 +300,12 @@ fn reverse_two_inlined_blocks_emits_reverse_003_warning() {
     )
     .unwrap();
 
-    // Simulate two inlined blocks by creating empty subdirs under
-    // schemas/inlined/blocks/. The pre-flight only checks for directory
-    // existence, not for valid block content.
-    let blocks_dir = target.join("specs/specdev/schemas/inlined/blocks");
-    std::fs::create_dir_all(blocks_dir.join("embassy")).unwrap();
-    std::fs::create_dir_all(blocks_dir.join("stm32h5-rs")).unwrap();
+    // Inline two real blocks so the pre-flight reads what `inline` actually
+    // writes (lineage.toml + flat `<block>.schema.yaml` files), not a
+    // simulated layout.
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
 
     let out = Command::new(analyzer_bin())
         .arg("reverse")
@@ -307,9 +345,9 @@ fn reverse_into_scopes_to_subset() {
         },
     )
     .unwrap();
-    let blocks_dir = target.join("specs/specdev/schemas/inlined/blocks");
-    std::fs::create_dir_all(blocks_dir.join("embassy")).unwrap();
-    std::fs::create_dir_all(blocks_dir.join("stm32h5-rs")).unwrap();
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
+    inline::run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
 
     let out = Command::new(analyzer_bin())
         .arg("reverse")
@@ -392,6 +430,69 @@ description = "Foo module."
         !stdout.contains("name: make_bucket"),
         "private free fn must be filtered; stdout: {stdout}"
     );
+}
+
+// #101(a) + #101(b) end to end: firmware-layered's fixture profile.yaml
+// declares `items.visibility_floor: "pub(crate)"`; the module spec names a
+// nested task-body file through `source_file`. A `pub(crate) fn` and a
+// `pub(crate) const` extract, a private const does not (#103), and a
+// `pub(crate) use` stays because the spec's re_export enum admits `crate`
+// (#104).
+#[test]
+fn extract_items_cli_honours_source_file_override_and_profile_floor() {
+    let dir = tmp_dir("extract-items-floor");
+    let target = dir.join("proj");
+    std::fs::create_dir_all(&target).unwrap();
+    bootstrap::run_bootstrap(
+        &full_plugin(),
+        &BootstrapInputs {
+            profile: "firmware-layered".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap();
+
+    std::fs::write(
+        target.join("specs/modules/Blink.toml"),
+        r#"
+name = "Blink"
+layer = "application"
+description = "Blink task body."
+source_file = "src/tasks/blink.rs"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(target.join("src/tasks")).unwrap();
+    // The convention file exists too and must NOT be the one read.
+    std::fs::write(target.join("src/blink.rs"), "pub fn decoy() {}\n").unwrap();
+    std::fs::write(
+        target.join("src/tasks/blink.rs"),
+        "pub(crate) fn init_peripherals() {}\npub(crate) const DEBOUNCE_TICKS: u8 = 3;\n\
+         const PRIVATE_TICKS: u8 = 4;\npub(super) fn narrower() {}\n\
+         pub(crate) use crate::hal::Led;\n",
+    )
+    .unwrap();
+
+    let out = Command::new(analyzer_bin())
+        .arg("extract-items")
+        .arg("--project")
+        .arg(&target)
+        .arg("--module")
+        .arg("Blink")
+        .output()
+        .expect("run extract-items");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("src/tasks/blink.rs"), "stdout: {stdout}");
+    assert!(!stdout.contains("decoy"), "override must win over the convention file; stdout: {stdout}");
+    assert!(stdout.contains("name: init_peripherals"), "stdout: {stdout}");
+    assert!(stdout.contains("name: DEBOUNCE_TICKS"), "stdout: {stdout}");
+    assert!(stdout.contains("name: Led"), "stdout: {stdout}");
+    assert!(!stdout.contains("PRIVATE_TICKS"), "private const must drop; stdout: {stdout}");
+    assert!(!stdout.contains("narrower"), "pub(super) is below a pub(crate) floor; stdout: {stdout}");
 }
 
 #[test]

@@ -6,6 +6,7 @@ use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     cargo_toml::render,
     layout::LayoutContext,
+    validate, Severity,
 };
 
 fn full_plugin() -> PathBuf {
@@ -306,4 +307,232 @@ version = "{version}"
 "#
     );
     std::fs::write(target.join(format!("specs/modules/{mod_name}.toml")), body).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// [[test_targets]] → [[test]] rows: declaration order, `path` when given,
+// `harness = false` only when false (true is Cargo's default and is
+// elided); the rows sit between the crate target and [dependencies].
+// ---------------------------------------------------------------------------
+#[test]
+fn firmware_test_targets_render_as_test_rows() {
+    let (target, layout) = fresh_project("firmware-layered", "demo", "fw-test-targets");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    let augmented = format!(
+        "{arch}\n\
+         [[test_targets]]\nname = \"zeta_hw\"\nharness = false\n\n\
+         [[test_targets]]\nname = \"alpha-smoke\"\npath = \"tests/on_target/alpha.rs\"\n\n\
+         [[test_targets]]\nname = \"plain\"\nharness = true\n"
+    );
+    std::fs::write(target.join("specs/architecture.toml"), augmented).unwrap();
+
+    let t = render(&layout).unwrap().text;
+    let zeta = "[[test]]\nname = \"zeta_hw\"\nharness = false\n\n";
+    let alpha = "[[test]]\nname = \"alpha-smoke\"\npath = \"tests/on_target/alpha.rs\"\n\n";
+    let plain = "[[test]]\nname = \"plain\"\n\n";
+    assert!(t.contains(zeta), "{t}");
+    assert!(t.contains(alpha), "path rendered when given:\n{t}");
+    assert!(t.contains(plain), "harness = true is elided:\n{t}");
+    assert!(!t.contains("harness = true"), "{t}");
+    let z = t.find(zeta).unwrap();
+    let a = t.find(alpha).unwrap();
+    let p = t.find(plain).unwrap();
+    assert!(z < a && a < p, "declaration order, not lex order:\n{t}");
+    let bin = t.find("[[bin]]").unwrap();
+    let deps = t.find("[dependencies]").unwrap();
+    assert!(
+        bin < z && p < deps,
+        "rows sit between the crate target and [dependencies]:\n{t}"
+    );
+
+    // The schema admits exactly these keys; the spec validates clean.
+    let report = validate::run_project(&target, None).unwrap();
+    let errors: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+}
+
+#[test]
+fn firmware_without_test_targets_emits_no_test_rows() {
+    let (_target, layout) = fresh_project("firmware-layered", "demo", "fw-no-test-targets");
+    let t = render(&layout).unwrap().text;
+    assert!(!t.contains("[[test]]"), "{t}");
+}
+
+// A test target is a closed subset: `required-features`, `bench`,
+// `test = false` and every other Cargo key are rejected until a project
+// brings a witness for them.
+#[test]
+fn firmware_test_target_rejects_keys_outside_the_subset() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-test-target-closed");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[test_targets]]\nname = \"hw\"\nbench = false\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| matches!(f.severity, Severity::Error)
+            && f.message.contains("bench")),
+        "an unknown key on a test target must be a validate error:\n{}",
+        report.render_plain()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Firmware [features]: a default set, an empty (cfg-only) feature, a
+// feature that depends on another, a `dep:` feature over an optional
+// typed-slot dep. The optional slot dep renders `optional = true`; the
+// section sits between the crate target and [dependencies]; the spec
+// validates clean (Feature entity + feature_depends_on relation +
+// feature_unique_names rule all present).
+// ---------------------------------------------------------------------------
+#[test]
+fn firmware_features_render_with_default_line_and_optional_slot_dep() {
+    let (target, layout) = fresh_project("firmware-layered", "demo", "fw-features");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^0.3\"\nfeatures = [\"print-defmt\"]\n";
+    assert!(arch.contains(anchor), "template shape changed; update this test's anchor");
+    let arch = arch.replace(anchor, &format!("{anchor}optional = true\n"));
+    let augmented = format!(
+        "{arch}\n\
+         [[features]]\nname = \"panic-probe\"\ndefault = true\ncargo_deps = [\"dep:panic-probe\"]\n\n\
+         [[features]]\nname = \"debug-memory\"\n\n\
+         [[features]]\nname = \"fb-rgb565\"\ndepends_on = [\"debug-memory\"]\n"
+    );
+    std::fs::write(target.join("specs/architecture.toml"), augmented).unwrap();
+
+    let t = render(&layout).unwrap().text;
+    let features = "[features]\n\
+                    default = [\"panic-probe\"]\n\
+                    debug-memory = []\n\
+                    fb-rgb565 = [\"debug-memory\"]\n\
+                    panic-probe = [\"dep:panic-probe\"]\n\n";
+    assert!(t.contains(features), "{t}");
+    assert!(
+        t.contains(
+            "panic-probe = { version = \"^0.3\", features = [\"print-defmt\"], optional = true }\n"
+        ),
+        "an optional typed-slot dep renders `optional = true`:\n{t}"
+    );
+    let b = t.find("[[bin]]").unwrap();
+    let f = t.find("[features]").unwrap();
+    let d = t.find("[dependencies]").unwrap();
+    assert!(b < f && f < d, "[[bin]] → [features] → [dependencies]:\n{t}");
+
+    let report = validate::run_project(&target, None).unwrap();
+    let errors: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Error))
+        .collect();
+    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+}
+
+// A spec with no [[features]] renders no [features] section — the
+// pre-existing firmware shape, byte-for-byte (firmware_cargo_toml_byte_stable
+// covers stability; this covers absence).
+#[test]
+fn firmware_without_features_emits_no_features_section() {
+    let (_target, layout) = fresh_project("firmware-layered", "demo", "fw-no-features");
+    let t = render(&layout).unwrap().text;
+    assert!(!t.contains("[features]"), "{t}");
+}
+
+// `depends_on` resolves through the feature_depends_on relation:
+// an unknown feature name is REDUCE_UNRESOLVED.
+#[test]
+fn firmware_feature_depends_on_unknown_feature_fails_validate() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-features-ghost");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[features]]\nname = \"alpha\"\ndepends_on = [\"ghost\"]\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| f.rule == "REDUCE_UNRESOLVED"
+            && f.message.contains("feature_depends_on")
+            && f.message.contains("`ghost`")),
+        "expected REDUCE_UNRESOLVED naming feature_depends_on and `ghost`:\n{}",
+        report.render_plain()
+    );
+}
+
+// Duplicate feature names fail the feature_unique_names rule.
+#[test]
+fn firmware_duplicate_feature_names_fail_validate() {
+    let (target, _layout) = fresh_project("firmware-layered", "demo", "fw-features-dup");
+    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        format!("{arch}\n[[features]]\nname = \"alpha\"\n\n[[features]]\nname = \"alpha\"\n"),
+    )
+    .unwrap();
+    let report = validate::run_project(&target, None).unwrap();
+    assert!(
+        report.findings().iter().any(|f| f.rule == "feature_unique_names"
+            && matches!(f.severity, Severity::Error)),
+        "expected a feature_unique_names error:\n{}",
+        report.render_plain()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A crate may sit in [dependencies] and [dev-dependencies] with different
+// features — Cargo unions them for test builds; the spec keeps both rows
+// (found by the first adoption: a no_std core with `postcard` plain and
+// `postcard` + `use-std` for its host tests).
+// ---------------------------------------------------------------------------
+#[test]
+fn same_crate_in_dependencies_and_dev_dependencies_keeps_both_rows() {
+    let (target, layout) = fresh_project("library-api", "liblib", "lib-dual-table");
+    std::fs::write(
+        target.join("specs/architecture.toml"),
+        r#"[[external_deps]]
+crate = "postcard"
+version = "1.1"
+
+[[external_deps]]
+crate = "postcard"
+version = "1.1"
+features = ["use-std"]
+test_only = true
+"#,
+    )
+    .unwrap();
+    let r = render(&layout).unwrap();
+    assert!(r.text.contains("[dependencies]\npostcard = \"1.1\"\n"), "{}", r.text);
+    assert!(
+        r.text.contains("[dev-dependencies]\npostcard = { version = \"1.1\", features = [\"use-std\"] }\n"),
+        "the dev row keeps its own features:\n{}",
+        r.text
+    );
+    assert!(r.warnings.is_empty(), "no conflict warning for a dual-table crate: {:?}", r.warnings);
+}
+
+// ---------------------------------------------------------------------------
+// [project].version is emitted literally on a standalone crate.
+// ---------------------------------------------------------------------------
+#[test]
+fn project_version_is_emitted_literally() {
+    let (target, _layout) = fresh_project("library-api", "liblib", "lib-version");
+    let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
+    std::fs::write(
+        target.join("spec.toml"),
+        spec.replace("[project]\n", "[project]\nversion = \"0.4.2\"\n"),
+    )
+    .unwrap();
+    let layout = LayoutContext::discover(&target, None).unwrap();
+    let r = render(&layout).unwrap();
+    assert!(
+        r.text.contains("[package]\nname = \"liblib\"\nversion = \"0.4.2\"\n"),
+        "{}",
+        r.text
+    );
 }

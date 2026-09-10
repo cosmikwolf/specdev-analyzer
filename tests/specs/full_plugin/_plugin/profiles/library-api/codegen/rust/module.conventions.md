@@ -286,8 +286,11 @@ imports document dependency intent.
 The union across every module in the library determines the full
 dependency set the `gen` step writes to `Cargo.toml`. Each entry is a
 [`CrateReference`](https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml) —
-`crate` + `version` are required; `source`, `features`,
-`default_features`, and `optional` are optional.
+`crate` is required; `version` is required unless `source` is a local
+path or `"workspace"` (the path crate, or the workspace root's
+`[[workspace_dependencies]]` entry, owns the version and the rendered
+dep carries none); `source`, `features`, `default_features`, and
+`optional` are optional.
 
 `source` is a **tagged union** — pick one shape per entry:
 
@@ -306,13 +309,13 @@ version = "0.1"
 source  = { path = "../ym2414b-core" }
 features = ["std"]
 
-# Workspace inheritance — render `<dep>.workspace = true`.
+# Workspace inheritance — render `<dep>.workspace = true`. No
+# `version`: the root's `[[workspace_dependencies]]` entry owns it.
 # Permitted alongside `optional = true`; package-field workspace
 # inheritance is per-field via `architecture.toml`'s
 # `[workspace_package]`.
 [[external_deps]]
 crate   = "tracing"
-version = "0.1"
 source  = "workspace"
 
 # Git dep with a pinned revision (use `tag` or `branch` instead of
@@ -443,10 +446,27 @@ serde = ["std"]
 
 The generated `Cargo.toml` reflects this exactly. Cargo.toml is OUTPUT:
 the analyzer's `manifest` subcommand writes it deterministically from
-the spec (architecture features + the union of module `external_deps`)
-— never maintain it by hand; if a dep or feature is missing, edit the
-spec and re-emit.
+the spec (architecture features + architecture-level `[[external_deps]]`
++ the union of module `external_deps`) — never maintain it by hand; if a
+dep or feature is missing, edit the spec and re-emit. Architecture-level
+`[[external_deps]]` is for crate-wide picks and for workspace-inherited
+or path deps on sibling crates; a crate one module needs belongs in that
+module's own `external_deps[]`. The same crate may appear once as a
+regular dep and once with `test_only = true` — Cargo allows different
+features on the two — and the emitter keeps both rows.
 
 Do **not** emit feature definitions in code (e.g. `#[cfg(feature = …)]`
 for an undeclared feature). The schema check catches missing feature
 names; runtime cargo will catch typos in declared-but-unused names.
+
+Build profiles follow the same rule. A standalone crate's
+`architecture.toml` `[profiles.<name>]` tables land after
+`[dependencies]` as `[profile.<name>]` (dev, release, test, bench, then
+custom profiles lex-sorted; keys in a fixed order; package overrides
+right after their parent). The subset is closed — `opt-level`, `debug`,
+`lto`, `codegen-units`, `panic`, `strip`, `overflow-checks`,
+`debug-assertions`, `incremental`, and `package.<crate>` overrides
+without `panic` / `lto`. In a workspace, profiles belong to the root's
+architecture.toml: Cargo ignores them in a member manifest, `validate`
+rejects them on a member (`PROFILES-ROOT-ONLY`), and the member render
+emits nothing for them.

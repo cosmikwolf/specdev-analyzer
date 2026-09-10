@@ -1,0 +1,63 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/nextjs-app/architecture.schema.yaml"
+title: "nextjs-app architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for nextjs-app projects. Declares
+  the app version, the Node and package-manager pins, the package.json
+  scripts overrides, and project-wide npm dependencies. Every field is
+  optional; an empty file validates. `specdev-analyzer manifest --write`
+  reads this file to emit package.json.
+type: object
+additionalProperties: false
+properties:
+  version:
+    description: >
+      App version string emitted as package.json's `version` field
+      (semver). Optional — omit to leave `version` unset.
+    type: string
+    minLength: 1
+  environment:
+    description: >
+      Runtime pins emitted into package.json. Overrides the profile
+      manifest's defaults key-by-key.
+    type: object
+    additionalProperties: false
+    properties:
+      node:
+        description: "`engines.node` range, e.g. \">=22.18.0\"."
+        type: string
+        minLength: 1
+      package_manager:
+        description: "`packageManager` corepack pin, e.g. \"pnpm@10.15.0\"."
+        type: string
+        minLength: 1
+  scripts:
+    description: >
+      package.json `scripts` entries. Overrides the profile's default
+      scripts key-by-key; a key absent here keeps the profile default.
+    type: object
+    additionalProperties:
+      type: string
+      minLength: 1
+  external_deps:
+    description: >
+      Project-wide npm dependencies (infrastructure packages every
+      module may assume — the framework itself, the test runners, the
+      type checker). Module-scoped packages belong in each module's
+      `external_deps` instead. Merged with module and block/bridge
+      contributions at `manifest` time; user-declared versions win on
+      conflict. `test_only = true` routes an entry to `devDependencies`.
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/npm_reference.schema.yaml#/$defs/NpmReference"
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (rendering
+      strategy, data-access layer, authentication approach). Distinct
+      from module-scope `guided_by`: project_decisions describes
+      commitments that span the architecture itself rather than any one
+      module's implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/DecisionId" }
+    uniqueItems: true

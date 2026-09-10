@@ -1,0 +1,73 @@
+# Project open questions — the *known unknowns*.
+#
+# An open question records something the project hasn't pinned an
+# answer for. Three statuses shape its lifecycle:
+#
+#   open               — no committed answer. Codegen for any module
+#                        whose requirements appear in this question's
+#                        `affects[]` list is BLOCKED. Three exits:
+#                        (a) a decision answers the question,
+#                        (b) a decision commits a working default
+#                            (status flips to `default_committed`),
+#                        (c) a decision closes the question as moot.
+#                        No CLI flag bypasses the gate — this is
+#                        intentional friction so "decide later"
+#                        leaves an audit trail.
+#
+#   default_committed  — a decision (`default_via`) commits a working
+#                        assumption. `verify` carries a one-line
+#                        falsification plan ("here's how I'll know
+#                        my placeholder was wrong"). Codegen proceeds;
+#                        the placeholder + verify text are inlined
+#                        into the prompt walk for affected modules.
+#
+#   closed             — a decision (`closed_by`) resolved the
+#                        question. The decision becomes the source of
+#                        truth; the OQ entry persists as audit trail.
+#
+# `affects = [...]` lists the requirement ids the question affects.
+# At least one entry is required — an open question that affects
+# nothing should be rephrased into a decision or deleted.
+#
+# Delete the EXAMPLE entries below once the project has real OQs.
+
+# EXAMPLE: an open question (codegen blocks until resolved).
+# [[open_question]]
+# id = "OQ-001"
+# title = "Which routes are statically prerendered?"
+# status = "open"
+# text = """
+# REQ-ARCH-001 asks for prerendered public pages. Which segments
+# carry `generateStaticParams`, and what the revalidation window is,
+# changes every page body. Decide before the first page is generated.
+# """
+# affects = ["REQ-ARCH-001"]
+# category = "design"
+
+# EXAMPLE: a question with a committed default (codegen proceeds).
+# [[open_question]]
+# id = "OQ-002"
+# title = "Acceptable time-to-first-byte for the events list?"
+# status = "default_committed"
+# text = """
+# Requirement REQ-PERF-002 names a budget but no concrete
+# number. The working assumption is <200 ms p95 on the staging
+# deployment; verify against production traffic before launch.
+# """
+# default_via = "DEC-005"
+# verify = "Read the p95 TTFB from the hosting dashboard for one week; assert < 200 ms."
+# affects = ["REQ-PERF-002"]
+# category = "impl_time"
+
+# EXAMPLE: a closed question (audit trail).
+# [[open_question]]
+# id = "OQ-003"
+# title = "Prisma or Drizzle for data access?"
+# status = "closed"
+# text = """
+# Type-safety-vs-migration-tooling question. Resolved for Prisma
+# once the schema stabilised.
+# """
+# closed_by = "DEC-006"
+# affects = ["REQ-PERF-001"]
+# category = "design"

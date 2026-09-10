@@ -11,6 +11,20 @@ pubspec_yaml:
     sdk: "^3.9.0"                 # architecture.toml [environment] overrides key-by-key
     flutter: ">=3.35.0"
 
+# Compile gate, as data: the codegen skill runs each `steps` argv in order
+# in the project root and records one row per module under `label`.
+# `flutter analyze` defaults to `--fatal-infos --fatal-warnings` and would
+# fail on one unused import; errors-only matches `cargo check` and the
+# rule this gate replaces ("no errors; treat analyzer errors like compile
+# errors"). Platform scaffolding is not this gate's finding: `pub get` and
+# `analyze` pass with no platform directories.
+gates:
+  - label: flutter-analyze
+    scope: module
+    steps:
+      - [flutter, pub, get]
+      - [flutter, analyze, --no-fatal-infos, --no-fatal-warnings]
+
 bootstrap:
   steps: []                       # standalone app; no workspace machinery
 

@@ -49,3 +49,24 @@ edition = "2021"
 # [[workspace_dependencies]]
 # crate = "defmt"
 # version = "0.3"
+
+# ---------------------------------------------------------------------------
+# Cargo build profiles — the workspace's [profile.*] tables. This is the
+# only home for profiles in a workspace: Cargo ignores profiles declared
+# in a member manifest, and a member that declares them fails validate.
+# Closed subset: opt-level, debug, lto, codegen-units, panic, strip,
+# overflow-checks, debug-assertions, incremental, plus package.<crate>
+# overrides of opt-level / debug / codegen-units / strip /
+# overflow-checks / debug-assertions / incremental. A custom profile
+# needs `inherits`.
+# ---------------------------------------------------------------------------
+# EXAMPLE: keep DWARF in release builds so the debug probe finds RTT.
+# [profiles.release]
+# debug = 2
+# opt-level = "s"
+
+# EXAMPLE: a test profile with one crate optimized harder.
+# [profiles.test]
+# opt-level = 1
+# [profiles.test.package.my-core]
+# opt-level = 2

@@ -1,0 +1,65 @@
+metaschema_version: "v1"
+
+# rtic block reduction. Tasks, resources and channels each materialize as
+# entities under the `rtic` namespace (the file's location establishes the
+# namespace; entity kind paths resolve to `rtic.Task`, `rtic.Resource`,
+# `rtic.Channel`).
+#
+# All three extend Module — they are sub-units of a module's application
+# composition. The qualified entity name combines the parent module name
+# with the local name (e.g. "Sequencer.on_tick" for module=Sequencer,
+# task=on_tick) so multiple modules' tasks coexist without collision.
+#
+# Unlike the async-runtime block this one DOES declare a relation, because
+# task→resource access is the whole point: the set of tasks reaching a
+# resource, and their priorities, is what determines its ceiling and
+# therefore whether an access needs a lock. Modelling tasks and resources
+# as unrelated entities would record the two halves and lose the thing
+# that connects them.
+
+entities:
+  - kind: Task
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "rtic.tasks[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      kind: ".kind"
+      priority: ".priority"
+      binds: ".binds"
+
+  - kind: Resource
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "rtic.resources[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      sharing: ".sharing"
+      type: ".type"
+
+  - kind: Channel
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "rtic.channels[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      payload_type: ".payload_type"
+      capacity: ".capacity"
+
+relations:
+  # Task → Resource. `uses` is a nested array inside each task, so the
+  # `from` endpoint composes the module name with the enclosing task's
+  # name; `${.}` is the resource name string being iterated.
+  #
+  # An entry naming a resource that does not exist yields REDUCE_UNRESOLVED
+  # with source-line provenance — which is the check that matters here, and
+  # it comes free with the relation rather than needing a rule of its own.
+  - kind: task_uses_resource
+    extends: depends_on
+    from_kind: Task
+    to_kind: Resource
+    from_spec: "specs/modules/*.toml"
+    for_each: "rtic.tasks[].uses[]"
+    endpoints:
+      from: "${root.name}.${parent.name}"
+      to: "${root.name}.${.}"

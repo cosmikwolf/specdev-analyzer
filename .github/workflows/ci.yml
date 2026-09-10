@@ -43,6 +43,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The package.json emitter's live tests (`tests/manifest_package_json.rs`)
+      # check `pnpm --version` at runtime and SKIP when it is absent, so
+      # without these two steps this job goes green having resolved no
+      # manifest at all. Versions match `languages/typescript/build.md`'s
+      # `packageManager` / `engines.node` pins, which are what the emitted
+      # manifests declare.
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.18.0
       - run: cargo build --locked
       - run: cargo test --locked --all-features
 
@@ -55,6 +67,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --path . --root "$RUNNER_TEMP/install" --locked
       - run: "$RUNNER_TEMP/install/bin/specdev-analyzer --version"
+
+  composition-gates:
+    # Per-stack composition gates. Each bootstraps a project, inlines the
+    # units of one stack, emits the manifest, and RESOLVES it — then asserts
+    # on the resolved lockfile that co-inlined units agree on the crates they
+    # share, and that the join product they exist to produce is present.
+    #
+    # Ignored in the normal `test` job because they reach crates.io, git
+    # remotes, and pub.dev; the rest of the suite is hermetic and stays so.
+    # Split into its own job so a registry outage reads as "composition gates
+    # unavailable", not "the analyzer is broken".
+    name: composition gates (network)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout analyzer
+        uses: actions/checkout@v4
+      - name: Checkout specdev plugin tree
+        uses: actions/checkout@v4
+        with:
+          # TODO: replace `<owner>/specdev` once the plugin tree is published
+          # to GitHub — same placeholder as the agnosticism-lint job below.
+          # The gates test the units that actually ship, so they run against
+          # the live tree rather than a fixture mirror.
+          repository: <owner>/specdev
+          path: specdev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          # The dart stack resolves with `flutter pub get`; without the SDK
+          # that one test skips rather than fails.
+          channel: stable
+      - name: Run composition gates
+        run: bash .github/scripts/composition-gates.sh
 
   agnosticism-lint:
     # D51 self-enforcement (doc 21 §9). Scans `src/` for hardcoded

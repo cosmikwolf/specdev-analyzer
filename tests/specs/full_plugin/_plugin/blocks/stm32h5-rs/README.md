@@ -112,6 +112,6 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
 This block replaces an earlier `stm32f4-rs` block (Phase 6, dropped
 2026-04-30) when the user's dogfood target shifted to STM32H5 hardware.
 The block-authoring pattern from stm32f4-rs is preserved in
-`specdev-next/000-block-creation-command-notes.md`. F4 support could be
+`specdev-planning/000-block-creation-command-notes.md`. F4 support could be
 re-authored as a separate `stm32f4-rs` block if a future project needs
 it; the recipe is the notes-doc + this block as a parallel reference.

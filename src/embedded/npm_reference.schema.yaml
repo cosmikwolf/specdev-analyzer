@@ -1,0 +1,123 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/npm_reference.schema.yaml"
+title: "NpmReference (v1)"
+description: |
+  Reusable npm-package dependency reference shared across profile-level
+  architecture schemas and module-level external_deps. Captures every
+  field that maps to a package.json dependency entry. Embedded in the
+  analyzer crate so `$ref` to this `$id` resolves universally,
+  regardless of project content.
+
+  Every npm dep is captured in the spec; package.json is OUTPUT — the
+  manifest step consumes these references to emit the full manifest.
+
+  A package.json dependency value is ONE string. That fixes the shape:
+  a registry dep carries its range in `version`; every other source
+  carries its whole value in its own key, and `version` is forbidden
+  beside it (there is no sibling-version slot, unlike pubspec).
+
+  This shape is the schema-side twin of the package.json emitter's
+  spec-side parser: the accepted key set, the exactly-one-shape rule,
+  and the registry-needs-version rule must stay in lockstep with it (a
+  lockstep test enforces this).
+
+  Not spec input in v1 (named, not silently dropped — an unknown key is
+  an error): package aliases (`npm:<real>@<range>` values), dist-tag
+  protocols in the source slot, `peerDependencies`,
+  `optionalDependencies`, `overrides`.
+
+$defs:
+  NpmReference:
+    type: object
+    additionalProperties: false
+    required: [package]
+    properties:
+      package:
+        description: |
+          npm package name, including the scope when present
+          (`@scope/name`). npm's name rules are enforced downstream by
+          the package manager, not here.
+        type: string
+        minLength: 1
+      version:
+        description: |
+          npm range string (e.g. "^1.2.3", "~1.2.0", ">=1.2.0 <2.0.0",
+          "1.2.3"). Required for a registry dep (no source key); the
+          value is emitted verbatim as the dependency value. Forbidden
+          beside `git` / `path` / `link` / `workspace` — those keys carry
+          the whole value.
+        type: string
+        minLength: 1
+      git:
+        description: |
+          Git source. Emitted as `<url>#<ref>` (or `<url>` alone when no
+          ref is given). The url is emitted verbatim — write the form the
+          package manager accepts (`git+https://…`, `git+ssh://…`,
+          `github:owner/repo`). `ref` is opaque: a tag, a branch, a
+          commit, or `semver:<range>`.
+        type: object
+        additionalProperties: false
+        required: [url]
+        properties:
+          url:
+            type: string
+            minLength: 1
+          ref:
+            type: string
+            minLength: 1
+      path:
+        description: |
+          Local directory dep, relative to the package.json's directory.
+          Emitted as `file:<path>` — the package manager copies (or
+          hard-links) the directory and installs its dependencies.
+        type: string
+        minLength: 1
+      link:
+        description: |
+          Local directory dep, relative to the package.json's directory.
+          Emitted as `link:<path>` — the package manager symlinks the
+          directory and installs nothing for it. Use `path` when the
+          target's own dependencies must be installed.
+        type: string
+        minLength: 1
+      workspace:
+        description: |
+          Workspace-protocol range (`*`, `^`, `~`, or an exact version).
+          Emitted as `workspace:<range>`. The package must be a member of
+          the enclosing pnpm workspace.
+        type: string
+        minLength: 1
+      test_only:
+        description: |
+          Set to `true` to route this package to `devDependencies`
+          instead of `dependencies`. Build, test, lint and codegen
+          tooling. Defaults to `false` when absent. A routing flag, not a
+          package.json key — it never appears in the rendered value.
+        type: boolean
+    allOf:
+      # At most one source key. Each branch `required`s its
+      # discriminating keys — a bare `properties` subschema is vacuously
+      # true when the key is absent and would defeat the guard.
+      - not:
+          anyOf:
+            - required: [git, path]
+            - required: [git, link]
+            - required: [git, workspace]
+            - required: [path, link]
+            - required: [path, workspace]
+            - required: [link, workspace]
+      # A version is FORBIDDEN beside any source key: the dependency
+      # value is one string and the source key owns it.
+      - not:
+          anyOf:
+            - required: [version, git]
+            - required: [version, path]
+            - required: [version, link]
+            - required: [version, workspace]
+      # A registry dep (no source key) must carry a version.
+      - anyOf:
+          - required: [git]
+          - required: [path]
+          - required: [link]
+          - required: [workspace]
+          - required: [version]

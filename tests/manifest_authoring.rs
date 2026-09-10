@@ -54,20 +54,45 @@ const PROFILES: &[&str] = &[
     "rust-workspace",
     "flutter-app",
     "rust-app",
+    "nextjs-app",
 ];
 
 // (name, codegen language) — the deps manifest lives at
 // blocks/<name>/codegen/<lang>/deps.yaml, so language is part of the row.
+// This list is meant to be the full inventory, and it had silently drifted:
+// two shipped blocks were missing, so their manifests were unchecked while the
+// suite looked complete. Add a row whenever a block ships.
 const BLOCKS: &[(&str, &str)] = &[
     ("nih-plug", "rust"),
     ("egui", "rust"),
+    ("eframe", "rust"),
     ("embassy", "rust"),
+    ("iroh", "rust"),
+    ("mk20dx", "rust"),
+    ("rtic", "rust"),
     ("stm32h5-rs", "rust"),
     ("flutter-rust-bridge", "dart"),
     ("universal-ble", "dart"),
 ];
 
 const BRIDGES: &[&str] = &["egui+nih-plug", "embassy+stm32h5-rs"];
+
+// Blocks that deliberately contribute NO deps, each with its reason. A block
+// absent from this list must contribute at least one dep in its language's
+// vocabulary — `recommended_external_deps` is suggestion-only and does not
+// count. Both directions are asserted, so adding a dep to a listed block is
+// as loud as dropping one from an unlisted block.
+const ZERO_DEP_BLOCKS: &[(&str, &str)] = &[
+    // Topology-only: the non-embassy STM32H5 HAL has no usable crates.io
+    // release yet, and the production path (`embassy-stm32`) is the
+    // embassy+stm32h5-rs bridge's join-product dep, never the block's.
+    ("stm32h5-rs", "no publishable HAL crate"),
+    // Host-neutral: egui always arrives from a host — `eframe::egui` from the
+    // eframe block, `nih_plug_egui::egui` from the egui+nih-plug bridge.
+    // Contributing a version here would put a second, independently-versioned
+    // egui in the graph alongside the host's, whose types would not unify.
+    ("egui", "the host owns the egui version"),
+];
 
 // ===========================================================================
 // 1 — full_plugin fixture: every manifest loads cleanly
@@ -86,6 +111,9 @@ fn fixture_profiles_load_cleanly() {
         match m.language.as_str() {
             "rust" => assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml"),
             "dart" => assert!(m.pubspec_yaml.is_some(), "{name} must declare pubspec_yaml"),
+            "typescript" => {
+                assert!(m.package_json.is_some(), "{name} must declare package_json")
+            }
             other => panic!("profile {name} declares unexpected language `{other}`"),
         }
     }
@@ -103,25 +131,20 @@ fn fixture_block_deps_load_cleanly() {
             .join("deps.yaml");
         let m = BlockDeps::load(&p)
             .unwrap_or_else(|e| panic!("deps for block {name} failed to load: {e:#}"));
-        // stm32h5-rs is intentionally topology-only: the non-embassy
-        // STM32H5 HAL has no usable crates.io release yet, and the
-        // production path (`embassy-stm32`) is the embassy+stm32h5-rs
-        // bridge's join-product dep, never the block's. Every other block
-        // contributes at least one dep in its language's vocabulary.
-        if *name == "stm32h5-rs" {
-            assert!(
-                m.crates.is_empty(),
-                "stm32h5-rs is topology-only and must declare no crates (embassy-stm32 is bridge-owned)"
-            );
-        } else {
-            let contributes = match *lang {
-                "dart" => !m.pub_packages.is_empty(),
-                _ => !m.crates.is_empty(),
-            };
-            assert!(
+        let contributes = match *lang {
+            "dart" => !m.pub_packages.is_empty(),
+            _ => !m.crates.is_empty(),
+        };
+        match ZERO_DEP_BLOCKS.iter().find(|(b, _)| b == name) {
+            Some((_, reason)) => assert!(
+                !contributes,
+                "block {name} declares deps but is listed as contributing none ({reason}); \
+                 either drop the dep or remove it from ZERO_DEP_BLOCKS"
+            ),
+            None => assert!(
                 contributes,
                 "block {name} should declare at least one {lang} dep (recommended_external_deps is suggestion-only)"
-            );
+            ),
         }
     }
 }
