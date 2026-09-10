@@ -32,6 +32,17 @@ items:
   # edit the inlined copy if this crate's floor differs.
   visibility_floor: "pub(crate)"
 
+# Compile gate, as data: the codegen skill runs each `steps` argv in order
+# in the project root and records one row per module under `label`. The
+# `${root.platform.target_triple}` token resolves against
+# `specs/architecture.toml`; a missing field is an error, never an empty
+# string. Warnings do not fail the gate; `cargo check` errors do.
+gates:
+  - label: cargo-check
+    scope: module
+    steps:
+      - [cargo, check, --quiet, --target, "${root.platform.target_triple}"]
+
 bootstrap:
   steps: []                       # standalone binary; no workspace machinery
 

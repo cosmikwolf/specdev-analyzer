@@ -39,6 +39,40 @@ pub struct Profile {
     /// Empty for a profile with no derived files.
     #[serde(default)]
     pub derived_files: Vec<DerivedRule>,
+    /// The compile-gate registry: every gate the codegen skill runs
+    /// after emission, as data (label, scope, argv steps). Empty for a
+    /// profile that declares none — which `report gen-plan` reports as
+    /// `gates_declared: false` and `gen --tail` refuses.
+    #[serde(default)]
+    pub gates: Vec<Gate>,
+}
+
+/// One `gates` row. `label` is opaque and is the row key in
+/// `gen-lineage.toml` together with the module; `steps` is a list of
+/// argv lists run in order in the project root (never a shell string).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct Gate {
+    pub label: String,
+    pub scope: GateScope,
+    pub steps: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateScope {
+    /// One execution per run, one recorded row per module in the run.
+    Module,
+    /// One execution per run, one recorded row with no module.
+    Batch,
+}
+
+impl GateScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GateScope::Module => "module",
+            GateScope::Batch => "batch",
+        }
+    }
 }
 
 /// One `paired_files` row: a template under the profile's `templates/`
@@ -356,6 +390,21 @@ impl Profile {
         Self::load(&path).map(Some)
     }
 
+    /// The declared module-scope gates, in declared order. `verified`
+    /// for a module means a pass row at the current key from every one
+    /// of these; an empty list means `verified` cannot be computed.
+    pub fn module_gates(&self) -> impl Iterator<Item = &Gate> {
+        self.gates.iter().filter(|g| g.scope == GateScope::Module)
+    }
+
+    /// True when at least one module-scope gate is declared — the
+    /// precondition for `verified` to mean anything. A registry with
+    /// only batch gates is as good as none here: "every declared
+    /// module-scope gate passed" would hold over zero gates forever.
+    pub fn gates_declared(&self) -> bool {
+        self.module_gates().next().is_some()
+    }
+
     /// The profile-declared visibility floor, if any (`items.visibility_floor`).
     pub fn visibility_floor(&self) -> Option<&str> {
         self.items
@@ -370,6 +419,26 @@ impl Profile {
         let value = super::load_yaml_validated(path, SCHEMA_YAML, SCHEMA_LABEL)?;
         let parsed: Profile = serde_json::from_value(value)
             .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
+        check_gate_labels_unique(&parsed.gates, path)?;
         Ok(parsed)
     }
+}
+
+/// Two `gates` rows with one label would write rows under one
+/// `(module, label)` key and overwrite each other. JSON Schema cannot
+/// express uniqueness across list items, so the loader checks it — the
+/// one site no consumer can bypass.
+fn check_gate_labels_unique(gates: &[Gate], path: &Path) -> Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for g in gates {
+        if !seen.insert(g.label.as_str()) {
+            anyhow::bail!(
+                "{}: `gates:` declares label `{}` twice; one row per label (rows are keyed by \
+                 label and module, so two rows would overwrite each other)",
+                path.display(),
+                g.label
+            );
+        }
+    }
+    Ok(())
 }

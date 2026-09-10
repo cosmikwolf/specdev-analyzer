@@ -21,9 +21,31 @@ fn tmp(tag: &str) -> PathBuf {
     p
 }
 
-/// Minimal project: spec.toml + specs/specdev/ + src/. Enough for
-/// `LayoutContext::discover`; gen-lineage machinery needs nothing else.
+/// Minimal project: spec.toml + specs/specdev/ + src/, with an inlined
+/// profile that declares one module-scope gate (`cargo-check`) so
+/// `verified` has a registry to be computed against.
 fn minimal_project(root: &Path) -> LayoutContext {
+    let layout = minimal_project_without_registry(root);
+    write_profile(
+        root,
+        "gates:\n  - label: cargo-check\n    scope: module\n    steps: [[cargo, check, --quiet]]\n",
+    );
+    layout
+}
+
+/// The inlined `profile.yaml` for the test project, with `extra` appended
+/// after the required keys (a `gates:` block or nothing).
+fn write_profile(root: &Path, extra: &str) {
+    fs::write(
+        root.join("specs/specdev/profile.yaml"),
+        format!("name: test-profile\nlanguage: rust\n{extra}"),
+    )
+    .unwrap();
+}
+
+/// Same project with no inlined `profile.yaml` at all — a pre-manifest
+/// tree, or one bootstrapped before the registry key existed.
+fn minimal_project_without_registry(root: &Path) -> LayoutContext {
     fs::create_dir_all(root.join("specs/specdev")).unwrap();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
@@ -825,4 +847,171 @@ fn record_gate_refuses_an_empty_label() {
     let layout = minimal_project(&root);
     let err = record_gate(&layout, &[], "  ", true).unwrap_err();
     assert!(format!("{err:#}").contains("--label"), "{err:#}");
+}
+
+// ---------------------------------------------------------------------------
+// The gate registry: `gates_declared` and the every-declared-gate rule.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_registry_reads_gates_declared_false_and_never_verified() {
+    // The vacuous reading — "every declared gate passed" over zero gates —
+    // must not appear: with nothing declared a pass row proves nothing.
+    let root = tmp("registry-none");
+    let layout = minimal_project_without_registry(&root);
+    unchanged_module(&root, &layout, "Widget");
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    let plan = run_gen_plan(&layout).unwrap();
+    assert!(!plan.gates_declared);
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+    // The batch row is still reported per label.
+    assert_eq!(plan.batch.len(), 1);
+    assert!(plan.batch[0].pass && plan.batch[0].current);
+
+    // A profile that exists but declares no `gates:` is the same state.
+    write_profile(&root, "");
+    let plan = run_gen_plan(&layout).unwrap();
+    assert!(!plan.gates_declared);
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+}
+
+#[test]
+fn batch_only_registry_reads_gates_declared_false() {
+    let root = tmp("registry-batch-only");
+    let layout = minimal_project_without_registry(&root);
+    write_profile(
+        &root,
+        "gates:\n  - label: build\n    scope: batch\n    steps: [[cargo, build]]\n",
+    );
+    unchanged_module(&root, &layout, "Widget");
+    record_gate(&layout, &["Widget".to_string()], "build", true).unwrap();
+    let plan = run_gen_plan(&layout).unwrap();
+    assert!(
+        !plan.gates_declared,
+        "a batch gate does not make `verified` computable"
+    );
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+}
+
+#[test]
+fn verified_needs_a_current_pass_row_from_every_module_scope_gate() {
+    let root = tmp("registry-two");
+    let layout = minimal_project_without_registry(&root);
+    write_profile(
+        &root,
+        "gates:\n  - label: fast\n    scope: module\n    steps: [[pnpm, exec, tsc, --noEmit]]\n  - label: lint\n    scope: module\n    steps: [[pnpm, exec, eslint]]\n  - label: build\n    scope: batch\n    steps: [[pnpm, exec, next, build]]\n",
+    );
+    unchanged_module(&root, &layout, "Widget");
+    let plan = run_gen_plan(&layout).unwrap();
+    assert!(plan.gates_declared);
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+
+    // One of two declared module gates passed: not verified.
+    record_gate(&layout, &["Widget".to_string()], "fast", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+
+    // The batch gate passing changes nothing on the module axis.
+    record_gate(&layout, &[], "build", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+
+    // Both module gates passed at the current key: verified.
+    record_gate(&layout, &["Widget".to_string()], "lint", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+
+    // One of them fails on a later run: back to unverified, still unchanged.
+    record_gate(&layout, &["Widget".to_string()], "lint", false).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+}
+
+#[test]
+fn a_pass_row_under_an_undeclared_label_does_not_count() {
+    // A label rename in the registry: rows under the old label are dead
+    // (the runner prunes them later); they must not satisfy the new label.
+    let root = tmp("registry-rename");
+    let layout = minimal_project(&root);
+    unchanged_module(&root, &layout, "Widget");
+    record_gate(&layout, &["Widget".to_string()], "cargo-check", true).unwrap();
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, true)
+    );
+
+    write_profile(
+        &root,
+        "gates:\n  - label: check\n    scope: module\n    steps: [[cargo, check]]\n",
+    );
+    let plan = run_gen_plan(&layout).unwrap();
+    assert!(plan.gates_declared);
+    assert_eq!(
+        plan_row(&layout, "Widget"),
+        (GenPlanCategory::Unchanged, false)
+    );
+}
+
+#[test]
+fn gates_declared_is_in_the_yaml_report() {
+    let root = tmp("registry-yaml");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let yaml = run_gen_plan(&layout).unwrap().to_yaml().unwrap();
+    assert!(yaml.starts_with("gates_declared: true\n"), "{yaml}");
+    write_profile(&root, "");
+    let yaml = run_gen_plan(&layout).unwrap().to_yaml().unwrap();
+    assert!(yaml.starts_with("gates_declared: false\n"), "{yaml}");
+}
+
+#[test]
+fn duplicate_gate_labels_are_refused_at_profile_load() {
+    let root = tmp("registry-dup");
+    let layout = minimal_project_without_registry(&root);
+    write_profile(
+        &root,
+        "gates:\n  - label: check\n    scope: module\n    steps: [[cargo, check]]\n  - label: check\n    scope: batch\n    steps: [[cargo, build]]\n",
+    );
+    let err = run_gen_plan(&layout).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("declares label `check` twice"), "{msg}");
+}
+
+#[test]
+fn registry_schema_refuses_empty_steps_and_bad_scope() {
+    let root = tmp("registry-schema");
+    let layout = minimal_project_without_registry(&root);
+    for bad in [
+        "gates:\n  - label: check\n    scope: module\n    steps: []\n",
+        "gates:\n  - label: check\n    scope: module\n    steps: [[]]\n",
+        "gates:\n  - label: check\n    scope: always\n    steps: [[cargo]]\n",
+        "gates:\n  - label: \"has space\"\n    scope: module\n    steps: [[cargo]]\n",
+        "gates:\n  - label: check\n    steps: [[cargo]]\n",
+        "gates:\n  - label: check\n    scope: module\n    steps: [\"cargo check\"]\n",
+    ] {
+        write_profile(&root, bad);
+        let err = run_gen_plan(&layout).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("MANIFEST-001"), "{bad}\n{msg}");
+    }
 }

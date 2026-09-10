@@ -37,7 +37,7 @@ pub use block_deps::{
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
     BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection, ContextExtra,
-    ContextSection, DerivedRule, FeaturesSection, ItemsSection, NpmEngines, NpmModuleType,
+    ContextSection, DerivedRule, FeaturesSection, Gate, GateScope, ItemsSection, NpmEngines, NpmModuleType,
     PackageJsonSection, PackageJsonShapeKind, PairedFile, PairedStub, Profile, PubEnvironment,
     PubShapeKind, PubspecYamlSection, ReverseSection, ReverseVocabulary, ShapeKind, SurfaceSection,
 };
