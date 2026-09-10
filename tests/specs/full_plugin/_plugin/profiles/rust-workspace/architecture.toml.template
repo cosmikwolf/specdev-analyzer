@@ -48,7 +48,7 @@ edition = "2021"
 # EXAMPLE: a registry crate hoisted across members.
 # [[workspace_dependencies]]
 # crate = "defmt"
-# version = "0.3"
+# version = "^1"
 
 # ---------------------------------------------------------------------------
 # Cargo build profiles — the workspace's [profile.*] tables. This is the

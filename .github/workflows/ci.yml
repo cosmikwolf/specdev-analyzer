@@ -43,7 +43,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - uses: dtolnay/rust-toolchain@stable
@@ -57,11 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout analyzer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: cosmikwolf/specdev
           path: specdev
@@ -83,11 +83,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout analyzer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: cosmikwolf/specdev
           path: specdev
@@ -117,11 +117,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout analyzer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: cosmikwolf/specdev
           path: specdev
@@ -147,11 +147,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout analyzer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The gates test the units that actually ship, so they run against
           # the live tree rather than a fixture mirror.
@@ -187,11 +187,11 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout analyzer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: specdev-analyzer
       - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: cosmikwolf/specdev
           path: specdev

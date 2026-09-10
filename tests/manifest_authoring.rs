@@ -234,6 +234,20 @@ fn fixture_matches_live_plugin_tree_byte_for_byte() {
         let rel = format!("profiles/{name}/profile.yaml");
         pairs.push((live_root.join(&rel), fixture_root.join(&rel), "profile"));
     }
+    // The architecture template is where a profile declares its own crate
+    // pins, including the commented ready-to-uncomment blocks the freshness
+    // sweep reads. It drifted unguarded: the fixture still carried
+    // `panic-probe ^0.3` and `heapless ^0.8` after the live template was
+    // bumped, which left an emission test asserting a version the plugin had
+    // stopped shipping. This pair is the guard for that.
+    for name in PROFILES {
+        let rel = format!("profiles/{name}/architecture.toml.template");
+        pairs.push((
+            live_root.join(&rel),
+            fixture_root.join(&rel),
+            "architecture template",
+        ));
+    }
     for (name, lang) in BLOCKS {
         let rel = format!("blocks/{name}/codegen/{lang}/deps.yaml");
         pairs.push((live_root.join(&rel), fixture_root.join(&rel), "deps"));
