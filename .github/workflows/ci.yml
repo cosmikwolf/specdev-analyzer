@@ -10,27 +10,69 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# ============================================================================
+# CHECKOUT LAYOUT — read this before adding a job.
+#
+# Every `src/lang/*.rs` embeds the plugin's tree-sitter queries with
+# `include_str!("../../../specdev/languages/<lang>/*.scm")`. That path resolves
+# from `src/lang/` up three levels — to the PARENT of this repository's root —
+# so the plugin tree must be a SIBLING of the analyzer checkout. Anything that
+# compiles fails without it:
+#
+#   error: couldn't read `src/lang/../../../specdev/languages/c/audit.scm`
+#
+# `actions/checkout` refuses a `path` outside `$GITHUB_WORKSPACE` ("Repository
+# path ... is not under ..."), so a repository checked out at the workspace
+# root can never be given a sibling. Every job therefore checks this repository
+# out into `specdev-analyzer/` and the plugin into `specdev/` — both under the
+# workspace, which makes them siblings of each other. Cargo steps carry
+# `working-directory: specdev-analyzer`, and `Swatinem/rust-cache` is told
+# where the workspace is.
+#
+# Jobs that compile need the plugin checkout: clippy, test, install-smoke,
+# composition-gates. `fmt` does not compile, so it omits it.
+#
+# The plugin repository is PRIVATE, so these checkouts need a token with read
+# access to it; until that lands (or both repositories are made public) the
+# plugin-checkout step fails with "Repository not found". Tracked with the
+# install-path visibility work.
+# ============================================================================
+
 jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: specdev-analyzer
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+        working-directory: specdev-analyzer
 
   clippy:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout analyzer
+        uses: actions/checkout@v4
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
+        uses: actions/checkout@v4
+        with:
+          repository: cosmikwolf/specdev
+          path: specdev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: specdev-analyzer
       - run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: specdev-analyzer
 
   test:
     name: test (${{ matrix.os }})
@@ -40,9 +82,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout analyzer
+        uses: actions/checkout@v4
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
+        uses: actions/checkout@v4
+        with:
+          repository: cosmikwolf/specdev
+          path: specdev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: specdev-analyzer
       # The package.json emitter's live tests (`tests/manifest_package_json.rs`)
       # check `pnpm --version` at runtime and SKIP when it is absent, so
       # without these two steps this job goes green having resolved no
@@ -56,16 +108,29 @@ jobs:
         with:
           node-version: 22.18.0
       - run: cargo build --locked
+        working-directory: specdev-analyzer
       - run: cargo test --locked --all-features
+        working-directory: specdev-analyzer
 
   install-smoke:
     name: cargo install smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout analyzer
+        uses: actions/checkout@v4
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
+        uses: actions/checkout@v4
+        with:
+          repository: cosmikwolf/specdev
+          path: specdev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: specdev-analyzer
       - run: cargo install --path . --root "$RUNNER_TEMP/install" --locked
+        working-directory: specdev-analyzer
       - run: "$RUNNER_TEMP/install/bin/specdev-analyzer --version"
 
   composition-gates:
@@ -83,17 +148,19 @@ jobs:
     steps:
       - name: Checkout analyzer
         uses: actions/checkout@v4
-      - name: Checkout specdev plugin tree
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
         uses: actions/checkout@v4
         with:
-          # TODO: replace `<owner>/specdev` once the plugin tree is published
-          # to GitHub — same placeholder as the agnosticism-lint job below.
           # The gates test the units that actually ship, so they run against
           # the live tree rather than a fixture mirror.
-          repository: <owner>/specdev
+          repository: cosmikwolf/specdev
           path: specdev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: specdev-analyzer
       - uses: subosito/flutter-action@v2
         with:
           # The dart stack resolves with `flutter pub get`; without the SDK
@@ -101,6 +168,7 @@ jobs:
           channel: stable
       - name: Run composition gates
         run: bash .github/scripts/composition-gates.sh
+        working-directory: specdev-analyzer
 
   agnosticism-lint:
     # D51 self-enforcement (doc 21 §9). Scans `src/` for hardcoded
@@ -111,20 +179,22 @@ jobs:
     # job is permitted to fail without failing the workflow. Phase (c)
     # blocking upgrade lands as a follow-up commit once one CI run has
     # confirmed clean (`continue-on-error: true` removed).
+    #
+    # This job greps; it does not compile. It still uses the shared layout so
+    # the plugin sits where the script's own default lookup expects it.
     name: D51 agnosticism lint (non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - name: Checkout analyzer
         uses: actions/checkout@v4
-      - name: Checkout specdev plugin tree
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
         uses: actions/checkout@v4
         with:
-          # TODO: replace `<owner>/specdev` once the plugin tree is
-          # published to GitHub. The local workspace currently has no
-          # `origin` remote configured (verified 2026-05-07). The lint
-          # runs locally + via this CI job once the plugin is published.
-          repository: <owner>/specdev
+          repository: cosmikwolf/specdev
           path: specdev
       - name: Run agnosticism lint
-        run: bash .github/scripts/agnosticism-lint.sh ./specdev
+        run: bash .github/scripts/agnosticism-lint.sh ../specdev
+        working-directory: specdev-analyzer

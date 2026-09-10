@@ -35,6 +35,14 @@ token (none currently do).
 | `reduction_cases/` | Loose reduction / extract fixtures (unresolved-extends, bridge lex-order violation, extract-end-to-end, …). |
 | `validate_cases/` | Loose validate-pipeline / layout-discovery fixtures (malformed `spec.toml`, aggregator duplicate-id, minimal skeleton, …). |
 
+Some fixtures expect a directory to **exist and be empty**: the layout pass
+reports `LAYOUT-002 present` for it, and `LAYOUT-003 missing:` (or a
+`LAYOUT-004` warning, for `codegen/<lang>/`) when it is absent. Git tracks
+files, not directories, so every such directory carries an empty `.gitkeep`,
+as `tests/snapshots/` already does. Without them a fresh clone is red:
+`skeleton-minimal` gains warnings and the four rule-code snapshots move. Add
+the `.gitkeep` whenever a new fixture expects an empty directory.
+
 ## Test-file map
 
 Feature-scoped names for the integration suites:
