@@ -11,9 +11,9 @@ cargo_toml:
   bin:
     name_template: "{project_name}"
     path_template: "src/main.rs"
-  features:
-    synthesize_default: false     # firmware-layered doesn't ship [[features]] by default
-    drain_from: []
+  features:                       # descriptive — the binary-shape renderer drains
+    synthesize_default: true      #   architecture.toml's [[features]] by fixed key and
+    drain_from: ["features"]      #   always writes `default = [...]` when any exist
   architecture_deps:
     typed_slots:
       - table: "platform"
@@ -23,6 +23,25 @@ cargo_toml:
       - table: "logger"
         keys: ["provider", "backend"]
     open_arrays: ["external_deps"]
+
+items:
+  # #101(b): a binary crate's contract surface is crate-wide, so the
+  # extractor admits `pub` and `pub(crate)` items here (a library floor is
+  # `pub`, the adapter default). The string is opaque to the analyzer —
+  # the language adapter interprets it. Project-owned after bootstrap:
+  # edit the inlined copy if this crate's floor differs.
+  visibility_floor: "pub(crate)"
+
+# Compile gate, as data: the codegen skill runs each `steps` argv in order
+# in the project root and records one row per module under `label`. The
+# `${root.platform.target_triple}` token resolves against
+# `specs/architecture.toml`; a missing field is an error, never an empty
+# string. Warnings do not fail the gate; `cargo check` errors do.
+gates:
+  - label: cargo-check
+    scope: module
+    steps:
+      - [cargo, check, --quiet, --target, "${root.platform.target_triple}"]
 
 bootstrap:
   steps: []                       # standalone binary; no workspace machinery

@@ -336,14 +336,17 @@ panic_handler = "abort"
     )
     .unwrap();
     let bin = env!("CARGO_BIN_EXE_specdev-analyzer");
-    let cargo_path = target.join("Cargo.toml");
+    // Paired files (the `[[bin]]` stub included) are written only under
+    // `--write`: `--output <file>` redirects the manifest text alone and
+    // never touches the project root. The original form of this test
+    // passed `--output <project>/Cargo.toml` and relied on the stub
+    // being written anyway — that was the defect, not the contract.
     let out = std::process::Command::new(bin)
-        .args(["cargo-toml", "--project"])
+        .args(["manifest", "--project"])
         .arg(&target)
-        .arg("--output")
-        .arg(&cargo_path)
+        .arg("--write")
         .output()
-        .expect("running cargo-toml");
+        .expect("running manifest --write");
     assert!(out.status.success(), "stderr:\n{}", String::from_utf8_lossy(&out.stderr));
     let stub_path = target.join("src/bin/standalone.rs");
     assert!(
@@ -355,12 +358,11 @@ panic_handler = "abort"
     // Re-running with a hand-edited stub must NOT clobber.
     std::fs::write(&stub_path, "// hand-edited\nfn main() {}\n").unwrap();
     let _ = std::process::Command::new(bin)
-        .args(["cargo-toml", "--project"])
+        .args(["manifest", "--project"])
         .arg(&target)
-        .arg("--output")
-        .arg(&cargo_path)
+        .arg("--write")
         .output()
-        .expect("re-running cargo-toml");
+        .expect("re-running manifest --write");
     let stub_body = std::fs::read_to_string(&stub_path).unwrap();
     assert!(
         stub_body.contains("hand-edited"),

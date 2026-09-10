@@ -1,0 +1,11 @@
+import type { NextConfig } from "next";
+
+// Written once by `specdev-analyzer manifest --write` when absent, then
+// externally owned. Both `experimental.authInterrupts` and
+// `experimental.globalNotFound` are absent on purpose: the profile's
+// v1 boundary kinds exclude the file conventions they enable.
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;

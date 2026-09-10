@@ -82,6 +82,42 @@ version = "^0.4"
 # version = "^2"
 
 # ---------------------------------------------------------------------------
+# Cargo features the binary exposes. Each [[features]] entry renders one
+# line of Cargo.toml [features]; `default = true` puts it in the
+# synthesized `default = [...]` line. `cargo_deps` carries Cargo's
+# feature-dep strings: `dep:<crate>` enables a dep whose CrateReference
+# carries `optional = true`. A feature with no deps is a plain cfg switch.
+# ---------------------------------------------------------------------------
+# EXAMPLE: an optional dep enabled by a default feature. Mark the dep
+# `optional = true` on its CrateReference (here [runtime.panic_handler]),
+# then declare the feature that enables it:
+# [[features]]
+# name = "panic-probe"
+# description = "Link panic-probe; drop it for a size-constrained build."
+# default = true
+# cargo_deps = ["dep:panic-probe"]
+
+# EXAMPLE: a cfg-only feature.
+# [[features]]
+# name = "debug-memory"
+# description = "Enable the heap/stack usage report on the debug menu."
+
+# ---------------------------------------------------------------------------
+# Cargo [[test]] targets that need a non-default setting. Cargo
+# auto-discovers tests/<name>.rs by itself; list a target here only when
+# it must run without the standard harness (embedded-test, defmt-test)
+# or lives at a non-default path. Each entry renders one [[test]] row.
+# ---------------------------------------------------------------------------
+# [[test_targets]]
+# name = "hw_integration"
+# harness = false
+
+# [[test_targets]]
+# name = "smoke"
+# path = "tests/on_target/smoke.rs"
+# harness = false
+
+# ---------------------------------------------------------------------------
 # Cross-module port connections.
 #
 # Each [[connections]] entry wires one module's port to another module's
@@ -104,3 +140,16 @@ version = "^0.4"
 # from = "RotaryEncoder.event_out"
 # to = "MainController.encoder_event_in"
 # flow_type = "encoder_event"
+
+# ---------------------------------------------------------------------------
+# Cargo build profiles ([profile.*]) — for a STANDALONE crate only. In a
+# workspace, profiles live in the workspace root's architecture.toml;
+# Cargo ignores them in a member manifest and validate rejects them here.
+# Closed subset: opt-level, debug, lto, codegen-units, panic, strip,
+# overflow-checks, debug-assertions, incremental, plus package.<crate>
+# overrides (no panic / lto there).
+# ---------------------------------------------------------------------------
+# EXAMPLE: keep DWARF in release builds so the debug probe finds RTT.
+# [profiles.release]
+# debug = 2
+# opt-level = "s"

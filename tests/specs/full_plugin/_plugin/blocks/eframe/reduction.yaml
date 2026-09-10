@@ -1,0 +1,44 @@
+metaschema_version: "v1"
+
+# eframe block reduction. Two entity kinds — Viewport and Persisted —
+# both extending Module, following the embassy precedent (two kinds, no
+# relations).
+#
+# The shell's scalar configuration (app_name, window_title, app_id,
+# initial_size, min_size, resizable, centered, renderer, persist_window,
+# repaint, repaint_interval_ms) is NOT reduced to entities. It is
+# per-module leaf config with nothing to relate to; materializing it
+# would produce entities no relation ever references. It reaches codegen
+# through the module spec directly.
+#
+# relations: [] — the two kinds are independent. A persisted value does
+# not belong to a viewport, and a viewport does not reference a persisted
+# key. If a future version lets a viewport persist its own geometry
+# separately from the root window's, that would be the first candidate
+# for an intra-block relation.
+#
+# Cross-block relations do not belong here (leg 3). What is DRAWN inside
+# a window is a separate concern with its own vocabulary; this block ends
+# at the window.
+
+entities:
+  - kind: Viewport
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "eframe.viewports[]"
+    name: "${root.name}.${.id}"
+    attrs:
+      title:        ".title"
+      kind:         ".kind"
+      resizable:    ".resizable"
+
+  - kind: Persisted
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "eframe.persisted[]"
+    name: "${root.name}.${.key}"
+    attrs:
+      value_type:       ".value_type"
+      default_on_error: ".default_on_error"
+
+relations: []

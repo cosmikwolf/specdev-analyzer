@@ -1,0 +1,162 @@
+metaschema_version: "v1"
+
+# mk20dx block reduction. Pins materialize as entities under the `mk20dx`
+# namespace (the file's location establishes the namespace; the entity
+# kind path resolves to `mk20dx.Pin`).
+#
+# Pin extends Module — a pin is a sub-unit of a module's hardware
+# composition. The qualified entity name combines the parent module name
+# with the local name (e.g. "Display.reset_line") so two modules may each
+# own a pin called `reset_line` without colliding.
+#
+# Peripheral entries also materialize as entities, one kind per table.
+# SPI and UART entries REFERENCE pins by name (sck/mosi/miso, tx/rx), and
+# those references are declared as relations: an entry naming a pin that
+# does not exist yields REDUCE_UNRESOLVED with source-line provenance,
+# which is the check that matters and comes free with the relation (the
+# rtic block's precedent).
+#
+# `clock` produces no entity — it is configuration on the init-owning
+# module, not a named sub-unit; nothing references it.
+#
+# The one cross-cutting relation worth having — "no two modules claim the
+# same physical pin" (and its siblings: the same PIT channel, the same DMA
+# channel, the same peripheral instance) — is a uniqueness property over a
+# field pair rather than a relation, and is not expressible as one.
+# Recorded in the README as a deferred check rather than approximated here.
+
+entities:
+  - kind: Pin
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.pins[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      port: ".port"
+      pin: ".pin"
+      mode: ".mode"
+      alt_fn: ".alt_fn"
+      interrupt: ".interrupt"
+
+  - kind: Interrupt
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.interrupts[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      vector: ".vector"
+
+  - kind: Timer
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.timers[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      channel: ".channel"
+      period_us: ".period_us"
+
+  - kind: Spi
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.spi[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      instance: ".instance"
+      baudrate_hz: ".baudrate_hz"
+      mode: ".mode"
+
+  - kind: Uart
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.uarts[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      instance: ".instance"
+      baudrate: ".baudrate"
+      parity: ".parity"
+      word_length: ".word_length"
+
+  - kind: Adc
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.adcs[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      instance: ".instance"
+      resolution: ".resolution"
+      averaging: ".averaging"
+
+  - kind: DmaChannel
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.dma_channels[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      channel: ".channel"
+      source: ".source"
+
+  - kind: Ftm
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "mk20dx.ftms[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      instance: ".instance"
+      frequency_hz: ".frequency_hz"
+
+relations:
+  # SPI / UART → Pin. Each pin-naming field is its own relation so an
+  # unresolved name reports which function reference broke, not just
+  # which entry. The referenced pin must be in the SAME module — both
+  # endpoint templates are ${root.name}-qualified, so a cross-module name
+  # cannot resolve, deliberately: a module's bus is wired with its own
+  # pins.
+  - kind: spi_uses_sck_pin
+    extends: depends_on
+    from_kind: Spi
+    to_kind: Pin
+    from_spec: "specs/modules/*.toml"
+    for_each: "mk20dx.spi[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to: "${root.name}.${.sck}"
+
+  - kind: spi_uses_mosi_pin
+    extends: depends_on
+    from_kind: Spi
+    to_kind: Pin
+    from_spec: "specs/modules/*.toml"
+    for_each: "mk20dx.spi[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to: "${root.name}.${.mosi}"
+
+  - kind: spi_uses_miso_pin
+    extends: depends_on
+    from_kind: Spi
+    to_kind: Pin
+    from_spec: "specs/modules/*.toml"
+    for_each: "mk20dx.spi[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to: "${root.name}.${.miso}"
+
+  - kind: uart_uses_tx_pin
+    extends: depends_on
+    from_kind: Uart
+    to_kind: Pin
+    from_spec: "specs/modules/*.toml"
+    for_each: "mk20dx.uarts[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to: "${root.name}.${.tx}"
+
+  - kind: uart_uses_rx_pin
+    extends: depends_on
+    from_kind: Uart
+    to_kind: Pin
+    from_spec: "specs/modules/*.toml"
+    for_each: "mk20dx.uarts[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to: "${root.name}.${.rx}"

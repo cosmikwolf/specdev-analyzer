@@ -1,0 +1,58 @@
+metaschema_version: "v1"
+
+# iroh block reduction. Two entity kinds — Stream and Channel — both
+# extending Module. One intra-block relation: `stream_on_channel`
+# (Stream → Channel) materialized from each stream's `channel` field,
+# following the precedent set by egui's `region_in_panel`.
+#
+# The relation buys real validation: a stream naming a channel that was
+# never declared resolves to nothing, and the existing
+# reference_exists / REDUCE_UNRESOLVED machinery flags it before
+# codegen. No new graph-check primitive is needed.
+#
+# The endpoint's own scalar configuration (alpn, role, identity, relay,
+# address_lookup) is NOT reduced to entities — it is per-module leaf
+# config with nothing to relate to, and materializing it would produce
+# entities no relation ever references. It reaches codegen through the
+# module spec directly.
+#
+# Cross-block relations do not belong here (leg 3). A consumer that
+# renders or otherwise acts on what a channel carries is wiring between
+# this block and that consumer's block, which is a bridge's concern —
+# and in practice is usually thin enough to hand-author.
+
+entities:
+  - kind: Stream
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "iroh.streams[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      kind:      ".kind"
+      direction: ".direction"
+      framing:   ".framing"
+      carries:   ".carries"
+      channel:   ".channel"
+      rate_hz:   ".rate_hz"
+
+  - kind: Channel
+    extends: Module
+    from: "specs/modules/*.toml"
+    for_each: "iroh.channels[]"
+    name: "${root.name}.${.name}"
+    attrs:
+      direction:    ".direction"
+      payload_type: ".payload_type"
+      capacity:     ".capacity"
+      overflow:     ".overflow"
+
+relations:
+  - kind: stream_on_channel
+    extends: depends_on
+    from_kind: Stream
+    to_kind: Channel
+    from_spec: "specs/modules/*.toml"
+    for_each: "iroh.streams[]"
+    endpoints:
+      from: "${root.name}.${.name}"
+      to:   "${root.name}.${.channel}"

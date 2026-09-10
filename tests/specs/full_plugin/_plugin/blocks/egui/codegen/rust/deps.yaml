@@ -1,25 +1,26 @@
 # Manifest — Cargo deps the egui block contributes.
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
-
-crates:
-  - name: nih_plug_egui
-    version: "0.0"                # nih-plug subcrate; git-only, same repo as nih_plug
-    features: []
-    source:
-      git: "https://github.com/robbert-vdh/nih-plug.git"
-      # Same rev as the nih-plug block pins. The two crates ship from one
-      # repo and nih_plug_egui depends on nih_plug, so a split rev risks
-      # two nih_plug versions in the tree. Bump both blocks and both
-      # reference crates together.
-      rev: "f36931f7af4646065488a9845d8f8c2f95252c23"
-
-# NOTE: no separate `egui` entry, deliberately. `nih_plug_egui` re-exports
-# the egui this block needs (`nih_plug_egui::egui`), which is what the
-# codegen prose and the reference crate both use. Declaring egui directly
-# would put a second, independently-versioned egui in the dependency tree
-# whose types would not unify with the re-exported one — the same hazard
-# the eframe block documents from the other direction.
+#
+# This block contributes NO crates, deliberately. It models editor topology
+# (panels, regions, purposes), which is host-agnostic; the egui crate itself
+# always arrives from whichever host the project inlines:
+#
+#   eframe (native app)     -> the `eframe` block, via `eframe::egui`
+#   nih-plug (plugin editor) -> the `egui+nih-plug` bridge, via
+#                               `nih_plug_egui::egui`
+#
+# The host also emits `pub use <host>::egui;` at the crate root, and this
+# block's emitted code refers to `crate::egui`. Contributing an egui version
+# here would put a second, independently-versioned egui in the dependency
+# graph alongside the host's, whose types would not unify — a confusing
+# failure well downstream of its cause. Two hosts in one crate now collide
+# at the single `pub use` line instead, which is a clear error at the point
+# that caused it.
+#
+# A block with no crates is valid: `crates` is optional in the deps manifest
+# schema. `recommended_external_deps` still applies — it suggests, it does
+# not inject.
 
 recommended_external_deps:
   - crate: egui_extras
-    purpose: "Knob widget when widget_kind = knob"
+    purpose: "Tables, image loaders and date pickers egui core omits."

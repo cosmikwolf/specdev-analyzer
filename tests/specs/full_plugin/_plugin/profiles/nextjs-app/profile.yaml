@@ -1,0 +1,112 @@
+# Manifest — drives analyzer dispatch for nextjs-app projects.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+name: nextjs-app
+language: typescript
+
+package_json:
+  shape: app                      # "private": true — an application, never published
+  package_manager: "pnpm@10.15.0" # architecture.toml [environment] package_manager overrides
+  engines:
+    node: ">=22.18.0"             # architecture.toml [environment] node overrides
+  type: module
+  scripts:                        # architecture.toml [scripts] overrides key-by-key
+    dev: next dev
+    build: next build
+    start: next start
+    typegen: next typegen
+    check: tsc --noEmit
+    test: vitest run --passWithNoTests
+    e2e: playwright test
+
+# Config files written once when absent by `specdev-analyzer manifest
+# --write`, then externally owned: never rewritten, never gen-recorded.
+# `next build` rewrites tsconfig.json on its first run when Next's keys
+# are missing; the template is authored in the post-build shape so the
+# file stays byte-identical. A deleted config comes back on the next
+# write — that is the "written when absent" rule, not a bug.
+paired_files:
+  - { template_file: templates/tsconfig.json.template,        target: tsconfig.json }
+  - { template_file: templates/next.config.ts.template,       target: next.config.ts }
+  - { template_file: templates/vitest.config.ts.template,     target: vitest.config.ts }
+  - { template_file: templates/playwright.config.ts.template, target: playwright.config.ts }
+  - { template_file: templates/gitignore.template,            target: .gitignore }
+  - { template_file: templates/gitkeep.template,              target: app/.gitkeep }
+
+# Route files derived per module by `specdev-analyzer derive --write`
+# (run by /spec-gen after the manifest, for every module on every gen).
+# A shim re-exports the module body; the body is looked up under `src/`
+# by the module's snake_case name, and a module with no body is skipped.
+# Rules match in declared order, first match wins, so the two error kinds
+# (which need the client directive in the route file itself) come before
+# the general boundary rule. `exclusive: segment` refuses a page and a
+# route handler in one directory before anything is written. Every
+# derived file is recorded with `derived = true`; a shim no rule produces
+# any more is deleted on the next derive. Never hand-edit a shim:
+# `derive --write --accept-edits` is the only exit.
+derived_files:
+  - when: { role: boundary, boundary_kind: error }
+    path: "app${.app_path}/error.tsx"
+    template: templates/shim-client.tsx.template
+  - when: { role: boundary, boundary_kind: global-error }
+    path: "app${.app_path}/global-error.tsx"
+    template: templates/shim-client.tsx.template
+  - when: { role: boundary }
+    path: "app${.app_path}/${.boundary_kind}.tsx"
+    template: templates/shim-default.tsx.template
+  - when: { role: page }
+    path: "app${.app_path}/page.tsx"
+    template: templates/shim-default.tsx.template
+    exclusive: segment
+  - when: { role: layout }
+    path: "app${.app_path}/layout.tsx"
+    template: templates/shim-default.tsx.template
+  - when: { role: app }
+    path: app/layout.tsx
+    template: templates/shim-default.tsx.template
+  - when: { role: route_handler }
+    path: "app${.app_path}/route.ts"
+    template: templates/shim-star.ts.template
+    exclusive: segment
+
+# Compile gates, as data: the codegen skill runs each `steps` argv in
+# order in the project root and records rows under `label`. `fast` is the
+# per-module gate (one row per module in the run): install without
+# `--frozen-lockfile` on purpose (a new dependency must be able to move
+# the lockfile), then route types, then the type check, then the unit
+# tests (`--passWithNoTests`: an app with no test items yet is not a
+# failure). `next-build` is the whole-tree gate (one batch row, no
+# module): it is the only check that catches a client-component rule
+# violation in a route file (`typegen` and `tsc` are blind to it) and
+# it prerenders every static route.
+gates:
+  - label: fast
+    scope: module
+    steps:
+      - [pnpm, install]
+      - [pnpm, exec, next, typegen]
+      - [pnpm, exec, tsc, --noEmit]
+      - [pnpm, exec, vitest, run, --passWithNoTests]
+  - label: next-build
+    scope: batch
+    steps:
+      - [pnpm, exec, next, build]
+
+bootstrap:
+  steps: []                       # standalone app; no workspace machinery
+
+context:
+  module_fields_for_prompt:
+    [items, satisfies, depends_on, context_files, external_deps, app_path, boundary_kind, client_component, environment]
+  context_subcommand_extras:
+    - field: role
+      from_attr: role
+
+reverse:
+  vocabulary: profile             # the profile's own schema is the reverse vocabulary
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

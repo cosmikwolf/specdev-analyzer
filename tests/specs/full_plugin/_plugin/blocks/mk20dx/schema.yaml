@@ -1,0 +1,443 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/mk20dx.v1"
+title: "mk20dx block (v2)"
+description: >
+  Schema fragment contributed by the `mk20dx` block. Adds a namespaced
+  `[mk20dx]` table to `Module` carrying MK20DX chip topology
+  (MK20DX128 / MK20DX256 — the Teensy 3.x family).
+
+  v2 covers pins, interrupts, the clock preset, and the peripheral
+  instances a module owns: PIT timer channels, SPI buses, UARTs, ADCs,
+  DMA channels, and FTM timers. Peripheral entries model OWNERSHIP and
+  the construction-time facts a board fixes (instance, pins, rates);
+  runtime use of a handle is the module's code, not the spec's. I2C,
+  I2S, USB and the small analog blocks (CMP / VREF / DAC) stay out —
+  promote them when a project needs one, with their witness in the same
+  commit.
+
+  Where an entry's field is legal on only one part of the family (SPI1,
+  ADC1, FTM2, DMA channels 4-15 exist on the MK20DX256 only), the schema
+  admits the union and the compiler settles it: the handle's field does
+  not exist on the smaller part, so a wrong instance fails the build.
+  Same philosophy as interrupt vector names.
+
+  This block models topology only. It contributes one crate, the family's
+  HAL (`mk20dx-hal`); the PAC arrives through the HAL's part-selection
+  feature. See `codegen/rust/deps.yaml`.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  mk20dx:
+    type: object
+    additionalProperties: false
+    description: >
+      NOTE: if a validation error names this table, fix the inner error
+      first — an error inside any entry below also surfaces as an
+      "unevaluated properties" finding at the module root.
+    properties:
+      pins:
+        description: >
+          GPIO pins the module owns. Each becomes a typed pin handle
+          moved into the mode the entry declares.
+        type: array
+        items: { $ref: "#/$defs/Pin" }
+      interrupts:
+        description: >
+          Interrupt vectors this module owns, other than the port vectors
+          implied by a pin's `interrupt` trigger. Declaring one records
+          that the module is responsible for the handler — and, more
+          usefully, tells codegen which source flag has to be cleared.
+
+          A PIT timer's interrupt is declared HERE (vector `PIT0`..`PIT3`),
+          not on the timers entry — one fact, one home.
+        type: array
+        items: { $ref: "#/$defs/Interrupt" }
+      clock:
+        description: >
+          The clock-tree preset, declared by AT MOST ONE module in the
+          project — the one that owns chip init. The tree is configured
+          once, before any peripheral exists; every peripheral entry in
+          every module is constructed against the frozen result. Codegen
+          refuses a second declaration (the graph primitives cannot
+          express this uniqueness, so it is a codegen-checked rule — see
+          this block's codegen prose).
+        $ref: "#/$defs/Clock"
+      timers:
+        description: >
+          PIT timer channels the module owns. The chip has four 32-bit
+          down-counters clocked from the bus clock; the PIT is split once
+          in project init and the declared channels are handed to the
+          module.
+        type: array
+        items: { $ref: "#/$defs/Timer" }
+      spi:
+        description: >
+          SPI buses the module owns as master. `sck` / `mosi` / `miso`
+          name entries in this module's own `pins` table (declared with
+          `mode = "alternate"`); the reference is checked at reduction.
+        type: array
+        items: { $ref: "#/$defs/Spi" }
+      uarts:
+        description: >
+          UARTs the module owns. `tx` / `rx` name entries in this
+          module's own `pins` table (declared with `mode = "alternate"`);
+          the reference is checked at reduction.
+        type: array
+        items: { $ref: "#/$defs/Uart" }
+      adcs:
+        description: >
+          ADC instances the module owns. Which input channel a read
+          samples is a call-site fact, not modelled here; the entry
+          carries the construction-time configuration.
+        type: array
+        items: { $ref: "#/$defs/Adc" }
+      dma_channels:
+        description: >
+          DMA channels the module owns, each optionally wired to a DMAMUX
+          request source. The DMA controller is split once in project
+          init and the declared channels are handed to the module.
+        type: array
+        items: { $ref: "#/$defs/DmaChannel" }
+      ftms:
+        description: >
+          FTM timers the module owns, for PWM or manual timer use. Which
+          package pin a channel drives is the pin-mux table's business —
+          declare the pin in `pins` with `mode = "alternate"` and the
+          part's ALT index; the HAL does not connect the two, so neither
+          does this schema.
+        type: array
+        items: { $ref: "#/$defs/Ftm" }
+
+$defs:
+  Identifier:
+    description: snake_case or PascalCase identifier usable as a Rust ident.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  Pin:
+    type: object
+    additionalProperties: false
+    required: [name, port, pin, mode]
+    # An alternate-function pin must say which mux, and nothing else may.
+    # Both branches `required: [mode]` on purpose — a bare `properties`
+    # guard is vacuously TRUE when the key is absent, so without it a pin
+    # omitting `mode` would slip past both.
+    allOf:
+      - if:
+          required: [mode]
+          properties:
+            mode: { const: alternate }
+        then:
+          required: [alt_fn]
+      - if:
+          required: [mode]
+          properties:
+            mode:
+              enum: [push_pull_output, open_drain_output, floating_input,
+                     pull_up_input, pull_down_input]
+        then:
+          not:
+            required: [alt_fn]
+      # An edge or level trigger on a pin the chip is driving is
+      # meaningless — the only transitions are the ones this code caused.
+      - if:
+          required: [mode]
+          properties:
+            mode:
+              enum: [push_pull_output, open_drain_output]
+        then:
+          not:
+            required: [interrupt]
+    properties:
+      name:
+        description: >
+          Name this pin is known by in the module's own code — the role
+          it plays, not its chip coordinates (`status_led`, not `pc5`).
+        $ref: "#/$defs/Identifier"
+      port:
+        description: GPIO port. The chip family exposes five.
+        type: string
+        enum: [A, B, C, D, E]
+      pin:
+        description: Pin number within the port.
+        type: integer
+        minimum: 0
+        maximum: 31
+      mode:
+        description: >
+          The mode the pin is moved into at init. `alternate` hands the
+          pin to a peripheral and requires `alt_fn`; every other value is
+          plain GPIO.
+        type: string
+        enum:
+          - push_pull_output
+          - open_drain_output
+          - floating_input
+          - pull_up_input
+          - pull_down_input
+          - alternate
+      alt_fn:
+        description: >
+          Alternate-function mux index, from the chip's pin-mux table.
+          Required when `mode = "alternate"`, forbidden otherwise. Which
+          index selects which peripheral is a datasheet fact this block
+          does not model — check the pin-mux table for the part.
+        type: integer
+        minimum: 1
+        maximum: 7
+      interrupt:
+        description: >
+          Condition on which this pin raises its port's interrupt. Stated
+          as intent; codegen writes the matching register field.
+
+          The chip raises ONE vector per port, shared by every
+          interrupting pin on it, so a handler dispatches by reading the
+          port's flag register. That is codegen's job, not the spec's —
+          see this block's codegen prose.
+
+          The `dma_*` values request a DMA transfer instead of a CPU
+          interrupt; they do not produce a handler.
+        type: string
+        enum:
+          - rising
+          - falling
+          - either_edge
+          - level_high
+          - level_low
+          - dma_rising
+          - dma_falling
+          - dma_either_edge
+
+  Clock:
+    type: object
+    additionalProperties: false
+    required: [speed]
+    properties:
+      speed:
+        description: >
+          Clock preset, assuming the family's standard 16 MHz crystal.
+          `mhz48` is the MK20DX128 (Teensy 3.0) shape; `mhz72` is the
+          MK20DX256 datasheet maximum; `mhz96` / `mhz120` are the
+          widely-used Teensy 3.1/3.2 overclocks (120 MHz core / 60 MHz
+          bus is the Teensy default). Which presets a part accepts is
+          settled at codegen — see the codegen prose.
+        type: string
+        enum: [mhz48, mhz72, mhz96, mhz120]
+
+  Timer:
+    type: object
+    additionalProperties: false
+    required: [name, channel]
+    properties:
+      name:
+        description: >
+          Role this timer plays (`sequencer_tick`, `scan_timer`), not a
+          restatement of the channel.
+        $ref: "#/$defs/Identifier"
+      channel:
+        description: PIT channel index. The chip has four.
+        type: integer
+        minimum: 0
+        maximum: 3
+      period_us:
+        description: >
+          Period in microseconds, started at init. Omit when the module's
+          own code owns the channel's timing entirely (a time driver, a
+          one-shot) — the channel is then handed over unstarted.
+
+          To take the channel's interrupt, also declare the matching
+          `PIT<channel>` vector in `[[mk20dx.interrupts]]`.
+        type: integer
+        minimum: 1
+
+  Spi:
+    type: object
+    additionalProperties: false
+    required: [name, instance, sck, mosi, miso, baudrate_hz]
+    properties:
+      name:
+        description: Role this bus plays (`main_bus`, `display_spi`).
+        $ref: "#/$defs/Identifier"
+      instance:
+        description: >
+          SPI instance. 1 exists on the MK20DX256 only — a wrong instance
+          fails the build at the peripheral field.
+        type: integer
+        enum: [0, 1]
+      sck:
+        description: >
+          Name of this module's `pins` entry carrying the SCK function
+          (declared with `mode = "alternate"` and the part's ALT index).
+          Checked at reduction; a name that resolves to nothing is a
+          validation error.
+        $ref: "#/$defs/Identifier"
+      mosi:
+        description: Name of this module's `pins` entry carrying MOSI.
+        $ref: "#/$defs/Identifier"
+      miso:
+        description: Name of this module's `pins` entry carrying MISO.
+        $ref: "#/$defs/Identifier"
+      baudrate_hz:
+        description: >
+          Target SCK frequency in Hz. The hardware divides the bus clock,
+          so the achieved rate is the nearest divisor at or below this —
+          a design target, not a guarantee.
+        type: integer
+        minimum: 1
+      mode:
+        description: SPI mode (CPOL/CPHA). Default 0.
+        type: integer
+        enum: [0, 1, 2, 3]
+
+  Uart:
+    type: object
+    additionalProperties: false
+    required: [name, instance, tx, rx, baudrate]
+    properties:
+      name:
+        description: Role this UART plays (`midi`, `debug_console`).
+        $ref: "#/$defs/Identifier"
+      instance:
+        description: UART instance. Both parts expose 0-2.
+        type: integer
+        enum: [0, 1, 2]
+      tx:
+        description: >
+          Name of this module's `pins` entry carrying TX (declared with
+          `mode = "alternate"`). Checked at reduction.
+        $ref: "#/$defs/Identifier"
+      rx:
+        description: Name of this module's `pins` entry carrying RX.
+        $ref: "#/$defs/Identifier"
+      baudrate:
+        description: Baud rate in Hz.
+        type: integer
+        minimum: 1
+      parity:
+        description: Parity. Default none.
+        type: string
+        enum: [none, even, odd]
+      word_length:
+        description: Data bits per frame. Default eight.
+        type: string
+        enum: [bits8, bits9]
+
+  Adc:
+    type: object
+    additionalProperties: false
+    required: [name, instance]
+    properties:
+      name:
+        description: Role this ADC plays (`cv_inputs`, `pot_scan`).
+        $ref: "#/$defs/Identifier"
+      instance:
+        description: >
+          ADC instance. 1 exists on the MK20DX256 only.
+        type: integer
+        enum: [0, 1]
+      resolution:
+        description: Conversion resolution. Default the HAL's (10-bit).
+        type: string
+        enum: [bits8, bits10, bits12, bits16]
+      averaging:
+        description: Hardware sample averaging. Default none.
+        type: string
+        enum: [none, x4, x8, x16, x32]
+      calibrate:
+        description: >
+          Run the hardware self-calibration at init. Default true —
+          calibration is what makes the stated resolution real. Setting
+          this false is a deliberate accuracy trade, not an omission.
+        type: boolean
+
+  DmaChannel:
+    type: object
+    additionalProperties: false
+    required: [name, channel]
+    properties:
+      name:
+        description: Role this channel plays (`display_flush`, `midi_rx`).
+        $ref: "#/$defs/Identifier"
+      channel:
+        description: >
+          DMA channel index. Channels 4-15 exist on the MK20DX256 only.
+        type: integer
+        minimum: 0
+        maximum: 15
+      source:
+        description: >
+          DMAMUX request source wired to this channel at init, spelled as
+          the HAL's `DmaSource` constant name (`SPI0_TX`, `UART2_RX`,
+          `PORTB`). Whether the name exists is settled by the compiler
+          when the source is set, so this block does not enumerate the
+          request table. Omit for software-triggered transfers.
+        type: string
+        pattern: "^[A-Z][A-Z0-9_]*$"
+
+  Ftm:
+    type: object
+    additionalProperties: false
+    required: [name, instance]
+    properties:
+      name:
+        description: Role this timer plays (`led_pwm`, `trigger_clock`).
+        $ref: "#/$defs/Identifier"
+      instance:
+        description: >
+          FTM instance. FTM0 has 8 channels; FTM1/FTM2 have 2. FTM2
+          exists on the MK20DX256 only.
+        type: integer
+        enum: [0, 1, 2]
+      frequency_hz:
+        description: >
+          PWM frequency, configured and started at init; the module
+          receives running channel handles. Omit when the module's own
+          code configures the timer manually (combine mode, input
+          capture) — it then receives the split parts stopped.
+        type: integer
+        minimum: 1
+      channels:
+        description: >
+          FTM channels the module uses for edge-aligned PWM output. Each
+          becomes a channel handle configured for PWM. Meaningful with
+          `frequency_hz`; without it the module configures channels
+          itself.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, channel]
+          properties:
+            name:
+              description: Role this output plays (`gate_1`, `backlight`).
+              $ref: "#/$defs/Identifier"
+            channel:
+              description: Channel index within the FTM instance.
+              type: integer
+              minimum: 0
+              maximum: 7
+
+  Interrupt:
+    type: object
+    additionalProperties: false
+    required: [name, vector]
+    properties:
+      name:
+        description: >
+          Name for the role this interrupt plays (`tick`, `dma_complete`),
+          not a restatement of the vector.
+        $ref: "#/$defs/Identifier"
+      vector:
+        description: >
+          Interrupt vector name, spelled exactly as the chip's PAC spells
+          it (`PIT0`, `SPI0`, `DMA3`). Whether the name exists is settled
+          by the compiler when the handler is bound, so this block does
+          not enumerate the chip's vector table.
+
+          Which peripheral family a vector belongs to — and therefore how
+          its flag is cleared — is derived from this name by codegen, so
+          there is no separate field for it.
+        $ref: "#/$defs/Identifier"

@@ -78,6 +78,20 @@ properties:
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  source_file:
+    description: >
+      Explicit source-file override for items[] extraction and sync
+      (#101(a)). Project-root-relative path (the same base as
+      `[paths].source`), e.g. `src/tasks/blink.rs`, `src/display/canvas.rs`
+      or `src/lib.rs` for a single-file crate root. When absent the
+      analyzer resolves by convention: `<paths.source>/<snake_case(name)>.<ext>`
+      plus the language adapter's own candidates (Rust also tries
+      `<snake_case(name)>/mod.rs`). Precedence: this override, then the
+      adapter candidates, then no source (pre-implementation module — no
+      items extracted, never an error). A declared file that does not
+      exist on disk resolves to no source as well.
+    type: string
+    minLength: 1
   context_files:
     description: >
       Per-module list of project-prose files inlined into the codegen

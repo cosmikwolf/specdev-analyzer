@@ -1,0 +1,118 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml"
+title: "Cargo build profiles (closed subset, v1)"
+description: |
+  Shape of the `profiles` table on a Rust project's `architecture.toml`:
+  Cargo `[profile.<name>]` settings. A closed subset of Cargo's profile
+  grammar — the nine knobs projects set, plus per-package overrides of
+  the subset Cargo allows in an override. Anything outside the subset is
+  a validate error, never a passthrough; admitting a key is a schema
+  change with a built witness. Not admitted: `build-override`,
+  `rustflags`, `trim-paths`, `split-debuginfo`, `rpath`.
+
+  Profiles are workspace-ROOT-only. Cargo ignores a profile declared in
+  a member crate's manifest (with a warning), so a member architecture
+  that declares `profiles` is a validate error naming the root, and the
+  renderer refuses it rather than emit a table Cargo would drop. A
+  standalone crate declares them in its own architecture.toml.
+
+  Profiles opt in with
+  `$ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"`.
+
+$defs:
+  Profiles:
+    description: |
+      `profiles.<name>`: the four built-in profiles by name, plus custom
+      profiles (any other lowercase name), which must say what they
+      `inherits`. Emitted in the order dev, release, test, bench, then
+      custom names lex-sorted.
+    type: object
+    propertyNames:
+      pattern: "^[a-z][a-z0-9_-]*$"
+    properties:
+      dev:     { $ref: "#/$defs/Profile" }
+      release: { $ref: "#/$defs/Profile" }
+      test:    { $ref: "#/$defs/Profile" }
+      bench:   { $ref: "#/$defs/Profile" }
+    additionalProperties: { $ref: "#/$defs/CustomProfile" }
+
+  Profile:
+    description: A built-in profile's settings — the nine knobs plus package overrides.
+    type: object
+    additionalProperties: false
+    properties:
+      opt-level:        { $ref: "#/$defs/OptLevel" }
+      debug:            { $ref: "#/$defs/Debug" }
+      lto:              { $ref: "#/$defs/Lto" }
+      codegen-units:    { $ref: "#/$defs/CodegenUnits" }
+      panic:            { $ref: "#/$defs/Panic" }
+      strip:            { $ref: "#/$defs/Strip" }
+      overflow-checks:  { type: boolean }
+      debug-assertions: { type: boolean }
+      incremental:      { type: boolean }
+      package:          { $ref: "#/$defs/PackageOverrides" }
+
+  CustomProfile:
+    description: |
+      A custom profile. `inherits` is required and names the profile it
+      starts from — a built-in, or another custom profile.
+    type: object
+    additionalProperties: false
+    required: [inherits]
+    properties:
+      inherits:
+        type: string
+        pattern: "^[a-z][a-z0-9_-]*$"
+      opt-level:        { $ref: "#/$defs/OptLevel" }
+      debug:            { $ref: "#/$defs/Debug" }
+      lto:              { $ref: "#/$defs/Lto" }
+      codegen-units:    { $ref: "#/$defs/CodegenUnits" }
+      panic:            { $ref: "#/$defs/Panic" }
+      strip:            { $ref: "#/$defs/Strip" }
+      overflow-checks:  { type: boolean }
+      debug-assertions: { type: boolean }
+      incremental:      { type: boolean }
+      package:          { $ref: "#/$defs/PackageOverrides" }
+
+  PackageOverrides:
+    description: |
+      `package.<crate>` overrides, keyed by crate name (Cargo's
+      package-name grammar). Cargo forbids `panic`, `lto` and `rpath` in
+      an override, so only the seven per-package knobs are admitted.
+      Emitted right after the parent profile, crates lex-sorted.
+    type: object
+    propertyNames:
+      pattern: "^[A-Za-z0-9_-]+$"
+    additionalProperties: { $ref: "#/$defs/PackageOverride" }
+
+  PackageOverride:
+    type: object
+    additionalProperties: false
+    properties:
+      opt-level:        { $ref: "#/$defs/OptLevel" }
+      debug:            { $ref: "#/$defs/Debug" }
+      codegen-units:    { $ref: "#/$defs/CodegenUnits" }
+      strip:            { $ref: "#/$defs/Strip" }
+      overflow-checks:  { type: boolean }
+      debug-assertions: { type: boolean }
+      incremental:      { type: boolean }
+
+  OptLevel:
+    description: "`0`, `1`, `2`, `3`, `\"s\"` or `\"z\"` — Cargo's spelling."
+    enum: [0, 1, 2, 3, "s", "z"]
+  Debug:
+    description: |
+      `true` / `false`, the levels `0` / `1` / `2`, or the named forms
+      `"none"`, `"line-tables-only"`, `"limited"`, `"full"`.
+    enum: [true, false, 0, 1, 2, "none", "line-tables-only", "limited", "full"]
+  Lto:
+    description: "`true` / `false`, or `\"fat\"`, `\"thin\"`, `\"off\"`."
+    enum: [true, false, "fat", "thin", "off"]
+  CodegenUnits:
+    type: integer
+    minimum: 1
+  Panic:
+    enum: ["unwind", "abort"]
+  Strip:
+    description: "`true` / `false`, or `\"none\"`, `\"symbols\"`, `\"debuginfo\"`."
+    enum: [true, false, "none", "symbols", "debuginfo"]

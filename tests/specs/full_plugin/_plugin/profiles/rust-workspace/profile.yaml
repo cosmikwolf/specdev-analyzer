@@ -20,6 +20,15 @@ cargo_toml:
     typed_slots: []
     open_arrays: []
 
+# Compile gate, as data: the codegen skill runs each `steps` argv in order
+# in the project root and records one row per module under `label`.
+# Warnings do not fail the gate; `cargo check` errors do.
+gates:
+  - label: cargo-check
+    scope: module
+    steps:
+      - [cargo, check, --quiet]
+
 bootstrap:
   steps: [emit_workspace_root, emit_member_stubs, walk_members]
 

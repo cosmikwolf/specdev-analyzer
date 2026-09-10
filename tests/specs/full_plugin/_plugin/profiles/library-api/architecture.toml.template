@@ -46,3 +46,35 @@
 # name = "serde"
 # description = "Serialize/deserialize support via serde."
 # depends_on = ["std"]
+
+# ---------------------------------------------------------------------------
+# Crate-wide dependencies — crates the library uses as a whole, or
+# workspace-inherited / path deps on sibling crates. Every entry lands in
+# Cargo.toml [dependencies] (`test_only = true` → [dev-dependencies]).
+# Keep a crate that only one module needs in that module's external_deps.
+# ---------------------------------------------------------------------------
+# [[external_deps]]
+# crate = "serde"
+# version = "1.0"
+# source = "workspace"
+# features = ["derive"]
+
+# [[external_deps]]
+# crate = "proptest"
+# version = "1.0"
+# source = "workspace"
+# test_only = true
+
+# ---------------------------------------------------------------------------
+# Cargo build profiles ([profile.*]) — for a STANDALONE crate only. In a
+# workspace, profiles live in the workspace root's architecture.toml;
+# Cargo ignores them in a member manifest and validate rejects them here.
+# Closed subset: opt-level, debug, lto, codegen-units, panic, strip,
+# overflow-checks, debug-assertions, incremental, plus package.<crate>
+# overrides (no panic / lto there).
+# ---------------------------------------------------------------------------
+# EXAMPLE: a smaller release binary.
+# [profiles.release]
+# lto = "fat"
+# codegen-units = 1
+# strip = true

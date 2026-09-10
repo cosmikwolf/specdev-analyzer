@@ -357,6 +357,17 @@ pub fn module_input_hash(layout: &LayoutContext, module_name: &str) -> Result<St
     Ok(crate::hash::content_hash(prompt.as_bytes()))
 }
 
+/// [`module_input_hash`] without the budget warning. Same bytes, same
+/// digest. For callers that hash every module on every run (`derive`)
+/// and would otherwise print one `CONTEXT-003` line per module per gen;
+/// the warning belongs to the prompt-emitting path.
+pub fn module_input_hash_quiet(layout: &LayoutContext, module_name: &str) -> Result<String> {
+    let modules = [module_name.to_string()];
+    let mut out = assemble_preamble(layout, &modules)?;
+    out.push_str(&assemble_tail(layout, module_name)?);
+    Ok(crate::hash::content_hash(out.as_bytes()))
+}
+
 /// Build the test-item verification context block.
 ///
 /// Walks the module's `items[]` for entries with `test = true`, and for

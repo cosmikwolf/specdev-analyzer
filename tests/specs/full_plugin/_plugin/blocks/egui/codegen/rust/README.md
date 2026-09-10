@@ -1,103 +1,167 @@
 # egui — Rust codegen conventions
 
 These conventions describe how an `egui` block table on a module spec
-maps to Rust source. They layer on top of the audio-plugin profile's
-`module.conventions.md`; concerns specific to the editor frame, panel
-emission, and per-region scaffolding live here.
+maps to Rust source. They layer on top of the project's profile's
+`module.conventions.md`; concerns specific to panel emission and
+per-region scaffolding live here.
 
-The block targets [egui](https://github.com/emilk/egui) via
-[nih_plug_egui](https://github.com/robbert-vdh/nih-plug/tree/master/nih_plug_egui)
-— nih-plug's egui adapter. The block models **topology only** (D47):
-panels and regions describe WHERE things go; parameter→widget bindings
-live in the `egui+nih-plug` bridge.
+The block models **topology only** (EGUI-TOPOLOGY-ONLY): panels and
+regions describe WHERE things go. It is **host-neutral**
+(EGUI-NEEDS-A-HOST): it never opens a window and never creates an egui
+context. Value→widget binding lives in a bridge against whichever unit
+owns the values.
 
-## Crate dependencies
+## Crate dependencies and the egui path
 
-This block contributes one crate:
-
-```toml
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "<pin>" }
-```
-
-`nih_plug_egui` re-exports the egui types this block needs
-(`egui::Context`, `egui::Ui`, panel constructors, etc.) — no separate
-`egui` dep is required. Pin the same nih-plug rev as the `nih-plug`
-block; they ship from the same repo.
-
-**Do NOT** add `eframe` or `egui_extras` from this block — those are
-the project's choice (`egui_extras` is commonly added when the bridge
-needs knob primitives; project lands it in their architecture
-`[[external_deps]]`).
-
-## Editor closure shape
-
-Every plugin shell module that carries `[egui]` emits one
-`create_egui_editor` call wired into the plugin's `editor()` method.
-The editor closure runs per frame on the UI thread; it captures
-`Arc<MyParams>` and any `Arc<Atomic*>` meter cells, but NEVER captures
-the engine struct (the engine lives behind `Arc<Mutex<...>>` or in
-audio-thread-owned state — passing it through the editor is a thread-
-safety violation).
-
-Skeleton emitted into the plugin shell module:
+This block contributes **no crates**. egui arrives from the host, and
+the host emits one line at the crate root:
 
 ```rust
-use nih_plug::prelude::*;
-use nih_plug_egui::{create_egui_editor, EguiState};
-use std::sync::Arc;
+pub use eframe::egui;          // when the `eframe` block is inlined
+pub use nih_plug_egui::egui;   // when the `egui+nih-plug` bridge is inlined
+```
 
-#[derive(Default)]
-struct EditorState {
-    // editor-thread state goes here (cached UI values, drag-in-progress
-    // flags, preset-picker open/closed). NEVER engine state.
+Every file this block's prose emits opens with:
+
+```rust
+use crate::egui;
+```
+
+and refers to egui types through it — `egui::CentralPanel`,
+`egui::Grid`, `egui::Context`, `egui::Ui`. **Never emit a direct
+`egui::` path from an `egui` crate dependency, and never name a host's
+crate here.** The alias is the whole mechanism: it keeps this block's
+emission identical under every host, and it makes two hosts in one
+crate fail at that single line instead of resolving two
+semver-incompatible eguis whose types refuse to unify far downstream.
+
+### When no host block is inlined
+
+egui also runs under integrations this tree ships no block for — a
+hand-rolled `winit` + `egui-wgpu` / `egui_glow` stack, an existing
+application that already owns its window and event loop and wants egui
+as a tools overlay, or headless use in tests. There the **project is
+the host**.
+
+In that case the project declares `egui` itself under
+`architecture.toml` `[[external_deps]]`, which makes it a **direct**
+dependency — so emitted code refers to plain **`egui::`** and there is
+no alias at all. Do not emit `crate::egui`, and do not emit a
+crate-root `pub use`: with no unit owning that line, it would have to
+be hand-added to a spec-generated, lineage-recorded crate root, and the
+next `/spec-gen` would delete it.
+
+Everything else in this document is unchanged — only the path differs.
+Note that not every integration crate re-exports egui (`eframe`,
+`nih_plug_egui`, `egui-winit` and `bevy_egui` do; `egui-wgpu` and
+`egui_glow` do not), which is a second reason the direct declaration is
+the right move when no host block is in play.
+
+**Do NOT** add `eframe`, `nih_plug_egui`, or `egui_extras` from this
+block. The first two are hosts; `egui_extras` is the project's choice
+and lands in its architecture `[[external_deps]]`.
+
+## Two panel API generations — determine which one applies FIRST
+
+egui changed its panel API, and the two shipped hosts sit one on each
+side of the change. **Before emitting any panel code, determine which
+form applies**, then use that form throughout. Everything else in this
+document — regions, layouts, purposes — is identical in both.
+
+Determine it by feature, not by memory:
+
+| If the host's egui has… | Use | Which host |
+|---|---|---|
+| `egui::Panel` and `show` taking a `&mut Ui` | **modern form** | `eframe` (egui 0.36) |
+| `egui::SidePanel` / `egui::TopBottomPanel` and `show` taking a `&Context` | **legacy form** | `nih_plug_egui` (egui 0.31) |
+
+The version history behind that, for orientation only — the feature
+check above is the rule:
+
+| egui | Panel types | `show` takes | Sizing |
+|---|---|---|---|
+| ≤ 0.33 | `SidePanel` / `TopBottomPanel` / `CentralPanel` | `&Context` | `default_width` / `default_height` |
+| 0.34 | unified `Panel` + `CentralPanel` | `&Context` | `default_size` |
+| ≥ 0.35 | unified `Panel` + `CentralPanel` | `&mut Ui` | `default_size` |
+
+Both forms below are compiled in this block's reference crate
+(`panels` and `panels_legacy`), so neither is written from memory.
+
+## What this block emits
+
+One function per module carrying `[egui]`, holding every panel in
+declaration order. **The parameter type is the first thing the form
+decides**, because it is what the host hands its paint callback:
+
+```rust
+use crate::egui;
+
+/// Modern form — the host hands its paint callback a `Ui`.
+pub fn draw(ui: &mut egui::Ui) {
+    // panels emit here, in the order declared in the spec
 }
 
-fn editor() -> Option<Box<dyn Editor>> {
-    let editor_state = EguiState::from_size(<default_size.width>, <default_size.height>);
-    let params = self.params.clone();
-    create_egui_editor(
-        editor_state,
-        EditorState::default(),
-        |_ctx, _state| {},  // build_fn — runs once
-        move |ctx, setter, state| {
-            // update_fn — runs per frame
-            // panel emission goes here, in the order declared in spec
-        },
-    )
+/// Legacy form — the host hands its paint callback a `Context`.
+pub fn draw(ctx: &egui::Context) {
+    // panels emit here, in the order declared in the spec
 }
 ```
 
-The `editor()` method is implemented on the plugin (`impl Plugin for
-MyPlugin { fn editor(...) -> ... }`) — not in this module's body. The
-audio-plugin profile's prose covers the `impl Plugin` skeleton; this
-block's prose fills in the editor closure body.
+The host's prose owns the callback that calls `draw` — an
+`eframe::App::ui` body, a plugin editor's update closure, whatever the
+host provides. This block is silent on how that callback comes to
+exist.
 
-When `[egui].default_size` is omitted, codegen falls back to
-`EguiState::from_size(400, 300)` (egui's conventional small editor).
-
-When `[egui].resizable = true`, codegen calls
-`editor_state.set_resizable(true)` after construction.
+**A bridge may extend this signature.** Widget stanzas composed into
+`parameter_controls` regions need their values in scope, so a bridge
+that fills those regions specifies the extra parameters in its own
+prose (the `egui+nih-plug` bridge adds a `ParamSetter` and the params
+handle). The panel and region structure inside the body is unchanged
+by that extension.
 
 ## Panel emission
 
-Panels emit in the order they appear in `[[egui.panels]]`. egui has a
-strict ordering rule for the frame builder: side / top / bottom panels
-must come BEFORE the central panel, because each panel removes its
-strip from the available area and the central panel fills what's
-left. Codegen reorders if needed but emits in spec order otherwise:
+Panels emit in the order they appear in `[[egui.panels]]`. Side / top /
+bottom panels must come BEFORE the central panel, because each panel
+claims its strip and the central panel fills what's left. Codegen
+reorders if needed but emits in spec order otherwise.
 
-| `kind`        | egui type                                |
-|---------------|------------------------------------------|
-| `central`     | `egui::CentralPanel::default()`           |
-| `side_left`   | `egui::SidePanel::left(<id>)`             |
-| `side_right`  | `egui::SidePanel::right(<id>)`            |
-| `top`         | `egui::TopBottomPanel::top(<id>)`         |
-| `bottom`      | `egui::TopBottomPanel::bottom(<id>)`      |
+### Modern form (`egui::Panel`, `show` takes a `&mut Ui`)
 
-Worked example for a header + main editor:
+| `kind`        | egui type                          | Sizing            |
+|---------------|------------------------------------|-------------------|
+| `central`     | `egui::CentralPanel::default()`     | —                 |
+| `side_left`   | `egui::Panel::left(<id>)`           | `.default_size(<width>)`  |
+| `side_right`  | `egui::Panel::right(<id>)`          | `.default_size(<width>)`  |
+| `top`         | `egui::Panel::top(<id>)`            | `.default_size(<height>)` |
+| `bottom`      | `egui::Panel::bottom(<id>)`         | `.default_size(<height>)` |
 
 ```rust
-move |ctx, setter, state| {
+pub fn draw(ui: &mut egui::Ui) {
+    egui::Panel::top("header")
+        .default_size(40.0)
+        .show(ui, |ui| {
+            // regions in the "header" panel emit here
+        });
+
+    egui::CentralPanel::default().show(ui, |ui| {
+        // regions in the "main" panel emit here
+    });
+}
+```
+
+### Legacy form (`SidePanel` / `TopBottomPanel`, `show` takes a `&Context`)
+
+| `kind`        | egui type                                | Sizing                     |
+|---------------|------------------------------------------|----------------------------|
+| `central`     | `egui::CentralPanel::default()`           | —                          |
+| `side_left`   | `egui::SidePanel::left(<id>)`             | `.default_width(<width>)`  |
+| `side_right`  | `egui::SidePanel::right(<id>)`            | `.default_width(<width>)`  |
+| `top`         | `egui::TopBottomPanel::top(<id>)`         | `.default_height(<height>)`|
+| `bottom`      | `egui::TopBottomPanel::bottom(<id>)`      | `.default_height(<height>)`|
+
+```rust
+pub fn draw(ctx: &egui::Context) {
     egui::TopBottomPanel::top("header")
         .default_height(40.0)
         .show(ctx, |ui| {
@@ -110,34 +174,38 @@ move |ctx, setter, state| {
 }
 ```
 
-Per-panel attributes:
-- `width` (only for `side_left` / `side_right`) → `.default_width(<width>)`
-- `height` (only for `top` / `bottom`) → `.default_height(<height>)`
+Per-panel attributes — the spec fields are the same in both forms, only
+the setter differs (see the sizing column of the form's table above):
+
+- `width` (only for `side_left` / `side_right`)
+- `height` (only for `top` / `bottom`)
 
 Codegen rejects `width` on non-side panels and `height` on non-top/bottom
 panels with a warning comment (the schema allows the fields on any
 panel kind, but the egui types only honor them for the matching
 positions).
 
+`[egui].default_size` and `[egui].resizable` are consumed by the
+**host**, not here — a host with no size of its own reads them, and a
+host that declares its own window geometry ignores them. This block
+emits nothing for either field.
+
 ## Per-region scaffolding by purpose
 
-Inside each panel's `.show(ctx, |ui| { ... })` closure, regions emit
-in declaration order. The region's `purpose` drives the scaffold:
+Inside each panel's `.show(…, |ui| { ... })` closure, regions emit in
+declaration order. **This section is identical in both panel forms** —
+the closure hands you a `&mut Ui` either way, and every call below is
+on that `Ui`. The region's `purpose` drives the scaffold:
 
 ### `parameter_controls`
 
-The bridge owns this. The egui block emits a placeholder marker; the
-`egui+nih-plug` bridge's prose composes parameter-widget calls into
-the region body. Worked example for a region with `layout = "grid"`,
-`columns = 2`:
+A bridge owns this. The egui block emits a placeholder marker; a
+bridge's prose composes widget calls into the region body. Worked
+example for a region with `layout = "grid"`, `columns = 2`:
 
 ```rust
 egui::Grid::new("param_grid").num_columns(2).show(ui, |ui| {
-    // BRIDGE FILL: parameter_widgets[] entries with region = "param_grid"
-    // emit here. Each becomes:
-    //   ui.label(<param.name>);
-    //   <widget_call>;
-    //   ui.end_row();
+    // BRIDGE FILL: value-bound widgets for region "param_grid" emit here.
 });
 ```
 
@@ -145,7 +213,7 @@ For `layout = "vertical"` (default):
 
 ```rust
 ui.vertical(|ui| {
-    // BRIDGE FILL: parameter_widgets[] entries
+    // BRIDGE FILL: value-bound widgets for region "<id>" emit here.
 });
 ```
 
@@ -153,7 +221,7 @@ For `layout = "horizontal"`:
 
 ```rust
 ui.horizontal(|ui| {
-    // BRIDGE FILL: parameter_widgets[] entries
+    // BRIDGE FILL: value-bound widgets for region "<id>" emit here.
 });
 ```
 
@@ -161,55 +229,60 @@ When `layout` is omitted, codegen defaults to `vertical`. When
 `columns` is set on a non-grid layout, codegen emits a warning
 comment and ignores it.
 
+**With no bridge inlined**, the marker becomes a hand-authored body —
+the region is still structurally declared, it just has no unit
+supplying its widgets.
+
 ### `metering`
 
-The region reads from audio-thread-published state via `Arc<Atomic*>`
-cells. Codegen emits the read boilerplate but leaves the visualization
-body for hand-authoring (proper meter rendering depends on cosmetic
-preference: bar / numeric / LED-style).
+The region displays values produced somewhere else, typically another
+thread publishing through `Arc<Atomic*>` cells. Codegen emits the read
+boilerplate but leaves the visualization body for hand-authoring
+(rendering depends on cosmetic preference: bar / numeric / LED-style).
+
+The published cell reaches the emitted code as a parameter — a
+`metering` region is one of the cases that extends the signature:
 
 ```rust
-ui.vertical(|ui| {
-    // Read meter values published by the audio thread.
-    // Plugin shell module declares these as Arc<AtomicF32> fields:
-    //
-    //   pub struct MyPlugin {
-    //       params: Arc<MyPluginParams>,
-    //       output_level: Arc<AtomicF32>,  // populated in process()
-    //   }
-    //
-    let level = self.output_level.load(std::sync::atomic::Ordering::Relaxed);
-    // TODO: render meter — bar / LED / numeric per author preference.
-    // Example: ui.label(format!("{:.1} dB", 20.0 * level.log10()));
-    ui.label("METERING (hand-authored)");
-});
+pub fn metering(ui: &mut egui::Ui, level: &std::sync::atomic::AtomicU32) {
+    ui.vertical(|ui| {
+        // Read a value published by the producing thread. `level` is a
+        // shared cell the producer writes and this side only reads.
+        let level = f32::from_bits(level.load(std::sync::atomic::Ordering::Relaxed));
+        // TODO: render — bar / LED / numeric per author preference.
+        // Example: ui.label(format!("{level:.2}"));
+        let _ = level;
+        ui.label("METERING (hand-authored)");
+    });
+}
 ```
 
-The audio-plugin profile prose covers the audio-thread side
-(allocate `Arc<AtomicF32>` in `initialize()`, write in `process()`).
+Emission of the **producing** side is not this block's concern; the
+project's profile prose owns it, including any thread-model rules about
+where the value may be written from.
 
 ### `preset_selector`
 
-Standard preset-picker pattern: combo box + prev/next buttons +
-save/load. Codegen emits the layout; preset list / persistence is
-hand-authored or comes from a separate preset-management facility
-(out of scope for v1).
+Standard saved-configuration picker: combo box + prev/next buttons +
+save/load. Codegen emits the layout; the configuration list and its
+persistence are hand-authored or come from a separate facility (out of
+scope for v1).
 
 ```rust
 ui.horizontal(|ui| {
     if ui.button("◀").clicked() {
-        // TODO: previous preset
+        // TODO: previous entry
     }
     egui::ComboBox::from_label("Preset")
-        .selected_text(/* current preset name */)
+        .selected_text(/* current entry name */)
         .show_ui(ui, |ui| {
-            // TODO: enumerate presets
+            // TODO: enumerate entries
         });
     if ui.button("▶").clicked() {
-        // TODO: next preset
+        // TODO: next entry
     }
     if ui.button("Save").clicked() {
-        // TODO: save preset
+        // TODO: save current
     }
 });
 ```
@@ -223,12 +296,12 @@ the body open:
 ui.vertical(|ui| {
     // FREE-FORM REGION: <region.id>
     // Hand-authored body. Author owns rendering — typical uses:
-    // oscilloscope / spectrum analyzer / EQ curve / modulation matrix /
-    // waveform editor / XY pad.
+    // plots / spectrum analyzers / curve editors / graph views /
+    // XY pads / waveform displays.
     //
-    // Read-only state should come from `Arc<Atomic*>` or lock-free
-    // ring buffers published by the audio thread, never the engine
-    // struct itself.
+    // Read-only state should arrive through shared cells or channels
+    // from whatever produces it, never by holding a reference to a
+    // producer that lives on another thread.
 });
 ```
 
@@ -260,46 +333,23 @@ ui.vertical(|ui| {
 For `grid`, `columns` must be set; codegen rejects unset columns on
 grid layouts with a warning.
 
-## State ownership rule
+## Interaction with the host, the profile, and bridges
 
-The editor closure captures **`Arc<MyParams>` and any `Arc<Atomic*>`
-meter cells, NEVER the engine struct**. Three reasons:
+This block describes WHERE things go. Three neighbours fill in the
+rest:
 
-1. The editor runs on the UI thread; the engine runs on the audio
-   thread. Sharing engine state requires `Arc<Mutex<...>>` and locking
-   on the audio path, which violates the realtime contract (no locks).
-2. egui closures are `'static` — capturing references doesn't compile
-   without `Arc`-wrapping. Wrapping the engine in `Arc<Mutex<...>>`
-   means the audio path locks every block.
-3. The decoupling matches nih-plug's design — params + meters are the
-   thread-safe surface; everything else is per-thread.
+- **The host** (the `eframe` block, or the `egui+nih-plug` bridge)
+  owns the crate-root `pub use …::egui;` alias, the window or editor
+  the interface lives in, and the paint callback that calls `draw`.
+- **The project's profile** owns module and struct shape, Cargo.toml
+  shape, and any thread-model rules for the values regions display.
+- **A bridge** owns value→widget binding — the placeholder markers
+  this block leaves in `parameter_controls` regions.
 
-When the editor needs to display engine-derived state (output level,
-voice count active), the plugin shell module publishes via
-`Arc<AtomicF32>` / `Arc<AtomicUsize>` updated from `process()`. The
-editor reads them with `.load(Relaxed)`. Codegen prose for `metering`
-regions documents this pattern; emission of the audio-thread side
-lives in the user's `process()` body.
+This block is silent on widget rendering, on the shape of the values
+being rendered, on window and event-loop concerns, and on Cargo.toml
+content. Read those documents for those concerns.
 
-## Interaction with audio-plugin + nih-plug conventions
-
-This block describes WHERE controls go. Two siblings fill in WHAT
-goes there:
-
-- **`nih-plug` block** owns parameter declaration (`[[nih_plug.parameters]]`)
-  and the plugin trait skeleton (`impl Plugin for MyPlugin`). The
-  `Arc<MyParams>` the editor closure captures comes from the
-  `#[derive(Params)]` struct that block's prose emits.
-- **`egui+nih-plug` bridge** owns parameter↔widget bindings
-  (`[[bindings."egui+nih-plug".parameter_widgets]]`). The bridge's
-  prose composes per-binding widget calls into `parameter_controls`
-  regions (the placeholder this block leaves open).
-
-This block is silent on widget rendering, on parameter struct shape,
-on plugin-trait constants, on Cargo.toml shape (the audio-plugin
-profile prose owns crate-type emission). Read those documents for
-those concerns.
-
-**Do NOT** emit parameter-widget calls in this block's prose — that's
-the bridge's responsibility. **Do NOT** emit `impl Plugin` content
-here — that's the nih-plug block's responsibility.
+**Do NOT** emit widget calls bound to declared values in this block's
+prose — that's a bridge's responsibility. **Do NOT** emit window,
+editor, or event-loop setup here — that's the host's.

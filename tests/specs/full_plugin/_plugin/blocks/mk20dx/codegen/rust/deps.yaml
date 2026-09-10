@@ -1,0 +1,45 @@
+# Manifest — Cargo deps the mk20dx block contributes.
+# Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
+#
+# Versions resolved from the registry at authoring time, not recalled:
+# mk20dx-hal 0.1.1 (2026-08-31), which depends on mk20d7-pac / mk20d5-pac
+# 0.1.1 by version.
+#
+# NAMING TRAP — name the HAL alone, never a PAC. `mk20d7` on crates.io is
+# an unrelated 2018 crate; the real PACs are `mk20d7-pac` / `mk20d5-pac`,
+# renamed back to `mk20d7` / `mk20d5` inside the HAL's manifest via
+# `package =`. The `mk20d7` feature below is what pulls the right PAC in.
+#
+# The `mk20d7` feature selects the MK20DX256 (Teensy 3.1/3.2) part. The
+# family's other part, MK20DX128 (Teensy 3.0), needs `mk20d5` instead —
+# there is no conditional mechanism in a deps manifest, so a mk20d5
+# project overrides the feature list in its own spec.
+#
+# `rt` brings the vector table and interrupt support; `critical-section`
+# forwards to the PAC's critical-section implementation, which
+# `Peripherals::take()` needs.
+
+crates:
+  - name: mk20dx-hal
+    version: "^0.1.1"
+    features: [mk20d7, rt, critical-section]
+    source: crates-io
+
+  # The PIT emission's period literal (`600u32.micros()`) needs fugit's
+  # ExtU32 — the HAL takes fugit durations in its public API but does not
+  # re-export the crate. Version matched to the HAL's own requirement.
+  - name: fugit
+    version: "0.3"
+    source: crates-io
+
+  # Driving the emitted pin handles goes through embedded-hal's digital
+  # traits (OutputPin / StatefulOutputPin / InputPin) — the HAL implements
+  # them but re-exports neither the traits nor the crate. A pin handle
+  # nothing can set is not a contribution. Version matched to the HAL's.
+  - name: embedded-hal
+    version: "1.0"
+    source: crates-io
+
+recommended_external_deps:
+  - crate: cortex-m-rt
+    purpose: "Vector table and startup for the bare-metal binary."

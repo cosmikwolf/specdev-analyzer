@@ -1,0 +1,198 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/languages/typescript/items.v1"
+title: "TypeScript items schema (v1)"
+description: >
+  Per-language schema fragment defining the `Item` shape for TypeScript
+  source. Each `Item` is an exported top-level declaration — or a public
+  member of an exported class — that carries spec significance
+  (typically because it `satisfies` a requirement).
+
+  Visibility is `export`. A top-level declaration that is not exported is
+  module-private and is never an item. A class member is public unless it
+  carries the `private` or `protected` modifier or a `#`-prefixed name;
+  members of a non-exported class are unreachable and are never items.
+  There is no visibility field — `export` and the modifiers ARE the
+  visibility.
+
+  v1 covers 9 item kinds (the `kind` enum below). Not items in v1:
+  constructors (spec the class item instead — its description covers
+  construction), fields and properties (state is the enclosing
+  declaration's concern), interface members (the interface is the item),
+  `export default <expression>` of an anonymous value, `declare` ambient
+  blocks, `namespace` bodies, and overload signatures (one item per
+  implementation; the signatures are collapsed into it). Each of these
+  can be admitted later by widening this file plus the sibling
+  `items.scm` — the analyzer takes its vocabulary from here at runtime.
+
+  Sparseness rule: every `Item` carries `satisfies` (≥1 entry) except
+  `kind = "re_export"`, where the inherently-contractual nature of an
+  `export { … } from` makes `satisfies` optional, and tests
+  (`test = true`, which carry `verifies` instead). Helper declarations
+  that don't satisfy a requirement do not appear in `items[]`.
+
+  This schema is meant to be `$ref`'d from each profile's
+  `module.schema.yaml` `items[]` field via the `{{language}}` placeholder.
+  It also ships standalone for use by the analyzer's `extract-items`
+  subcommand.
+
+type: object
+required: [name, kind, description]
+properties:
+  name:
+    description: >
+      The item's qualified name. For a top-level declaration this is the
+      TypeScript identifier (`connectDevice`, `Device`). For a public
+      member of an exported class it is `<Class>.<member>` — a method is a
+      function, so `Device.connect` is a `kind = "function"` item the same
+      way a top-level function is; `Device.state` with `kind = "getter"`
+      is the property surface. Type parameters never appear in the name
+      (author `Box.put`, not `Box<T>.put`). For a `re_export` it is the
+      exported name (`Dev` for `export { Device as Dev }`), the namespace
+      name for `export * as util from`, or the module specifier without
+      quotes for a star re-export (`./barrel` for `export * from
+      "./barrel"`). Must be unique within the module's items[] array.
+    type: string
+    minLength: 1
+  kind:
+    description: >
+      TypeScript declaration kinds, tracking the tree-sitter TypeScript
+      grammar's exported top-level declarations and class members.
+      `function` covers exported top-level functions (including generator
+      and async functions), methods, and static methods (qualified names
+      for members); `getter`/`setter` cover accessor pairs on exported
+      classes; `class` covers both concrete and abstract classes; `type`
+      is a type alias; `const` covers exported top-level `const` and `let`
+      bindings with a plain identifier name (a function-valued `const` is
+      a `const`); `re_export` covers `export { … }`, `export { … } from`,
+      `export * from` and `export * as ns from`.
+    type: string
+    enum:
+      - function
+      - class
+      - interface
+      - type
+      - enum
+      - const
+      - getter
+      - setter
+      - re_export
+  description:
+    description: >
+      One-or-two-sentence prose summary of the item's contractual
+      semantics. Prose-first — describe what the item does, not its
+      signature (signatures live in the source; the optional
+      `signature_hint` is the escape hatch).
+    type: string
+    minLength: 1
+  satisfies:
+    description: >
+      Requirement ids this item satisfies. Required (with `minItems: 1`)
+      for every kind except `re_export`. Allowed-but-optional for
+      `re_export` since a re-export is inherently contractual.
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    uniqueItems: true
+  signature_hint:
+    description: >
+      Optional signature shape, used as an escape hatch for cases where
+      prose alone is insufficient: non-obvious generics, function-typed
+      parameters, discriminated unions. Default is to omit; the items
+      model is prose-first.
+    type: string
+  test:
+    description: >
+      When true, this function is emitted as a test (in the test tree
+      per its `test_kind`) and verifies requirement(s) via `verifies`
+      rather than satisfying them via `satisfies`. Only
+      `kind = "function"` items may be tests. Mutually exclusive with
+      `satisfies`.
+    type: boolean
+    default: false
+  test_kind:
+    description: >
+      Test categorization driving emit location and runner. `unit` → a
+      test case in `tests/<module>.test.ts`; `component` → a rendered
+      component test in `tests/<module>.test.tsx` under a DOM
+      environment; `e2e` → a browser-driven end-to-end test in `e2e/`.
+      Only meaningful when `test = true`; defaults to `unit`.
+    type: string
+    enum: [unit, component, e2e]
+    default: unit
+  verifies:
+    description: >
+      Requirement ids this test verifies (the inverse of `satisfies`).
+      Required with ≥1 entry when `test = true`; forbidden otherwise.
+      Reduced into `test_verifies` edges; the
+      `test_requirements_have_verifiers` graph check walks them to
+      confirm every `nature = "test"` requirement has a verifier.
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    minItems: 1
+    uniqueItems: true
+
+# Three branches: re-exports (satisfies optional, carry target/alias),
+# test functions (verifies instead of satisfies), and every other
+# declaration (satisfies required).
+oneOf:
+  - title: re_export
+    properties:
+      kind: { const: re_export }
+      test: { const: false }
+      target:
+        description: >
+          What is being re-exported. For `export { a as b } from "./x"`
+          this is `./x#a` (module specifier, `#`, exported name); for a
+          local `export { a }` it is `a`; for `export * from "./x"` and
+          `export * as ns from "./x"` it is `./x`.
+        type: string
+        minLength: 1
+      alias:
+        description: >
+          Optional rename. Emitted as `export { <name> as <alias> }`.
+        type: string
+    required: [target]
+    not:
+      anyOf:
+        - required: [verifies]
+        - required: [test_kind]
+
+  - title: test-function
+    properties:
+      kind: { const: function }
+      test: { const: true }
+    required: [test, verifies]
+    not:
+      anyOf:
+        - required: [satisfies]
+        - required: [target]
+        - required: [alias]
+
+  - title: declaration
+    properties:
+      kind:
+        enum:
+          - function
+          - class
+          - interface
+          - type
+          - enum
+          - const
+          - getter
+          - setter
+      test: { const: false }
+    required: [satisfies]
+    not:
+      anyOf:
+        - required: [verifies]
+        - required: [test_kind]
+        - required: [target]
+        - required: [alias]
+
+allOf:
+  - properties:
+      satisfies:
+        minItems: 1

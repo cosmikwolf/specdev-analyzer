@@ -33,6 +33,14 @@ entities:
     from: "specs/architecture.toml"
     name: "architecture"
 
+  # Workspace singleton — anchor for relations that hang off spec.toml's
+  # `[workspace]` table (default_members). One per workspace; the same
+  # shape as the Architecture singleton, one file over.
+  - kind: Workspace
+    extends: structural
+    from: "spec.toml"
+    name: "workspace"
+
   # Decisions — workspace-tier *how & why*. Workspace decisions
   # implicitly apply to every module in every member crate; child
   # crates do not name workspace decisions in their own
@@ -65,6 +73,19 @@ entities:
       default_via: ".default_via"
 
 relations:
+  # Workspace → Member: `[workspace].default_members[]` names members by
+  # `name`. An entry that matches no member is REDUCE_UNRESOLVED at reduce
+  # time — no domain row is needed for reference resolution.
+  - kind: workspace_default_member
+    extends: depends_on
+    from_kind: Workspace
+    to_kind: Member
+    from_spec: "spec.toml"
+    for_each: "workspace.default_members[]"
+    endpoints:
+      from: "workspace"
+      to: "${.}"
+
   # Architecture → Decision: project-shape commitments. Drives
   # `architecture_project_decisions_resolves`. The only decision-anchored
   # relation that applies at workspace tier — Module/Requirement-anchored
