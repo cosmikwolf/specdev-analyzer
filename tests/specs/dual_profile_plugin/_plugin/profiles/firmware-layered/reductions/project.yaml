@@ -2,7 +2,7 @@ metaschema_version: "v1"
 
 # Project-level entity declarations: the kinds that exist at the profile
 # root, before any block or bridge contributes its own kinds. Blocks
-# inlined later (Phase 6) declare their own kinds via reductions/blocks/.
+# inlined later declare their own kinds via reductions/blocks/.
 
 entities:
   # Modules — the core unit. Each `specs/modules/*.toml` produces one Module.

@@ -1,5 +1,5 @@
 [domain]
-name = "phase2-e2e"
+name = "extract-e2e"
 
 [validation]
 [validation.rules]

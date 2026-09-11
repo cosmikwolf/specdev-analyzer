@@ -1,6 +1,6 @@
 [domain]
 name = "agg-unresolved"
-description = "Phase 1 aggregator-unresolved-ref fixture"
+description = "aggregator-unresolved-ref fixture"
 
 [schemas]
 module = "schemas/module.schema.yaml"
