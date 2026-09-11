@@ -7,7 +7,7 @@ named **for the feature they exercise**, never for when they were authored.
 There is no chronological ("phaseN", "stepN") nomenclature anywhere in this
 tree. Planning-phase terminology and decision IDs live in the planning
 workspace, not in shipped surface — a reader of this repository cannot follow a
-`Phase 16 §8.1 step 3a` or `(D51)` pointer, so those references are removed.
+`Phase 16 §8.1 step 3a` or `(D51)` pointer, so those references are removed. <!-- PLANNING-OK: the rule's own worked examples -->
 
 Rules:
 

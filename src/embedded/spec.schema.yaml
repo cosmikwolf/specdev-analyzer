@@ -4,8 +4,8 @@ title: spec.toml
 description: |
   JSON Schema for the project-level `spec.toml` manifest. Embedded in the
   analyzer crate; the analyzer is the source of truth for what a valid
-  `spec.toml` is. Phase 1 invariant 5 (no resolution chain at analyze time)
-  forbids loading this from a plugin.
+  `spec.toml` is. It is never loaded from a plugin, so analysis needs no
+  resolution chain.
 type: object
 additionalProperties: false
 required: [spec_version, project, paths]
@@ -47,8 +47,8 @@ properties:
       edition:
         type: string
         description: |
-          Rust edition. Optional; defaults to "2021" if absent. Phase 8's
-          `gen` emits this as Cargo.toml's `[package].edition` for Rust
+          Rust edition. Optional; defaults to "2021" if absent. `gen`
+          emits this as Cargo.toml's `[package].edition` for Rust
           projects. Ignored for non-Rust languages.
         enum: ["2018", "2021", "2024"]
         default: "2021"
@@ -56,20 +56,20 @@ properties:
         type: string
         description: |
           SPDX license identifier (or "OR"-joined identifiers). Optional;
-          libraries should set this. Phase 8's `gen` emits as
-          Cargo.toml's `[package].license`.
+          libraries should set this. `gen` emits it as Cargo.toml's
+          `[package].license`.
         minLength: 1
       description:
         type: string
         description: |
           Short project description. Optional; libraries should set this
-          (it appears on crates.io). Phase 8's `gen` emits as
-          Cargo.toml's `[package].description`.
+          (it appears on crates.io). `gen` emits it as Cargo.toml's
+          `[package].description`.
         maxLength: 200
       repository:
         type: string
         description: |
-          Repository URL (Phase 8.6+). Optional; libraries that publish
+          Repository URL. Optional; libraries that publish
           to crates.io should set this. For workspace members this
           field is normally omitted — the workspace owns the canonical
           value via `[workspace_package].repository` and members emit
@@ -127,12 +127,12 @@ properties:
           Optional path to the plugin tree, relative to spec.toml. When set, this overrides the
           SPECDEV_PLUGIN_ROOT and CLAUDE_PLUGIN_ROOT environment variables for inline / bootstrap
           / inline-bridge commands. The CLI flag --plugin-root still takes precedence over this
-          field. Per doc 15 §9.2, multi-package workspaces may legitimately set this per-package;
+          field. Multi-package workspaces may legitimately set this per-package;
           conflicting values across packages are accepted at CLI time.
         minLength: 1
   workspace:
     description: |
-      Workspace marker (Phase 8.6+). Presence signals "this spec.toml
+      Workspace marker. Presence signals "this spec.toml
       describes a Cargo workspace root"; member crates' Cargo.toml
       emission walks up to find this marker and renders `*.workspace =
       true` for inherited package fields. Optional — only `rust-workspace`
