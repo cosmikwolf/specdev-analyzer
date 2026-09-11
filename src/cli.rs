@@ -142,8 +142,10 @@ pub enum Command {
         /// Profile name (e.g. `firmware-layered`, `library-api`).
         #[arg(long)]
         profile: String,
-        /// Target language for codegen (e.g. `rust`, `c`, `dart` — any
-        /// language the schema enums admit).
+        /// Target language for codegen. The `language` enums in
+        /// `spec.schema.yaml` and `profile.schema.yaml` are the source of
+        /// truth and admit `rust`, `c`, `cpp`, `dart` and `typescript`;
+        /// not every one of them has a manifest emitter (see `manifest`).
         #[arg(long)]
         language: String,
         /// Project name (lowercase, hyphens). Becomes `[project].name` in
@@ -187,7 +189,9 @@ pub enum Command {
         plugin: PathBuf,
     },
     /// Emit the project's build manifest, dispatching on
-    /// `[project].language`: Cargo.toml for rust, pubspec.yaml for dart.
+    /// `[project].language`: Cargo.toml for rust, pubspec.yaml for dart,
+    /// package.json for typescript. Other admitted languages have no
+    /// emitter and are refused by name.
     /// Every dep is captured in the spec; this subcommand renders the
     /// OUTPUT half. Lex-sorted deps; stable across runs. Conflict
     /// warnings on stderr.
@@ -199,7 +203,8 @@ pub enum Command {
         #[arg(short, long, conflicts_with = "write")]
         output: Option<PathBuf>,
         /// Write to the language's canonical filename in the project root
-        /// (Cargo.toml / pubspec.yaml) — lets callers stay language-neutral.
+        /// (Cargo.toml / pubspec.yaml / package.json) — lets callers stay
+        /// language-neutral.
         #[arg(long)]
         write: bool,
     },
