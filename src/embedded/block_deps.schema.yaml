@@ -1,6 +1,6 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/schema/meta/v1/block_deps.schema.yaml"
-title: "block deps manifest (Phase 16, D52 / doc 21 §4)"
+title: "block deps manifest (v1)"
 description: |
   Validates `blocks/<block-name>/codegen/<language>/deps.yaml`. Optional
   per (block, language) pair; when present, the analyzer drains dep
@@ -9,9 +9,10 @@ description: |
   ecosystem's closed set of dep shapes; a deps.yaml carries whichever
   keys its language directory implies).
   `recommended_external_deps[]` is a non-injecting suggestion list
-  surfaced by /spec-design (preserves spec-is-source-of-truth, D35).
+  surfaced by /spec-design; it never injects, which keeps the spec the
+  source of truth.
   Inlined alongside the block's README; participates in the block's
-  per-unit content_hash (doc 15 §5.5).
+  per-unit content_hash.
 
 type: object
 additionalProperties: false

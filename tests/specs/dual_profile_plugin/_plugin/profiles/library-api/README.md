@@ -77,8 +77,8 @@ as DisplayInner;` at the top.
 - **`no-private-in-public-api`** — checks that a `pub` re-export's
   target traces (transitively) to a `pub` module. Expressible via
   `reachability` with constraint filters that the existing primitive
-  doesn't yet support directly. Will land in a Phase 5.x or future
-  evolution if dogfood reveals the gap matters.
+  doesn't yet support directly. May land in a future evolution if
+  dogfood reveals the gap matters.
 - **Typed library-api API constraints** (MSRV, no_std/alloc support as
   enum fields). Currently expressed as free-form `requirement.text`.
 

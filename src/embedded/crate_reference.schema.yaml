@@ -8,9 +8,8 @@ description: |
   the analyzer crate so `$ref` to this `$id` resolves universally,
   regardless of project content.
 
-  Phase 6.7 commitment: every Cargo dep is captured in the spec.
-  Cargo.toml is OUTPUT — Phase 8's gen consumes these references to
-  emit the full Cargo project.
+  The spec captures every Cargo dep. Cargo.toml is OUTPUT — `gen`
+  consumes these references to emit the full Cargo project.
 
 $defs:
   CrateReference:
@@ -118,8 +117,8 @@ $defs:
         description: |
           Set to `true` to mark the dep as optional (Cargo enables it
           via a feature flag — typically `dep:<crate>` in a feature's
-          deps list). Defaults to `false` when absent. Phase 8.6+:
-          permitted alongside `source = "workspace"` because Cargo
+          deps list). Defaults to `false` when absent. Permitted
+          alongside `source = "workspace"` because Cargo
           allows `optional` at the member-dep site even when version /
           source / default-features are workspace-inherited.
         type: boolean

@@ -4,8 +4,8 @@ title: "Canonical root kinds (v1)"
 description: >
   Closed vocabulary of root kinds every entity ultimately extends. Adding
   or renaming a root kind is a metaschema version bump. Embedded in the
-  analyzer per doc 15 §11 invariant 5 (no plugin lookup at analyze time).
-  See specdev-lab/10-metaschema.md for rationale.
+  analyzer rather than read from the plugin tree, so analysis needs no
+  plugin lookup and every project resolves the same vocabulary.
 
 $defs:
   RootKind:
