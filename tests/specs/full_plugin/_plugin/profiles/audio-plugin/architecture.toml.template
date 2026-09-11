@@ -1,10 +1,9 @@
 # Architecture-level decisions for an audio-plugin project.
 #
-# Phase 15-A spike (D44–D49) committed this profile shape. Three
-# required tables: [plugin] (vendor + format identity), [audio] (bus
-# layout + sample-rate bounds), [runtime] (panic strategy). Optional
-# [[features]] declares Cargo features. Phase 8 emits Cargo.toml from
-# these fields plus per-module external_deps[].
+# Three required tables: [plugin] (vendor + format identity), [audio]
+# (bus layout + sample-rate bounds), [runtime] (panic strategy).
+# Optional [[features]] declares Cargo features. Codegen emits
+# Cargo.toml from these fields plus per-module external_deps[].
 
 # ---------------------------------------------------------------------------
 # Plugin identity — vendor / display / formats. All five required fields
@@ -46,7 +45,7 @@ default_channel_layout = "stereo"   # mono | stereo | quad | five-one | seven-on
 # ---------------------------------------------------------------------------
 [runtime]
 panic_handler  = "abort"
-realtime_audit = false      # informational; future graph-check primitive (D48)
+realtime_audit = false      # informational today; no graph check reads it
 
 # ---------------------------------------------------------------------------
 # Cargo features (optional). Mirrors library-api's [[features]] shape.
