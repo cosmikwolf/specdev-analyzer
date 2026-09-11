@@ -43,6 +43,11 @@ use tree_sitter::{Node, Parser};
 
 use crate::lang::{adapter_for, LanguageAdapter};
 
+/// A reference language's build-manifest filename paired with the parser
+/// that reads its pins. One entry per language that ships reference
+/// crates; the pair is resolved once and destructured at the call site.
+type ReferenceManifestReader = (&'static str, fn(&str) -> Result<BTreeMap<String, Pin>>);
+
 /// Walk `blocks/` and `bridges/` and lint any unit that ships a
 /// `reference/<lang>/reference_cases.yaml`. Returns pre-coded, sorted,
 /// de-duplicated offender lines (`<unit>: [CODE] message`).
@@ -108,8 +113,8 @@ fn lint_unit(unit: &Path, offenders: &mut Vec<String>) -> Result<()> {
         let Some(adapter) = adapter_for(&lang) else {
             continue;
         };
-        let cases = read_cases(&manifest)
-            .with_context(|| format!("reading {}", manifest.display()))?;
+        let cases =
+            read_cases(&manifest).with_context(|| format!("reading {}", manifest.display()))?;
 
         // --- REF-COVERAGE-001: each declared case has a reference source ---
         // A language may span several extensions; any of them satisfies
@@ -189,7 +194,7 @@ fn lint_pins(
     }
     // Reference build-manifest filename is a language fact, like the source
     // extension the coverage check already takes from the adapter.
-    let (manifest_name, parse): (&str, fn(&str) -> Result<BTreeMap<String, Pin>>) = match lang {
+    let (manifest_name, parse): ReferenceManifestReader = match lang {
         "rust" => ("Cargo.toml", parse_cargo_pins),
         _ => return Ok(()), // no reference-manifest reader for this language yet
     };
@@ -201,8 +206,7 @@ fn lint_pins(
         .with_context(|| format!("loading {}", deps_path.display()))?;
     let text = std::fs::read_to_string(&ref_manifest)
         .with_context(|| format!("reading {}", ref_manifest.display()))?;
-    let ref_pins =
-        parse(&text).with_context(|| format!("parsing {}", ref_manifest.display()))?;
+    let ref_pins = parse(&text).with_context(|| format!("parsing {}", ref_manifest.display()))?;
 
     for entry in &deps.crates {
         let Some(ref_pin) = ref_pins.get(&entry.name) else {
@@ -261,9 +265,15 @@ fn parse_cargo_pins(text: &str) -> Result<BTreeMap<String, Pin>> {
         };
         for (name, spec) in t {
             let pin = match spec {
-                toml::Value::String(v) => Pin { version: Some(v.clone()), rev: None },
+                toml::Value::String(v) => Pin {
+                    version: Some(v.clone()),
+                    rev: None,
+                },
                 toml::Value::Table(tt) => Pin {
-                    version: tt.get("version").and_then(toml::Value::as_str).map(String::from),
+                    version: tt
+                        .get("version")
+                        .and_then(toml::Value::as_str)
+                        .map(String::from),
                     rev: tt
                         .get("rev")
                         .or_else(|| tt.get("tag"))
@@ -482,11 +492,7 @@ mod tests {
 
     fn scratch() -> std::path::PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let p = std::env::temp_dir().join(format!(
-            "reflint-test-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let p = std::env::temp_dir().join(format!("reflint-test-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&p);
         p
     }
@@ -512,11 +518,7 @@ mod tests {
         for (fname, body) in src_files {
             std::fs::write(refrust.join("src").join(fname), body).unwrap();
         }
-        std::fs::write(
-            unit.join("codegen").join("rust").join("README.md"),
-            readme,
-        )
-        .unwrap();
+        std::fs::write(unit.join("codegen").join("rust").join("README.md"), readme).unwrap();
     }
 
     #[test]
@@ -547,8 +549,9 @@ mod tests {
         let offenders = lint_reference_crates(&root).unwrap();
         std::fs::remove_dir_all(&root).ok();
         assert!(
-            offenders.iter().any(|o| o.contains("REF-COVERAGE-001")
-                && o.contains("\"spi\"")),
+            offenders
+                .iter()
+                .any(|o| o.contains("REF-COVERAGE-001") && o.contains("\"spi\"")),
             "{offenders:?}"
         );
         // i2c is covered → no coverage finding for it
@@ -693,7 +696,10 @@ mod tests {
         std::fs::create_dir_all(unit.join("reference").join("rust").join("src")).unwrap();
         // a source file but no reference_cases.yaml → opt-out
         std::fs::write(
-            unit.join("reference").join("rust").join("src").join("i2c.rs"),
+            unit.join("reference")
+                .join("rust")
+                .join("src")
+                .join("i2c.rs"),
             "fn t(x: I2c<'static, Async>) {}",
         )
         .unwrap();

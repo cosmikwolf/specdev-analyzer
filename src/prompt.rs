@@ -288,9 +288,7 @@ pub fn assemble_tail(layout: &LayoutContext, module_name: &str) -> Result<String
                     }
                 }
                 Err(e) => {
-                    out.push_str(&format!(
-                        "(failed to read context file `{rel}`: {e})\n",
-                    ));
+                    out.push_str(&format!("(failed to read context file `{rel}`: {e})\n",));
                 }
             }
             out.push_str("```\n\n");
@@ -394,7 +392,10 @@ fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) 
     // Lazy-load the requirement and decision tables once.
     let reqs = load_toml_array(&layout.specs_dir.join("requirements.toml"), "requirement");
     let decisions = load_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
-    let req_by_id = |id: &str| reqs.iter().find(|r| r.get("id").and_then(toml::Value::as_str) == Some(id));
+    let req_by_id = |id: &str| {
+        reqs.iter()
+            .find(|r| r.get("id").and_then(toml::Value::as_str) == Some(id))
+    };
     let dec_by_id = |id: &str| {
         decisions
             .iter()
@@ -410,7 +411,10 @@ fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) 
     );
 
     for item in test_items {
-        let name = item.get("name").and_then(toml::Value::as_str).unwrap_or("<unnamed>");
+        let name = item
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("<unnamed>");
         let kind = item
             .get("test_kind")
             .and_then(toml::Value::as_str)
@@ -432,7 +436,10 @@ fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) 
                     if let Some(vb) = req.get("verified_by").and_then(toml::Value::as_array) {
                         let hints: Vec<&str> = vb.iter().filter_map(toml::Value::as_str).collect();
                         if !hints.is_empty() {
-                            out.push_str(&format!("  - verification hints: {}\n", hints.join("; ")));
+                            out.push_str(&format!(
+                                "  - verification hints: {}\n",
+                                hints.join("; ")
+                            ));
                         }
                     }
                     if let Some(db) = req.get("decided_by").and_then(toml::Value::as_array) {
@@ -546,11 +553,8 @@ pub fn check_codegen_gate(
         if !intersects {
             continue;
         }
-        let title = read_open_question_title(
-            &layout.specs_dir.join("open_questions.toml"),
-            oq_id,
-        )
-        .unwrap_or_default();
+        let title = read_open_question_title(&layout.specs_dir.join("open_questions.toml"), oq_id)
+            .unwrap_or_default();
         let message = build_refusal_message(
             module_name,
             oq_id,
@@ -577,8 +581,8 @@ pub fn check_codegen_gate(
         if entry.status != "open" {
             continue;
         }
-        let intersects = entry.affects.is_empty()
-            || entry.affects.iter().any(|r| satisfies.contains(r));
+        let intersects =
+            entry.affects.is_empty() || entry.affects.iter().any(|r| satisfies.contains(r));
         if !intersects {
             continue;
         }
@@ -603,12 +607,7 @@ pub fn check_codegen_gate(
     Ok(None)
 }
 
-fn build_refusal_message(
-    module_name: &str,
-    oq_id: &str,
-    title: &str,
-    pointer: &str,
-) -> String {
+fn build_refusal_message(module_name: &str, oq_id: &str, title: &str, pointer: &str) -> String {
     format!(
         "Refusing to generate code for module `{module_name}`: open question \
          `{oq_id}` (`{title}`) is unresolved.\n\n\
@@ -626,13 +625,12 @@ fn build_refusal_message(
     )
 }
 
-fn read_open_question_title(
-    path: &std::path::Path,
-    oq_id: &str,
-) -> Option<String> {
+fn read_open_question_title(path: &std::path::Path, oq_id: &str) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let parsed: toml::Value = toml::from_str(&text).ok()?;
-    let arr = parsed.get("open_question").and_then(toml::Value::as_array)?;
+    let arr = parsed
+        .get("open_question")
+        .and_then(toml::Value::as_array)?;
     for item in arr {
         if item.get("id").and_then(toml::Value::as_str) == Some(oq_id) {
             return item
@@ -752,7 +750,9 @@ pub fn collect_decision_oq_context(
 
     // (b) module.satisfies → Requirement.decided_by
     for req_id in &satisfies {
-        let Some(decision_ids) = req_decided_by.get(req_id) else { continue };
+        let Some(decision_ids) = req_decided_by.get(req_id) else {
+            continue;
+        };
         for id in decision_ids {
             emit_decision(id, &local_decisions);
             emit_decision(id, &workspace_decisions);
@@ -874,7 +874,9 @@ fn read_decisions(
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(arr) = parsed.get("decision").and_then(toml::Value::as_array) {
         for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+                continue;
+            };
             let title = item
                 .get("title")
                 .and_then(toml::Value::as_str)
@@ -922,7 +924,9 @@ pub(crate) fn read_open_questions(
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) {
         for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+                continue;
+            };
             let status = item
                 .get("status")
                 .and_then(toml::Value::as_str)
@@ -979,7 +983,9 @@ fn read_requirement_decided_by(
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     if let Some(arr) = parsed.get("requirement").and_then(toml::Value::as_array) {
         for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else { continue };
+            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+                continue;
+            };
             let decisions: Vec<String> = item
                 .get("decided_by")
                 .and_then(toml::Value::as_array)
@@ -1017,8 +1023,7 @@ fn warn_if_over_budget(module_name: &str, char_count: usize) {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_TOKEN_BUDGET);
     let budget_chars = budget_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
-    let threshold =
-        ((budget_chars as f64) * BUDGET_WARNING_FRACTION) as usize;
+    let threshold = ((budget_chars as f64) * BUDGET_WARNING_FRACTION) as usize;
     if char_count >= threshold {
         let approx_tokens = char_count / APPROX_CHARS_PER_TOKEN;
         warn!(

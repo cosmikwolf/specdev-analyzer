@@ -98,7 +98,11 @@ fn rust_app_pairs_the_bin_with_a_stub_source() {
         .unwrap_or_else(|| {
             panic!(
                 "expected a paired src/main.rs stub, got: {:?}",
-                rendered.extra_files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+                rendered
+                    .extra_files
+                    .iter()
+                    .map(|(p, _)| p)
+                    .collect::<Vec<_>>()
             )
         });
     assert!(
@@ -125,7 +129,8 @@ fn library_profile_without_bin_is_byte_for_byte_unchanged() {
     let (_target, layout) = fresh("library-api", "mylib", "libonly");
     let rendered = render(&layout).unwrap();
 
-    const GOLDEN: &str = "[package]\nname = \"mylib\"\nedition = \"2021\"\n\n[lib]\n\n[dependencies]\n";
+    const GOLDEN: &str =
+        "[package]\nname = \"mylib\"\nedition = \"2021\"\n\n[lib]\n\n[dependencies]\n";
     assert_eq!(
         rendered.text, GOLDEN,
         "library-api Cargo.toml emission moved. If this change is intended, \
@@ -135,7 +140,11 @@ fn library_profile_without_bin_is_byte_for_byte_unchanged() {
     assert!(
         rendered.extra_files.is_empty(),
         "no paired stub without a [[bin]]: {:?}",
-        rendered.extra_files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+        rendered
+            .extra_files
+            .iter()
+            .map(|(p, _)| p)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -164,17 +173,16 @@ fn library_crate_type_reaches_the_manifest() {
     // Declare the crate types an FFI companion crate needs.
     fs::write(
         &manifest_path,
-        original.replace(
-            "  lib: {}",
-            "  lib:\n    crate_type: [cdylib, staticlib]",
-        ),
+        original.replace("  lib: {}", "  lib:\n    crate_type: [cdylib, staticlib]"),
     )
     .unwrap();
     Profile::load(&manifest_path).expect("edited manifest must still validate");
 
     let rendered = render(&layout).unwrap();
     assert!(
-        rendered.text.contains("crate-type = [\"cdylib\", \"staticlib\"]"),
+        rendered
+            .text
+            .contains("crate-type = [\"cdylib\", \"staticlib\"]"),
         "crate_type must render in declaration order:\n{}",
         rendered.text
     );
@@ -215,7 +223,9 @@ fn project_crate_type_overrides_the_profile_default() {
 
     let rendered = render(&layout).unwrap();
     assert!(
-        rendered.text.contains("crate-type = [\"cdylib\", \"staticlib\"]"),
+        rendered
+            .text
+            .contains("crate-type = [\"cdylib\", \"staticlib\"]"),
         "the per-project override must reach the manifest:\n{}",
         rendered.text
     );

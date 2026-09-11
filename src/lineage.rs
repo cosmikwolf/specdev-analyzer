@@ -98,8 +98,8 @@ impl Lineage {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text =
-            std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).map_err(|e| {
             anyhow!(
                 "[LINEAGE-001] {} is not a valid lineage.toml: {}",
@@ -175,12 +175,14 @@ mod tests {
     #[test]
     fn round_trip_preserves_shape() {
         let dir = tmp("roundtrip");
-        let mut l = Lineage::default();
-        l.meta = Some(MetaSection {
-            plugin_version: "0.4.2".into(),
-            bootstrapped_at: "2026-04-28T10:00:00Z".into(),
-            profile: "firmware-layered".into(),
-        });
+        let mut l = Lineage {
+            meta: Some(MetaSection {
+                plugin_version: "0.4.2".into(),
+                bootstrapped_at: "2026-04-28T10:00:00Z".into(),
+                profile: "firmware-layered".into(),
+            }),
+            ..Default::default()
+        };
         l.blocks.insert(
             "embassy".into(),
             Entry {
@@ -288,14 +290,14 @@ mod tests {
         let profile_files = btree_map(profile_path, hash, 0..8);
         let meta = option::of(meta_strategy());
 
-        (meta, blocks, bridges, profile_files).prop_map(
-            |(meta, blocks, bridges, profile_files)| Lineage {
+        (meta, blocks, bridges, profile_files).prop_map(|(meta, blocks, bridges, profile_files)| {
+            Lineage {
                 meta,
                 blocks,
                 bridges,
                 profile_files,
-            },
-        )
+            }
+        })
     }
 
     fn entry_strategy() -> impl proptest::strategy::Strategy<Value = Entry> {
@@ -320,12 +322,12 @@ mod tests {
         use proptest::strategy::Strategy;
         let printable = "[a-zA-Z0-9_./:-]+";
         let timestamp = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z";
-        (printable, timestamp, printable).prop_map(
-            |(plugin_version, bootstrapped_at, profile)| MetaSection {
+        (printable, timestamp, printable).prop_map(|(plugin_version, bootstrapped_at, profile)| {
+            MetaSection {
                 plugin_version,
                 bootstrapped_at,
                 profile,
-            },
-        )
+            }
+        })
     }
 }

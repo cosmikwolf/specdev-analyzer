@@ -239,7 +239,10 @@ fn unknown_profile_key_fails_before_any_write_and_names_the_plugin() {
     .unwrap_err();
     let msg = format!("{err:#}");
 
-    assert!(msg.contains("MANIFEST-001"), "expected MANIFEST-001; got {msg}");
+    assert!(
+        msg.contains("MANIFEST-001"),
+        "expected MANIFEST-001; got {msg}"
+    );
 
     // Attribution (#117): the path in the message is the plugin's file.
     assert!(

@@ -151,33 +151,27 @@ fn approve_and_set_actions(
         serde_yaml::Value::String("2026-05-03T00:00:00Z".into()),
     );
     let entries = map
-        .get_mut(&serde_yaml::Value::String("entries".into()))
+        .get_mut(serde_yaml::Value::String("entries".into()))
         .unwrap()
         .as_sequence_mut()
         .unwrap();
     for entry in entries.iter_mut() {
         let em = entry.as_mapping_mut().unwrap();
         let id = em
-            .get(&serde_yaml::Value::String("id".into()))
+            .get(serde_yaml::Value::String("id".into()))
             .and_then(|v| v.as_str())
             .unwrap()
             .to_string();
         for (target_id, action, rationale, proposed) in entry_recs {
             if id == *target_id {
                 let rec = em
-                    .get_mut(&serde_yaml::Value::String("recommendation".into()))
+                    .get_mut(serde_yaml::Value::String("recommendation".into()))
                     .unwrap()
                     .as_mapping_mut()
                     .unwrap();
-                rec.insert(
-                    "action".into(),
-                    serde_yaml::Value::String((*action).into()),
-                );
+                rec.insert("action".into(), serde_yaml::Value::String((*action).into()));
                 if let Some(r) = rationale {
-                    rec.insert(
-                        "rationale".into(),
-                        serde_yaml::Value::String((*r).into()),
-                    );
+                    rec.insert("rationale".into(), serde_yaml::Value::String((*r).into()));
                 }
                 if let Some(p) = proposed {
                     rec.insert("proposed_spec".into(), p.clone());
@@ -197,19 +191,19 @@ fn set_rename_to(path: &Path, entry_id: &str, new_name: &str) {
     let entries = doc
         .as_mapping_mut()
         .unwrap()
-        .get_mut(&serde_yaml::Value::String("entries".into()))
+        .get_mut(serde_yaml::Value::String("entries".into()))
         .unwrap()
         .as_sequence_mut()
         .unwrap();
     for entry in entries.iter_mut() {
         let em = entry.as_mapping_mut().unwrap();
         let id = em
-            .get(&serde_yaml::Value::String("id".into()))
+            .get(serde_yaml::Value::String("id".into()))
             .and_then(|v| v.as_str())
             .unwrap();
         if id == entry_id {
             let rec = em
-                .get_mut(&serde_yaml::Value::String("recommendation".into()))
+                .get_mut(serde_yaml::Value::String("recommendation".into()))
                 .unwrap()
                 .as_mapping_mut()
                 .unwrap();
@@ -251,7 +245,12 @@ satisfies = ["DEMO-1"]
     assert_eq!(prop.exit_code, Some(1));
 
     let r = run_apply(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected refusal; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected refusal; stderr={}",
+        r.stderr
+    );
     assert!(r.stderr.contains("ITEM-302"), "stderr={}", r.stderr);
 }
 
@@ -390,9 +389,16 @@ satisfies = ["DEMO-1"]
     );
 
     let r = run_apply(&target, "Foo");
-    assert!(r.success, "apply failed; stderr={}\nstdout={}", r.stderr, r.stdout);
+    assert!(
+        r.success,
+        "apply failed; stderr={}\nstdout={}",
+        r.stderr, r.stdout
+    );
     let new_text = std::fs::read_to_string(&module_path).unwrap();
-    assert!(new_text.contains("name = \"helper\""), "new entry not found:\n{new_text}");
+    assert!(
+        new_text.contains("name = \"helper\""),
+        "new entry not found:\n{new_text}"
+    );
     assert!(new_text.contains("DEMO-2"));
     // Pinned key order: kind first.
     let helper_block = new_text
@@ -402,7 +408,10 @@ satisfies = ["DEMO-1"]
     let kind_pos = helper_block.find("kind = ").unwrap();
     let name_pos = helper_block.find("name = ").unwrap();
     let desc_pos = helper_block.find("description = ").unwrap();
-    assert!(kind_pos < name_pos && name_pos < desc_pos, "key order wrong: {helper_block}");
+    assert!(
+        kind_pos < name_pos && name_pos < desc_pos,
+        "key order wrong: {helper_block}"
+    );
 }
 
 #[test]
@@ -540,7 +549,10 @@ satisfies = ["DEMO-1"]
         "old name still present:\n{new_text}"
     );
     // The trace and description survive the rename — the whole point of F-011.
-    assert!(new_text.contains("DEMO-1"), "satisfies trace lost:\n{new_text}");
+    assert!(
+        new_text.contains("DEMO-1"),
+        "satisfies trace lost:\n{new_text}"
+    );
     assert!(
         new_text.contains("Refill the bucket against the clock."),
         "description lost:\n{new_text}"
@@ -587,13 +599,23 @@ satisfies = ["DEMO-1"]
     approve_and_set_actions(
         &path,
         &[
-            ("spec-only-0", "rename", Some("oops, forgot the new name"), None),
+            (
+                "spec-only-0",
+                "rename",
+                Some("oops, forgot the new name"),
+                None,
+            ),
             ("source-only-0", "skip", Some("paired"), None),
         ],
     );
 
     let r = run_apply(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected refusal; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected refusal; stderr={}",
+        r.stderr
+    );
     assert!(r.stderr.contains("ITEM-315"), "stderr={}", r.stderr);
 }
 
@@ -634,9 +656,6 @@ satisfies = ["DEMO-1"]
     let r = run_apply(&target, "Foo");
     assert!(r.success, "apply failed; stderr={}", r.stderr);
     let new_text = std::fs::read_to_string(&module_path).unwrap();
-    assert_eq!(
-        new_text, original,
-        "skip should leave file untouched"
-    );
+    assert_eq!(new_text, original, "skip should leave file untouched");
     assert!(audit_path(&target, "Foo").exists());
 }

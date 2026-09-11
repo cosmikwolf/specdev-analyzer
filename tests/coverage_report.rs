@@ -61,7 +61,10 @@ fn fresh_library_project(tag: &str) -> PathBuf {
 
 fn run_coverage(project: &Path, format: Option<&str>) -> (bool, String, String) {
     let mut cmd = Command::new(analyzer_bin());
-    cmd.arg("report").arg("coverage").arg("--project").arg(project);
+    cmd.arg("report")
+        .arg("coverage")
+        .arg("--project")
+        .arg(project);
     if let Some(f) = format {
         cmd.arg("--format").arg(f);
     }
@@ -149,8 +152,14 @@ satisfies = ["REQ-002"]
     // Both module names should appear under REQ-002's satisfied_by row.
     let req_idx = stdout.find("REQ-002").expect("REQ-002 row present");
     let tail = &stdout[req_idx..];
-    assert!(tail.contains("Alpha"), "Alpha should satisfy REQ-002; got:\n{stdout}");
-    assert!(tail.contains("Beta"), "Beta should satisfy REQ-002; got:\n{stdout}");
+    assert!(
+        tail.contains("Alpha"),
+        "Alpha should satisfy REQ-002; got:\n{stdout}"
+    );
+    assert!(
+        tail.contains("Beta"),
+        "Beta should satisfy REQ-002; got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -184,7 +193,10 @@ satisfies = ["REQ-003"]
     // module-level satisfies; coverage must still credit the module.
     let req_idx = stdout.find("REQ-003").expect("REQ-003 row present");
     let tail = &stdout[req_idx..];
-    assert!(tail.contains("Gamma"), "Gamma should satisfy REQ-003 via item; got:\n{stdout}");
+    assert!(
+        tail.contains("Gamma"),
+        "Gamma should satisfy REQ-003 via item; got:\n{stdout}"
+    );
     // Should NOT be in orphans.
     let orphans_idx = stdout.find("orphans:").expect("orphans present");
     assert!(
@@ -215,8 +227,14 @@ satisfies = ["REQ-010"]
     .unwrap();
     let (success, stdout, _stderr) = run_coverage(&target, Some("markdown")).clone();
     assert!(success);
-    assert!(stdout.contains("# Coverage matrix"), "markdown header expected");
-    assert!(stdout.contains("| Requirement | Satisfied by |"), "table header expected");
+    assert!(
+        stdout.contains("# Coverage matrix"),
+        "markdown header expected"
+    );
+    assert!(
+        stdout.contains("| Requirement | Satisfied by |"),
+        "table header expected"
+    );
     assert!(stdout.contains("`REQ-010`"));
     assert!(stdout.contains("`Delta`"));
 }
@@ -235,7 +253,10 @@ text = "no satisfier"
     .unwrap();
     let (success, stdout, _stderr) = run_coverage(&target, Some("md"));
     assert!(success);
-    assert!(stdout.contains("ORPHAN"), "markdown ORPHAN highlight expected");
+    assert!(
+        stdout.contains("ORPHAN"),
+        "markdown ORPHAN highlight expected"
+    );
     assert!(stdout.contains("REQ-011"));
 }
 
@@ -245,7 +266,10 @@ fn default_format_is_yaml() {
     let (success, stdout, _stderr) = run_coverage(&target, None);
     assert!(success);
     // YAML output uses `matrix:` (with a colon), not Markdown's `# Coverage matrix`.
-    assert!(stdout.contains("matrix:"), "default format should be YAML; got:\n{stdout}");
+    assert!(
+        stdout.contains("matrix:"),
+        "default format should be YAML; got:\n{stdout}"
+    );
     assert!(
         !stdout.contains("# Coverage matrix"),
         "default format must not be Markdown; got:\n{stdout}"

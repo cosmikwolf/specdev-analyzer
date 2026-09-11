@@ -234,7 +234,9 @@ fn bridge_lint_still_works() {
     });
     let bridge_offenders = lint_plugin_bridges(&plugin).unwrap();
     assert!(
-        bridge_offenders.iter().any(|o| o.contains("BRIDGE-LEX-001")),
+        bridge_offenders
+            .iter()
+            .any(|o| o.contains("BRIDGE-LEX-001")),
         "expected BRIDGE-LEX-001; got: {bridge_offenders:?}"
     );
     // Block lint independent — embassy + stm32h5-rs unchanged, should pass.

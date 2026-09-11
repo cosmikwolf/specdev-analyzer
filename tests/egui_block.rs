@@ -321,9 +321,7 @@ purpose = "free_form"
     let errs = errors_for(&report, "REDUCE_UNRESOLVED");
     let panel_errs: Vec<_> = errs
         .iter()
-        .filter(|f| {
-            f.message.contains("Panel") && f.message.contains("nonexistent")
-        })
+        .filter(|f| f.message.contains("Panel") && f.message.contains("nonexistent"))
         .collect();
     assert_eq!(
         panel_errs.len(),

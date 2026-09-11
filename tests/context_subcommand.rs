@@ -329,7 +329,10 @@ visibility = "pub"
     )
     .unwrap();
     let lib = run(&layout, "Lib");
-    assert_eq!(lib.related_modules.re_export_targets, vec!["Inner".to_string()]);
+    assert_eq!(
+        lib.related_modules.re_export_targets,
+        vec!["Inner".to_string()]
+    );
     assert!(lib
         .related_files
         .contains(&"specs/modules/Inner.toml".to_string()));

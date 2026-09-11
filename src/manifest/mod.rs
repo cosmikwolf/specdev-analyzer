@@ -29,7 +29,6 @@ pub mod block_deps;
 pub mod bridge_contract;
 pub mod profile;
 
-pub use profile::{CrateType as ProfileCrateType, LibSection};
 pub use block_deps::{
     BlockDeps, CrateEntry, CrateSource, CrateSourceTag, NpmEntry, NpmGit, NpmSource, PubEntry,
     PubGit, PubSource, RecommendedDep,
@@ -37,10 +36,12 @@ pub use block_deps::{
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
     BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection, ContextExtra,
-    ContextSection, DerivedRule, FeaturesSection, Gate, GateScope, ItemsSection, NpmEngines, NpmModuleType,
-    PackageJsonSection, PackageJsonShapeKind, PairedFile, PairedStub, Profile, PubEnvironment,
-    PubShapeKind, PubspecYamlSection, ReverseSection, ReverseVocabulary, ShapeKind, SurfaceSection,
+    ContextSection, DerivedRule, FeaturesSection, Gate, GateScope, ItemsSection, NpmEngines,
+    NpmModuleType, PackageJsonSection, PackageJsonShapeKind, PairedFile, PairedStub, Profile,
+    PubEnvironment, PubShapeKind, PubspecYamlSection, ReverseSection, ReverseVocabulary, ShapeKind,
+    SurfaceSection,
 };
+pub use profile::{CrateType as ProfileCrateType, LibSection};
 
 use anyhow::{anyhow, Context, Result};
 use jsonschema::Validator;
@@ -52,8 +53,9 @@ use std::sync::OnceLock;
 /// validator. Used by each manifest loader to validate parsed YAML
 /// before serde-deserializing into the typed struct.
 fn compile_schema(yaml: &str, label: &'static str) -> &'static Validator {
-    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, &'static Validator>>> =
-        OnceLock::new();
+    static CACHE: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, &'static Validator>>,
+    > = OnceLock::new();
     let map = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = map.lock().expect("manifest schema cache poisoned");
     if let Some(v) = guard.get(label) {
@@ -90,10 +92,9 @@ fn load_yaml_validated(
 /// handshake has to, because a version mismatch would otherwise present
 /// as an unreadable pile of `additionalProperties` errors (#117).
 pub(crate) fn read_yaml(path: &Path) -> Result<JsonValue> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    serde_yaml::from_str(&text)
-        .with_context(|| format!("parsing {} as YAML", path.display()))
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_yaml::from_str(&text).with_context(|| format!("parsing {} as YAML", path.display()))
 }
 
 /// Validate an already-parsed manifest against an embedded schema.

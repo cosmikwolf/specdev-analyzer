@@ -170,7 +170,11 @@ impl SpecConfig {
             let pointer = err.instance_path().to_string();
             let (line, col) = locate_error_in_toml(text, &pointer);
             let field = humanize_pointer(&pointer);
-            let msg = format!("{}: {}", field, crate::diagnostics::format_schema_error(&err));
+            let msg = format!(
+                "{}: {}",
+                field,
+                crate::diagnostics::format_schema_error(&err)
+            );
             return Err(anyhow!(LocatedError::new(path, line, col, msg))
                 .context(format!("validating {}", path.display())));
         }
@@ -247,10 +251,7 @@ pub fn find_spec_toml(start: &Path) -> Option<PathBuf> {
         if candidate.is_file() {
             return Some(candidate);
         }
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 

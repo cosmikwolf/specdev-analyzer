@@ -145,18 +145,14 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
     }
 
     // Codegen prose at codegen/rust/module.conventions.md.
-    assert!(
-        target
-            .join("specs/specdev/codegen/rust/module.conventions.md")
-            .is_file()
-    );
+    assert!(target
+        .join("specs/specdev/codegen/rust/module.conventions.md")
+        .is_file());
 
     // Project-level reduction.
-    assert!(
-        target
-            .join("specs/specdev/reductions/project.yaml")
-            .is_file()
-    );
+    assert!(target
+        .join("specs/specdev/reductions/project.yaml")
+        .is_file());
 
     // Templates rendered into project root.
     assert!(target.join("spec.toml").is_file());
@@ -165,11 +161,9 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
     assert!(target.join("specs/specdev/domain.toml").is_file());
 
     // languages tier (items.schema.yaml inlined).
-    assert!(
-        target
-            .join("specs/specdev/schemas/inlined/languages/rust/items.schema.yaml")
-            .is_file()
-    );
+    assert!(target
+        .join("specs/specdev/schemas/inlined/languages/rust/items.schema.yaml")
+        .is_file());
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +350,9 @@ fn cargo_toml_emits_bin_when_standalone_in_formats() {
         "cdylib still required:\n{t}"
     );
     assert!(
-        t.contains("[[bin]]\nname = \"demo_plugin-standalone\"\npath = \"src/bin/standalone.rs\"\n"),
+        t.contains(
+            "[[bin]]\nname = \"demo_plugin-standalone\"\npath = \"src/bin/standalone.rs\"\n"
+        ),
         "expected [[bin]] standalone target:\n{t}"
     );
 }

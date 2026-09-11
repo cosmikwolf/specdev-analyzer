@@ -155,9 +155,10 @@ impl DriftReport {
                 .units
                 .iter()
                 .all(|u| u.files.iter().all(|f| f.category == FileCategory::Clean))
-            && self.profile.as_ref().is_none_or(|p| {
-                p.files.iter().all(|f| f.category == FileCategory::Clean)
-            })
+            && self
+                .profile
+                .as_ref()
+                .is_none_or(|p| p.files.iter().all(|f| f.category == FileCategory::Clean))
     }
 
     /// `true` when the project predates `[profile_files]`, so no claim
@@ -364,8 +365,7 @@ fn drift_one_unit(
     }
 
     // Iterate over the union of upstream and plugin file keys.
-    let mut keys: std::collections::BTreeSet<PathBuf> =
-        std::collections::BTreeSet::new();
+    let mut keys: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     keys.extend(upstream_files.keys().cloned());
     keys.extend(plugin_index.keys().cloned());
 
@@ -375,8 +375,13 @@ fn drift_one_unit(
         // collect (which carries rel_dst); fall back to a synthesized
         // path from rel_in_unit when the file only exists in upstream
         // (plugin removed it).
-        let project_path =
-            project_path_for(layout, kind, name, &rel_in_unit, plugin_index.get(&rel_in_unit));
+        let project_path = project_path_for(
+            layout,
+            kind,
+            name,
+            &rel_in_unit,
+            plugin_index.get(&rel_in_unit),
+        );
 
         let project_bytes_opt = match std::fs::read(&project_path) {
             Ok(b) => Some(b),

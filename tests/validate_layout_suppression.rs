@@ -89,7 +89,10 @@ fn rust_workspace_manifest_suppresses_specs_modules_directory() {
     if modules_dir.is_dir() {
         std::fs::remove_dir_all(&modules_dir).unwrap();
     }
-    assert!(!modules_dir.exists(), "specs/modules/ must be absent for this test");
+    assert!(
+        !modules_dir.exists(),
+        "specs/modules/ must be absent for this test"
+    );
     let report = run_validate(&target);
     assert!(
         !warns_for_modules_dir(&report),
@@ -107,7 +110,10 @@ fn library_api_manifest_warns_when_specs_modules_directory_missing() {
     if modules_dir.is_dir() {
         std::fs::remove_dir_all(&modules_dir).unwrap();
     }
-    assert!(!modules_dir.exists(), "specs/modules/ must be absent for this test");
+    assert!(
+        !modules_dir.exists(),
+        "specs/modules/ must be absent for this test"
+    );
     let report = run_validate(&target);
     assert!(
         warns_for_modules_dir(&report),

@@ -11,13 +11,11 @@
 //! anywhere blocks every subsequent emission.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    gen_lineage::{
-        record_files, record_files_accepting_edits, run_gen_drift, GenFileCategory,
-    },
+    gen_lineage::{record_files, record_files_accepting_edits, run_gen_drift, GenFileCategory},
     layout::LayoutContext,
 };
 
@@ -56,11 +54,17 @@ fn fresh(tag: &str) -> (PathBuf, LayoutContext) {
 }
 
 /// Write a file under the project and record it as generated.
-fn emit_and_record(target: &PathBuf, layout: &LayoutContext, rel: &str, body: &str) -> PathBuf {
+fn emit_and_record(target: &Path, layout: &LayoutContext, rel: &str, body: &str) -> PathBuf {
     let p = target.join(rel);
     fs::create_dir_all(p.parent().unwrap()).unwrap();
     fs::write(&p, body).unwrap();
-    record_files(layout, None, &[p.clone()], "2026-01-01T00:00:00Z").unwrap();
+    record_files(
+        layout,
+        None,
+        std::slice::from_ref(&p),
+        "2026-01-01T00:00:00Z",
+    )
+    .unwrap();
     p
 }
 
@@ -82,10 +86,18 @@ fn recording_an_edited_file_is_refused() {
     );
 
     // The unguarded re-record is what used to make it `clean` again.
-    let err = record_files(&layout, None, &[f.clone()], "2026-01-02T00:00:00Z")
-        .expect_err("re-recording an edited file must be refused");
+    let err = record_files(
+        &layout,
+        None,
+        std::slice::from_ref(&f),
+        "2026-01-02T00:00:00Z",
+    )
+    .expect_err("re-recording an edited file must be refused");
     let msg = format!("{err:#}");
-    assert!(msg.contains("src/lib.rs"), "error must name the file: {msg}");
+    assert!(
+        msg.contains("src/lib.rs"),
+        "error must name the file: {msg}"
+    );
     assert!(
         msg.contains("--accept-edits"),
         "error must name the escape hatch: {msg}"

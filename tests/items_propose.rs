@@ -122,9 +122,18 @@ satisfies = ["DEMO-1"]
     .unwrap();
 
     let r = run_propose(&target, "Foo", &[]);
-    assert_eq!(r.exit_code, Some(1), "expected drift exit 1; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected drift exit 1; stderr={}",
+        r.stderr
+    );
     let path = proposal_path(&target, "Foo");
-    assert!(path.exists(), "proposal file not written at {}", path.display());
+    assert!(
+        path.exists(),
+        "proposal file not written at {}",
+        path.display()
+    );
     let content = std::fs::read_to_string(&path).unwrap();
     assert!(content.contains("schema_version: 1"));
     assert!(content.contains("module: Foo"));
@@ -155,11 +164,7 @@ satisfies = ["DEMO-1"]
     )
     .unwrap();
     std::fs::create_dir_all(target.join("src")).unwrap();
-    std::fs::write(
-        target.join("src/foo.rs"),
-        "pub fn render() -> u32 { 0 }\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("src/foo.rs"), "pub fn render() -> u32 { 0 }\n").unwrap();
 
     let r = run_propose(&target, "Foo", &[]);
     assert!(r.success, "expected exit 0 (clean); stderr={}", r.stderr);
@@ -187,7 +192,12 @@ satisfies = ["DEMO-1"]
     .unwrap();
 
     let first = run_propose(&target, "Foo", &[]);
-    assert_eq!(first.exit_code, Some(1), "first run drift: stderr={}", first.stderr);
+    assert_eq!(
+        first.exit_code,
+        Some(1),
+        "first run drift: stderr={}",
+        first.stderr
+    );
     let path = proposal_path(&target, "Foo");
     // Mark it with a fake rationale so we can detect overwrite.
     let original = std::fs::read_to_string(&path).unwrap();
@@ -210,7 +220,12 @@ satisfies = ["DEMO-1"]
     assert_eq!(after, edited, "file should not have been overwritten");
 
     let third = run_propose(&target, "Foo", &["--clobber"]);
-    assert_eq!(third.exit_code, Some(1), "clobber drift exit; stderr={}", third.stderr);
+    assert_eq!(
+        third.exit_code,
+        Some(1),
+        "clobber drift exit; stderr={}",
+        third.stderr
+    );
     let after_clobber = std::fs::read_to_string(&path).unwrap();
     assert!(
         !after_clobber.contains("human review"),
@@ -311,7 +326,10 @@ satisfies = ["DEMO-1"]
     let r = run_propose(&target, "Foo", &[]);
     assert_eq!(r.exit_code, Some(1));
     let content = std::fs::read_to_string(proposal_path(&target, "Foo")).unwrap();
-    assert!(!content.contains("source_file:"), "no source_file field when None: {content}");
+    assert!(
+        !content.contains("source_file:"),
+        "no source_file field when None: {content}"
+    );
     assert!(content.contains("category: in_spec_only"));
 }
 
@@ -334,13 +352,13 @@ satisfies = ["DEMO-1"]
     .unwrap();
 
     let custom = target.join("scratch/proposal.yaml");
-    let r = run_propose(
-        &target,
-        "Foo",
-        &["--output", custom.to_str().unwrap()],
-    );
+    let r = run_propose(&target, "Foo", &["--output", custom.to_str().unwrap()]);
     assert_eq!(r.exit_code, Some(1));
-    assert!(custom.exists(), "custom path not written: {}", custom.display());
+    assert!(
+        custom.exists(),
+        "custom path not written: {}",
+        custom.display()
+    );
     // Default path should NOT have been written when --output overrides.
     assert!(!proposal_path(&target, "Foo").exists());
 }
@@ -351,7 +369,12 @@ fn propose_missing_module_errors_with_item_101() {
     bootstrap_lib(&target);
 
     let r = run_propose(&target, "DoesNotExist", &[]);
-    assert_eq!(r.exit_code, Some(2), "expected hard error; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(2),
+        "expected hard error; stderr={}",
+        r.stderr
+    );
     assert!(
         r.stderr.contains("ITEM-101"),
         "expected ITEM-101; stderr={}",

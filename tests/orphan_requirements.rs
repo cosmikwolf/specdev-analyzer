@@ -224,7 +224,9 @@ visibility = "pub"
         .filter(|f| matches!(f.severity, Severity::Error))
         .collect();
     assert!(
-        errors.iter().any(|f| f.message.contains("nature") || f.message.contains("philosophical")),
+        errors
+            .iter()
+            .any(|f| f.message.contains("nature") || f.message.contains("philosophical")),
         "expected schema error mentioning the bad value; got: {errors:?}"
     );
 }
@@ -247,7 +249,10 @@ visibility = "pub"
 
     let report = validate::run_project(&target, None).unwrap();
     let warnings = warnings_for(&report, "requirements_have_satisfiers");
-    assert!(warnings.is_empty(), "empty universe = no warnings; got: {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "empty universe = no warnings; got: {warnings:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -295,11 +300,12 @@ satisfies = ["REQ-COVERED-001"]
 
     let report = validate::run_project(&target, None).unwrap();
     let warnings = warnings_for(&report, "requirements_have_satisfiers");
-    let names: Vec<&str> = warnings
-        .iter()
-        .map(|f| f.message.as_str())
-        .collect();
-    assert_eq!(warnings.len(), 2, "two module-nature orphans; got {names:?}");
+    let names: Vec<&str> = warnings.iter().map(|f| f.message.as_str()).collect();
+    assert_eq!(
+        warnings.len(),
+        2,
+        "two module-nature orphans; got {names:?}"
+    );
     assert!(
         names.iter().any(|m| m.contains("REQ-ORPHAN-001")),
         "REQ-ORPHAN-001 (default nature) should fire: {names:?}"

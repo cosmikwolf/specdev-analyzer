@@ -70,7 +70,9 @@ pub(crate) struct CrateRef {
 #[serde(untagged)]
 enum CrateSource {
     Tagged(CrateSourceTag),
-    Path { path: String },
+    Path {
+        path: String,
+    },
     Git {
         git: String,
         #[serde(default)]
@@ -149,7 +151,7 @@ pub fn render(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         "firmware-layered" => render_firmware(layout, workspace_ctx.as_ref()), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "library-api" => render_library(layout, workspace_ctx.as_ref(), None, None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
         "audio-plugin" => render_audio_plugin(layout, workspace_ctx.as_ref(), None), // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
-        "rust-workspace" => Err(anyhow!( // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "rust-workspace" /* D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1. */ => Err(anyhow!(
             "spec.toml at {} declares profile `rust-workspace` but has no \
              [workspace] table; add `[workspace]` with `[[workspace.members]]` \
              entries or change the profile",
@@ -343,9 +345,7 @@ fn translate_block_source(s: &bd_module::CrateSource) -> CrateSource {
         bd_module::CrateSource::Tagged(bd_module::CrateSourceTag::CratesIo) => {
             CrateSource::Tagged(CrateSourceTag::CratesIo)
         }
-        bd_module::CrateSource::Path { path } => CrateSource::Path {
-            path: path.clone(),
-        },
+        bd_module::CrateSource::Path { path } => CrateSource::Path { path: path.clone() },
         bd_module::CrateSource::Git {
             git,
             rev,
@@ -367,7 +367,11 @@ fn translate_block_source(s: &bd_module::CrateSource) -> CrateSource {
 /// mirroring the discipline applied to ShapeKind.
 fn evaluate_bin_gate(gate: &BinGate, arch: &toml::value::Table) -> bool {
     match gate {
-        BinGate::ArchitectureArrayContains { table, field, value } => arch
+        BinGate::ArchitectureArrayContains {
+            table,
+            field,
+            value,
+        } => arch
             .get(table.as_str())
             .and_then(toml::Value::as_table)
             .and_then(|t| t.get(field.as_str()))
@@ -424,8 +428,8 @@ impl WorkspaceContext {
     fn load(root_spec: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(root_spec)
             .with_context(|| format!("reading {}", root_spec.display()))?;
-        let parsed: serde_json::Value = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", root_spec.display()))?;
+        let parsed: serde_json::Value =
+            toml::from_str(&text).with_context(|| format!("parsing {}", root_spec.display()))?;
         let root_dir = root_spec.parent().unwrap_or(root_spec);
         let specs_dir = parsed
             .get("paths")
@@ -436,7 +440,10 @@ impl WorkspaceContext {
         let arch = read_architecture(&arch_path)?;
 
         let mut package_fields: BTreeSet<String> = BTreeSet::new();
-        if let Some(wp) = arch.get("workspace_package").and_then(toml::Value::as_table) {
+        if let Some(wp) = arch
+            .get("workspace_package")
+            .and_then(toml::Value::as_table)
+        {
             for (k, _) in wp.iter() {
                 package_fields.insert(k.clone());
             }
@@ -524,7 +531,10 @@ fn render_firmware(
     match project.crate_shape {
         Some(crate::config::CrateShape::Library) => {
             text.push_str("[lib]\n");
-            text.push_str(&format!("name = {}\n", quote_str(&crate_ident(&project.name))));
+            text.push_str(&format!(
+                "name = {}\n",
+                quote_str(&crate_ident(&project.name))
+            ));
             text.push_str("path = \"src/lib.rs\"\n");
         }
         _ => {
@@ -555,7 +565,11 @@ fn render_firmware(
         &mut warnings,
     )?;
 
-    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
+    Ok(RenderedCargoToml {
+        text,
+        warnings,
+        extra_files: Vec::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +641,11 @@ fn render_library(
     // a per-package override one field over.
     text.push_str("[lib]\n");
     let crate_types: Vec<&str> = if !project.crate_type.is_empty() {
-        project.crate_type.iter().map(|t| t.as_cargo_str()).collect()
+        project
+            .crate_type
+            .iter()
+            .map(|t| t.as_cargo_str())
+            .collect()
     } else {
         manifest_lib
             .map(|l| l.crate_type.iter().map(|t| t.as_cargo_str()).collect())
@@ -702,7 +720,11 @@ fn render_library(
         ));
     }
 
-    Ok(RenderedCargoToml { text, warnings, extra_files })
+    Ok(RenderedCargoToml {
+        text,
+        warnings,
+        extra_files,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -926,10 +948,7 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
 
     // [workspace] block: resolver + members list.
     text.push_str("[workspace]\n");
-    let resolver = workspace_section
-        .resolver
-        .as_deref()
-        .unwrap_or("2");
+    let resolver = workspace_section.resolver.as_deref().unwrap_or("2");
     text.push_str(&format!("resolver = {}\n", quote_str(resolver)));
     text.push_str("members = [\n");
     for member in &workspace_section.members {
@@ -973,11 +992,20 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
     // architecture.toml's [workspace_package]. Emit in Cargo's
     // idiomatic order (matches zfm dogfood baseline): identity →
     // license → repository → toolchain version.
-    if let Some(wp) = arch.get("workspace_package").and_then(toml::Value::as_table) {
+    if let Some(wp) = arch
+        .get("workspace_package")
+        .and_then(toml::Value::as_table)
+    {
         if !wp.is_empty() {
             text.push('\n');
             text.push_str("[workspace.package]\n");
-            for key in ["version", "edition", "license", "repository", "rust-version"] {
+            for key in [
+                "version",
+                "edition",
+                "license",
+                "repository",
+                "rust-version",
+            ] {
                 if let Some(v) = wp.get(key).and_then(toml::Value::as_str) {
                     text.push_str(&format!("{} = {}\n", key, quote_str(v)));
                 }
@@ -1009,7 +1037,11 @@ fn render_workspace_root(layout: &LayoutContext) -> Result<RenderedCargoToml> {
         &mut warnings,
     )?;
 
-    Ok(RenderedCargoToml { text, warnings, extra_files: Vec::new() })
+    Ok(RenderedCargoToml {
+        text,
+        warnings,
+        extra_files: Vec::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,7 +1192,10 @@ fn write_profiles(
         }
         for key in KEYS {
             if let Some(v) = profile.get(key) {
-                text.push_str(&format!("{key} = {}\n", render_profile_value(name, key, v)?));
+                text.push_str(&format!(
+                    "{key} = {}\n",
+                    render_profile_value(name, key, v)?
+                ));
             }
         }
         if let Some(packages) = profile.get("package").and_then(toml::Value::as_table) {
@@ -1206,29 +1241,28 @@ fn read_architecture(path: &Path) -> Result<toml::value::Table> {
     if !path.is_file() {
         return Ok(toml::value::Table::new());
     }
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let value: toml::Value = toml::from_str(&text)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     match value {
         toml::Value::Table(t) => Ok(t),
-        _ => Err(anyhow!(
-            "{} did not parse as a TOML table",
-            path.display()
-        )),
+        _ => Err(anyhow!("{} did not parse as a TOML table", path.display())),
     }
 }
 
 fn parse_crate_ref(value: Option<&toml::Value>) -> Result<Option<CrateRef>> {
     let Some(v) = value else { return Ok(None) };
     let json = serde_json::to_value(v)?;
-    let parsed: CrateRef = serde_json::from_value(json)
-        .map_err(|e| anyhow!("CrateReference parse error: {e}"))?;
+    let parsed: CrateRef =
+        serde_json::from_value(json).map_err(|e| anyhow!("CrateReference parse error: {e}"))?;
     Ok(Some(parsed))
 }
 
 fn extract_crate_ref_array(value: Option<&toml::Value>) -> Result<Vec<CrateRef>> {
-    let Some(v) = value else { return Ok(Vec::new()) };
+    let Some(v) = value else {
+        return Ok(Vec::new());
+    };
     let arr = match v.as_array() {
         Some(a) => a,
         None => return Ok(Vec::new()),
@@ -1255,10 +1289,10 @@ fn collect_module_external_deps(layout: &LayoutContext) -> Result<Vec<CrateRef>>
         .collect();
     paths.sort();
     for path in &paths {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let value: toml::Value = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let value: toml::Value =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         for c in extract_crate_ref_array(value.get("external_deps"))? {
             out.push(c);
         }
@@ -1406,13 +1440,15 @@ fn parse_library_features(value: Option<&toml::Value>) -> Result<ParsedFeatures>
                     .collect()
             })
             .unwrap_or_default();
-        let mut deps: Vec<String> =
-            depends_on.into_iter().chain(cargo_deps.into_iter()).collect();
+        let mut deps: Vec<String> = depends_on.into_iter().chain(cargo_deps).collect();
         deps.sort();
         deps.dedup();
         out.features.insert(name.to_string(), deps);
 
-        if t.get("default").and_then(toml::Value::as_bool).unwrap_or(false) {
+        if t.get("default")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+        {
             out.defaults.push(name.to_string());
         }
     }
@@ -1560,7 +1596,12 @@ fn render_dep_value(c: &CrateRef) -> String {
         Some(CrateSource::Path { path }) => {
             vec![format!("path = {}", quote_str(path))]
         }
-        Some(CrateSource::Git { git, rev, tag, branch }) => {
+        Some(CrateSource::Git {
+            git,
+            rev,
+            tag,
+            branch,
+        }) => {
             let mut parts = vec![format!("git = {}", quote_str(git))];
             if let Some(r) = rev {
                 parts.push(format!("rev = {}", quote_str(r)));

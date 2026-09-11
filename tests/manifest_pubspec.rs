@@ -211,7 +211,8 @@ fn dart_manifest_unversioned_path_dep_is_not_a_version_conflict() {
         r.stdout
     );
     assert!(
-        !r.stderr.contains("`local_proto` declared with conflicting versions"),
+        !r.stderr
+            .contains("`local_proto` declared with conflicting versions"),
         "unversioned path dep + versioned block entry must not warn as a \
          version conflict (#106).\nstderr: {}",
         r.stderr
@@ -230,7 +231,8 @@ fn dart_manifest_unversioned_path_dep_is_not_a_version_conflict() {
     // source difference, so the two mergers still diverge here — tracked
     // separately; do not "align" them by deleting this warning.
     assert!(
-        r.stderr.contains("`local_proto` declared with conflicting sources"),
+        r.stderr
+            .contains("`local_proto` declared with conflicting sources"),
         "a genuine source difference must still be reported.\nstderr: {}",
         r.stderr
     );
@@ -333,7 +335,12 @@ fn rust_manifest_matches_cargo_toml_alias_byte_for_byte() {
     .unwrap();
     let via_manifest = run_cli(&target, &["manifest"]);
     let via_alias = run_cli(&target, &["cargo-toml"]);
-    assert_eq!(via_manifest.exit_code, Some(0), "stderr: {}", via_manifest.stderr);
+    assert_eq!(
+        via_manifest.exit_code,
+        Some(0),
+        "stderr: {}",
+        via_manifest.stderr
+    );
     assert_eq!(via_alias.exit_code, Some(0), "stderr: {}", via_alias.stderr);
     assert_eq!(
         via_manifest.stdout, via_alias.stdout,
@@ -388,7 +395,11 @@ pubspec_yaml:
     // Pub's documented aggregator-root shape: placeholder name, never
     // published.
     assert!(r.stdout.contains("name: _\n"), "stdout: {}", r.stdout);
-    assert!(r.stdout.contains("publish_to: none"), "stdout: {}", r.stdout);
+    assert!(
+        r.stdout.contains("publish_to: none"),
+        "stdout: {}",
+        r.stdout
+    );
     assert!(
         r.stdout.contains("workspace:\n  - \"app\"\n"),
         "stdout: {}",

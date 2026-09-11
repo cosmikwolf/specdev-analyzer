@@ -33,8 +33,7 @@ use super::{ExtractedItem, Span};
 /// `profile.yaml` (`items.visibility_floor`). `Ok(None)` when the manifest
 /// or the key is absent — the adapter default then applies.
 pub fn profile_visibility_floor(specdev_root: &Path) -> Result<Option<String>> {
-    Ok(Profile::load_inlined(specdev_root)?
-        .and_then(|p| p.visibility_floor().map(str::to_string)))
+    Ok(Profile::load_inlined(specdev_root)?.and_then(|p| p.visibility_floor().map(str::to_string)))
 }
 
 /// Parse `source` with the language adapter, run the per-language items
@@ -187,7 +186,9 @@ fn build_named(
 
 fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedItem> {
     let def_node = capture_node(query, m, "impl.def")?;
-    let target = capture_text(query, m, source, "impl.type")?.trim().to_string();
+    let target = capture_text(query, m, source, "impl.type")?
+        .trim()
+        .to_string();
     let trait_text = capture_text(query, m, source, "impl.trait").map(|s| s.trim().to_string());
     let name = match trait_text {
         Some(t) if !t.is_empty() => format!("{t} for {target}"),
@@ -218,7 +219,9 @@ fn build_member(
     prefix: &str,
     floor: Option<&str>,
 ) -> Option<ExtractedItem> {
-    let kind = prefix.strip_prefix("inherent_").expect("checked starts_with");
+    let kind = prefix
+        .strip_prefix("inherent_")
+        .expect("checked starts_with");
     if !vis_gate_passes(query, m, source, prefix, adapter, floor) {
         return None;
     }
@@ -261,7 +264,7 @@ fn build_re_export(
     source: &str,
     adapter: &dyn LanguageAdapter,
 ) -> Option<ExtractedItem> {
-    if query.capture_names().iter().any(|n| *n == "re_export.vis") {
+    if query.capture_names().contains(&"re_export.vis") {
         let vis = capture_text(query, m, source, "re_export.vis")?.trim();
         adapter.re_export_visibility(vis)?;
     }
@@ -339,11 +342,7 @@ fn extern_abi(node: Node<'_>, source: &str) -> Option<String> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "string_literal" {
-            return Some(
-                source[child.byte_range()]
-                    .trim_matches('"')
-                    .to_string(),
-            );
+            return Some(source[child.byte_range()].trim_matches('"').to_string());
         }
     }
     None
@@ -363,12 +362,7 @@ fn capture_text<'a>(query: &Query, m: &QueryMatch, source: &'a str, name: &str) 
 }
 
 /// All texts for a (possibly quantified) capture name in this match.
-fn capture_texts<'a>(
-    query: &Query,
-    m: &QueryMatch,
-    source: &'a str,
-    name: &str,
-) -> Vec<&'a str> {
+fn capture_texts<'a>(query: &Query, m: &QueryMatch, source: &'a str, name: &str) -> Vec<&'a str> {
     let Some(idx) = query.capture_names().iter().position(|n| *n == name) else {
         return Vec::new();
     };
@@ -478,7 +472,10 @@ mod tests {
     fn re_export_admits_what_the_spec_enum_admits() {
         let source = "pub use a::B;\npub(crate) use a::C;\npub(super) use a::D;\nuse a::E;\n";
         assert_eq!(names(&extract(source), "re_export"), vec!["B", "C"]);
-        assert_eq!(names(&extract_with_floor(source, "pub(crate)"), "re_export"), vec!["B", "C"]);
+        assert_eq!(
+            names(&extract_with_floor(source, "pub(crate)"), "re_export"),
+            vec!["B", "C"]
+        );
     }
 
     #[test]
@@ -581,7 +578,9 @@ impl Show for T { fn show(&self) {} }
         let source = "impl RateLimiter<C> { pub fn try_consume(&self, n: u32) -> bool { true } }\n";
         let items = extract(source);
         assert!(
-            items.iter().any(|i| i.kind == "fn" && i.name == "RateLimiter::try_consume"),
+            items
+                .iter()
+                .any(|i| i.kind == "fn" && i.name == "RateLimiter::try_consume"),
             "expected `RateLimiter::try_consume`, got {:?}",
             items.iter().map(|i| &i.name).collect::<Vec<_>>()
         );
@@ -592,8 +591,12 @@ impl Show for T { fn show(&self) {} }
     fn inherent_assoc_const_and_type() {
         let source = "impl Widget { pub const MAX: u32 = 8; pub type Out = u16; fn p() {} }\n";
         let items = extract(source);
-        assert!(items.iter().any(|i| i.kind == "const" && i.name == "Widget::MAX"));
-        assert!(items.iter().any(|i| i.kind == "type" && i.name == "Widget::Out"));
+        assert!(items
+            .iter()
+            .any(|i| i.kind == "const" && i.name == "Widget::MAX"));
+        assert!(items
+            .iter()
+            .any(|i| i.kind == "type" && i.name == "Widget::Out"));
     }
 
     #[test]
@@ -607,10 +610,7 @@ impl Show for T { fn show(&self) {} }
     fn extracts_re_export_with_alias() {
         let source = "pub use crate::inner::Inner as PublicName;\n";
         let items = extract(source);
-        let re_exports: Vec<_> = items
-            .iter()
-            .filter(|i| i.kind == "re_export")
-            .collect();
+        let re_exports: Vec<_> = items.iter().filter(|i| i.kind == "re_export").collect();
         assert_eq!(re_exports.len(), 1);
         assert_eq!(re_exports[0].name, "PublicName");
     }
@@ -628,10 +628,7 @@ impl Show for T { fn show(&self) {} }
     fn extracts_extern_block() {
         let source = "extern \"C\" {\n    fn foo() -> u32;\n}\n";
         let items = extract(source);
-        let externs: Vec<_> = items
-            .iter()
-            .filter(|i| i.kind == "extern_block")
-            .collect();
+        let externs: Vec<_> = items.iter().filter(|i| i.kind == "extern_block").collect();
         assert_eq!(externs.len(), 1);
         assert!(externs[0].name.starts_with("extern_C_at_"));
     }
