@@ -1,9 +1,9 @@
 # Architecture-level decisions for a firmware-layered project.
 #
-# Phase 6.7+: this file captures project-wide infrastructure picks
+# This file captures project-wide infrastructure picks
 # (platform, runtime, logger) AS WELL AS cross-module port
-# connections. Every Cargo dep is captured here or in modules; Phase
-# 8's `gen` emits Cargo.toml from these fields. The spec is the source
+# connections. Every Cargo dep is captured here or in modules; codegen
+# emits Cargo.toml from these fields. The spec is the source
 # of truth.
 
 # ---------------------------------------------------------------------------

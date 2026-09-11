@@ -263,18 +263,30 @@ fi
 #
 # The walk is kept as a fallback for a plugin tree that is not a git
 # checkout (a packaged install), where nothing untracked exists anyway.
+#
+# #145: there was an extension filter here — `.md|.yaml|.yml|.json` — and it
+# covered 279 of 522 tracked files while reporting clean over **17** real
+# violations. The worst were the profile `*.toml.template` files, which
+# `bootstrap` copies verbatim into every new project, so a co-worker's own
+# `specs/architecture.toml` opened with `# Phase 6.7+:`. Note that extending
+# the list would not have fixed it either: those files end in `.template`,
+# not `.toml`. An inclusion list fails silently and gets one more entry per
+# ecosystem, so the list is deleted rather than extended (#122's lesson, and
+# the same shape as the `--exclude-dir` argument above). Everything git
+# tracks is scanned; `grep -I` skips the one binary file
+# (`profiles/nextjs-app/templates/gitkeep.template`) without naming it. The
+# per-line `PLANNING-OK` escape is the exception list, and it fails loudly
+# because each exception sits at its own site.
 plugin_planning_count=0
 if git -C "$plugin_tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   plugin_planning_hits=$(git -C "$plugin_tree" ls-files --cached --others --exclude-standard \
-    | grep -E '\.(md|yaml|yml|json)$' \
     | sed "s|^|$plugin_tree/|" \
     | tr '\n' '\0' \
-    | xargs -0 -r grep -HnE "$PLANNING_RE" 2>/dev/null \
+    | xargs -0 -r grep -HnEI "$PLANNING_RE" 2>/dev/null \
     | grep -vE 'PLANNING-OK' || true)
 else
-  plugin_planning_hits=$(grep -rnE \
-    --include='*.md' --include='*.yaml' --include='*.yml' --include='*.json' \
-    --exclude-dir='.git' \
+  plugin_planning_hits=$(grep -rnEI \
+    --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='target' \
     "$PLANNING_RE" "$plugin_tree" 2>/dev/null \
     | grep -vE 'PLANNING-OK' || true)
 fi

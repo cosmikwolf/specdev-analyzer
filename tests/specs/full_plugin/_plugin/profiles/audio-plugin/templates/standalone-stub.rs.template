@@ -1,6 +1,6 @@
 //! Standalone host for `{project_name}` — paired with the `[[bin]]` row
 //! emitted by `cargo-toml` when `[plugin].formats` includes `"standalone"`
-//! (F-016, doc 21 §3.1 audio-plugin manifest `paired_stub.template_file`).
+//! (the audio-plugin profile manifest's `paired_stub.template_file`).
 //!
 //! The analyzer writes this file once when the `[[bin]]` row first
 //! emits; subsequent re-emits never overwrite. Replace `MyPlugin` below
