@@ -1,0 +1,41 @@
+# pnpm settings for this project. Written once when absent, then yours.
+#
+# This file is NOT about workspaces, despite its name. pnpm 10 reads its
+# settings from here, and a single application with no `packages:` key is a
+# supported shape — `create-next-app` writes the same file for a single app.
+#
+# Why it ships: pnpm 10 refuses a dependency's install scripts by default.
+# `pnpm install` prints "Ignored build scripts: ..." and still exits 0, so a
+# package that needs to build a native binary never builds one while every
+# static gate stays green. The failure then surfaces at the first real
+# request — not at install, type-check, unit-test or build time.
+#
+# `onlyBuiltDependencies` is the allowlist. pnpm also reads it from
+# package.json's `pnpm` field, but package.json is generated output that
+# `specdev-analyzer manifest --write` overwrites, so this file is the only
+# home the setting survives in.
+#
+# Measured on pnpm 10.15.0, with a control:
+#   - This file IS read in a single-app project. The control run, identical
+#     but with the file removed, ignored the scripts even under
+#     `pnpm install --force`.
+#   - A first install (no `node_modules/`) runs the approved scripts under a
+#     plain `pnpm install`.
+#   - Adding a name to a tree that is ALREADY installed is not enough on its
+#     own: a plain `pnpm install` is a no-op that repeats the same warning.
+#     Use `pnpm install --force`, or `pnpm rebuild <pkg>`.
+#   - A name for a package this project does not depend on is inert: no
+#     warning, no error.
+#
+# `pnpm approve-builds` edits this list for you, interactively.
+#
+# pnpm 11 replaces `onlyBuiltDependencies` with `allowBuilds` (a map, not a
+# list). This project pins pnpm 10, so the list form is correct here. Change
+# the key when you move the pin, not before.
+
+onlyBuiltDependencies:
+  # Required by the SQLite stack the prisma block documents. Each entry is
+  # inert when that block is not inlined, so the default is safe either way.
+  - "@prisma/engines"
+  - better-sqlite3
+  - prisma
