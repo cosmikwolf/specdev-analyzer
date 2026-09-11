@@ -140,7 +140,11 @@ fn git_rev_mismatch_is_flagged_as_a_pin_disagreement() {
     let f = findings_for(&root);
     assert_eq!(f.len(), 1, "expected exactly one finding, got: {f:#?}");
     assert!(f[0].contains("REF-PIN-001"), "{}", f[0]);
-    assert!(f[0].contains("aaa111") && f[0].contains("bbb222"), "{}", f[0]);
+    assert!(
+        f[0].contains("aaa111") && f[0].contains("bbb222"),
+        "{}",
+        f[0]
+    );
 }
 
 #[test]
@@ -231,9 +235,7 @@ fn target_specific_dependency_tables_are_compared() {
     version: "0.6"
     source: crates-io
 "#,
-        &format!(
-            "{PKG}[target.'cfg(target_arch = \"arm\")'.dependencies]\nsome_hal = \"0.7\"\n"
-        ),
+        &format!("{PKG}[target.'cfg(target_arch = \"arm\")'.dependencies]\nsome_hal = \"0.7\"\n"),
     );
     let f = findings_for(&root);
     assert_eq!(f.len(), 1, "expected exactly one finding, got: {f:#?}");

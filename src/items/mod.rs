@@ -108,8 +108,8 @@ pub fn load_item_kinds(layout: &LayoutContext) -> Result<Vec<String>> {
             path.display()
         )
     })?;
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let kinds: Vec<String> = doc
         .get("properties")
         .and_then(|p| p.get("kind"))

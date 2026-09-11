@@ -17,6 +17,18 @@
 //! - `DRIFT-INVARIANT-001` — inlined file present, no upstream entry
 //! - `DRIFT-INVARIANT-002` — upstream entry present, no inlined file
 //! - `DRIFT-INVARIANT-003` — lineage entry present, neither inlined nor upstream
+//!
+//! The report also covers the **profile substrate** (#109): the schemas,
+//! templates, `profile.yaml` and root TOMLs that `bootstrap` scaffolded.
+//! Those have no `upstream/` copy — their merge base is the hash
+//! `bootstrap` recorded in `lineage.toml` `[profile_files]`, so the same
+//! four categories are computable while a three-way *merge* is not. A tree
+//! bootstrapped before #109 records no hashes; it reports
+//! `status: not_recorded`, which is deliberately not `clean`. Reporting a
+//! confident pass over a substrate the tool never looked at is the defect
+//! #109 filed: `drift` said clean on `dogfood-flutter-hello/rust` while a
+//! stale inlined `architecture.schema.yaml` was a hard `SCHEMA-ARCH`
+//! error.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,6 +36,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use crate::bootstrap::{self, BootstrapInputs};
 use crate::inline::{collect_block_files, collect_bridge_files, UnitFile};
 use crate::layout::LayoutContext;
 use crate::lineage::Lineage;
@@ -63,12 +76,63 @@ pub struct InvariantViolation {
     pub message: String,
 }
 
+/// How much of a file the category below is a statement about. Stated in
+/// the report rather than left as a rule the reader has to know: a partial
+/// comparison that looks total is how a confident clean gets published
+/// over a substrate nobody checked (#109).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Comparison {
+    /// Whole file.
+    Full,
+    /// Everything except the `allOf` array that `inline` appends to. That
+    /// array's contents are reported by `units:`.
+    ExcludesUnitRefs,
+}
+
+/// One profile-scaffolded file, classified against the hash `bootstrap`
+/// recorded for it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileFileDrift {
+    /// Path relative to the PROJECT ROOT, `/`-separated — not relative to
+    /// a unit directory. A profile writes to `spec.toml`, `specs/*.toml`
+    /// and `specs/specdev/**`, so there is no single containing directory
+    /// to be relative to.
+    pub path: String,
+    pub category: FileCategory,
+    pub comparison: Comparison,
+}
+
+/// Whether this project records the substrate at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileDriftStatus {
+    /// `[profile_files]` is populated; the categories below are real.
+    Recorded,
+    /// Bootstrapped before #109. Nothing to compare against, so nothing
+    /// is asserted — in particular, NOT that the substrate is clean.
+    NotRecorded,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileDrift {
+    /// `[project].profile` from `spec.toml`.
+    pub profile: String,
+    pub status: ProfileDriftStatus,
+    /// Sorted by `path`. Empty when `status` is `not_recorded`.
+    pub files: Vec<ProfileFileDrift>,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct DriftReport {
     /// Sorted by `(kind, name)` for stable snapshots.
     pub units: Vec<UnitDrift>,
     /// Broken-invariant errors. Sorted by `(code, kind, name)`.
     pub invariants: Vec<InvariantViolation>,
+    /// The profile substrate (#109). `None` only when the project has no
+    /// resolvable profile directory in the plugin tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileDrift>,
 }
 
 impl DriftReport {
@@ -78,12 +142,31 @@ impl DriftReport {
     }
 
     /// `true` iff every file is `Clean` AND there are no invariant errors.
+    ///
+    /// A `not_recorded` profile substrate does NOT make this false. The
+    /// tree is not dirty; the tool simply cannot see that far, and every
+    /// project bootstrapped before #109 is in that state. Callers that
+    /// need to know should ask [`Self::profile_substrate_unrecorded`] —
+    /// silence and cleanliness are different answers and get different
+    /// questions.
     pub fn is_clean(&self) -> bool {
         self.invariants.is_empty()
             && self
                 .units
                 .iter()
                 .all(|u| u.files.iter().all(|f| f.category == FileCategory::Clean))
+            && self
+                .profile
+                .as_ref()
+                .is_none_or(|p| p.files.iter().all(|f| f.category == FileCategory::Clean))
+    }
+
+    /// `true` when the project predates `[profile_files]`, so no claim
+    /// about the profile substrate is being made either way.
+    pub fn profile_substrate_unrecorded(&self) -> bool {
+        self.profile
+            .as_ref()
+            .is_some_and(|p| p.status == ProfileDriftStatus::NotRecorded)
     }
 }
 
@@ -111,10 +194,135 @@ pub fn run_drift(layout: &LayoutContext, plugin_root: &Path) -> Result<DriftRepo
         }
     }
 
+    report.profile = drift_profile(layout, plugin_root, &lineage, &mut report.invariants)?;
+
     report
         .invariants
         .sort_by(|a, b| (&a.code, &a.kind, &a.name).cmp(&(&b.code, &b.kind, &b.name)));
     Ok(report)
+}
+
+/// Classify the profile substrate (#109).
+///
+/// The three values compared per file:
+///
+/// * **base** — the hash `bootstrap` recorded in `[profile_files]`.
+/// * **ours** — the file on disk in the project now.
+/// * **theirs** — what the CURRENT plugin would write for that path,
+///   recomputed through [`bootstrap::profile_expected_bytes`] with the
+///   same substitution inputs. Recomputing rather than reading the raw
+///   template is the whole trick: `spec.toml` and `module.schema.yaml`
+///   carry `{{project_name}}` / `{{language}}`, and comparing against
+///   template text would report every templated file as drifted forever.
+///
+/// The substitution inputs need no new stored state — `spec.toml`'s
+/// `[project]` table already carries `name`, `profile` and `language`,
+/// which is exactly what `bootstrap` was given.
+fn drift_profile(
+    layout: &LayoutContext,
+    plugin_root: &Path,
+    lineage: &Lineage,
+    invariants: &mut Vec<InvariantViolation>,
+) -> Result<Option<ProfileDrift>> {
+    let project = &layout.spec.project;
+    let profile_dir = plugin_root.join("profiles").join(&project.profile);
+    if !profile_dir.is_dir() {
+        // The plugin has no such profile. `migrate` reports this as
+        // MIGRATE-002; drift stays a pure reporter and says nothing.
+        return Ok(None);
+    }
+
+    if !lineage.records_profile_files() {
+        return Ok(Some(ProfileDrift {
+            profile: project.profile.clone(),
+            status: ProfileDriftStatus::NotRecorded,
+            files: Vec::new(),
+        }));
+    }
+
+    let inputs = BootstrapInputs {
+        profile: project.profile.clone(),
+        language: project.language.clone(),
+        project_name: project.name.clone(),
+        target_dir: layout.project_root.clone(),
+    };
+    let theirs = bootstrap::profile_expected_bytes(&profile_dir, &inputs)?;
+
+    // Union of what bootstrap recorded and what the plugin ships now, so
+    // a file the plugin added or dropped since bootstrap still appears.
+    let mut paths: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    paths.extend(lineage.profile_files.keys().map(|k| k.as_str()));
+    paths.extend(theirs.keys().map(|k| k.as_str()));
+
+    let mut files: Vec<ProfileFileDrift> = Vec::new();
+    for path in paths {
+        let base = lineage.profile_files.get(path).map(|s| s.as_str());
+        let theirs_hash = match theirs.get(path) {
+            Some(b) => Some(bootstrap::profile_file_hash(path, b)?),
+            None => None,
+        };
+        let abs = layout.project_root.join(path);
+        let ours_hash = match std::fs::read(&abs) {
+            Ok(b) => Some(bootstrap::profile_file_hash(path, &b)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(format!("reading {}", abs.display())))
+            }
+        };
+
+        // Recorded, but gone from the project: the same shape as an
+        // inlined unit whose file was deleted, so it reuses that code.
+        if base.is_some() && ours_hash.is_none() {
+            invariants.push(violation(
+                "DRIFT-INVARIANT-002",
+                "profile",
+                &project.profile,
+                format!("`{path}` is recorded in [profile_files] but is not in the project"),
+            ));
+            continue;
+        }
+        // Present but never recorded: bootstrap did not write it. Either
+        // hand-added, or hand-copied from a newer plugin.
+        if base.is_none() {
+            invariants.push(violation(
+                "DRIFT-INVARIANT-001",
+                "profile",
+                &project.profile,
+                format!(
+                    "`{path}` is shipped by the profile but has no [profile_files] record; \
+                     bootstrap did not write it"
+                ),
+            ));
+            continue;
+        }
+
+        let base = base.expect("base checked above");
+        let ours_moved = ours_hash.as_deref() != Some(base);
+        // A path the plugin no longer produces counts as moved: the
+        // plugin side genuinely differs from the base.
+        let theirs_moved = theirs_hash.as_deref() != Some(base);
+        let category = match (ours_moved, theirs_moved) {
+            (false, false) => FileCategory::Clean,
+            (false, true) => FileCategory::PluginMoved,
+            (true, false) => FileCategory::LocallyEdited,
+            (true, true) => FileCategory::Both,
+        };
+        files.push(ProfileFileDrift {
+            path: path.to_string(),
+            category,
+            comparison: if bootstrap::CO_OWNED_AGGREGATORS.contains(&path) {
+                Comparison::ExcludesUnitRefs
+            } else {
+                Comparison::Full
+            },
+        });
+    }
+
+    Ok(Some(ProfileDrift {
+        profile: project.profile.clone(),
+        status: ProfileDriftStatus::Recorded,
+        files,
+    }))
 }
 
 /// Classify one unit's file set. Returns `Err(InvariantViolation)` for
@@ -157,8 +365,7 @@ fn drift_one_unit(
     }
 
     // Iterate over the union of upstream and plugin file keys.
-    let mut keys: std::collections::BTreeSet<PathBuf> =
-        std::collections::BTreeSet::new();
+    let mut keys: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     keys.extend(upstream_files.keys().cloned());
     keys.extend(plugin_index.keys().cloned());
 
@@ -168,8 +375,13 @@ fn drift_one_unit(
         // collect (which carries rel_dst); fall back to a synthesized
         // path from rel_in_unit when the file only exists in upstream
         // (plugin removed it).
-        let project_path =
-            project_path_for(layout, kind, name, &rel_in_unit, plugin_index.get(&rel_in_unit));
+        let project_path = project_path_for(
+            layout,
+            kind,
+            name,
+            &rel_in_unit,
+            plugin_index.get(&rel_in_unit),
+        );
 
         let project_bytes_opt = match std::fs::read(&project_path) {
             Ok(b) => Some(b),

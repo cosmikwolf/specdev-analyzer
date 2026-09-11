@@ -79,9 +79,13 @@ fn fresh_project(tag: &str, plugin: &Path, profile: &str) -> (PathBuf, LayoutCon
 
 #[test]
 fn bootstrap_copies_profile_yaml_when_present() {
-    let (target, _layout) = fresh_project("bootstrap-profile-yaml", &full_plugin(), "firmware-layered");
+    let (target, _layout) =
+        fresh_project("bootstrap-profile-yaml", &full_plugin(), "firmware-layered");
     let dst = target.join("specs/specdev/profile.yaml");
-    assert!(dst.is_file(), "profile.yaml must be copied to specs/specdev/");
+    assert!(
+        dst.is_file(),
+        "profile.yaml must be copied to specs/specdev/"
+    );
     let src_bytes =
         std::fs::read(full_plugin().join("profiles/firmware-layered/profile.yaml")).unwrap();
     let dst_bytes = std::fs::read(&dst).unwrap();
@@ -105,8 +109,11 @@ fn bootstrap_skips_profile_yaml_when_absent() {
             .exists(),
         "minimal_plugin fixture should NOT have a profile.yaml (test premise)"
     );
-    let (target, _layout) =
-        fresh_project("bootstrap-no-profile-yaml", &minimal_plugin(), "firmware-layered");
+    let (target, _layout) = fresh_project(
+        "bootstrap-no-profile-yaml",
+        &minimal_plugin(),
+        "firmware-layered",
+    );
     assert!(target.join("spec.toml").is_file());
     assert!(
         !target.join("specs/specdev/profile.yaml").exists(),
@@ -120,16 +127,21 @@ fn bootstrap_skips_profile_yaml_when_absent() {
 
 #[test]
 fn inline_block_copies_deps_yaml_when_present() {
-    let (target, layout) =
-        fresh_project("inline-block-deps", &full_plugin(), "firmware-layered");
+    let (target, layout) = fresh_project("inline-block-deps", &full_plugin(), "firmware-layered");
     run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
 
     let dst = target.join("specs/specdev/codegen/rust/blocks/embassy/deps.yaml");
-    assert!(dst.is_file(), "deps.yaml must be copied to inlined codegen tree");
+    assert!(
+        dst.is_file(),
+        "deps.yaml must be copied to inlined codegen tree"
+    );
     let src_bytes =
         std::fs::read(full_plugin().join("blocks/embassy/codegen/rust/deps.yaml")).unwrap();
     let dst_bytes = std::fs::read(&dst).unwrap();
-    assert_eq!(src_bytes, dst_bytes, "deps.yaml must be copied byte-faithfully");
+    assert_eq!(
+        src_bytes, dst_bytes,
+        "deps.yaml must be copied byte-faithfully"
+    );
 
     // Upstream snapshot also captures the manifest (upstream invariant).
     let upstream_dst = upstream::upstream_dir(&layout.specdev_root, UnitKind::Block, "embassy")
@@ -169,7 +181,8 @@ fn inline_block_skips_deps_yaml_when_absent() {
 
 #[test]
 fn inline_bridge_copies_contract_yaml_when_present() {
-    let (target, layout) = fresh_project("inline-bridge-contract", &full_plugin(), "firmware-layered");
+    let (target, layout) =
+        fresh_project("inline-bridge-contract", &full_plugin(), "firmware-layered");
     run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
     run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
     run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
@@ -183,15 +196,15 @@ fn inline_bridge_copies_contract_yaml_when_present() {
     let src_bytes =
         std::fs::read(full_plugin().join("bridges/embassy+stm32h5-rs/contract.yaml")).unwrap();
     let dst_bytes = std::fs::read(&dst).unwrap();
-    assert_eq!(src_bytes, dst_bytes, "contract.yaml must be copied byte-faithfully");
+    assert_eq!(
+        src_bytes, dst_bytes,
+        "contract.yaml must be copied byte-faithfully"
+    );
 
     // Upstream snapshot also captures the manifest.
-    let upstream_dst = upstream::upstream_dir(
-        &layout.specdev_root,
-        UnitKind::Bridge,
-        "embassy+stm32h5-rs",
-    )
-    .join("contract.yaml");
+    let upstream_dst =
+        upstream::upstream_dir(&layout.specdev_root, UnitKind::Bridge, "embassy+stm32h5-rs")
+            .join("contract.yaml");
     assert!(
         upstream_dst.is_file(),
         "upstream/ snapshot must include contract.yaml at {}",
@@ -211,8 +224,11 @@ fn inline_bridge_skips_contract_yaml_when_absent() {
             .exists(),
         "minimal_plugin fixture bridge should NOT ship contract.yaml (test premise)"
     );
-    let (target, layout) =
-        fresh_project("inline-bridge-no-contract", &minimal_plugin(), "firmware-layered");
+    let (target, layout) = fresh_project(
+        "inline-bridge-no-contract",
+        &minimal_plugin(),
+        "firmware-layered",
+    );
     run_inline_block(&layout, &minimal_plugin(), "embassy").unwrap();
     run_inline_block(&layout, &minimal_plugin(), "lvgl").unwrap();
     run_inline_bridge(&layout, &minimal_plugin(), "embassy+lvgl").unwrap();
@@ -234,14 +250,15 @@ fn inline_bridge_skips_contract_yaml_when_absent() {
 fn inline_block_hash_includes_deps_yaml_bytes() {
     let (_t1, layout1) = fresh_project("hash-with-deps", &full_plugin(), "firmware-layered");
     run_inline_block(&layout1, &full_plugin(), "embassy").unwrap();
-    let hash_with =
-        Lineage::load(&layout1.specdev_root).unwrap().blocks["embassy"].content_hash.clone();
+    let hash_with = Lineage::load(&layout1.specdev_root).unwrap().blocks["embassy"]
+        .content_hash
+        .clone();
 
-    let (_t2, layout2) =
-        fresh_project("hash-without-deps", &minimal_plugin(), "firmware-layered");
+    let (_t2, layout2) = fresh_project("hash-without-deps", &minimal_plugin(), "firmware-layered");
     run_inline_block(&layout2, &minimal_plugin(), "embassy").unwrap();
-    let hash_without =
-        Lineage::load(&layout2.specdev_root).unwrap().blocks["embassy"].content_hash.clone();
+    let hash_without = Lineage::load(&layout2.specdev_root).unwrap().blocks["embassy"]
+        .content_hash
+        .clone();
 
     // The fixture trees ship different schema/reduction/README bodies too
     // (full_plugin's embassy is the canonical block; minimal_plugin's is the stub), so
@@ -307,13 +324,15 @@ fn inline_block_hash_stable_across_reinline_with_deps_yaml() {
 
 #[test]
 fn inline_bridge_hash_stable_across_reinline_with_contract_yaml() {
-    let (_t, layout) =
-        fresh_project("hash-stable-bridge-contract", &full_plugin(), "firmware-layered");
+    let (_t, layout) = fresh_project(
+        "hash-stable-bridge-contract",
+        &full_plugin(),
+        "firmware-layered",
+    );
     run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
     run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
     run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
-    let hash_first = Lineage::load(&layout.specdev_root).unwrap().bridges
-        ["embassy+stm32h5-rs"]
+    let hash_first = Lineage::load(&layout.specdev_root).unwrap().bridges["embassy+stm32h5-rs"]
         .content_hash
         .clone();
 
@@ -340,19 +359,14 @@ fn inline_bridge_hash_stable_across_reinline_with_contract_yaml() {
             std::fs::remove_file(f).unwrap();
         }
     }
-    upstream::remove_upstream_unit(
-        &layout.specdev_root,
-        UnitKind::Bridge,
-        "embassy+stm32h5-rs",
-    )
-    .unwrap();
+    upstream::remove_upstream_unit(&layout.specdev_root, UnitKind::Bridge, "embassy+stm32h5-rs")
+        .unwrap();
     let mut lineage = Lineage::load(&layout.specdev_root).unwrap();
     lineage.bridges.remove("embassy+stm32h5-rs");
     lineage.save(&layout.specdev_root).unwrap();
 
     run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
-    let hash_second = Lineage::load(&layout.specdev_root).unwrap().bridges
-        ["embassy+stm32h5-rs"]
+    let hash_second = Lineage::load(&layout.specdev_root).unwrap().bridges["embassy+stm32h5-rs"]
         .content_hash
         .clone();
     assert_eq!(

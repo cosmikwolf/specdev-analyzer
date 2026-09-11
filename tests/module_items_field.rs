@@ -75,10 +75,8 @@ fn bootstrap_substitutes_language_in_module_schema() {
     )
     .unwrap();
 
-    let schema_text = std::fs::read_to_string(
-        target.join("specs/specdev/schemas/module.schema.yaml"),
-    )
-    .unwrap();
+    let schema_text =
+        std::fs::read_to_string(target.join("specs/specdev/schemas/module.schema.yaml")).unwrap();
     assert!(
         schema_text.contains("inlined/languages/rust/items.schema.yaml"),
         "expected items[] $ref to be substituted; schema:\n{schema_text}"
@@ -117,7 +115,10 @@ fn substitute_preserves_utf8_em_dash() {
     );
     // The string should parse as valid UTF-8.
     let text = String::from_utf8(bytes).expect("output is valid UTF-8");
-    assert!(text.contains("—"), "em-dash char absent from substituted schema");
+    assert!(
+        text.contains("—"),
+        "em-dash char absent from substituted schema"
+    );
 }
 
 #[test]

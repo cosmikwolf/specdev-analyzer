@@ -16,8 +16,8 @@ description: >
 
   This block targets `stm32h5xx-hal` / `stm32h5xx-pac`. The
   embassy-flavored `embassy-stm32` is OUT OF SCOPE (would violate
-  doc 15 §3.1 leg 3); embassy integration goes through the
-  `embassy+stm32h5-rs` bridge (Phase 7).
+  the sharp-test cross-block reach rule); embassy integration goes
+  through the `embassy+stm32h5-rs` bridge.
 
   Default verification target: STM32H563 (mainline; USB-OTG-FS, full
   peripheral set). Other H5 variants (H503 lighter; H573 with full

@@ -10,7 +10,7 @@
 //! Coverage:
 //!   1. rust-workspace (manifest path, both schemas suppressed) — bootstrap
 //!      + validate emits NO `LAYOUT-003` for module.schema.yaml or
-//!      requirements.schema.yaml.
+//!        requirements.schema.yaml.
 //!   2. library-api (manifest path, both schemas required) — delete
 //!      module.schema.yaml after bootstrap; validate WARNs LAYOUT-003.
 //!   3. firmware-layered analogue.
@@ -290,7 +290,10 @@ fn asymmetric_surface_suppresses_only_module_not_requirements() {
         "surface:\n  has_modules: true\n  has_requirements: true",
         "surface:\n  has_modules: false\n  has_requirements: true",
     );
-    assert_ne!(body, mutated, "fixture surface block did not match expected source text");
+    assert_ne!(
+        body, mutated,
+        "fixture surface block did not match expected source text"
+    );
     std::fs::write(&manifest_path, &mutated).unwrap();
 
     let _ = std::fs::remove_file(target.join("specs/specdev/schemas/module.schema.yaml"));
@@ -317,11 +320,7 @@ fn malformed_profile_yaml_emits_manifest_001_no_double_fire() {
     let target = bootstrap_at(&full_plugin(), "library-api", "malformed");
     // Overwrite the manifest with a body that fails schema validation
     // (missing required `name` + `language`).
-    std::fs::write(
-        target.join("specs/specdev/profile.yaml"),
-        "garbage: true\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("specs/specdev/profile.yaml"), "garbage: true\n").unwrap();
     // Keep both schemas present so the missing-warning path doesn't fire
     // for those — this isolates the assertion on MANIFEST-001 surface.
     let report = run_validate(&target);

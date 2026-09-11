@@ -101,11 +101,7 @@ satisfies = ["DEMO-1"]
     .unwrap();
 
     std::fs::create_dir_all(target.join("src")).unwrap();
-    std::fs::write(
-        target.join("src/foo.rs"),
-        "pub fn render() -> u32 { 0 }\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("src/foo.rs"), "pub fn render() -> u32 { 0 }\n").unwrap();
 
     let r = run_items_diff(&target, "Foo");
     assert!(
@@ -144,14 +140,15 @@ satisfies = ["DEMO-2"]
     .unwrap();
 
     std::fs::create_dir_all(target.join("src")).unwrap();
-    std::fs::write(
-        target.join("src/foo.rs"),
-        "pub fn render() -> u32 { 0 }\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("src/foo.rs"), "pub fn render() -> u32 { 0 }\n").unwrap();
 
     let r = run_items_diff(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected exit 1 (drift); stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected exit 1 (drift); stderr={}",
+        r.stderr
+    );
     assert!(r.stdout.contains("name: ghost"));
     // The both[] bucket should still contain `render`.
     assert!(r.stdout.contains("name: render"));
@@ -184,7 +181,12 @@ satisfies = ["DEMO-1"]
     .unwrap();
 
     let r = run_items_diff(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected drift exit; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected drift exit; stderr={}",
+        r.stderr
+    );
     // helper should appear in in_source_only; render should be in both[].
     assert!(
         r.stdout.contains("helper"),
@@ -248,8 +250,16 @@ verifies = ["DEMO-1"]
         "test items must not count as drift; exit={:?} stderr={}\nstdout=\n{}",
         r.exit_code, r.stderr, r.stdout
     );
-    assert!(r.stdout.contains("in_spec_only: []"), "stdout=\n{}", r.stdout);
-    assert!(r.stdout.contains("in_source_only: []"), "stdout=\n{}", r.stdout);
+    assert!(
+        r.stdout.contains("in_spec_only: []"),
+        "stdout=\n{}",
+        r.stdout
+    );
+    assert!(
+        r.stdout.contains("in_source_only: []"),
+        "stdout=\n{}",
+        r.stdout
+    );
 }
 
 // R-002: a private (non-`pub`) top-level free fn helper is module-private,
@@ -286,7 +296,11 @@ satisfies = ["DEMO-1"]
         "private free fn must not count as drift; exit={:?} stderr={}\nstdout=\n{}",
         r.exit_code, r.stderr, r.stdout
     );
-    assert!(r.stdout.contains("in_source_only: []"), "stdout=\n{}", r.stdout);
+    assert!(
+        r.stdout.contains("in_source_only: []"),
+        "stdout=\n{}",
+        r.stdout
+    );
 }
 
 #[test]
@@ -317,7 +331,12 @@ signature_hint = "fn render(x: u64) -> u32"
     .unwrap();
 
     let r = run_items_diff(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected drift exit; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected drift exit; stderr={}",
+        r.stderr
+    );
     assert!(
         r.stdout.contains("signature_drift"),
         "expected signature_drift; stdout=\n{}",
@@ -346,7 +365,12 @@ satisfies = ["DEMO-1"]
     // No `src/foo.rs` — pre-implementation module.
 
     let r = run_items_diff(&target, "Foo");
-    assert_eq!(r.exit_code, Some(1), "expected drift exit; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(1),
+        "expected drift exit; stderr={}",
+        r.stderr
+    );
     assert!(r.stdout.contains("name: render"));
     assert!(r.stdout.contains("in_spec_only:"));
     // source_file is null when no source file resolves.
@@ -475,7 +499,12 @@ fn items_diff_missing_module_errors_with_item_101() {
     bootstrap_lib(&target);
 
     let r = run_items_diff(&target, "DoesNotExist");
-    assert_eq!(r.exit_code, Some(2), "expected hard error; stderr={}", r.stderr);
+    assert_eq!(
+        r.exit_code,
+        Some(2),
+        "expected hard error; stderr={}",
+        r.stderr
+    );
     assert!(
         r.stderr.contains("ITEM-101"),
         "expected ITEM-101; stderr={}",

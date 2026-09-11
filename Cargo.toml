@@ -2,7 +2,13 @@
 name = "specdev-analyzer"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# Set by the DEPENDENCY graph, not by this crate's own source: clap_builder
+# needs edition 2024, and eleven icu_* packages require 1.86. Measured with
+# `cargo check --lib`: 1.81 and 1.85 fail, 1.86 and 1.88 pass. The `msrv` CI
+# job builds on exactly this toolchain so the number stays a tested claim —
+# the previous value, 1.75, had gone eleven minor versions stale unnoticed
+# because nothing ever built against it.
+rust-version = "1.86"
 description = "Domain-agnostic analyzer for TOML specs. Parse, validate, extract, and audit spec-driven projects."
 license = "MIT"
 repository = "https://github.com/tenkai/specdev-analyzer"

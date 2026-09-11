@@ -100,11 +100,7 @@ fn context_files_inline_in_declared_order_between_architecture_and_module() {
     let (target, layout) = fresh_library_project("declared-order");
     // Two distinguishable context files, declared in non-alphabetical order
     // so we can verify declared-order is honored over lex order.
-    std::fs::write(
-        target.join("docs-zeta.md"),
-        "ZETA-CONTENT first inlined\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("docs-zeta.md"), "ZETA-CONTENT first inlined\n").unwrap();
     std::fs::write(
         target.join("docs-alpha.md"),
         "ALPHA-CONTENT second inlined\n",
@@ -122,8 +118,14 @@ context_files = [
     )
     .unwrap();
     let prompt = assemble_module_prompt(&layout, "Envelope").unwrap();
-    assert!(prompt.contains("## Project context"), "section header expected");
-    assert!(prompt.contains("```docs-zeta.md\n"), "fence with path-as-tag");
+    assert!(
+        prompt.contains("## Project context"),
+        "section header expected"
+    );
+    assert!(
+        prompt.contains("```docs-zeta.md\n"),
+        "fence with path-as-tag"
+    );
     assert!(prompt.contains("ZETA-CONTENT first inlined"));
     assert!(prompt.contains("ALPHA-CONTENT second inlined"));
 

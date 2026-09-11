@@ -19,11 +19,30 @@
 //! origin_version = "0.4.2"
 //! inlined_at     = "2026-04-28T10:15:00Z"
 //! content_hash   = "sha256:..."
+//!
+//! [profile_files]
+//! "spec.toml" = "sha256:..."
+//! "specs/specdev/schemas/module.schema.yaml" = "sha256:..."
 //! ```
 //!
 //! The single `content_hash` per unit is a rolled-up hash over the unit's
-//! file set (see [`crate::inline`]). Profiles intentionally have no entry —
-//! they are one-shot scaffolding.
+//! file set (see [`crate::inline`]).
+//!
+//! `[profile_files]` records every file `bootstrap` scaffolded from the
+//! profile, keyed by path relative to the project root, hashed **as
+//! written** — post-substitution, because `spec.toml` and
+//! `module.schema.yaml` carry `{{project_name}}` / `{{language}}` tokens
+//! and hashing the plugin's template text would report drift forever.
+//!
+//! This overturns a premise (#109). Earlier revisions said profiles
+//! "intentionally have no entry — they are one-shot scaffolding", which was
+//! true when a profile shipped templates and prose. A profile now ships the
+//! project's *schemas* and its `profile.yaml` manifest, and every analyzer
+//! command reads them. Measured on `dogfood-flutter-hello/rust`: `drift`
+//! reported clean while the inlined `architecture.schema.yaml` was missing
+//! `external_deps` — a hard `SCHEMA-ARCH` error that blocked
+//! `manifest --write`. A substrate nothing hashes is a substrate nothing
+//! can report on.
 //!
 //! Byte-stability is preserved via `BTreeMap`: blocks and bridges serialize
 //! in lex order regardless of insertion order.
@@ -48,6 +67,12 @@ pub struct Lineage {
     pub blocks: BTreeMap<String, Entry>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub bridges: BTreeMap<String, Entry>,
+    /// Profile-scaffolded files: project-relative path → hash of the bytes
+    /// bootstrap wrote. Empty for every tree bootstrapped before #109; an
+    /// empty map is "unknown", never "clean", and `drift` says so rather
+    /// than reporting a confident pass over a substrate it cannot see.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub profile_files: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,8 +98,8 @@ impl Lineage {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text =
-            std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&text).map_err(|e| {
             anyhow!(
                 "[LINEAGE-001] {} is not a valid lineage.toml: {}",
@@ -110,6 +135,13 @@ impl Lineage {
     pub fn has_bridge(&self, name: &str) -> bool {
         self.bridges.contains_key(name)
     }
+
+    /// True when this tree records its profile substrate. False for every
+    /// project bootstrapped before #109 — the caller must report "not
+    /// recorded", not "clean".
+    pub fn records_profile_files(&self) -> bool {
+        !self.profile_files.is_empty()
+    }
 }
 
 /// Absolute path of the lineage file under a `specs/specdev/` root.
@@ -143,12 +175,14 @@ mod tests {
     #[test]
     fn round_trip_preserves_shape() {
         let dir = tmp("roundtrip");
-        let mut l = Lineage::default();
-        l.meta = Some(MetaSection {
-            plugin_version: "0.4.2".into(),
-            bootstrapped_at: "2026-04-28T10:00:00Z".into(),
-            profile: "firmware-layered".into(),
-        });
+        let mut l = Lineage {
+            meta: Some(MetaSection {
+                plugin_version: "0.4.2".into(),
+                bootstrapped_at: "2026-04-28T10:00:00Z".into(),
+                profile: "firmware-layered".into(),
+            }),
+            ..Default::default()
+        };
         l.blocks.insert(
             "embassy".into(),
             Entry {
@@ -244,14 +278,25 @@ mod tests {
         // doesn't care about lex order — that's `inline-bridge`'s job.
         let bridge_name = "[a-z][a-z0-9_-]{0,8}\\+[a-z][a-z0-9_-]{0,8}";
 
+        // Profile-file keys are project-relative paths with `/`
+        // separators (#109). Nested paths matter here: `[profile_files]`
+        // keys contain dots and slashes, which TOML has to quote on the
+        // way out and unquote on the way back in.
+        let profile_path = "[a-z][a-z0-9_./-]{0,24}";
+        let hash = "sha256:[0-9a-f]{64}";
+
         let blocks = btree_map(block_name, entry_strategy(), 0..6);
         let bridges = btree_map(bridge_name, entry_strategy(), 0..4);
+        let profile_files = btree_map(profile_path, hash, 0..8);
         let meta = option::of(meta_strategy());
 
-        (meta, blocks, bridges).prop_map(|(meta, blocks, bridges)| Lineage {
-            meta,
-            blocks,
-            bridges,
+        (meta, blocks, bridges, profile_files).prop_map(|(meta, blocks, bridges, profile_files)| {
+            Lineage {
+                meta,
+                blocks,
+                bridges,
+                profile_files,
+            }
         })
     }
 
@@ -277,12 +322,12 @@ mod tests {
         use proptest::strategy::Strategy;
         let printable = "[a-zA-Z0-9_./:-]+";
         let timestamp = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z";
-        (printable, timestamp, printable).prop_map(
-            |(plugin_version, bootstrapped_at, profile)| MetaSection {
+        (printable, timestamp, printable).prop_map(|(plugin_version, bootstrapped_at, profile)| {
+            MetaSection {
                 plugin_version,
                 bootstrapped_at,
                 profile,
-            },
-        )
+            }
+        })
     }
 }

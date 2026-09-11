@@ -88,8 +88,9 @@ $defs:
           overlaps this list. At workspace tier `affects` is OPTIONAL
           and may be absent or empty — a workspace-tier OQ with no
           `affects` implicitly affects every module in every member
-          crate (per D63 §1's workspace-decisions-implicitly-apply-down
-          rule, extended to workspace OQs). Authors who want to scope
+          crate (workspace-tier questions implicitly apply down to every
+          member crate, the same way workspace-tier decisions do). Authors
+          who want to scope
           a workspace OQ to a specific subset of member-crate
           requirements can list those requirement ids explicitly.
         type: array

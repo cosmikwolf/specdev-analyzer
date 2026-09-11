@@ -133,8 +133,7 @@ fn re_inline_bridge_refused() {
     run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
     run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
     run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap();
-    let err =
-        run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap_err();
+    let err = run_inline_bridge(&layout, &full_plugin(), "embassy+stm32h5-rs").unwrap_err();
     assert!(format!("{err:#}").contains("INLINE-002"));
 }
 
@@ -283,8 +282,7 @@ properties:
     // contribution participates in module validation.
     let module_schema_path = layout.module_schema_path.clone();
     let mut module_schema_text = std::fs::read_to_string(&module_schema_path).unwrap();
-    module_schema_text
-        .push_str("- $ref: inlined/bridges/embassy+local-thing.schema.yaml\n");
+    module_schema_text.push_str("- $ref: inlined/bridges/embassy+local-thing.schema.yaml\n");
     std::fs::write(&module_schema_path, module_schema_text).unwrap();
 
     // Local bridge reduction. Lives under reductions/bridges/local/;

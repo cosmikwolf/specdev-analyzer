@@ -120,8 +120,7 @@ fn bootstrap_scaffolds_flutter_app_layout() {
     assert!(spec.contains("language = \"dart\""), "spec.toml: {spec}");
     assert!(spec.contains("source = \"lib/src\""), "spec.toml: {spec}");
 
-    let profile =
-        std::fs::read_to_string(target.join("specs/specdev/profile.yaml")).unwrap();
+    let profile = std::fs::read_to_string(target.join("specs/specdev/profile.yaml")).unwrap();
     assert!(profile.contains("pubspec_yaml"), "profile.yaml: {profile}");
 
     assert!(target
@@ -329,9 +328,14 @@ fn pubspec_emits_version_and_flutter_block() {
     assert!(text.contains("version: \"0.1.0+1\"\n"), "pubspec: {text}");
     assert!(text.contains("publish_to: none\n"), "pubspec: {text}");
     assert!(
-        text.contains("flutter:\n  uses-material-design: true\n  assets:\n    - \"assets/images/\"\n"),
+        text.contains(
+            "flutter:\n  uses-material-design: true\n  assets:\n    - \"assets/images/\"\n"
+        ),
         "pubspec: {text}"
     );
     // The flutter block is the last section by convention.
-    assert!(text.trim_end().ends_with("- \"assets/images/\""), "pubspec: {text}");
+    assert!(
+        text.trim_end().ends_with("- \"assets/images/\""),
+        "pubspec: {text}"
+    );
 }

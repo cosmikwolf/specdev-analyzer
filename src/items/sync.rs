@@ -218,13 +218,7 @@ pub(crate) fn parse_spec_items(
         // and strip the canonical keys; whatever remains rides through
         // verbatim.
         let mut extras = toml_table_to_json_map(table);
-        for k in [
-            "kind",
-            "name",
-            "description",
-            "satisfies",
-            "signature_hint",
-        ] {
+        for k in ["kind", "name", "description", "satisfies", "signature_hint"] {
             extras.remove(k);
         }
 
@@ -272,9 +266,7 @@ fn toml_to_json(v: &toml::Value) -> serde_json::Value {
             .unwrap_or(serde_json::Value::Null),
         toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
         toml::Value::Datetime(d) => serde_json::Value::String(d.to_string()),
-        toml::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(toml_to_json).collect())
-        }
+        toml::Value::Array(arr) => serde_json::Value::Array(arr.iter().map(toml_to_json).collect()),
         toml::Value::Table(t) => serde_json::Value::Object(toml_table_to_json_map(t)),
     }
 }
@@ -284,9 +276,7 @@ fn toml_to_json(v: &toml::Value) -> serde_json::Value {
 /// `Some(reason)` when they disagree.
 fn signature_drift(hint: &str, source: &ExtractedItem) -> Option<String> {
     let extracted = source.signature.as_deref().unwrap_or("");
-    let normalize = |s: &str| {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
-    };
+    let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalize(hint) == normalize(extracted) {
         None
     } else {
@@ -358,9 +348,9 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
 
     for spec in spec_items {
         let spec_key = adapter.item_identity_key(&spec.kind, &spec.name);
-        let pos = source_remaining
-            .iter()
-            .position(|s| s.kind == spec.kind && adapter.item_identity_key(&s.kind, &s.name) == spec_key);
+        let pos = source_remaining.iter().position(|s| {
+            s.kind == spec.kind && adapter.item_identity_key(&s.kind, &s.name) == spec_key
+        });
         match pos {
             Some(idx) => {
                 let source = source_remaining.remove(idx);
@@ -403,8 +393,18 @@ mod tests {
     /// without a bootstrapped project on disk.
     fn rust_kinds() -> Result<Vec<String>> {
         Ok([
-            "fn", "struct", "enum", "union", "trait", "impl", "type", "const", "static",
-            "re_export", "macro", "extern_block",
+            "fn",
+            "struct",
+            "enum",
+            "union",
+            "trait",
+            "impl",
+            "type",
+            "const",
+            "static",
+            "re_export",
+            "macro",
+            "extern_block",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -448,7 +448,10 @@ mod tests {
     fn strip_generics_removes_balanced_groups() {
         assert_eq!(strip_generics("RateLimiter<C>"), "RateLimiter");
         assert_eq!(strip_generics("RateLimiter"), "RateLimiter");
-        assert_eq!(strip_generics("Clock for RateLimiter<C>"), "Clock for RateLimiter");
+        assert_eq!(
+            strip_generics("Clock for RateLimiter<C>"),
+            "Clock for RateLimiter"
+        );
         assert_eq!(strip_generics("From<u32> for Foo"), "From for Foo");
         assert_eq!(strip_generics("From<Vec<u8>> for Foo"), "From for Foo");
     }
@@ -467,7 +470,10 @@ mod tests {
     #[test]
     fn normalize_impl_name_strips_trait_and_target_paths() {
         // F-013: path-qualified trait reduces to its last segment.
-        assert_eq!(normalize_impl_name("fmt::Display for RateLimited"), "Display for RateLimited");
+        assert_eq!(
+            normalize_impl_name("fmt::Display for RateLimited"),
+            "Display for RateLimited"
+        );
         assert_eq!(
             normalize_impl_name("core::fmt::Display for RateLimited"),
             "Display for RateLimited"
@@ -477,11 +483,20 @@ mod tests {
             "Error for ConfigError"
         );
         // Target path is normalized too.
-        assert_eq!(normalize_impl_name("Display for crate::Foo"), "Display for Foo");
+        assert_eq!(
+            normalize_impl_name("Display for crate::Foo"),
+            "Display for Foo"
+        );
         // Generics + paths compose (F-010 + F-013).
-        assert_eq!(normalize_impl_name("core::convert::From<u32> for Foo"), "From for Foo");
+        assert_eq!(
+            normalize_impl_name("core::convert::From<u32> for Foo"),
+            "From for Foo"
+        );
         // Bare names are unchanged.
-        assert_eq!(normalize_impl_name("Display for RateLimited"), "Display for RateLimited");
+        assert_eq!(
+            normalize_impl_name("Display for RateLimited"),
+            "Display for RateLimited"
+        );
         assert_eq!(normalize_impl_name("RateLimiter"), "RateLimiter");
     }
 
@@ -534,10 +549,22 @@ satisfies = ["REQ-BUCKET-001"]
 "#;
         let v: toml::Value = toml::from_str(toml_text).unwrap();
         let items = parse_spec_items(&v, "test", &rust_kinds()).unwrap();
-        let test_item = items.iter().find(|i| i.extras.contains_key("test")).unwrap();
-        assert!(is_test_item(test_item), "test = true item must be a test item");
-        let method = items.iter().find(|i| i.name == "TokenBucket::try_take").unwrap();
-        assert!(!is_test_item(method), "non-test item must not be a test item");
+        let test_item = items
+            .iter()
+            .find(|i| i.extras.contains_key("test"))
+            .unwrap();
+        assert!(
+            is_test_item(test_item),
+            "test = true item must be a test item"
+        );
+        let method = items
+            .iter()
+            .find(|i| i.name == "TokenBucket::try_take")
+            .unwrap();
+        assert!(
+            !is_test_item(method),
+            "non-test item must not be a test item"
+        );
     }
 
     #[test]

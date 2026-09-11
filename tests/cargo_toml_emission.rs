@@ -98,7 +98,8 @@ fn firmware_external_deps_appear() {
     // Re-discover (LayoutContext caches spec, but architecture.toml is read by render at call time).
     let r = render(&layout).unwrap();
     assert!(
-        r.text.contains("heapless = { version = \"^0.8\", features = [\"serde\"] }"),
+        r.text
+            .contains("heapless = { version = \"^0.8\", features = [\"serde\"] }"),
         "expected heapless dep with features; got:\n{}",
         r.text
     );
@@ -112,7 +113,11 @@ fn firmware_module_external_deps_merge() {
     let (target, layout) = fresh_project("firmware-layered", "demo", "fw-mod-extdeps");
     write_module_with_dep(&target, "Uart", "nb", "^1");
     let r = render(&layout).unwrap();
-    assert!(r.text.contains("nb = \"^1\""), "expected nb dep; got:\n{}", r.text);
+    assert!(
+        r.text.contains("nb = \"^1\""),
+        "expected nb dep; got:\n{}",
+        r.text
+    );
     // Original architecture deps still present.
     assert!(r.text.contains("cortex-m = "));
 }
@@ -352,7 +357,11 @@ fn firmware_test_targets_render_as_test_rows() {
         .iter()
         .filter(|f| matches!(f.severity, Severity::Error))
         .collect();
-    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+    assert!(
+        errors.is_empty(),
+        "expected 0 errors:\n{}",
+        report.render_plain()
+    );
 }
 
 #[test]
@@ -376,8 +385,10 @@ fn firmware_test_target_rejects_keys_outside_the_subset() {
     .unwrap();
     let report = validate::run_project(&target, None).unwrap();
     assert!(
-        report.findings().iter().any(|f| matches!(f.severity, Severity::Error)
-            && f.message.contains("bench")),
+        report
+            .findings()
+            .iter()
+            .any(|f| matches!(f.severity, Severity::Error) && f.message.contains("bench")),
         "an unknown key on a test target must be a validate error:\n{}",
         report.render_plain()
     );
@@ -395,8 +406,11 @@ fn firmware_test_target_rejects_keys_outside_the_subset() {
 fn firmware_features_render_with_default_line_and_optional_slot_dep() {
     let (target, layout) = fresh_project("firmware-layered", "demo", "fw-features");
     let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
-    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^0.3\"\nfeatures = [\"print-defmt\"]\n";
-    assert!(arch.contains(anchor), "template shape changed; update this test's anchor");
+    let anchor = "[runtime.panic_handler]\ncrate = \"panic-probe\"\nversion = \"^1\"\nfeatures = [\"print-defmt\"]\n";
+    assert!(
+        arch.contains(anchor),
+        "template shape changed; update this test's anchor"
+    );
     let arch = arch.replace(anchor, &format!("{anchor}optional = true\n"));
     let augmented = format!(
         "{arch}\n\
@@ -415,14 +429,17 @@ fn firmware_features_render_with_default_line_and_optional_slot_dep() {
     assert!(t.contains(features), "{t}");
     assert!(
         t.contains(
-            "panic-probe = { version = \"^0.3\", features = [\"print-defmt\"], optional = true }\n"
+            "panic-probe = { version = \"^1\", features = [\"print-defmt\"], optional = true }\n"
         ),
         "an optional typed-slot dep renders `optional = true`:\n{t}"
     );
     let b = t.find("[[bin]]").unwrap();
     let f = t.find("[features]").unwrap();
     let d = t.find("[dependencies]").unwrap();
-    assert!(b < f && f < d, "[[bin]] → [features] → [dependencies]:\n{t}");
+    assert!(
+        b < f && f < d,
+        "[[bin]] → [features] → [dependencies]:\n{t}"
+    );
 
     let report = validate::run_project(&target, None).unwrap();
     let errors: Vec<_> = report
@@ -430,7 +447,11 @@ fn firmware_features_render_with_default_line_and_optional_slot_dep() {
         .iter()
         .filter(|f| matches!(f.severity, Severity::Error))
         .collect();
-    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+    assert!(
+        errors.is_empty(),
+        "expected 0 errors:\n{}",
+        report.render_plain()
+    );
 }
 
 // A spec with no [[features]] renders no [features] section — the
@@ -456,9 +477,12 @@ fn firmware_feature_depends_on_unknown_feature_fails_validate() {
     .unwrap();
     let report = validate::run_project(&target, None).unwrap();
     assert!(
-        report.findings().iter().any(|f| f.rule == "REDUCE_UNRESOLVED"
-            && f.message.contains("feature_depends_on")
-            && f.message.contains("`ghost`")),
+        report
+            .findings()
+            .iter()
+            .any(|f| f.rule == "REDUCE_UNRESOLVED"
+                && f.message.contains("feature_depends_on")
+                && f.message.contains("`ghost`")),
         "expected REDUCE_UNRESOLVED naming feature_depends_on and `ghost`:\n{}",
         report.render_plain()
     );
@@ -476,8 +500,10 @@ fn firmware_duplicate_feature_names_fail_validate() {
     .unwrap();
     let report = validate::run_project(&target, None).unwrap();
     assert!(
-        report.findings().iter().any(|f| f.rule == "feature_unique_names"
-            && matches!(f.severity, Severity::Error)),
+        report
+            .findings()
+            .iter()
+            .any(|f| f.rule == "feature_unique_names" && matches!(f.severity, Severity::Error)),
         "expected a feature_unique_names error:\n{}",
         report.render_plain()
     );
@@ -507,13 +533,23 @@ test_only = true
     )
     .unwrap();
     let r = render(&layout).unwrap();
-    assert!(r.text.contains("[dependencies]\npostcard = \"1.1\"\n"), "{}", r.text);
     assert!(
-        r.text.contains("[dev-dependencies]\npostcard = { version = \"1.1\", features = [\"use-std\"] }\n"),
+        r.text.contains("[dependencies]\npostcard = \"1.1\"\n"),
+        "{}",
+        r.text
+    );
+    assert!(
+        r.text.contains(
+            "[dev-dependencies]\npostcard = { version = \"1.1\", features = [\"use-std\"] }\n"
+        ),
         "the dev row keeps its own features:\n{}",
         r.text
     );
-    assert!(r.warnings.is_empty(), "no conflict warning for a dual-table crate: {:?}", r.warnings);
+    assert!(
+        r.warnings.is_empty(),
+        "no conflict warning for a dual-table crate: {:?}",
+        r.warnings
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -531,7 +567,8 @@ fn project_version_is_emitted_literally() {
     let layout = LayoutContext::discover(&target, None).unwrap();
     let r = render(&layout).unwrap();
     assert!(
-        r.text.contains("[package]\nname = \"liblib\"\nversion = \"0.4.2\"\n"),
+        r.text
+            .contains("[package]\nname = \"liblib\"\nversion = \"0.4.2\"\n"),
         "{}",
         r.text
     );

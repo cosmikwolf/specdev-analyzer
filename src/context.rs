@@ -87,11 +87,7 @@ pub fn run_context(layout: &LayoutContext, module: &str) -> Result<ContextReport
 
 /// Build the report from a layout + a pre-computed graph. Split out
 /// for tests that want to construct a graph directly.
-pub fn build_report(
-    layout: &LayoutContext,
-    module: &str,
-    graph: &Graph,
-) -> Result<ContextReport> {
+pub fn build_report(layout: &LayoutContext, module: &str, graph: &Graph) -> Result<ContextReport> {
     let profile = layout.spec.project.profile.clone();
     let language = layout.spec.project.language.clone();
 
@@ -105,11 +101,7 @@ pub fn build_report(
         // /spec-design cold-start — module not yet authored. Return
         // schema + READMEs + a count of existing modules so the caller
         // knows the project's scale without forcing a full read.
-        let total_modules = graph
-            .entities
-            .iter()
-            .filter(|e| e.kind == "Module")
-            .count();
+        let total_modules = graph.entities.iter().filter(|e| e.kind == "Module").count();
         return Ok(ContextReport {
             module: module.to_string(),
             profile,
@@ -126,11 +118,7 @@ pub fn build_report(
     let related = compute_related(layout, module, graph)?;
     let related_files = related_files_for(&related, layout);
 
-    let total_modules = graph
-        .entities
-        .iter()
-        .filter(|e| e.kind == "Module")
-        .count();
+    let total_modules = graph.entities.iter().filter(|e| e.kind == "Module").count();
     let related_count = related.all_modules().len();
     // Subtract 1 for M itself; never go negative.
     let excluded = total_modules
@@ -254,11 +242,7 @@ fn related_files_for(related: &RelatedModules, layout: &LayoutContext) -> Vec<St
     out
 }
 
-fn compute_related(
-    layout: &LayoutContext,
-    module: &str,
-    graph: &Graph,
-) -> Result<RelatedModules> {
+fn compute_related(layout: &LayoutContext, module: &str, graph: &Graph) -> Result<RelatedModules> {
     // entity_owner: (qualified_kind, name) → owning module name. Built
     // by walking entities and reading the file stem from provenance for
     // entries whose source is `specs/modules/<Name>.toml`.
@@ -486,20 +470,19 @@ fn compute_profile_specific(
     // byte-for-byte for projects without an inlined manifest. Removed in
     // v1.1.
     match layout.spec.project.profile.as_str() {
-        "firmware-layered" => { // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "firmware-layered" /* D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1. */ => {
             if let Some(layer) = ent.attrs.get("layer").and_then(|v| v.as_str()) {
                 out.insert(
                     "layer".to_string(),
                     serde_yaml::Value::String(layer.to_string()),
                 );
             }
-            let collected =
-                collect_local_entities_by_kind(graph, module, &["Peripheral", "Pin"]);
+            let collected = collect_local_entities_by_kind(graph, module, &["Peripheral", "Pin"]);
             if let Some(map) = collected {
                 out.insert("hardware_resources".to_string(), map);
             }
         }
-        "library-api" => { // D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1.
+        "library-api" /* D51-fallback: pre-manifest backward-compat dispatch; remove in v1.1. */ => {
             if let Some(vis) = ent.attrs.get("visibility").and_then(|v| v.as_str()) {
                 out.insert(
                     "visibility".to_string(),
@@ -564,8 +547,7 @@ fn collect_local_entities_by_kind(
     module: &str,
     kinds: &[&str],
 ) -> Option<serde_yaml::Value> {
-    let mut groups: BTreeMap<&str, Vec<String>> =
-        kinds.iter().map(|k| (*k, Vec::new())).collect();
+    let mut groups: BTreeMap<&str, Vec<String>> = kinds.iter().map(|k| (*k, Vec::new())).collect();
     for e in &graph.entities {
         let Some(owner) = module_from_provenance(&e.provenance.source_file) else {
             continue;
@@ -589,9 +571,7 @@ fn collect_local_entities_by_kind(
         let key = format!("{}s", k.to_ascii_lowercase());
         yaml.insert(
             serde_yaml::Value::String(key),
-            serde_yaml::Value::Sequence(
-                names.into_iter().map(serde_yaml::Value::String).collect(),
-            ),
+            serde_yaml::Value::Sequence(names.into_iter().map(serde_yaml::Value::String).collect()),
         );
     }
     Some(serde_yaml::Value::Mapping(yaml))
@@ -601,9 +581,7 @@ fn collect_local_entities_by_kind(
 /// Mirror of the helpers in `cargo_toml.rs` and `skeleton.rs` — kept
 /// module-private here too; a shared `manifest::loader_for(layout)` is a
 /// v1.x cleanup item.
-fn load_inlined_profile(
-    layout: &LayoutContext,
-) -> Result<Option<crate::manifest::Profile>> {
+fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<crate::manifest::Profile>> {
     crate::manifest::Profile::load_inlined(&layout.specdev_root)
 }
 

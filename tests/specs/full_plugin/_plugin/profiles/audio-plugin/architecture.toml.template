@@ -1,10 +1,9 @@
 # Architecture-level decisions for an audio-plugin project.
 #
-# Phase 15-A spike (D44–D49) committed this profile shape. Three
-# required tables: [plugin] (vendor + format identity), [audio] (bus
-# layout + sample-rate bounds), [runtime] (panic strategy). Optional
-# [[features]] declares Cargo features. Phase 8 emits Cargo.toml from
-# these fields plus per-module external_deps[].
+# Three required tables: [plugin] (vendor + format identity), [audio]
+# (bus layout + sample-rate bounds), [runtime] (panic strategy).
+# Optional [[features]] declares Cargo features. Codegen emits
+# Cargo.toml from these fields plus per-module external_deps[].
 
 # ---------------------------------------------------------------------------
 # Plugin identity — vendor / display / formats. All five required fields
@@ -46,7 +45,7 @@ default_channel_layout = "stereo"   # mono | stereo | quad | five-one | seven-on
 # ---------------------------------------------------------------------------
 [runtime]
 panic_handler  = "abort"
-realtime_audit = false      # informational; future graph-check primitive (D48)
+realtime_audit = false      # informational today; no graph check reads it
 
 # ---------------------------------------------------------------------------
 # Cargo features (optional). Mirrors library-api's [[features]] shape.
@@ -69,7 +68,28 @@ realtime_audit = false      # informational; future graph-check primitive (D48)
 # Every entry lands in Cargo.toml [dependencies].
 # ---------------------------------------------------------------------------
 
-# EXAMPLE: lock-free ring buffer for cross-thread state publication.
+# EXAMPLE: lock-free ring buffer for cross-thread state publication
+# (a vanilla crates.io dep — `source` omitted defaults to crates.io).
 # [[external_deps]]
 # crate = "rtrb"
-# version = "^0.3"
+# version = "^0.4"
+
+# EXAMPLE: depend on a sibling workspace member by path. `source` is a
+# tagged union; the path form is `{ path = "..." }` (NOT
+# `source = "path", path = "..."`). Other forms accepted by the schema:
+#   source = "workspace"                       — `<dep>.workspace = true` inheritance
+#   source = { git = "https://...", rev = "..." } — git-dep with rev/tag/branch
+#   source = "crates-io"                       — explicit default (same as omitting `source`)
+# [[external_deps]]
+# crate    = "ym2414b-core"
+# version  = "0.1"
+# source   = { path = "../ym2414b-core" }
+# features = ["std"]
+
+# EXAMPLE: inherit from the workspace's [workspace.dependencies] table.
+# Use this when the workspace shell hoists the dep and members opt in
+# per-member. Permitted alongside `optional = true`.
+# [[external_deps]]
+# crate  = "serde"
+# version = "1"
+# source  = "workspace"

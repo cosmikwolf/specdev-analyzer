@@ -200,6 +200,77 @@ source = "."
 }
 
 // ---------------------------------------------------------------------------
+// 5. #117 / #118: a `profile.yaml` the analyzer's embedded schema rejects is
+//    caught BEFORE the copy loop, and the diagnostic names the PLUGIN file.
+//
+//    This is the regression guard for the check's *position*. Move
+//    `manifest_bootstrap_steps` back after the copy and both halves fail:
+//    the message names `<target>/specs/specdev/profile.yaml` (a file the
+//    user never authored) and a 25-file partial tree survives the error.
+// ---------------------------------------------------------------------------
+#[test]
+fn unknown_profile_key_fails_before_any_write_and_names_the_plugin() {
+    let synthetic = tmp_workspace("skew-plugin");
+    let synthetic_plugin = synthetic.join("_plugin");
+    copy_dir_recursive(&full_plugin(), &synthetic_plugin).unwrap();
+
+    // Simulate a plugin tree newer than the analyzer: one top-level key
+    // the embedded `profile.schema.yaml` does not admit. `additionalProperties:
+    // false` means every contract widening looks exactly like this to an
+    // older binary — `gates`, `paired_files`, `derived_files` and
+    // `package_json` all presented this way to the 2026-09-03 build.
+    let manifest = synthetic_plugin.join("profiles/library-api/profile.yaml");
+    let mut text = std::fs::read_to_string(&manifest).unwrap();
+    text.push_str("\nunknown_future_key: 1\n");
+    std::fs::write(&manifest, text).unwrap();
+
+    let target_workspace = tmp_workspace("skew-target");
+    let target = target_workspace.join("proj");
+    std::fs::create_dir_all(&target).unwrap();
+    let err = bootstrap::run_bootstrap(
+        &synthetic_plugin,
+        &BootstrapInputs {
+            profile: "library-api".into(),
+            language: "rust".into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap_err();
+    let msg = format!("{err:#}");
+
+    assert!(
+        msg.contains("MANIFEST-001"),
+        "expected MANIFEST-001; got {msg}"
+    );
+
+    // Attribution (#117): the path in the message is the plugin's file.
+    assert!(
+        msg.contains(&manifest.display().to_string()),
+        "diagnostic must name the PLUGIN manifest {}; got {msg}",
+        manifest.display()
+    );
+    let project_copy = target.join("specs/specdev/profile.yaml");
+    assert!(
+        !msg.contains(&project_copy.display().to_string()),
+        "diagnostic must NOT name the project copy {}; got {msg}",
+        project_copy.display()
+    );
+    assert!(
+        msg.contains("PLUGIN tree"),
+        "diagnostic must say the file is the plugin's, not the user's; got {msg}"
+    );
+
+    // Atomicity (#118): the check ran before the copy loop, so the target
+    // holds nothing and the retry is not blocked by BOOTSTRAP-001.
+    assert!(
+        !target.join("specs").exists(),
+        "no specs/ tree may survive a failed profile schema check; found {}",
+        target.join("specs").display()
+    );
+}
+
+// ---------------------------------------------------------------------------
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;

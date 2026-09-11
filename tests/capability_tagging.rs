@@ -56,7 +56,11 @@ fn fresh_library(tag: &str) -> (PathBuf, LayoutContext) {
 }
 
 fn findings_with_rule<'a>(report: &'a Report, rule: &str) -> Vec<&'a Finding> {
-    report.findings().iter().filter(|f| f.rule == rule).collect()
+    report
+        .findings()
+        .iter()
+        .filter(|f| f.rule == rule)
+        .collect()
 }
 
 // ===========================================================================
@@ -191,8 +195,7 @@ visibility = "pub"
 "#,
     )
     .unwrap();
-    let report =
-        validate::run_project_for(&target, None, Some(Capability::CargoToml)).unwrap();
+    let report = validate::run_project_for(&target, None, Some(Capability::CargoToml)).unwrap();
     assert!(
         findings_with_rule(&report, "ITEMS-001").is_empty(),
         "ITEMS-001 (StrictGen-only) must not fire under --for=cargo-toml"
@@ -213,8 +216,7 @@ visibility = "pub"
 "#,
     )
     .unwrap();
-    let report =
-        validate::run_project_for(&target, None, Some(Capability::StrictGen)).unwrap();
+    let report = validate::run_project_for(&target, None, Some(Capability::StrictGen)).unwrap();
     assert_eq!(findings_with_rule(&report, "ITEMS-001").len(), 1);
     assert_eq!(findings_with_rule(&report, "CONTEXT-100").len(), 1);
 }
@@ -236,8 +238,7 @@ visibility = "supersecret"
 "#,
     )
     .unwrap();
-    let report =
-        validate::run_project_for(&target, None, Some(Capability::CargoToml)).unwrap();
+    let report = validate::run_project_for(&target, None, Some(Capability::CargoToml)).unwrap();
     let schema_errs: Vec<_> = report
         .findings()
         .iter()

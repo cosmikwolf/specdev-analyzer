@@ -211,7 +211,11 @@ fn cargo_toml_render_carries_block_and_platform_deps() {
         "cortex-m-rt",
         "defmt",
     ] {
-        assert!(rendered.text.contains(dep), "missing dep {dep}:\n{}", rendered.text);
+        assert!(
+            rendered.text.contains(dep),
+            "missing dep {dep}:\n{}",
+            rendered.text
+        );
     }
     assert!(
         rendered.warnings.is_empty(),
@@ -236,7 +240,13 @@ fn gen_lineage_tripwire_works_on_the_firmware_stack() {
 
     let ts = "2026-06-12T12:00:00Z";
     record_files(&layout, Some("Blinky"), &[blinky_rs], ts).unwrap();
-    record_files(&layout, Some("UartEcho"), &[echo_rs.clone()], ts).unwrap();
+    record_files(
+        &layout,
+        Some("UartEcho"),
+        std::slice::from_ref(&echo_rs),
+        ts,
+    )
+    .unwrap();
     record_files(&layout, None, &[cargo], ts).unwrap();
 
     let report = run_gen_drift(&layout).unwrap();

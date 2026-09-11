@@ -162,10 +162,10 @@ fn load_modules(layout: &LayoutContext) -> Result<Vec<ModuleView>> {
     let kind_vocab = crate::items::load_item_kinds(layout);
     let mut modules: Vec<ModuleView> = Vec::with_capacity(module_paths.len());
     for path in &module_paths {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let value: toml::Value = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let value: toml::Value =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         let module_name = value
             .get("name")
             .and_then(|v| v.as_str())
