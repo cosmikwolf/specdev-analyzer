@@ -238,10 +238,7 @@ fn live_plugin_tree_block_deps_load_cleanly() {
         // exactly the blocks nobody copied in. Measured when this moved: the
         // fixture holds 10 blocks and the live tree ships 14, so four blocks
         // were escaping the rule entirely.
-        let contributes = match lang.as_str() {
-            "dart" => !m.pub_packages.is_empty(),
-            _ => !m.crates.is_empty(),
-        };
+        let contributes = contributes_deps(&m, lang);
         match ZERO_DEP_BLOCKS.iter().find(|(b, _)| b == name) {
             Some((_, reason)) => assert!(
                 !contributes,
@@ -254,6 +251,73 @@ fn live_plugin_tree_block_deps_load_cleanly() {
             ),
         }
     }
+}
+
+/// Does this block's `deps.yaml` contribute at least one dep in `lang`'s
+/// own vocabulary?
+///
+/// Each language keeps its deps under its OWN key, so the language must
+/// select the key. This was a two-arm match whose `_` fell through to
+/// `crates`, which is a silent wrong answer for every language that is
+/// neither rust nor dart: a typescript block contributing `npm:` entries
+/// read as contributing nothing and failed the rule it satisfied. Nothing
+/// caught it because the tree shipped no typescript block until the first
+/// one arrived — the arm was unreachable, then it was wrong.
+///
+/// The fallback panics by name rather than guessing. A block deps.yaml in
+/// a sixth language cannot be checked against the wrong key and then pass
+/// or fail for the wrong reason.
+fn contributes_deps(m: &BlockDeps, lang: &str) -> bool {
+    match lang {
+        "rust" => !m.crates.is_empty(),
+        "dart" => !m.pub_packages.is_empty(),
+        "typescript" => !m.npm.is_empty(),
+        other => panic!(
+            "no block-deps vocabulary mapping for language `{other}`. A deps.yaml \
+             under blocks/*/codegen/{other}/ keeps its entries under a key this \
+             match does not read, so the zero-dep rule would answer from the \
+             wrong key. Add the arm."
+        ),
+    }
+}
+
+#[test]
+fn contributes_deps_reads_each_language_own_key() {
+    // Each language's entries must be seen through its own key, and must
+    // NOT be seen through another language's. The second half is the one
+    // that was broken: npm entries read through `crates` as "none".
+    let npm_only: BlockDeps =
+        serde_yaml::from_str("npm:\n  - package: \"@prisma/client\"\n    version: \"^7.10.0\"\n")
+            .expect("npm deps parse");
+    assert!(
+        contributes_deps(&npm_only, "typescript"),
+        "an npm-only deps.yaml contributes in typescript"
+    );
+    assert!(
+        !contributes_deps(&npm_only, "rust"),
+        "an npm-only deps.yaml contributes nothing in rust — if this passes, \
+         some arm is reading another language's key"
+    );
+
+    let crates_only: BlockDeps =
+        serde_yaml::from_str("crates:\n  - name: itm\n    version: \"0.9.0-rc.1\"\n")
+            .expect("crate deps parse");
+    assert!(contributes_deps(&crates_only, "rust"));
+    assert!(!contributes_deps(&crates_only, "typescript"));
+
+    let empty: BlockDeps = serde_yaml::from_str("{}\n").expect("empty deps parse");
+    for lang in ["rust", "dart", "typescript"] {
+        assert!(!contributes_deps(&empty, lang), "empty contributes nothing");
+    }
+}
+
+#[test]
+#[should_panic(expected = "no block-deps vocabulary mapping for language `kotlin`")]
+fn contributes_deps_panics_for_an_unmapped_language() {
+    // The guard is the point of the rewrite, so it is asserted rather than
+    // assumed. Without this the fallback is a comment.
+    let empty: BlockDeps = serde_yaml::from_str("{}\n").expect("empty deps parse");
+    let _ = contributes_deps(&empty, "kotlin");
 }
 
 #[test]
