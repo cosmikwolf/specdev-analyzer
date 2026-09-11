@@ -69,10 +69,8 @@ mod tests {
     use crate::lang::rust::RustAdapter;
 
     fn tmp(label: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "specdev-source-map-{label}-{}",
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("specdev-source-map-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("src/tasks")).unwrap();
         d
@@ -129,7 +127,11 @@ mod tests {
     fn override_is_read_from_the_module_toml() {
         let root = tmp("toml");
         let m = root.join("Blink.toml");
-        std::fs::write(&m, "name = \"Blink\"\nsource_file = \"src/tasks/blink.rs\"\n").unwrap();
+        std::fs::write(
+            &m,
+            "name = \"Blink\"\nsource_file = \"src/tasks/blink.rs\"\n",
+        )
+        .unwrap();
         assert_eq!(
             load_source_file_override(&m).as_deref(),
             Some("src/tasks/blink.rs")

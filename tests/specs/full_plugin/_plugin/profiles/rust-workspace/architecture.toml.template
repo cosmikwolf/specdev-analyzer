@@ -1,13 +1,13 @@
 # Architecture-level decisions for a Cargo workspace.
 #
-# Phase 8.6: this file declares the canonical [workspace.package] fields
+# This file declares the canonical [workspace.package] fields
 # (inherited by member crates via `*.workspace = true` in their
 # Cargo.toml) and the hoisted [[workspace_dependencies]] candidates
 # (members opt in via `source = "workspace"` on their CrateReference).
 #
 # Member-specific concerns (modules, requirements, per-crate features,
-# per-crate deps) live in the member's own `specs/` tree, NOT here. D36
-# enforcement: a workspace spec MUST NOT reference per-member internals.
+# per-crate deps) live in the member's own `specs/` tree, NOT here — a
+# workspace spec MUST NOT reference per-member internals.
 
 # ---------------------------------------------------------------------------
 # Workspace-level package fields. Each of these is emitted into the
@@ -48,7 +48,7 @@ edition = "2021"
 # EXAMPLE: a registry crate hoisted across members.
 # [[workspace_dependencies]]
 # crate = "defmt"
-# version = "0.3"
+# version = "^1"
 
 # ---------------------------------------------------------------------------
 # Cargo build profiles — the workspace's [profile.*] tables. This is the

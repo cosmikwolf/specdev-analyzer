@@ -89,7 +89,10 @@ fn manifest_dispatch_library_shape_renders_library() {
     );
     let out = render(&layout).unwrap().text;
     // Library shape: `[lib]` section, no `[[bin]]` row.
-    assert!(out.contains("[lib]"), "library shape must emit [lib]:\n{out}");
+    assert!(
+        out.contains("[lib]"),
+        "library shape must emit [lib]:\n{out}"
+    );
     assert!(
         !out.contains("[[bin]]"),
         "library shape must NOT emit [[bin]]:\n{out}"
@@ -106,7 +109,10 @@ fn manifest_dispatch_binary_shape_renders_firmware() {
     assert!(manifest_path(&target).is_file());
     let out = render(&layout).unwrap().text;
     // Binary shape: `[[bin]]` row with name=project_name + path=src/main.rs.
-    assert!(out.contains("[[bin]]"), "binary shape must emit [[bin]]:\n{out}");
+    assert!(
+        out.contains("[[bin]]"),
+        "binary shape must emit [[bin]]:\n{out}"
+    );
     assert!(
         out.contains(r#"name = "demo""#),
         "binary shape must emit `name = \"<project>\"`:\n{out}"
@@ -127,7 +133,10 @@ fn manifest_dispatch_plugin_shape_renders_audio_plugin() {
     assert!(manifest_path(&target).is_file());
     let out = render(&layout).unwrap().text;
     // Plugin shape: `[lib]` + `crate-type = ["cdylib"]`.
-    assert!(out.contains("[lib]"), "plugin shape must emit [lib]:\n{out}");
+    assert!(
+        out.contains("[lib]"),
+        "plugin shape must emit [lib]:\n{out}"
+    );
     assert!(
         out.contains(r#"crate-type = ["cdylib"]"#),
         "plugin shape must emit cdylib crate-type:\n{out}"
@@ -141,12 +150,8 @@ fn manifest_dispatch_plugin_shape_renders_audio_plugin() {
 
 #[test]
 fn manifest_dispatch_workspace_shape_without_table_errors_with_shape_vocabulary() {
-    let (target, _initial_layout) = fresh_project(
-        &full_plugin(),
-        "rust-workspace",
-        "broken",
-        "ws-no-table",
-    );
+    let (target, _initial_layout) =
+        fresh_project(&full_plugin(), "rust-workspace", "broken", "ws-no-table");
     // Strip [workspace] from spec.toml — manifest still claims
     // shape: workspace, so the dispatch must error with a shape-aware
     // message.
@@ -206,7 +211,10 @@ fn backward_compat_fallback_when_manifest_missing() {
         "minimal_plugin bootstrap must NOT have written profile.yaml"
     );
     let out = render(&layout).unwrap().text;
-    assert!(out.contains("[[bin]]"), "fallback firmware shape must emit [[bin]]:\n{out}");
+    assert!(
+        out.contains("[[bin]]"),
+        "fallback firmware shape must emit [[bin]]:\n{out}"
+    );
     assert!(
         out.contains(r#"path = "src/main.rs""#),
         "fallback firmware shape must emit src/main.rs:\n{out}"
@@ -220,8 +228,7 @@ fn backward_compat_fallback_when_manifest_missing() {
 
 #[test]
 fn parity_manifest_vs_fallback_library_api() {
-    let (target, layout) =
-        fresh_project(&full_plugin(), "library-api", "liblib", "parity-lib");
+    let (target, layout) = fresh_project(&full_plugin(), "library-api", "liblib", "parity-lib");
     let manifest_out = render(&layout).unwrap().text;
     // Now strip the manifest and re-render via fallback. Both paths
     // call render_library(); output must be byte-identical.
@@ -236,8 +243,7 @@ fn parity_manifest_vs_fallback_library_api() {
 
 #[test]
 fn parity_manifest_vs_fallback_firmware_layered() {
-    let (target, layout) =
-        fresh_project(&full_plugin(), "firmware-layered", "demo", "parity-fw");
+    let (target, layout) = fresh_project(&full_plugin(), "firmware-layered", "demo", "parity-fw");
     let manifest_out = render(&layout).unwrap().text;
     std::fs::remove_file(manifest_path(&target)).unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
@@ -250,8 +256,7 @@ fn parity_manifest_vs_fallback_firmware_layered() {
 
 #[test]
 fn parity_manifest_vs_fallback_audio_plugin() {
-    let (target, layout) =
-        fresh_project(&full_plugin(), "audio-plugin", "myfx", "parity-ap");
+    let (target, layout) = fresh_project(&full_plugin(), "audio-plugin", "myfx", "parity-ap");
     let manifest_out = render(&layout).unwrap().text;
     std::fs::remove_file(manifest_path(&target)).unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
@@ -280,5 +285,8 @@ fn workspace_short_circuit_takes_precedence_over_manifest_dispatch() {
     // spec.toml.template, so the workspace-root path fires first.
     // Output should be the [workspace] block, NOT a per-shape body.
     let out = render(&layout).unwrap().text;
-    assert!(out.starts_with("[workspace]"), "expected workspace-root output:\n{out}");
+    assert!(
+        out.starts_with("[workspace]"),
+        "expected workspace-root output:\n{out}"
+    );
 }

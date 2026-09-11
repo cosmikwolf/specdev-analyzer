@@ -129,7 +129,10 @@ surface:
     assert_eq!(ctx.context_subcommand_extras.len(), 2);
     let hw_extra = &ctx.context_subcommand_extras[1];
     assert_eq!(hw_extra.field, "hardware_resources");
-    assert_eq!(hw_extra.kind.as_deref(), Some("collect_local_entities_by_kind"));
+    assert_eq!(
+        hw_extra.kind.as_deref(),
+        Some("collect_local_entities_by_kind")
+    );
     assert_eq!(hw_extra.kinds, vec!["Peripheral", "Pin"]);
 }
 
@@ -246,7 +249,9 @@ recommended_external_deps:
     assert_eq!(m.crates.len(), 1);
     let c = &m.crates[0];
     assert_eq!(c.name, "nih_plug");
-    assert!(matches!(&c.source, Some(CrateSource::Git { git, rev: Some(_), .. }) if git.contains("nih-plug")));
+    assert!(
+        matches!(&c.source, Some(CrateSource::Git { git, rev: Some(_), .. }) if git.contains("nih-plug"))
+    );
     assert_eq!(m.recommended_external_deps.len(), 1);
     assert_eq!(m.recommended_external_deps[0].crate_name, "nih_plug");
 }
@@ -295,7 +300,10 @@ recommended_external_deps: []
     let p = write("deps-embassy", body);
     let m = BlockDeps::load(&p).expect("embassy deps load");
     assert_eq!(m.crates.len(), 2);
-    assert_eq!(m.crates[0].features, vec!["arch-cortex-m", "executor-thread"]);
+    assert_eq!(
+        m.crates[0].features,
+        vec!["arch-cortex-m", "executor-thread"]
+    );
     assert!(m.recommended_external_deps.is_empty());
 }
 

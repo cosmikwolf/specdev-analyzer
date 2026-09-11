@@ -200,7 +200,10 @@ fn unbound_parameter_warns_not_errors() {
         msg.contains("Parameter") && msg.contains("parameter_binding"),
         "uses neutral parameter/relation vocabulary: {msg}"
     );
-    assert!(!msg.contains("requirement"), "no requirement leakage: {msg}");
+    assert!(
+        !msg.contains("requirement"),
+        "no requirement leakage: {msg}"
+    );
 }
 
 #[test]
@@ -244,7 +247,10 @@ fn multi_target_binding_is_clean() {
         errors(&report)
     );
     let orphans = findings_for(&report, "parameters_have_bindings", Severity::Warning);
-    assert!(orphans.is_empty(), "no orphan with all params bound: {orphans:#?}");
+    assert!(
+        orphans.is_empty(),
+        "no orphan with all params bound: {orphans:#?}"
+    );
 }
 
 #[test]
@@ -288,6 +294,9 @@ fn prompt_assembly_is_byte_identical_across_runs() {
     // The binding table rides verbatim in the module TOML section, so
     // every binding's target appears in the prompt — the basis for a
     // deterministic apply_param_changes emission.
-    assert!(a.contains("ChipEngine::set_master_volume"), "binding target present in prompt");
+    assert!(
+        a.contains("ChipEngine::set_master_volume"),
+        "binding target present in prompt"
+    );
     assert!(a.contains("db_to_amp"), "value transform present in prompt");
 }

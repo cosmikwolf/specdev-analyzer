@@ -80,19 +80,10 @@ pub fn apply_proposal(
     module_name: &str,
     proposal_path: &Path,
 ) -> Result<ApplyReport> {
-    let proposal_text = std::fs::read_to_string(proposal_path).with_context(|| {
-        format!(
-            "[ITEM-310] reading proposal at {}",
-            proposal_path.display()
-        )
-    })?;
-    let mut doc: ProposalDocument =
-        serde_yaml::from_str(&proposal_text).with_context(|| {
-            format!(
-                "[ITEM-310] parsing proposal at {}",
-                proposal_path.display()
-            )
-        })?;
+    let proposal_text = std::fs::read_to_string(proposal_path)
+        .with_context(|| format!("[ITEM-310] reading proposal at {}", proposal_path.display()))?;
+    let mut doc: ProposalDocument = serde_yaml::from_str(&proposal_text)
+        .with_context(|| format!("[ITEM-310] parsing proposal at {}", proposal_path.display()))?;
 
     if doc.schema_version != 1 {
         return Err(anyhow!(
@@ -148,17 +139,13 @@ pub fn apply_proposal(
                 }
             }
             "add-to-spec" | "update-spec" => {
-                let ps = entry
-                    .recommendation
-                    .proposed_spec
-                    .as_ref()
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "[ITEM-306] entry {} has action `{}` but no `proposed_spec`",
-                            entry.id,
-                            entry.recommendation.action
-                        )
-                    })?;
+                let ps = entry.recommendation.proposed_spec.as_ref().ok_or_else(|| {
+                    anyhow!(
+                        "[ITEM-306] entry {} has action `{}` but no `proposed_spec`",
+                        entry.id,
+                        entry.recommendation.action
+                    )
+                })?;
                 let map = ps.as_mapping().ok_or_else(|| {
                     anyhow!(
                         "[ITEM-307] entry {}: proposed_spec must be a YAML mapping",
@@ -197,9 +184,8 @@ pub fn apply_proposal(
 
     // Read module spec via toml_edit so comments/whitespace round-trip.
     let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
-    let module_text = std::fs::read_to_string(&module_path).with_context(|| {
-        format!("[ITEM-311] reading module spec {}", module_path.display())
-    })?;
+    let module_text = std::fs::read_to_string(&module_path)
+        .with_context(|| format!("[ITEM-311] reading module spec {}", module_path.display()))?;
     let mut spec_doc: toml_edit::DocumentMut = module_text
         .parse()
         .with_context(|| format!("[ITEM-311] parsing module spec {}", module_path.display()))?;
@@ -267,9 +253,8 @@ pub fn apply_proposal(
         }
     }
 
-    std::fs::write(&module_path, spec_doc.to_string()).with_context(|| {
-        format!("[ITEM-312] writing module spec {}", module_path.display())
-    })?;
+    std::fs::write(&module_path, spec_doc.to_string())
+        .with_context(|| format!("[ITEM-312] writing module spec {}", module_path.display()))?;
 
     // Flip proposal status, add applied_at, rename to .applied.yaml.
     doc.status = "applied".into();
@@ -290,13 +275,11 @@ pub fn apply_proposal(
     })
     .context("[ITEM-313] serializing audit log")?;
     if let Some(parent) = audit_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("[ITEM-313] creating audit dir {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("[ITEM-313] creating audit dir {}", parent.display()))?;
     }
-    std::fs::write(&audit_path, audit_yaml).with_context(|| {
-        format!("[ITEM-313] writing audit log {}", audit_path.display())
-    })?;
+    std::fs::write(&audit_path, audit_yaml)
+        .with_context(|| format!("[ITEM-313] writing audit log {}", audit_path.display()))?;
     // Remove the proposal file now that the audit log carries the
     // record. Future `items propose` lands a fresh .proposal.yaml.
     if proposal_path.exists() && proposal_path != audit_path {
@@ -348,9 +331,7 @@ pub fn audit_path_for(layout: &LayoutContext, module_name: &str) -> PathBuf {
         .join(format!("{module_name}.applied.yaml"))
 }
 
-fn items_array_mut<'a>(
-    doc: &'a mut toml_edit::DocumentMut,
-) -> Result<&'a mut toml_edit::ArrayOfTables> {
+fn items_array_mut(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::ArrayOfTables> {
     if !doc.contains_key("items") {
         // Create an empty `[[items]]` array via insertion of a single
         // table, then take a mutable handle.
@@ -358,17 +339,11 @@ fn items_array_mut<'a>(
         doc.insert("items", toml_edit::Item::ArrayOfTables(arr));
     }
     doc["items"].as_array_of_tables_mut().ok_or_else(|| {
-        anyhow!(
-            "[ITEM-311] module spec `items` field is not an array of tables; cannot apply"
-        )
+        anyhow!("[ITEM-311] module spec `items` field is not an array of tables; cannot apply")
     })
 }
 
-fn remove_item(
-    doc: &mut toml_edit::DocumentMut,
-    kind: &str,
-    name: &str,
-) -> Result<bool> {
+fn remove_item(doc: &mut toml_edit::DocumentMut, kind: &str, name: &str) -> Result<bool> {
     let arr = items_array_mut(doc)?;
     let pos = arr.iter().position(|t| {
         t.get("kind").and_then(|v| v.as_str()) == Some(kind)
@@ -450,9 +425,9 @@ fn rename_item(
 /// name → description → satisfies → signature_hint → everything else
 /// (alphabetical). Matches the convention codegen prose recommends.
 fn yaml_to_toml_table(v: &serde_yaml::Value) -> Result<toml_edit::Table> {
-    let map = v.as_mapping().ok_or_else(|| {
-        anyhow!("[ITEM-307] proposed_spec must be a YAML mapping")
-    })?;
+    let map = v
+        .as_mapping()
+        .ok_or_else(|| anyhow!("[ITEM-307] proposed_spec must be a YAML mapping"))?;
 
     let mut table = toml_edit::Table::new();
 
@@ -556,11 +531,23 @@ satisfies = ["DEMO-1"]
         let ok = rename_item(&mut doc, "fn", "refill", "apply_refill").unwrap();
         assert!(ok);
         let out = doc.to_string();
-        assert!(out.contains("name = \"apply_refill\""), "name not rewritten:\n{out}");
-        assert!(!out.contains("name = \"refill\""), "old name lingers:\n{out}");
+        assert!(
+            out.contains("name = \"apply_refill\""),
+            "name not rewritten:\n{out}"
+        );
+        assert!(
+            !out.contains("name = \"refill\""),
+            "old name lingers:\n{out}"
+        );
         // Trace and description ride through untouched.
-        assert!(out.contains("satisfies = [\"DEMO-1\"]"), "satisfies lost:\n{out}");
-        assert!(out.contains("description = \"Refill the bucket.\""), "description lost:\n{out}");
+        assert!(
+            out.contains("satisfies = [\"DEMO-1\"]"),
+            "satisfies lost:\n{out}"
+        );
+        assert!(
+            out.contains("description = \"Refill the bucket.\""),
+            "description lost:\n{out}"
+        );
     }
 
     #[test]

@@ -153,7 +153,10 @@ fn dart_privacy_and_non_item_shapes_are_filtered() {
         !names.contains(&"Device.Device") && !names.contains(&"Device.new"),
         "constructors are not items; got: {names:?}"
     );
-    assert!(!names.contains(&"Device.id"), "fields are not items; got: {names:?}");
+    assert!(
+        !names.contains(&"Device.id"),
+        "fields are not items; got: {names:?}"
+    );
 
     // Enum constants are not items — the enum declaration is one item.
     assert!(!names.contains(&"Status.idle"), "got: {names:?}");
@@ -190,7 +193,10 @@ abstract class Base {
 
     assert!(!names.contains(&"HomeScreen.build"), "got: {names:?}");
     assert!(!names.contains(&"HomeScreen.hashCode"), "got: {names:?}");
-    assert!(!names.contains(&"Base.poke"), "abstract @override; got: {names:?}");
+    assert!(
+        !names.contains(&"Base.poke"),
+        "abstract @override; got: {names:?}"
+    );
     assert!(
         names.contains(&"HomeScreen.legacyHelper"),
         "non-override annotation must not suppress; got: {names:?}"
@@ -301,7 +307,11 @@ fn build_dart_project(tag: &str) -> PathBuf {
     let spec_path = target.join("spec.toml");
     let spec = std::fs::read_to_string(&spec_path).unwrap();
     assert!(spec.contains("language = \"rust\""), "fixture assumption");
-    std::fs::write(&spec_path, spec.replace("language = \"rust\"", "language = \"dart\"")).unwrap();
+    std::fs::write(
+        &spec_path,
+        spec.replace("language = \"rust\"", "language = \"dart\""),
+    )
+    .unwrap();
 
     let dart_tier_dst = target.join("specs/specdev/schemas/inlined/languages/dart");
     std::fs::create_dir_all(&dart_tier_dst).unwrap();
@@ -311,7 +321,11 @@ fn build_dart_project(tag: &str) -> PathBuf {
     )
     .unwrap();
 
-    std::fs::write(target.join("specs/modules/BleScanner.toml"), DART_MODULE_SPEC).unwrap();
+    std::fs::write(
+        target.join("specs/modules/BleScanner.toml"),
+        DART_MODULE_SPEC,
+    )
+    .unwrap();
     std::fs::create_dir_all(target.join("src")).unwrap();
     std::fs::write(target.join("src/ble_scanner.dart"), DART_MODULE_SOURCE).unwrap();
     target
@@ -332,7 +346,10 @@ fn dart_extract_items_cli_exits_zero() {
         "extract-items must exit 0 on a Dart module; stderr: {stderr}\nstdout: {stdout}"
     );
     assert!(stdout.contains("kind: class"), "stdout: {stdout}");
-    assert!(stdout.contains("name: BleScanner.start"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("name: BleScanner.start"),
+        "stdout: {stdout}"
+    );
     let _ = std::fs::remove_dir_all(&target);
 }
 
@@ -389,7 +406,9 @@ fn dart_items_diff_reports_drift_and_unknown_kind() {
     assert!(!out.status.success());
     assert!(stderr.contains("ITEM-102"), "stderr: {stderr}");
     assert!(
-        stderr.contains("class/mixin/enum/extension/extension_type/function/getter/setter/typedef/const"),
+        stderr.contains(
+            "class/mixin/enum/extension/extension_type/function/getter/setter/typedef/const"
+        ),
         "unknown-kind advice must list the Dart vocabulary; stderr: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&target);

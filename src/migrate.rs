@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 
+use crate::bootstrap::{self, BootstrapInputs};
 use crate::inline::{
     collect_block_files, collect_bridge_files, rollup_hash, write_unit_files, UnitFile,
 };
@@ -68,6 +69,21 @@ pub struct MigrateReport {
     /// Profile-shell migration (one entry max — there is at most one
     /// inlined profile per project).
     pub profile_files_written: Vec<PathBuf>,
+    /// `--refresh` only: files overwritten because their on-disk hash
+    /// still matched the hash `bootstrap` recorded, which proves nobody
+    /// hand-edited them (#109).
+    pub profile_files_refreshed: Vec<PathBuf>,
+    /// `--refresh` only: files left alone because they diverge from the
+    /// recorded hash. Refusing here is the point — an overwrite would
+    /// discard the user's edit with no merge base to recover it from.
+    pub profile_files_locally_edited: Vec<PathBuf>,
+    /// `--refresh` only: co-owned aggregators whose profile-owned part the
+    /// plugin has moved. Detectable, but not mechanically applicable —
+    /// rewriting the file would drop the `$ref` list `inline` appended.
+    pub profile_files_needs_manual: Vec<PathBuf>,
+    /// `--refresh` on a tree with no `[profile_files]`. Nothing can be
+    /// proven untouched, so nothing is written.
+    pub profile_refresh_unavailable: bool,
     pub profile_skipped: bool,
     pub migrated: Vec<MigratedUnit>,
     pub skipped: Vec<SkippedUnit>,
@@ -80,7 +96,12 @@ impl MigrateReport {
     /// profile shell.
     pub fn total_files_written(&self) -> usize {
         self.profile_files_written.len()
-            + self.migrated.iter().map(|m| m.files_written.len()).sum::<usize>()
+            + self.profile_files_refreshed.len()
+            + self
+                .migrated
+                .iter()
+                .map(|m| m.files_written.len())
+                .sum::<usize>()
     }
 }
 
@@ -91,6 +112,7 @@ pub fn run_migrate(
     layout: &LayoutContext,
     plugin_root: &Path,
     dry_run: bool,
+    refresh: bool,
 ) -> Result<MigrateReport> {
     let mut lineage = Lineage::load(&layout.specdev_root)?;
     let meta = lineage.meta.as_ref().ok_or_else(|| {
@@ -106,7 +128,18 @@ pub fn run_migrate(
     };
 
     // ----- Profile shell -----
-    plan_profile_shell(plugin_root, &meta.profile, layout, dry_run, &mut report)?;
+    let mut new_profile_hashes: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    plan_profile_shell(
+        plugin_root,
+        &meta.profile,
+        layout,
+        dry_run,
+        refresh,
+        &lineage.profile_files.clone(),
+        &mut new_profile_hashes,
+        &mut report,
+    )?;
 
     // ----- Blocks -----
     let block_names: Vec<String> = lineage.blocks.keys().cloned().collect();
@@ -126,13 +159,7 @@ pub fn run_migrate(
                     });
                     continue;
                 }
-                let written = apply_unit_migration(
-                    layout,
-                    UnitKind::Block,
-                    name,
-                    &files,
-                    dry_run,
-                )?;
+                let written = apply_unit_migration(layout, UnitKind::Block, name, &files, dry_run)?;
                 report.migrated.push(MigratedUnit {
                     kind: UnitKind::Block,
                     name: name.clone(),
@@ -149,9 +176,10 @@ pub fn run_migrate(
             Err(e) => {
                 let msg = format!("{e:#}");
                 if msg.contains("[INLINE-001]") {
-                    report
-                        .missing_in_plugin
-                        .push(format!("[MIGRATE-002] block `{name}` not found in plugin tree at {}", plugin_root.join("blocks").join(name).display()));
+                    report.missing_in_plugin.push(format!(
+                        "[MIGRATE-002] block `{name}` not found in plugin tree at {}",
+                        plugin_root.join("blocks").join(name).display()
+                    ));
                 } else {
                     return Err(e);
                 }
@@ -177,13 +205,8 @@ pub fn run_migrate(
                     });
                     continue;
                 }
-                let written = apply_unit_migration(
-                    layout,
-                    UnitKind::Bridge,
-                    name,
-                    &files,
-                    dry_run,
-                )?;
+                let written =
+                    apply_unit_migration(layout, UnitKind::Bridge, name, &files, dry_run)?;
                 report.migrated.push(MigratedUnit {
                     kind: UnitKind::Bridge,
                     name: name.clone(),
@@ -200,9 +223,10 @@ pub fn run_migrate(
             Err(e) => {
                 let msg = format!("{e:#}");
                 if msg.contains("[INLINE-001]") {
-                    report
-                        .missing_in_plugin
-                        .push(format!("[MIGRATE-002] bridge `{name}` not found in plugin tree at {}", plugin_root.join("bridges").join(name).display()));
+                    report.missing_in_plugin.push(format!(
+                        "[MIGRATE-002] bridge `{name}` not found in plugin tree at {}",
+                        plugin_root.join("bridges").join(name).display()
+                    ));
                 } else {
                     return Err(e);
                 }
@@ -213,22 +237,61 @@ pub fn run_migrate(
     // Persist lineage iff anything actually migrated. Skip the write when
     // dry-run OR when nothing changed (preserves byte-stability of the
     // file's mtime + content for idempotency tests).
-    if !dry_run && !report.migrated.is_empty() {
+    // Fold the profile-file hashes in before deciding whether to write:
+    // a refresh with no block/bridge migration still moves the base.
+    let profile_hashes_changed = !new_profile_hashes.is_empty()
+        && new_profile_hashes
+            .iter()
+            .any(|(k, v)| lineage.profile_files.get(k) != Some(v));
+    if profile_hashes_changed {
+        lineage.profile_files.extend(new_profile_hashes);
+    }
+    if !dry_run && (!report.migrated.is_empty() || profile_hashes_changed) {
         lineage.save(&layout.specdev_root)?;
     }
 
     Ok(report)
 }
 
-/// Plan + apply the profile-shell migration: copy `profile.yaml` and any
-/// `templates/*` from `<plugin-root>/profiles/<name>/`. Profile shell has
-/// no per-unit `content_hash` (lineage `[meta]` is the audit trail and is
-/// frozen); migration is purely "write missing files; never overwrite."
+/// Plan + apply the profile-shell migration.
+///
+/// Two modes.
+///
+/// **Default (additive).** Write only files that are MISSING from the
+/// project; never overwrite. This is the pre-#109 contract and it is
+/// unchanged.
+///
+/// **`--refresh`.** Also rewrite a file whose on-disk hash still equals
+/// the hash `bootstrap` recorded in `[profile_files]`. Equality is a proof
+/// that nobody hand-edited it, so the overwrite cannot destroy work. A
+/// file that diverges is reported and left alone: there is no `upstream/`
+/// base copy for profile files, so there is nothing to merge against and
+/// an overwrite would simply lose the edit. `drift` names those files;
+/// resolving them is the user's call, not a flag's.
+///
+/// Refresh needs the recorded hashes. A tree bootstrapped before #109 has
+/// none, so nothing there can be proven untouched, and the mode reports
+/// `profile_refresh_unavailable` rather than guessing.
+///
+/// The file list comes from [`bootstrap::profile_expected_bytes`] — the
+/// same producer `bootstrap` and `drift` use. The earlier hand-rolled
+/// version enumerated `profile.yaml` and `templates/*` only, so it could
+/// not repair the stale `architecture.schema.yaml` that #109 measured;
+/// `schemas/`, `codegen/` and the root TOMLs were invisible to it.
+#[allow(clippy::too_many_arguments)]
 fn plan_profile_shell(
     plugin_root: &Path,
     profile_name: &str,
     layout: &LayoutContext,
     dry_run: bool,
+    refresh: bool,
+    recorded: &std::collections::BTreeMap<String, String>,
+    // Hashes to fold back into `[profile_files]` for every file this call
+    // wrote. A write that does not move the recorded base leaves `drift`
+    // reporting `Both` on a file it just made clean — the base is now
+    // wrong on both sides of the comparison. Hash after the step that
+    // writes.
+    new_hashes: &mut std::collections::BTreeMap<String, String>,
     report: &mut MigrateReport,
 ) -> Result<()> {
     let profile_dir = plugin_root.join("profiles").join(profile_name);
@@ -244,68 +307,99 @@ fn plan_profile_shell(
         return Ok(());
     }
 
-    // 1. profile.yaml — write only when source exists AND destination missing.
-    let manifest_src = profile_dir.join("profile.yaml");
-    if manifest_src.is_file() {
-        let dst_rel = PathBuf::from("profile.yaml");
-        let dst_abs = layout.specdev_root.join(&dst_rel);
+    if refresh && recorded.is_empty() {
+        report.profile_refresh_unavailable = true;
+    }
+
+    let inputs = BootstrapInputs {
+        profile: profile_name.to_string(),
+        language: layout.spec.project.language.clone(),
+        project_name: layout.spec.project.name.clone(),
+        target_dir: layout.project_root.clone(),
+    };
+    let expected = bootstrap::profile_expected_bytes(&profile_dir, &inputs)?;
+
+    for (rel, bytes) in &expected {
+        let dst_rel = PathBuf::from(rel);
+        let dst_abs = layout.project_root.join(&dst_rel);
+
         if !dst_abs.exists() {
-            if !dry_run {
-                if let Some(parent) = dst_abs.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        anyhow!("creating {}: {e}", parent.display())
-                    })?;
-                }
-                let bytes = std::fs::read(&manifest_src)
-                    .map_err(|e| anyhow!("reading {}: {e}", manifest_src.display()))?;
-                std::fs::write(&dst_abs, &bytes)
-                    .map_err(|e| anyhow!("writing {}: {e}", dst_abs.display()))?;
-            }
+            write_file(&dst_abs, bytes, dry_run)?;
+            new_hashes.insert(rel.clone(), bootstrap::profile_file_hash(rel, bytes)?);
             report.profile_files_written.push(dst_rel);
+            continue;
         }
+
+        if !refresh {
+            continue;
+        }
+
+        // A co-owned aggregator is never rewritten. `module.schema.yaml`
+        // holds the `$ref` list `inline` appended, and the plugin's
+        // template does not; writing the template back would silently
+        // delete every inlined unit's schema reference. Its recorded hash
+        // covers only the profile-owned remainder, so a real upstream move
+        // is detectable but not mechanically applicable — say that instead
+        // of either destroying the refs or reporting nothing.
+        if bootstrap::CO_OWNED_AGGREGATORS.contains(&rel.as_str()) {
+            let current = std::fs::read(&dst_abs)
+                .map_err(|e| anyhow!("reading {}: {e}", dst_abs.display()))?;
+            let ours = bootstrap::profile_file_hash(rel, &current)?;
+            let theirs = bootstrap::profile_file_hash(rel, bytes)?;
+            if ours != theirs {
+                report.profile_files_needs_manual.push(dst_rel);
+            }
+            continue;
+        }
+
+        let Some(base) = recorded.get(rel) else {
+            // Present on disk, never recorded. Refresh has no proof of
+            // provenance, so it declines — same reasoning as a diverged
+            // file, reported under the same list.
+            report.profile_files_locally_edited.push(dst_rel);
+            continue;
+        };
+        let current =
+            std::fs::read(&dst_abs).map_err(|e| anyhow!("reading {}: {e}", dst_abs.display()))?;
+        // `profile_file_hash` is the function that produced `base`, so it
+        // is the one that may compare against it. Today the co-owned
+        // branch above catches every path whose recorded hash is
+        // normalized, so this call is equivalent to `content_hash` for all
+        // reachable input — it is the invariant written down, not a live
+        // guard, and no test can distinguish the two. The version that
+        // hard-coded `content_hash` here did produce the bug (a freshly
+        // bootstrapped tree reporting `module.schema.yaml` as user-edited),
+        // before the co-owned branch existed to mask it.
+        if &bootstrap::profile_file_hash(rel, &current)? != base {
+            report.profile_files_locally_edited.push(dst_rel);
+            continue;
+        }
+        // Provably untouched since bootstrap. Skip a no-op rewrite so the
+        // report counts real changes only.
+        if current.as_slice() == bytes.as_slice() {
+            continue;
+        }
+        write_file(&dst_abs, bytes, dry_run)?;
+        new_hashes.insert(rel.clone(), bootstrap::profile_file_hash(rel, bytes)?);
+        report.profile_files_refreshed.push(dst_rel);
     }
 
-    // 2. templates/* — byte-faithful copy of any flat `templates/<file>`
-    //    entries the profile ships (mirrors `bootstrap::profile_plan` step
-    //    3c). Subdirectories not walked in v1; if a template is missing
-    //    on the destination side, copy it; pre-existing files are never
-    //    overwritten.
-    let templates_dir = profile_dir.join("templates");
-    if templates_dir.is_dir() {
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(&templates_dir)
-            .map_err(|e| anyhow!("reading {}: {e}", templates_dir.display()))?
-            .filter_map(|r| r.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file())
-            .collect();
-        entries.sort();
-        for src in entries {
-            let Some(file_name) = src.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            let dst_rel = PathBuf::from(format!("templates/{file_name}"));
-            let dst_abs = layout.specdev_root.join(&dst_rel);
-            if dst_abs.exists() {
-                continue;
-            }
-            if !dry_run {
-                if let Some(parent) = dst_abs.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        anyhow!("creating {}: {e}", parent.display())
-                    })?;
-                }
-                let bytes = std::fs::read(&src)
-                    .map_err(|e| anyhow!("reading {}: {e}", src.display()))?;
-                std::fs::write(&dst_abs, &bytes)
-                    .map_err(|e| anyhow!("writing {}: {e}", dst_abs.display()))?;
-            }
-            report.profile_files_written.push(dst_rel);
-        }
-    }
-
-    if report.profile_files_written.is_empty() {
+    if report.profile_files_written.is_empty() && report.profile_files_refreshed.is_empty() {
         report.profile_skipped = true;
     }
+    Ok(())
+}
+
+/// Write `bytes` to `path`, creating parents. No-op under `dry_run`.
+fn write_file(path: &Path, bytes: &[u8], dry_run: bool) -> Result<()> {
+    if dry_run {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("creating {}: {e}", parent.display()))?;
+    }
+    std::fs::write(path, bytes).map_err(|e| anyhow!("writing {}: {e}", path.display()))?;
     Ok(())
 }
 

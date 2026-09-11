@@ -9,7 +9,7 @@ description: |
   (the `egui+nih-plug` bridge wires parameters → widgets; this wires
   parameters → engine writes).
 
-  Locality (D58, refined Phase 20): the table is **co-resident with
+  Locality: the table is **co-resident with
   `[nih_plug]` on the `plugin_shell` module**. The binding's only
   spec-entity reference is the parameter, which lives on the shell; the
   reducer resolves `parameter → <shell>.<id>` locally (same reduce-time
@@ -19,11 +19,11 @@ description: |
   declaration order (see the profile's `codegen/rust/module.conventions.md`,
   §"Parameter binding model").
 
-  Shape commitments (D58): bindings are **explicit** (no convention
+  Shape commitments: bindings are **explicit** (no convention
   auto-binding in v1); a single parameter MAY appear on multiple rows
   (**multi-target allowed**; emission is declaration order; no
   uniqueness check); context-dependent writes ride the `custom`
-  transform escape hatch. Value-transform vocabulary (D59): six named
+  transform escape hatch. Value-transform vocabulary: six named
   transforms + `custom`.
 
   This schema is self-contained: the parameter-id pattern is inlined
@@ -53,7 +53,7 @@ $defs:
         description: |
           Source parameter id. Resolves at reduce time against a
           `[nih_plug.parameters].id` declared on this same module
-          (co-residency, D58); a missing reference surfaces as a
+          (co-residency); a missing reference surfaces as a
           `REDUCE_UNRESOLVED` error.
         $ref: "#/$defs/ParameterId"
       target_kind:
@@ -88,7 +88,7 @@ $defs:
         items: { type: string, minLength: 1 }
       value_transform:
         description: |
-          How the parameter value is reshaped before the write (D59).
+          How the parameter value is reshaped before the write.
           Defaults to `identity` when omitted.
         $ref: "#/$defs/ValueTransform"
       description:
@@ -100,8 +100,8 @@ $defs:
 
   ValueTransform:
     description: |
-      Closed set of six named transforms plus a `custom` escape hatch
-      (D59). Discriminated on `kind`.
+      Closed set of six named transforms plus a `custom` escape hatch.
+      Discriminated on `kind`.
 
         identity       — pass through unchanged.
         clamp          — `value.clamp(min, max)`.

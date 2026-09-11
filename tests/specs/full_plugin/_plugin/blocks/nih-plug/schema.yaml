@@ -7,12 +7,13 @@ description: >
   declarative surface: parameters, audio ports, MIDI configuration, and
   process-callback metadata.
 
-  v1 covers the shapes a typical VST3 / CLAP / standalone plugin needs.
-  Bounded follow-ups (per Phase 15-A spike §7): wider `widget_kind`
-  coverage moves into the `egui+nih-plug` bridge as needed; per-platform
-  realtime audit (no-alloc on hot path) is deferred until 15-G dogfood
-  evidence demands it; sysex / background-task wiring is deferred until
-  a real plugin needs it.
+  v1 covers the shapes a typical VST3 / CLAP / standalone plugin needs,
+  including SysEx (system-exclusive) input/output via the optional
+  `[nih_plug.midi.sysex]` subtable. Bounded follow-ups: wider
+  `widget_kind` coverage moves into the `egui+nih-plug` bridge as
+  needed; per-platform realtime audit (no-alloc on hot path) is
+  deferred until dogfood evidence demands it; background-task wiring
+  is deferred until a real plugin needs it.
 
   This block targets the [nih-plug](https://github.com/robbert-vdh/nih-plug)
   framework. The `[nih_plug]` table is expected only on `plugin_shell`-

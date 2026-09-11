@@ -113,6 +113,19 @@ enforce the placement.
 imports joins the client graph. Do not emit the directive when the
 field is absent or false.
 
+**"First line of the body" means the first line of *code*.** The
+`// @spec` regen-pointer comment (and an SPDX header, when the project
+declares a license) sits **above** the directive or the guard import,
+and that is correct — a leading comment does not stop Next from seeing
+the directive. Measured on Next 16.3.4 / Turbopack: a client component
+whose first two lines are `// @spec …` then `"use client";` builds
+(exit 0) and its `useState` works; the same file with the directive
+removed and the comment kept fails the build with *"You're importing a
+module that depends on `useState` into a React Server Component
+module"*. Do not "fix" the ordering by moving the comment below the
+directive, and do not drop the comment to get the directive onto
+line 1.
+
 **`environment`** (service only) emits the guard import as the first
 line:
 

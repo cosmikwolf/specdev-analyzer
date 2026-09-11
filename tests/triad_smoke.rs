@@ -236,8 +236,7 @@ satisfies = ["ZFM-002"]
 #[test]
 fn triad_smoke_reduces_clean() {
     let (target, _layout) = build_triad_smoke("reduces-clean");
-    let (graph, report) =
-        reduction::run_project(&target, None).expect("reduction::run_project");
+    let (graph, report) = reduction::run_project(&target, None).expect("reduction::run_project");
 
     // Every triad entity kind should materialize at least one entity.
     let entity_kinds: std::collections::HashSet<&str> =
@@ -404,11 +403,7 @@ satisfies = ["ZFM-001"]
 
 /// Helper: assert that a finding with `rule == expected_rule` fires
 /// against the mutated fixture, AND that the message contains `expect_in_msg`.
-fn assert_rule_fires(
-    report: &specdev_analyzer::Report,
-    expected_rule: &str,
-    expect_in_msg: &str,
-) {
+fn assert_rule_fires(report: &specdev_analyzer::Report, expected_rule: &str, expect_in_msg: &str) {
     let hit = report
         .findings()
         .iter()
@@ -640,11 +635,7 @@ text = "closed_by target."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
     let report = validate::run_project(&target, None).expect("validate");
-    assert_rule_fires(
-        &report,
-        "decision_supersedes_chain_consistency",
-        "DEC-002",
-    );
+    assert_rule_fires(&report, "decision_supersedes_chain_consistency", "DEC-002");
 }
 
 #[test]
@@ -1002,9 +993,15 @@ fn gate_module_blocked_refusal_message() {
     );
     assert!(m.contains("`Open blocker`"), "OQ title not surfaced:\n{m}");
     assert!(m.contains("Three exit options:"), "no exit options:\n{m}");
-    assert!(m.contains("1. Resolve via a decision"), "exit 1 missing:\n{m}");
+    assert!(
+        m.contains("1. Resolve via a decision"),
+        "exit 1 missing:\n{m}"
+    );
     assert!(m.contains("2. Commit a default"), "exit 2 missing:\n{m}");
-    assert!(m.contains("3. Mark the question moot"), "exit 3 missing:\n{m}");
+    assert!(
+        m.contains("3. Mark the question moot"),
+        "exit 3 missing:\n{m}"
+    );
     assert!(
         m.contains("`specs/open_questions.toml`"),
         "no pointer to open_questions.toml:\n{m}"

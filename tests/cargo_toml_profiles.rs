@@ -175,7 +175,10 @@ fn workspace_root_renders_profiles_in_cargo_order_with_overrides() {
         "profiles after [workspace.dependencies], Cargo order, fixed keys:\n{}",
         r.text
     );
-    let deps = r.text.find("[workspace.dependencies]\ndefmt = \"0.3\"\n").unwrap();
+    let deps = r
+        .text
+        .find("[workspace.dependencies]\ndefmt = \"0.3\"\n")
+        .unwrap();
     assert!(deps < r.text.find("[profile.release]").unwrap());
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
 
@@ -205,11 +208,15 @@ fn no_profiles_declared_emits_no_profile_tables() {
 #[test]
 fn standalone_firmware_renders_profiles_after_dependencies() {
     let target = fresh("firmware-layered", "demo", "fw-profiles");
-    append_arch(&target, "[profiles.release]\ndebug = 2\nopt-level = \"s\"\n");
+    append_arch(
+        &target,
+        "[profiles.release]\ndebug = 2\nopt-level = \"s\"\n",
+    );
 
     let r = render(&discover(&target)).unwrap();
     assert!(
-        r.text.ends_with("\n[profile.release]\nopt-level = \"s\"\ndebug = 2\n"),
+        r.text
+            .ends_with("\n[profile.release]\nopt-level = \"s\"\ndebug = 2\n"),
         "{}",
         r.text
     );
@@ -233,22 +240,37 @@ fn member_profiles_are_refused_by_validate_and_render() {
     bootstrap_at(&member, "library-api", "alpha");
     let member_arch = member.join("specs/architecture.toml");
     let clean = std::fs::read_to_string(&member_arch).unwrap();
-    std::fs::write(&member_arch, format!("{clean}\n[profiles.release]\ndebug = 2\n")).unwrap();
+    std::fs::write(
+        &member_arch,
+        format!("{clean}\n[profiles.release]\ndebug = 2\n"),
+    )
+    .unwrap();
 
     let report = validate::run_project(&member, None).unwrap();
-    let hit = report.findings().iter().find(|f| f.rule == "PROFILES-ROOT-ONLY");
-    let hit = hit.unwrap_or_else(|| panic!("expected PROFILES-ROOT-ONLY:\n{}", report.render_plain()));
+    let hit = report
+        .findings()
+        .iter()
+        .find(|f| f.rule == "PROFILES-ROOT-ONLY");
+    let hit =
+        hit.unwrap_or_else(|| panic!("expected PROFILES-ROOT-ONLY:\n{}", report.render_plain()));
     assert!(matches!(hit.severity, Severity::Error));
     assert!(
-        hit.message.contains(&root.join("spec.toml").display().to_string()),
+        hit.message
+            .contains(&root.join("spec.toml").display().to_string()),
         "the finding names the workspace root:\n{}",
         hit.message
     );
 
     let r = render(&discover(&member)).unwrap();
-    assert!(!r.text.contains("[profile"), "member render must not carry profiles:\n{}", r.text);
     assert!(
-        r.warnings.iter().any(|w| w.contains("member of the workspace") && w.contains("spec.toml")),
+        !r.text.contains("[profile"),
+        "member render must not carry profiles:\n{}",
+        r.text
+    );
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("member of the workspace") && w.contains("spec.toml")),
         "member render warns and names the root:\n{:?}",
         r.warnings
     );
@@ -256,9 +278,16 @@ fn member_profiles_are_refused_by_validate_and_render() {
     // Negative control: without the table, neither path complains.
     std::fs::write(&member_arch, clean).unwrap();
     let report = validate::run_project(&member, None).unwrap();
-    assert!(report.findings().iter().all(|f| f.rule != "PROFILES-ROOT-ONLY"));
+    assert!(report
+        .findings()
+        .iter()
+        .all(|f| f.rule != "PROFILES-ROOT-ONLY"));
     let r = render(&discover(&member)).unwrap();
-    assert!(r.warnings.iter().all(|w| !w.contains("profiles")), "{:?}", r.warnings);
+    assert!(
+        r.warnings.iter().all(|w| !w.contains("profiles")),
+        "{:?}",
+        r.warnings
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,8 +297,14 @@ fn member_profiles_are_refused_by_validate_and_render() {
 #[test]
 fn schema_rejects_keys_outside_the_subset() {
     let cases: [(&str, &str); 5] = [
-        ("[profiles.release]\nrustflags = [\"-C\", \"link-arg=-Tlink.x\"]\n", "rustflags"),
-        ("[profiles.release.package.serde]\npanic = \"abort\"\n", "panic"),
+        (
+            "[profiles.release]\nrustflags = [\"-C\", \"link-arg=-Tlink.x\"]\n",
+            "rustflags",
+        ),
+        (
+            "[profiles.release.package.serde]\npanic = \"abort\"\n",
+            "panic",
+        ),
         ("[profiles.probe]\nopt-level = 1\n", "inherits"),
         ("[profiles.release]\nopt-level = 4\n", "opt-level"),
         ("[profiles.Release]\ndebug = 2\n", "Release"),
@@ -280,11 +315,16 @@ fn schema_rejects_keys_outside_the_subset() {
         let report = validate::run_project(&target, None).unwrap();
         let plain = report.render_plain();
         assert!(
-            report.findings().iter().any(|f| f.rule == "SCHEMA-ARCH"
-                && matches!(f.severity, Severity::Error)),
+            report
+                .findings()
+                .iter()
+                .any(|f| f.rule == "SCHEMA-ARCH" && matches!(f.severity, Severity::Error)),
             "case {i} ({needle}) must be a SCHEMA-ARCH error:\n{plain}"
         );
-        assert!(plain.contains(needle), "case {i}: report names `{needle}`:\n{plain}");
+        assert!(
+            plain.contains(needle),
+            "case {i}: report names `{needle}`:\n{plain}"
+        );
     }
 
     let target = fresh("firmware-layered", "demo", "fw-profiles-good");

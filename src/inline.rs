@@ -100,10 +100,10 @@ fn read_file(path: &Path) -> Result<Vec<u8>> {
 /// separately.
 fn plugin_version(plugin_root: &Path) -> Result<String> {
     let manifest = plugin_root.join(crate::plugin_root::PLUGIN_MARKER);
-    let text =
-        std::fs::read_to_string(&manifest).with_context(|| format!("reading {}", manifest.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .with_context(|| format!("parsing {}", manifest.display()))?;
+    let text = std::fs::read_to_string(&manifest)
+        .with_context(|| format!("reading {}", manifest.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
     let v = value
         .get("version")
         .and_then(|v| v.as_str())
@@ -323,7 +323,8 @@ fn refuse_if_dst_exists(
                 dst.display(),
             ));
         }
-        let upstream_dst = upstream::upstream_dir(specdev_root, kind, name).join(&f.rel_src_in_unit);
+        let upstream_dst =
+            upstream::upstream_dir(specdev_root, kind, name).join(&f.rel_src_in_unit);
         if upstream_dst.exists() {
             return Err(anyhow!(
                 "[INLINE-002] {unit_label}: refuse to overwrite existing {}; the upstream/ snapshot already exists. Run `specdev drift` to inspect, or `git checkout -- specs/specdev/upstream/...` to reset.",
@@ -354,6 +355,33 @@ pub(crate) fn write_unit_files(specdev_root: &Path, files: &[UnitFile]) -> Resul
 /// running the same insertion twice produces a single entry. Callers
 /// always run this on a fresh inline (caller has already refused
 /// re-inline); idempotency guards against double-runs from test harnesses.
+/// Hash of an aggregator schema with its `allOf` array removed.
+///
+/// `module.schema.yaml` has two writers: `bootstrap` lays down the
+/// profile's template, then every `inline` appends a `$ref` to `allOf`
+/// (through [`aggregator_add_ref`], which re-emits the whole document via
+/// `serde_yaml`). A single recorded hash of the file therefore cannot
+/// separate "the plugin's template moved" from "I inlined a block" — and
+/// the second is not drift at all; `drift`'s `units:` section already
+/// reports it.
+///
+/// Dropping `allOf` before hashing splits the two cleanly. What remains is
+/// exactly the profile-owned part, and it is invariant under any number of
+/// `$ref` appends. Both sides of the comparison go through the same
+/// re-emission, so `serde_yaml` stripping comments costs nothing: it
+/// strips them identically on each side.
+pub fn aggregator_profile_hash(bytes: &[u8], label: &str) -> Result<String> {
+    let text = std::str::from_utf8(bytes).with_context(|| format!("{label} is not valid UTF-8"))?;
+    let mut value: serde_yaml::Value =
+        serde_yaml::from_str(text).with_context(|| format!("parsing {label}"))?;
+    if let Some(map) = value.as_mapping_mut() {
+        map.remove(serde_yaml::Value::from("allOf"));
+    }
+    let normalized =
+        serde_yaml::to_string(&value).with_context(|| format!("re-emitting {label}"))?;
+    Ok(crate::hash::content_hash(normalized.as_bytes()))
+}
+
 fn aggregator_add_ref(module_schema_path: &Path, ref_path: &str) -> Result<()> {
     let text = std::fs::read_to_string(module_schema_path)
         .with_context(|| format!("reading {}", module_schema_path.display()))?;
@@ -361,9 +389,12 @@ fn aggregator_add_ref(module_schema_path: &Path, ref_path: &str) -> Result<()> {
         .with_context(|| format!("parsing {}", module_schema_path.display()))?;
 
     // Locate or create allOf as a sequence at the root level.
-    let mapping = value
-        .as_mapping_mut()
-        .ok_or_else(|| anyhow!("{} root is not a YAML mapping", module_schema_path.display()))?;
+    let mapping = value.as_mapping_mut().ok_or_else(|| {
+        anyhow!(
+            "{} root is not a YAML mapping",
+            module_schema_path.display()
+        )
+    })?;
     let key = serde_yaml::Value::from("allOf");
     let entry = mapping
         .entry(key)
@@ -410,7 +441,13 @@ pub fn run_inline_block(layout: &LayoutContext, plugin_root: &Path, name: &str) 
         ));
     }
     let files = collect_block_files(plugin_root, name)?;
-    refuse_if_dst_exists(&layout.specdev_root, &files, UnitKind::Block, name, &format!("block {name}"))?;
+    refuse_if_dst_exists(
+        &layout.specdev_root,
+        &files,
+        UnitKind::Block,
+        name,
+        &format!("block {name}"),
+    )?;
 
     write_unit_files(&layout.specdev_root, &files)?;
 
@@ -473,7 +510,12 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
         .iter()
         .map(|f| (f.rel_src_in_unit.clone(), f.bytes.clone()))
         .collect();
-    upstream::write_upstream_files(&layout.specdev_root, UnitKind::Bridge, name, &upstream_files)?;
+    upstream::write_upstream_files(
+        &layout.specdev_root,
+        UnitKind::Bridge,
+        name,
+        &upstream_files,
+    )?;
 
     aggregator_add_ref(
         &layout.module_schema_path,
@@ -611,10 +653,7 @@ pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
 
             // Check 006: $id convention.
             let expected_id = format!("https://specdev.dev/blocks/{block_name}.v1");
-            let actual_id = value
-                .get("$id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let actual_id = value.get("$id").and_then(|v| v.as_str()).unwrap_or("");
             if actual_id != expected_id {
                 offenders.push(format!(
                     "{block_name}: [BLOCK-LINT-006] schema.yaml $id is {actual_id:?}; expected {expected_id:?}"
@@ -655,10 +694,9 @@ pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
 /// Read a YAML file and parse it as a `serde_json::Value`. Used by
 /// `lint_plugin_blocks` for both schema and reduction parsing.
 fn read_yaml_value(path: &Path) -> Result<serde_json::Value> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    serde_yaml::from_str(&text)
-        .with_context(|| format!("parsing {}", path.display()))
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// Lazily-loaded validator for the embedded reduction metaschema.
@@ -666,8 +704,7 @@ fn read_yaml_value(path: &Path) -> Result<serde_json::Value> {
 fn reduction_metaschema_validator() -> &'static jsonschema::Validator {
     use std::sync::OnceLock;
     static VALIDATOR: OnceLock<jsonschema::Validator> = OnceLock::new();
-    static METASCHEMA_YAML: &str =
-        include_str!("embedded/reduction.metaschema.yaml");
+    static METASCHEMA_YAML: &str = include_str!("embedded/reduction.metaschema.yaml");
     VALIDATOR.get_or_init(|| {
         let value: serde_json::Value = serde_yaml::from_str(METASCHEMA_YAML)
             .expect("embedded reduction.metaschema.yaml parses as YAML");

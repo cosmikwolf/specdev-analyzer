@@ -6,6 +6,52 @@ Rust crate through [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust
 codegen prose that emits the FRB config file and sequences the standalone
 generator CLI, Cargokit integration, and web/wasm builds.
 
+## Platform status — read before choosing this block
+
+Verified working: **web**, **host/desktop** (including the companion crate
+compiling for `wasm32-unknown-unknown`), and **Android**.
+
+Android needs **two mandatory steps** that `integrate` does not do for you.
+Skip either one and the build still reports success while the `.apk`
+contains no Rust — see "Android: two mandatory steps" in the codegen prose
+for the commands, and "Assert the artifact, not the exit code" below for
+why a green build is not evidence.
+
+1. **Replace the vendored Cargokit with the maintained fork.** FRB 2.12.0's
+   `integrate` vendors a copy taken from the now-**archived** `irondash`
+   repository. That copy calls Gradle's `Project.exec()`, removed in
+   Gradle 9, so the build fails loudly with `Could not find method exec()`.
+   Current Flutter ships Gradle 9.x and the Android Gradle Plugin it ships
+   refuses to run on Gradle 8, so pinning cannot satisfy both. The
+   maintained fork (`fzyzcjy/cargokit`, same author as FRB) already uses
+   the injected `ExecOperations`, and clears this.
+2. **Name the companion crate with underscores, not hyphens.** Cargokit
+   derives the artifact filename from the crate's `[package].name`
+   *verbatim* (`build_tool/lib/src/artifacts_provider.dart`,
+   `getArtifactNames` → `'lib$libraryName.so'`), while cargo normalizes
+   `-` to `_` when it writes the file. A crate named `hello-rust` makes
+   Cargokit look for `libhello-rust.so`; cargo wrote `libhello_rust.so`;
+   the existence filter drops it, the `jniLibs/<buildType>/<abi>/` staging
+   directories are created and left **empty**, and the source set Cargokit
+   registers contributes nothing. This is a spec-owned fact: set
+   `[project].name` in the companion crate's `spec.toml`, so
+   `manifest --write` keeps it. Note that `bootstrap --name` documents
+   itself as "lowercase, hyphens" — correct for a normal crate, wrong for
+   an FRB companion.
+
+### Assert the artifact, not the exit code
+
+Both failure modes above are **silent**: `flutter build apk` exits 0 and
+the app crashes at `RustLib.init()` on a device. A gate over the `.apk`
+must assert the library is *inside* it, not that the command succeeded:
+
+```sh
+unzip -l build/app/outputs/flutter-apk/app-debug.apk | grep 'lib<crate_name>.so'
+```
+
+A debug `.apk` carries the ABIs Flutter selects (typically `arm64-v8a`,
+`armeabi-v7a`, `x86_64`); Cargokit stages four, including `x86`.
+
 ## When to use
 
 A Flutter app project needs to call Rust — DSP, protocol parsing, domain

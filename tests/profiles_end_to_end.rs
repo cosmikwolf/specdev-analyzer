@@ -88,7 +88,11 @@ fn bootstrap_firmware_validates_clean() {
     let target = fresh_bootstrap("firmware-layered", "fw-bootstrap");
     let report = validate::run_project(&target, None).unwrap();
     let errs = errors(&report);
-    assert!(errs.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+    assert!(
+        errs.is_empty(),
+        "expected 0 errors:\n{}",
+        report.render_plain()
+    );
     // Sanity: profile-shipped files landed.
     assert!(target.join("specs/architecture.toml").is_file());
     assert!(target.join("specs/requirements.toml").is_file());
@@ -115,7 +119,11 @@ fn bootstrap_library_validates_clean() {
     let target = fresh_bootstrap("library-api", "lib-bootstrap");
     let report = validate::run_project(&target, None).unwrap();
     let errs = errors(&report);
-    assert!(errs.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+    assert!(
+        errs.is_empty(),
+        "expected 0 errors:\n{}",
+        report.render_plain()
+    );
     // library-api ships its own enums.schema.yaml but no metadata.
     assert!(target
         .join("specs/specdev/schemas/enums.schema.yaml")

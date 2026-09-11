@@ -74,8 +74,8 @@ relation_scope = "module_satisfies"
 
 # Every Requirement with `nature = "test"` must be verified by at least
 # one test item (a `[[items]]` entry with `test = true` whose `verifies`
-# names it) — the test-surface analogue of requirements_have_satisfiers
-# (D60). Uses the generic `entity_has_inbound_relation` primitive with an
+# names it) — the test-surface analogue of requirements_have_satisfiers.
+# Uses the generic `entity_has_inbound_relation` primitive with an
 # attr filter scoping the check to `nature = "test"`; the `test_verifies`
 # edges come from `items[].verifies[]` reduction. Reference resolution
 # (a `verifies` id naming a real requirement) is handled at reduce time

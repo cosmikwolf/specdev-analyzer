@@ -29,11 +29,43 @@ token (none currently do).
 
 | Directory | Contents |
 |---|---|
-| `full_plugin/_plugin/` | The complete canonical plugin tree (every profile, block, bridge). Byte-for-byte mirror of the live `specdev/` plugin; consumed by most tests via the `full_plugin()` helper. |
+| `full_plugin/_plugin/` | The canonical plugin tree as most tests see it — every profile, and a chosen subset of blocks and bridges. **A subset of the live `specdev/` plugin, not a mirror of it** (see below); consumed via the `full_plugin()` helper. |
 | `minimal_plugin/_plugin/` | A small early plugin tree (embassy + lvgl + firmware-layered). Consumed via `minimal_plugin()`. |
 | `dual_profile_plugin/_plugin/` | A plugin tree carrying two profiles (firmware-layered + library-api) plus the rust language tier. |
 | `reduction_cases/` | Loose reduction / extract fixtures (unresolved-extends, bridge lex-order violation, extract-end-to-end, …). |
 | `validate_cases/` | Loose validate-pipeline / layout-discovery fixtures (malformed `spec.toml`, aggregator duplicate-id, minimal skeleton, …). |
+
+### `full_plugin/` is a subset, and every file in it must be current
+
+The fixture deliberately does **not** copy the whole plugin tree. It carries no
+`reference/` crates, omits some blocks and bridges outright, and holds only part
+of `languages/`. What it copies is an authoring choice; what it must not do is
+carry a **stale** copy of anything it did choose.
+
+`manifest_authoring.rs::every_fixture_file_matches_the_live_plugin_tree` enforces
+exactly that, by **walking the fixture** and asserting each file is byte-identical
+to its live counterpart. Two consequences worth knowing before you edit either
+tree:
+
+- **Never hand-edit a file under `full_plugin/`.** Edit the live plugin tree and
+  re-copy. A fixture-only edit is reported as drift on the next run.
+- **Adding a file to the fixture puts it under the guard automatically.** There is
+  no list to update. This replaced an enumerated list of compared paths, which had
+  failed in the way inclusion lists always fail — the one file nobody added
+  (`architecture.toml.template`, carrying every profile's crate pins) drifted
+  unguarded until an emission test was caught asserting a version the plugin no
+  longer shipped.
+
+The unit inventories in that file are discovered by directory walk for the same
+reason; ship a block or bridge and it is checked on the next run.
+
+Some fixtures expect a directory to **exist and be empty**: the layout pass
+reports `LAYOUT-002 present` for it, and `LAYOUT-003 missing:` (or a
+`LAYOUT-004` warning, for `codegen/<lang>/`) when it is absent. Git tracks
+files, not directories, so every such directory carries an empty `.gitkeep`,
+as `tests/snapshots/` already does. Without them a fresh clone is red:
+`skeleton-minimal` gains warnings and the four rule-code snapshots move. Add
+the `.gitkeep` whenever a new fixture expects an empty directory.
 
 ## Test-file map
 

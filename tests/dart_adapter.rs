@@ -73,9 +73,7 @@ fn embedded_audit_query_compiles_and_captures_top_level_constructs() {
         }
     }
 
-    let has = |cap: &str, text: &str| {
-        captured.contains(&(cap.to_string(), text.to_string()))
-    };
+    let has = |cap: &str, text: &str| captured.contains(&(cap.to_string(), text.to_string()));
     assert!(has("class.name", "RateLimiter"), "{captured:?}");
     assert!(has("mixin.name", "Poker"), "{captured:?}");
     assert!(has("enum.name", "Color"), "{captured:?}");
@@ -130,10 +128,9 @@ fn collect_params(
 #[test]
 fn spec_and_profile_language_enums_agree_and_admit_dart() {
     let embedded = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/embedded");
-    let spec: serde_json::Value = serde_yaml::from_str(
-        &std::fs::read_to_string(embedded.join("spec.schema.yaml")).unwrap(),
-    )
-    .unwrap();
+    let spec: serde_json::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(embedded.join("spec.schema.yaml")).unwrap())
+            .unwrap();
     let profile: serde_json::Value = serde_yaml::from_str(
         &std::fs::read_to_string(embedded.join("profile.schema.yaml")).unwrap(),
     )

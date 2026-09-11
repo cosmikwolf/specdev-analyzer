@@ -65,7 +65,7 @@ Closed enum for `kind`: `USART | UART | SPI | I2C | GPIO | TIM | ADC |
 DMA | RCC | USB | OCTOSPI`. v1.x can widen as projects need (LPUART,
 ETH, RNG, CRC, HASH, AES, LPTIM).
 
-## Sharp-test rationale (doc 15 §3.1)
+## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific MCU family
   (`stm32h5xx-hal` / `stm32h5xx-pac`), not the abstract concept of
@@ -77,7 +77,7 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
   require PAC-fallback documented as an escape hatch.
 - **No cross-block reach:** ✓ — codegen explicitly excludes
   `embassy-stm32` and other runtime-flavored HAL crates. Embassy
-  integration is bridge territory (`embassy+stm32h5-rs`, Phase 7).
+  integration is bridge territory (`embassy+stm32h5-rs`).
 
 ## Deferred (revisit triggers per §12)
 
@@ -109,9 +109,7 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
 
 ## History
 
-This block replaces an earlier `stm32f4-rs` block (Phase 6, dropped
-2026-04-30) when the user's dogfood target shifted to STM32H5 hardware.
-The block-authoring pattern from stm32f4-rs is preserved in
-`specdev-planning/000-block-creation-command-notes.md`. F4 support could be
-re-authored as a separate `stm32f4-rs` block if a future project needs
-it; the recipe is the notes-doc + this block as a parallel reference.
+This block replaces an earlier `stm32f4-rs` block (dropped 2026-04-30)
+when the user's dogfood target shifted to STM32H5 hardware. F4 support
+could be re-authored as a separate `stm32f4-rs` block if a future
+project needs it; this block stands as a parallel reference.

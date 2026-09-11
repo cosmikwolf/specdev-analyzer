@@ -115,7 +115,10 @@ mod tests {
             cp.0
         );
         assert!(cp.1.pointer("/$defs/Profiles").is_some());
-        assert!(cp.1.pointer("/$defs/PackageOverride/properties/panic").is_none(),
-            "package overrides must not admit `panic`");
+        assert!(
+            cp.1.pointer("/$defs/PackageOverride/properties/panic")
+                .is_none(),
+            "package overrides must not admit `panic`"
+        );
     }
 }

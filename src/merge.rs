@@ -54,8 +54,8 @@ fn plugin_version(plugin_root: &Path) -> Result<String> {
     let manifest = plugin_root.join(crate::plugin_root::PLUGIN_MARKER);
     let text = std::fs::read_to_string(&manifest)
         .with_context(|| format!("reading {}", manifest.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .with_context(|| format!("parsing {}", manifest.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
     Ok(value
         .get("version")
         .and_then(|v| v.as_str())
@@ -132,11 +132,12 @@ fn run_merge_unit(
     // File-set match check — strict v1.
     let upstream_keys: std::collections::BTreeSet<&Path> =
         upstream_files.keys().map(|p| p.as_path()).collect();
-    let plugin_keys: std::collections::BTreeSet<&Path> =
-        plugin_files.iter().map(|f| f.rel_src_in_unit.as_path()).collect();
+    let plugin_keys: std::collections::BTreeSet<&Path> = plugin_files
+        .iter()
+        .map(|f| f.rel_src_in_unit.as_path())
+        .collect();
     if upstream_keys != plugin_keys {
-        let only_upstream: Vec<&Path> =
-            upstream_keys.difference(&plugin_keys).copied().collect();
+        let only_upstream: Vec<&Path> = upstream_keys.difference(&plugin_keys).copied().collect();
         let only_plugin: Vec<&Path> = plugin_keys.difference(&upstream_keys).copied().collect();
         return Err(anyhow!(
             "[MERGE-FILESET] {kind:?} `{name}`: file set changed since inlining (only in upstream: {only_upstream:?}; only in plugin: {only_plugin:?}). File-set evolution is not supported in v1; intervene manually and re-`inline`.",
@@ -154,8 +155,7 @@ fn run_merge_unit(
             .unwrap()
             .as_nanos(),
     ));
-    std::fs::create_dir_all(&tmp_dir)
-        .with_context(|| format!("creating {}", tmp_dir.display()))?;
+    std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
 
     for f in &plugin_files {
         let base = upstream_files
@@ -284,7 +284,7 @@ fn merge_three(
 ) -> Result<(Vec<u8>, bool)> {
     // Sanitize the label into a filename-safe stem so temp paths don't
     // collide across files in the same unit.
-    let stem = label.to_string_lossy().replace('/', "__").replace('\\', "__");
+    let stem = label.to_string_lossy().replace(['/', '\\'], "__");
     let ours_path = tmp_dir.join(format!("{stem}.ours"));
     let base_path = tmp_dir.join(format!("{stem}.base"));
     let theirs_path = tmp_dir.join(format!("{stem}.theirs"));
@@ -352,14 +352,8 @@ mod tests {
         let base = b"line1\nline2\nline3\n";
         let ours = b"line1\nline2\nline3\n"; // unchanged
         let theirs = b"line1\nline2-changed\nline3\n";
-        let (merged, clean) = merge_three(
-            &dir,
-            ours,
-            base,
-            theirs,
-            std::path::Path::new("test.yaml"),
-        )
-        .unwrap();
+        let (merged, clean) =
+            merge_three(&dir, ours, base, theirs, std::path::Path::new("test.yaml")).unwrap();
         assert!(clean);
         assert_eq!(merged, theirs.to_vec());
     }
@@ -370,14 +364,8 @@ mod tests {
         let base = b"line1\nline2\nline3\nline4\nline5\n";
         let ours = b"line1\nline2-ours\nline3\nline4\nline5\n";
         let theirs = b"line1\nline2\nline3\nline4-theirs\nline5\n";
-        let (merged, clean) = merge_three(
-            &dir,
-            ours,
-            base,
-            theirs,
-            std::path::Path::new("test.yaml"),
-        )
-        .unwrap();
+        let (merged, clean) =
+            merge_three(&dir, ours, base, theirs, std::path::Path::new("test.yaml")).unwrap();
         assert!(clean, "merge output:\n{}", String::from_utf8_lossy(&merged));
         let s = String::from_utf8(merged).unwrap();
         assert!(s.contains("line2-ours"));
@@ -390,14 +378,8 @@ mod tests {
         let base = b"line1\nline2\nline3\n";
         let ours = b"line1\nline2-ours\nline3\n";
         let theirs = b"line1\nline2-theirs\nline3\n";
-        let (merged, clean) = merge_three(
-            &dir,
-            ours,
-            base,
-            theirs,
-            std::path::Path::new("test.yaml"),
-        )
-        .unwrap();
+        let (merged, clean) =
+            merge_three(&dir, ours, base, theirs, std::path::Path::new("test.yaml")).unwrap();
         assert!(!clean);
         let s = String::from_utf8(merged).unwrap();
         assert!(s.contains("<<<<<<<"));

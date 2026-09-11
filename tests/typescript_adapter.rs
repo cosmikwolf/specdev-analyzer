@@ -1,8 +1,8 @@
 //! TypeScript language admission: adapter resolution, the two-grammar
 //! split (`.ts` → typescript, `.tsx` → tsx), embedded audit query compile
 //! + captures under BOTH grammars over real source, parameter parsing,
-//! lockstep between the two `language` schema enums, and extraction over
-//! the fixture under both grammars.
+//!   lockstep between the two `language` schema enums, and extraction over
+//!   the fixture under both grammars.
 //!
 //! The syntax-coverage fixtures under `tests/fixtures/typescript/` must
 //! parse with zero ERROR nodes under their own grammar. The `.ts` fixture

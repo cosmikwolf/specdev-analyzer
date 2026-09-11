@@ -38,15 +38,9 @@ fn live_plugin_lint_passes() {
     };
 
     let mut findings = Vec::new();
-    findings.extend(
-        inline::lint_plugin_bridges(&plugin).expect("lint_plugin_bridges"),
-    );
-    findings.extend(
-        inline::lint_plugin_blocks(&plugin).expect("lint_plugin_blocks"),
-    );
-    findings.extend(
-        reference_lint::lint_reference_crates(&plugin).expect("lint_reference_crates"),
-    );
+    findings.extend(inline::lint_plugin_bridges(&plugin).expect("lint_plugin_bridges"));
+    findings.extend(inline::lint_plugin_blocks(&plugin).expect("lint_plugin_blocks"));
+    findings.extend(reference_lint::lint_reference_crates(&plugin).expect("lint_reference_crates"));
     findings.extend(
         prose_lint::lint_codegen_prose_profiles(&plugin).expect("lint_codegen_prose_profiles"),
     );

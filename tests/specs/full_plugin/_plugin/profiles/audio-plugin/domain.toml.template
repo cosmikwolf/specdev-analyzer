@@ -89,7 +89,7 @@ relation_scope = "module_satisfies"
 
 # Every Requirement with `nature = "test"` must be verified by at least
 # one test item (a `[[items]]` entry with `test = true` whose `verifies`
-# names it) — D60. Generic `entity_has_inbound_relation` primitive with a
+# names it). Generic `entity_has_inbound_relation` primitive with a
 # `nature = "test"` attr filter; `test_verifies` edges come from
 # `items[].verifies[]` reduction. Reference resolution is reduce-time
 # REDUCE_UNRESOLVED.
@@ -101,12 +101,12 @@ entity_attr = "nature"
 entity_attr_value = "test"
 relation_scope = "test_verifies"
 
-# Every nih-plug Parameter must be wired to at least one engine write
-# (D58, load-bearing orphan check). Catches "added a parameter, forgot
+# Every nih-plug Parameter must be wired to at least one engine write.
+# A load-bearing orphan check: it catches "added a parameter, forgot
 # to bind it to the engine" at validate time. Uses the generic
 # `entity_has_inbound_relation` primitive — every Parameter must be the
 # target of at least one `parameter_binding` edge. Multi-target bindings
-# (D58) leave the check satisfied; the `parameter_binding_unique` slot is
+# leave the check satisfied; the `parameter_binding_unique` slot is
 # intentionally omitted. Reference resolution (binding.parameter → a
 # real Parameter) is handled at reduce time by REDUCE_UNRESOLVED, not
 # here, per the convention header.

@@ -98,7 +98,7 @@ $defs:
         description: >
           Ids of older decisions this one replaces. Optional on
           `accepted` decisions; the targeted decisions must carry
-          `status = "superseded"`. The chain is one-way (D63 §7) —
+          `status = "superseded"`. The chain is one-way —
           there is no `superseded_by` back-pointer; the
           `decision_supersedes_chain_consistency` graph check walks
           these arrays to validate orphans, cycles, and unique

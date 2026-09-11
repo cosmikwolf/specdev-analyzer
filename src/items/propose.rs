@@ -53,7 +53,7 @@ pub struct ProposalDocument {
     /// each entry's recommendation; the human flips
     /// `awaiting-approval` → `approved` by setting `approved: true`
     /// + `approver` + `approved_at`; `items apply` flips
-    /// `approved` → `applied` and timestamps the audit log entry.
+    ///   `approved` → `applied` and timestamps the audit log entry.
     pub status: String,
     #[serde(default)]
     pub approved: bool,
@@ -211,7 +211,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
                     action: "pending".into(),
                     rationale: String::new(),
                     proposed_spec: None,
-                rename_to: None,
+                    rename_to: None,
                 },
             });
             drift_idx += 1;
@@ -250,7 +250,10 @@ pub fn write_proposal(doc: &ProposalDocument, path: &Path, clobber: bool) -> Res
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
-            format!("[ITEM-201] creating proposal directory {}", parent.display())
+            format!(
+                "[ITEM-201] creating proposal directory {}",
+                parent.display()
+            )
         })?;
     }
     let yaml = serde_yaml::to_string(doc)
@@ -365,11 +368,11 @@ mod tests {
     #[test]
     fn spec_item_to_yaml_round_trips_extras() {
         let mut extras = serde_json::Map::new();
-        extras.insert("target".into(), serde_json::Value::String("inner::T".into()));
         extras.insert(
-            "visibility".into(),
-            serde_json::Value::String("pub".into()),
+            "target".into(),
+            serde_json::Value::String("inner::T".into()),
         );
+        extras.insert("visibility".into(), serde_json::Value::String("pub".into()));
         let spec = sync::SpecItem {
             kind: "re_export".into(),
             name: "Reexp".into(),
@@ -381,17 +384,17 @@ mod tests {
         let y = spec_item_to_yaml(&spec);
         let m = y.as_mapping().expect("mapping");
         assert_eq!(
-            m.get(&serde_yaml::Value::String("kind".into()))
+            m.get(serde_yaml::Value::String("kind".into()))
                 .and_then(|v| v.as_str()),
             Some("re_export")
         );
         assert_eq!(
-            m.get(&serde_yaml::Value::String("target".into()))
+            m.get(serde_yaml::Value::String("target".into()))
                 .and_then(|v| v.as_str()),
             Some("inner::T")
         );
         assert_eq!(
-            m.get(&serde_yaml::Value::String("visibility".into()))
+            m.get(serde_yaml::Value::String("visibility".into()))
                 .and_then(|v| v.as_str()),
             Some("pub")
         );

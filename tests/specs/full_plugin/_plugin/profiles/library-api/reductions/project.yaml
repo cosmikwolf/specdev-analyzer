@@ -145,7 +145,7 @@ relations:
   # carries `verifies[]` (the inverse of `satisfies`). Reduce those into
   # Module → Requirement edges so the `test_requirements_have_verifiers`
   # orphan check can confirm every `nature = "test"` requirement is
-  # verified by some test item (D60). The nested `items[].verifies[]`
+  # verified by some test item. The nested `items[].verifies[]`
   # for_each walks each item's verifies array; `${root.name}` is the
   # declaring module (the source endpoint — NOT `${parent.name}`, which
   # would be the item, not a Module entity). REDUCE_UNRESOLVED catches a
@@ -201,7 +201,7 @@ relations:
 
   # Decision → Decision: supersession chain. Walks the `supersedes[]`
   # field on accepted decisions; the targeted decisions must carry
-  # `status = "superseded"`. The chain is one-way (D63 §7) — no
+  # `status = "superseded"`. The chain is one-way — no
   # `superseded_by` back-pointer exists. Drives
   # `decision_supersedes_resolves` and feeds the
   # `decision_supersedes_chain_consistency` graph check.

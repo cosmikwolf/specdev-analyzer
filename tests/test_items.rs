@@ -120,9 +120,20 @@ fn verified_test_requirement_validates_clean() {
     write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", MODULE_WITH_TEST_ITEM);
     let report = validate::run_project(&target, None).unwrap();
-    assert!(errors(&report).is_empty(), "expected no errors; got:\n{:#?}", errors(&report));
-    let warns = findings_for(&report, "test_requirements_have_verifiers", Severity::Warning);
-    assert!(warns.is_empty(), "the test req is verified — no warning expected; got:\n{warns:#?}");
+    assert!(
+        errors(&report).is_empty(),
+        "expected no errors; got:\n{:#?}",
+        errors(&report)
+    );
+    let warns = findings_for(
+        &report,
+        "test_requirements_have_verifiers",
+        Severity::Warning,
+    );
+    assert!(
+        warns.is_empty(),
+        "the test req is verified — no warning expected; got:\n{warns:#?}"
+    );
 }
 
 #[test]
@@ -142,16 +153,33 @@ satisfies = ["REQ-API-001"]
     write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
-    assert!(errors(&report).is_empty(), "orphan test req is a warning; got:\n{:#?}", errors(&report));
-    let warns = findings_for(&report, "test_requirements_have_verifiers", Severity::Warning);
-    assert_eq!(warns.len(), 1, "exactly one unverified test req; got:\n{warns:#?}");
+    assert!(
+        errors(&report).is_empty(),
+        "orphan test req is a warning; got:\n{:#?}",
+        errors(&report)
+    );
+    let warns = findings_for(
+        &report,
+        "test_requirements_have_verifiers",
+        Severity::Warning,
+    );
+    assert_eq!(
+        warns.len(),
+        1,
+        "exactly one unverified test req; got:\n{warns:#?}"
+    );
     let msg = &warns[0].message;
-    assert!(msg.contains("REQ-TEST-001"), "names the unverified req: {msg}");
+    assert!(
+        msg.contains("REQ-TEST-001"),
+        "names the unverified req: {msg}"
+    );
     assert!(msg.contains("test_verifies"), "names the relation: {msg}");
     // The module-orphan check must NOT fire on the test-nature req.
     let mod_warns = findings_for(&report, "requirements_have_satisfiers", Severity::Warning);
     assert!(
-        mod_warns.iter().all(|f| !f.message.contains("REQ-TEST-001")),
+        mod_warns
+            .iter()
+            .all(|f| !f.message.contains("REQ-TEST-001")),
         "test req must not be flagged by the module-orphan check: {mod_warns:#?}"
     );
 }
@@ -257,10 +285,22 @@ verifies = ["REQ-TEST-001"]
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
     // bench validates clean (enum slot reserved) — no error.
-    assert!(errors(&report).is_empty(), "bench is schema-valid; got:\n{:#?}", errors(&report));
+    assert!(
+        errors(&report).is_empty(),
+        "bench is schema-valid; got:\n{:#?}",
+        errors(&report)
+    );
     let warns = findings_for(&report, "TEST-KIND-001", Severity::Warning);
-    assert_eq!(warns.len(), 1, "one reserved-kind warning; got:\n{warns:#?}");
-    assert!(warns[0].message.contains("bench"), "names the reserved kind: {}", warns[0].message);
+    assert_eq!(
+        warns.len(),
+        1,
+        "one reserved-kind warning; got:\n{warns:#?}"
+    );
+    assert!(
+        warns[0].message.contains("bench"),
+        "names the reserved kind: {}",
+        warns[0].message
+    );
 }
 
 #[test]
@@ -272,13 +312,19 @@ fn prompt_includes_test_item_verification_context() {
     let a = prompt::assemble_module_prompt(&layout, "Lib").unwrap();
     let b = prompt::assemble_module_prompt(&layout, "Lib").unwrap();
     assert_eq!(a, b, "prompt assembly must be deterministic");
-    assert!(a.contains("Test items (verification context)"), "test-items section present:\n{a}");
+    assert!(
+        a.contains("Test items (verification context)"),
+        "test-items section present:\n{a}"
+    );
     assert!(a.contains("roundtrip_serde"), "names the test item");
     assert!(
         a.contains("Round-trip serde tests run on every PR"),
         "injects the verifying requirement's text:\n{a}"
     );
-    assert!(a.contains("REQ-TEST-001"), "names the verified requirement id");
+    assert!(
+        a.contains("REQ-TEST-001"),
+        "names the verified requirement id"
+    );
 }
 
 #[test]
@@ -311,7 +357,10 @@ test_only = true
     let layout = LayoutContext::discover(&target, None).unwrap();
     let rendered = cargo_toml::render(&layout).unwrap();
     let text = &rendered.text;
-    assert!(text.contains("[dev-dependencies]"), "dev-dependencies section emitted:\n{text}");
+    assert!(
+        text.contains("[dev-dependencies]"),
+        "dev-dependencies section emitted:\n{text}"
+    );
     let (deps_part, dev_part) = text
         .split_once("[dev-dependencies]")
         .expect("has a dev-dependencies section");
@@ -328,7 +377,10 @@ test_only = true
         "serde must be a regular dependency:\n{text}"
     );
     // `test_only` is a routing flag, never a rendered Cargo key.
-    assert!(!text.contains("test_only"), "test_only must not leak into Cargo.toml:\n{text}");
+    assert!(
+        !text.contains("test_only"),
+        "test_only must not leak into Cargo.toml:\n{text}"
+    );
 }
 
 #[test]

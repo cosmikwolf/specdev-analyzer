@@ -6,13 +6,37 @@ description: |
   byte-copied into a project at `specs/specdev/profile.yaml` during
   bootstrap. Drives manifest render dispatch (cargo_toml / pubspec_yaml /
   package_json), skeleton policy,
-  context-subcommand extras, and validate-pass surface flags. Does NOT
-  participate in lineage (project-owned post-bootstrap, doc 15 §3.3).
+  context-subcommand extras, and validate-pass surface flags.
+
+  The project's copy IS drift-tracked: bootstrap records every
+  profile-scaffolded file's post-substitution hash under `[profile_files]`
+  in `lineage.toml`, so `drift` reports this file the way it reports an
+  inlined block's (#109). The older claim that a profile "leaves no
+  ongoing dependency" was written when profiles shipped only templates and
+  prose; a profile now ships the schemas and this manifest, which every
+  command reads.
 
 type: object
 additionalProperties: false
 required: [name, language]
 properties:
+  contract_version:
+    description: |
+      The `profile.schema.yaml` contract this manifest is authored
+      against. Compared against the analyzer's embedded
+      `PROFILE_CONTRACT_VERSION` **before** this schema runs, so a
+      plugin newer than the analyzer reports one `MANIFEST-002` naming
+      the remedy instead of a pile of `additionalProperties` errors
+      naming the user's own file (#117).
+
+      **Optional here, mandatory on the plugin side.** The asymmetry is
+      deliberate: this schema also validates project trees bootstrapped
+      before the field existed, and those must keep validating, so an
+      absent value means contract 1. `plugin-lint` requires the field
+      on every `profiles/*/profile.yaml`, because a plugin author who
+      omits it at a contract bump reopens #117 for every older binary.
+    type: integer
+    minimum: 1
   name:
     description: |
       Profile name. MUST match the plugin-tree directory name.

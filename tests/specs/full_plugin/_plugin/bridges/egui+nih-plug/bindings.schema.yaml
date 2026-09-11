@@ -8,12 +8,12 @@ description: |
   declared by the `egui` block.
 
   This bridge is the architectural validation moment for the bridge
-  primitive (per spike §3.2): unlike `embassy+stm32h5-rs` which is
+  primitive: unlike `embassy+stm32h5-rs` which is
   closer to a wiring stub, this bridge carries a **load-bearing
   semantic role** — parameter↔widget bindings are the bridge's
   responsibility, not either source block's.
 
-  v1 ships eight `widget_kind` values per D50 covering ~95% of typical
+  v1 ships eight `widget_kind` values per WIDGET-KIND-V1 covering ~95% of typical
   synth/effect plugin UIs (1:1 parameter ↔ widget bindings). Multi-
   parameter widgets (xy_pad, envelope_editor) and audio-thread-state
   widgets (led, meter, graph_display) stay deferred — they don't fit
@@ -66,7 +66,7 @@ $defs:
 
   WidgetKind:
     description: |
-      Closed enum of single-parameter widget kinds (D50). All eight
+      Closed enum of single-parameter widget kinds (WIDGET-KIND-V1). All eight
       bind 1:1 with a parameter and render inside a
       `purpose = "parameter_controls"` region.
 
@@ -126,11 +126,11 @@ $defs:
           module. The region's `purpose` SHOULD be
           `parameter_controls` (codegen prose enforces this as a
           discipline rule; v1.x may promote to a graph-check primitive
-          per D50's bounded follow-up table).
+          per WIDGET-KIND-V1's bounded follow-up table).
         $ref: "#/$defs/Identifier"
       widget_kind:
         description: |
-          Widget kind (D50). See `WidgetKind` for the per-kind type
+          Widget kind (WIDGET-KIND-V1). See `WidgetKind` for the per-kind type
           constraint table. Codegen prose contains the egui call
           mapping (e.g. `knob` → `egui_extras` knob; `slider` →
           `widgets::ParamSlider::for_param`; `button` → `ui.button`

@@ -101,8 +101,16 @@ layer = "application"
     )
     .unwrap();
     let rel = detect_relevance(&layout, "Plain").unwrap();
-    assert!(rel.blocks.is_empty(), "no blocks expected; got {:?}", rel.blocks);
-    assert!(rel.bridges.is_empty(), "no bridges expected; got {:?}", rel.bridges);
+    assert!(
+        rel.blocks.is_empty(),
+        "no blocks expected; got {:?}",
+        rel.blocks
+    );
+    assert!(
+        rel.bridges.is_empty(),
+        "no bridges expected; got {:?}",
+        rel.bridges
+    );
 
     let prompt = assemble_module_prompt(&layout, "Plain").unwrap();
     assert!(prompt.contains("## Profile module conventions"));
@@ -223,7 +231,11 @@ fn assembled_prompt_has_expected_sections_in_order() {
         "## Module spec (`specs/modules/Uart.toml`)",
     ]
     .iter()
-    .map(|h| prompt.find(h).unwrap_or_else(|| panic!("missing header: {h}")))
+    .map(|h| {
+        prompt
+            .find(h)
+            .unwrap_or_else(|| panic!("missing header: {h}"))
+    })
     .collect();
 
     let sorted = {
@@ -462,7 +474,14 @@ fn cli_preamble_and_tail_conflict() {
     write_uart_module(&target);
     let bin = env!("CARGO_BIN_EXE_specdev-analyzer");
     let out = std::process::Command::new(bin)
-        .args(["gen", "--module", "Uart", "--preamble", "--tail", "--project"])
+        .args([
+            "gen",
+            "--module",
+            "Uart",
+            "--preamble",
+            "--tail",
+            "--project",
+        ])
         .arg(&target)
         .output()
         .expect("gen --preamble --tail");

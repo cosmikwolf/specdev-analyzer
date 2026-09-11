@@ -104,7 +104,7 @@ fn input_hash_is_stable_and_moves_with_the_spec() {
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
 
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
     let h1 = GenLineage::load(&layout.specdev_root)
         .unwrap()
         .files
@@ -115,7 +115,7 @@ fn input_hash_is_stable_and_moves_with_the_spec() {
         .unwrap();
 
     // Re-recording an unchanged spec yields the same input_hash.
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
     let h2 = GenLineage::load(&layout.specdev_root)
         .unwrap()
         .files
@@ -207,7 +207,7 @@ fn hand_edit_is_flagged_edited() {
     let layout = minimal_project(&root);
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
 
     fs::write(&src, "pub fn widget() { /* hand edit */ }\n").unwrap();
 
@@ -222,7 +222,7 @@ fn deleted_file_is_flagged_missing() {
     let layout = minimal_project(&root);
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
 
     fs::remove_file(&src).unwrap();
 
@@ -243,7 +243,7 @@ fn re_record_returns_edited_file_to_clean() {
     let layout = minimal_project(&root);
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
 
     fs::write(&src, "pub fn widget() { /* regenerated */ }\n").unwrap();
     assert!(!run_gen_drift(&layout).unwrap().is_clean());
@@ -431,7 +431,7 @@ fn plan_hand_edited_output_is_edited() {
     write_module(&root, "Widget", "");
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
 
     fs::write(&src, "pub fn widget() { /* hand edit */ }\n").unwrap();
     let plan = run_gen_plan(&layout).unwrap();
@@ -448,7 +448,7 @@ fn plan_deleted_output_is_missing() {
     write_module(&root, "Widget", "");
     let src = root.join("src/widget.rs");
     fs::write(&src, "pub fn widget() {}\n").unwrap();
-    record_files(&layout, Some("Widget"), &[src.clone()], TS).unwrap();
+    record_files(&layout, Some("Widget"), std::slice::from_ref(&src), TS).unwrap();
 
     fs::remove_file(&src).unwrap();
     let plan = run_gen_plan(&layout).unwrap();
