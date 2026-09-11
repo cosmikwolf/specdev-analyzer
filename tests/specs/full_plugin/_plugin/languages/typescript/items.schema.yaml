@@ -62,9 +62,13 @@ properties:
       for members); `getter`/`setter` cover accessor pairs on exported
       classes; `class` covers both concrete and abstract classes; `type`
       is a type alias; `const` covers exported top-level `const` and `let`
-      bindings with a plain identifier name (a function-valued `const` is
-      a `const`); `re_export` covers `export { … }`, `export { … } from`,
-      `export * from` and `export * as ns from`.
+      bindings — both a plain identifier name and a destructured export,
+      which yields one item per bound identifier (`export const { a, b } =
+      x` is two items; a rename contributes the local binding, `renamed`,
+      not the source key). Destructuring nested deeper than one level
+      (`export const { a: { b } } = x`) is NOT covered, and a function-valued
+      `const` is a `const`; `re_export` covers `export { … }`,
+      `export { … } from`, `export * from` and `export * as ns from`.
     type: string
     enum:
       - function
