@@ -75,8 +75,10 @@ fn extract_round_trip_is_byte_identical() {
     let arch_first = std::fs::read_to_string(out_dir.join("architecture.yaml")).unwrap();
 
     let r2 = extract::run_project(&project, None).unwrap();
-    let out_dir_2 =
-        std::env::temp_dir().join(format!("specdev-reduction-extract-2-{}", std::process::id()));
+    let out_dir_2 = std::env::temp_dir().join(format!(
+        "specdev-reduction-extract-2-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&out_dir_2);
     extract::write(&r2, &out_dir_2).unwrap();
     let arch_second = std::fs::read_to_string(out_dir_2.join("architecture.yaml")).unwrap();

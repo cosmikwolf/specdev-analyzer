@@ -226,8 +226,7 @@ fn manifest_less_fallback_firmware_layered_emits_layer() {
     // The minimal_plugin fixture doesn't ship the `layer` field in its
     // module schema, so we can't use it for behavior tests that depend on
     // extracted attrs.
-    let (target, _initial_layout) =
-        fresh_project(&full_plugin(), "firmware-layered", "fb-fw");
+    let (target, _initial_layout) = fresh_project(&full_plugin(), "firmware-layered", "fb-fw");
     std::fs::remove_file(target.join("specs/specdev/profile.yaml")).unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
     assert!(
@@ -283,11 +282,7 @@ fn malformed_profile_yaml_errors_manifest_001() {
         "name = \"Api\"\nvisibility = \"pub\"\n",
     )
     .unwrap();
-    std::fs::write(
-        target.join("specs/specdev/profile.yaml"),
-        "garbage: true\n",
-    )
-    .unwrap();
+    std::fs::write(target.join("specs/specdev/profile.yaml"), "garbage: true\n").unwrap();
     let layout = LayoutContext::discover(&target, None).unwrap();
     let err = context::run_context(&layout, "Api").unwrap_err();
     let msg = format!("{err:#}");

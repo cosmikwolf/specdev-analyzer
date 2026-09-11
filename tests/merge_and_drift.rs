@@ -103,7 +103,8 @@ fn fresh_project_with_embassy(tag: &str) -> (PathBuf, PathBuf, LayoutContext) {
     (workspace, project, layout)
 }
 
-const EMBASSY_SCHEMA_BASE: &str = include_str!("specs/minimal_plugin/_plugin/blocks/embassy/schema.yaml");
+const EMBASSY_SCHEMA_BASE: &str =
+    include_str!("specs/minimal_plugin/_plugin/blocks/embassy/schema.yaml");
 
 // ---------------------------------------------------------------------------
 // Exit criterion 5 — clean re-merge (theirs == base) is zero-diff, content_hash unchanged.
@@ -122,8 +123,8 @@ fn merge_clean_reinline_is_zero_diff() {
     .unwrap();
 
     // Plugin unchanged → merge against itself.
-    let outcome = merge::run_merge_block(&layout, &minimal_plugin(), "embassy")
-        .expect("clean re-merge");
+    let outcome =
+        merge::run_merge_block(&layout, &minimal_plugin(), "embassy").expect("clean re-merge");
     assert!(outcome.clean);
 
     let bytes_after = std::fs::read(
@@ -132,7 +133,10 @@ fn merge_clean_reinline_is_zero_diff() {
             .join("schemas/inlined/blocks/embassy.schema.yaml"),
     )
     .unwrap();
-    assert_eq!(bytes_before, bytes_after, "files must not drift on no-op merge");
+    assert_eq!(
+        bytes_before, bytes_after,
+        "files must not drift on no-op merge"
+    );
 
     let lineage_after = Lineage::load(&layout.specdev_root).unwrap();
     assert_eq!(
@@ -205,8 +209,10 @@ fn merge_conflicting_edits_leaves_markers_and_preserves_lineage() {
     let project_schema_path = layout
         .specdev_root
         .join("schemas/inlined/blocks/embassy.schema.yaml");
-    let local = String::from(EMBASSY_SCHEMA_BASE)
-        .replace("type: object", "type: object\n# local-only annotation\nfoo: bar");
+    let local = String::from(EMBASSY_SCHEMA_BASE).replace(
+        "type: object",
+        "type: object\n# local-only annotation\nfoo: bar",
+    );
     std::fs::write(&project_schema_path, &local).unwrap();
 
     let mut mods = BTreeMap::new();
@@ -225,8 +231,14 @@ fn merge_conflicting_edits_leaves_markers_and_preserves_lineage() {
     assert!(s.contains("MERGE-002"), "{s}");
 
     let after = std::fs::read_to_string(&project_schema_path).unwrap();
-    assert!(after.contains("<<<<<<<"), "conflict markers expected: {after}");
-    assert!(after.contains(">>>>>>>"), "conflict markers expected: {after}");
+    assert!(
+        after.contains("<<<<<<<"),
+        "conflict markers expected: {after}"
+    );
+    assert!(
+        after.contains(">>>>>>>"),
+        "conflict markers expected: {after}"
+    );
 
     let lineage_after = Lineage::load(&layout.specdev_root).unwrap();
     assert_eq!(

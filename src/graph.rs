@@ -339,14 +339,12 @@ fn reach_impl(
 ///
 /// Emits one finding per orphan entity, naming the requirement id and
 /// the recognised nature values for the user's reference.
-pub fn requirements_have_satisfiers(
-    root: &Value,
-    rule: &str,
-    severity: Severity,
-) -> Vec<Finding> {
+pub fn requirements_have_satisfiers(root: &Value, rule: &str, severity: Severity) -> Vec<Finding> {
     let entities = root.get("entities").and_then(|v| v.as_array());
     let relations = root.get("relations").and_then(|v| v.as_array());
-    let Some(entities) = entities else { return Vec::new() };
+    let Some(entities) = entities else {
+        return Vec::new();
+    };
     let satisfied: BTreeSet<String> = relations
         .map(|arr| {
             arr.iter()
@@ -573,7 +571,9 @@ pub fn entity_attr_inbound_count(
 ) -> Vec<Finding> {
     let entities = root.get("entities").and_then(|v| v.as_array());
     let relations = root.get("relations").and_then(|v| v.as_array());
-    let Some(entities) = entities else { return Vec::new() };
+    let Some(entities) = entities else {
+        return Vec::new();
+    };
 
     // Count inbound edges per target name.
     let mut inbound: HashMap<String, usize> = HashMap::new();
@@ -636,7 +636,9 @@ pub fn entity_attr_target_attr_equals(
     severity: Severity,
 ) -> Vec<Finding> {
     let entities = root.get("entities").and_then(|v| v.as_array());
-    let Some(entities) = entities else { return Vec::new() };
+    let Some(entities) = entities else {
+        return Vec::new();
+    };
 
     // Build (name → entity) for cross-resolution.
     let mut by_name: BTreeMap<String, &Value> = BTreeMap::new();
@@ -648,11 +650,15 @@ pub fn entity_attr_target_attr_equals(
 
     let mut out = Vec::new();
     for ent in entities {
-        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
         if kind != entity_kind {
             continue;
         }
-        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else { continue };
+        let Some(name) = ent.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
         let attr_value = ent
             .get("attrs")
             .and_then(|a| a.get(entity_attr))
@@ -753,9 +759,15 @@ pub fn module_reachable_through_open_question(
     // affects edges (reversed): Requirement → OpenQuestion.
     let mut req_to_oqs: HashMap<String, Vec<String>> = HashMap::new();
     for rel in &relations {
-        let Some(kind) = rel.get("kind").and_then(|v| v.as_str()) else { continue };
-        let Some(from) = rel.get("from").and_then(|v| v.as_str()) else { continue };
-        let Some(to) = rel.get("to").and_then(|v| v.as_str()) else { continue };
+        let Some(kind) = rel.get("kind").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(from) = rel.get("from").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(to) = rel.get("to").and_then(|v| v.as_str()) else {
+            continue;
+        };
         match kind {
             "module_satisfies" => {
                 module_to_reqs
@@ -786,14 +798,20 @@ pub fn module_reachable_through_open_question(
 
     for module in module_names {
         let mut emitted: BTreeSet<String> = BTreeSet::new();
-        let Some(reqs) = module_to_reqs.get(module) else { continue };
+        let Some(reqs) = module_to_reqs.get(module) else {
+            continue;
+        };
         for req in reqs {
-            let Some(oqs) = req_to_oqs.get(req) else { continue };
+            let Some(oqs) = req_to_oqs.get(req) else {
+                continue;
+            };
             for oq in oqs {
                 if emitted.contains(oq) {
                     continue;
                 }
-                let Some(oq_ent) = by_name.get(oq) else { continue };
+                let Some(oq_ent) = by_name.get(oq) else {
+                    continue;
+                };
                 let status = oq_ent
                     .get("attrs")
                     .and_then(|a| a.get("status"))
@@ -896,7 +914,9 @@ pub fn layer_dependency_graph(
         let Some((from_name, _from_ptr)) = from_by_anc.get(&anc) else {
             continue;
         };
-        let Some(to_name) = p.value.as_str() else { continue };
+        let Some(to_name) = p.value.as_str() else {
+            continue;
+        };
         let Some(from_layer) = layer_by_name.get(from_name) else {
             continue;
         };
@@ -917,9 +937,7 @@ pub fn layer_dependency_graph(
             out.push(Finding::new(
                 rule,
                 severity,
-                format!(
-                    "module `{to_name}` declares unknown layer `{to_layer}` (not in ordering)"
-                ),
+                format!("module `{to_name}` declares unknown layer `{to_layer}` (not in ordering)"),
             ));
             continue;
         };
@@ -1054,13 +1072,24 @@ mod tests {
                 { "kind": "egui.Region",        "name": "shell.algorithm" },
             ],
         });
-        let f = unique(&v, "entities[].name", "unique_qualified_names", Severity::Error);
+        let f = unique(
+            &v,
+            "entities[].name",
+            "unique_qualified_names",
+            Severity::Error,
+        );
         assert_eq!(f.len(), 1);
         let msg = &f[0].message;
         assert!(msg.contains("shell.algorithm"), "missing value: {msg}");
-        assert!(msg.contains("`nih-plug.Parameter`"), "missing kind A: {msg}");
+        assert!(
+            msg.contains("`nih-plug.Parameter`"),
+            "missing kind A: {msg}"
+        );
         assert!(msg.contains("`egui.Region`"), "missing kind B: {msg}");
-        assert!(msg.contains("collides"), "expected collision phrasing: {msg}");
+        assert!(
+            msg.contains("collides"),
+            "expected collision phrasing: {msg}"
+        );
     }
 
     #[test]
@@ -1073,7 +1102,12 @@ mod tests {
                 { "kind": "Module", "name": "audio" },
             ],
         });
-        let f = unique(&v, "entities[].name", "unique_qualified_names", Severity::Error);
+        let f = unique(
+            &v,
+            "entities[].name",
+            "unique_qualified_names",
+            Severity::Error,
+        );
         assert_eq!(f.len(), 1);
         let msg = &f[0].message;
         assert!(msg.contains("`Module`"), "missing kind in message: {msg}");
@@ -1088,7 +1122,10 @@ mod tests {
         assert_eq!(f.len(), 1);
         let msg = &f[0].message;
         assert!(msg.contains("duplicate value `a`"), "{msg}");
-        assert!(!msg.contains("collides"), "no kind info should yield no collide phrasing: {msg}");
+        assert!(
+            !msg.contains("collides"),
+            "no kind info should yield no collide phrasing: {msg}"
+        );
     }
 
     #[test]
@@ -1112,13 +1149,32 @@ mod tests {
                 { "kind": "parameter_binding", "from": "synth", "to": "synth.op1_crs" },
             ],
         });
-        let f = entity_has_inbound_relation(&v, "parameter_binding", None, None, "parameters_have_bindings", Severity::Warning);
+        let f = entity_has_inbound_relation(
+            &v,
+            "parameter_binding",
+            None,
+            None,
+            "parameters_have_bindings",
+            Severity::Warning,
+        );
         assert_eq!(f.len(), 1, "exactly one orphan expected");
         let msg = &f[0].message;
-        assert!(msg.contains("synth.master_volume"), "names the orphan: {msg}");
-        assert!(msg.contains("Parameter "), "uses last-segment noun, not the qualified kind: {msg}");
-        assert!(msg.contains("`parameter_binding`"), "names the relation: {msg}");
-        assert!(!msg.contains("requirement"), "must not leak requirement vocabulary: {msg}");
+        assert!(
+            msg.contains("synth.master_volume"),
+            "names the orphan: {msg}"
+        );
+        assert!(
+            msg.contains("Parameter "),
+            "uses last-segment noun, not the qualified kind: {msg}"
+        );
+        assert!(
+            msg.contains("`parameter_binding`"),
+            "names the relation: {msg}"
+        );
+        assert!(
+            !msg.contains("requirement"),
+            "must not leak requirement vocabulary: {msg}"
+        );
     }
 
     #[test]
@@ -1132,8 +1188,18 @@ mod tests {
                 { "kind": "parameter_binding", "from": "synth", "to": "synth.algorithm" },
             ],
         });
-        let f = entity_has_inbound_relation(&v, "parameter_binding", None, None, "parameters_have_bindings", Severity::Warning);
-        assert!(f.is_empty(), "multi-bound parameter is not an orphan: {f:?}");
+        let f = entity_has_inbound_relation(
+            &v,
+            "parameter_binding",
+            None,
+            None,
+            "parameters_have_bindings",
+            Severity::Warning,
+        );
+        assert!(
+            f.is_empty(),
+            "multi-bound parameter is not an orphan: {f:?}"
+        );
     }
 
     #[test]
@@ -1160,9 +1226,20 @@ mod tests {
             "test_requirements_have_verifiers",
             Severity::Warning,
         );
-        assert_eq!(f.len(), 1, "only the unverified test requirement is flagged: {f:?}");
-        assert!(f[0].message.contains("REQ-3"), "names REQ-3: {}", f[0].message);
-        assert!(!f[0].message.contains("REQ-1"), "must not flag the module req");
+        assert_eq!(
+            f.len(),
+            1,
+            "only the unverified test requirement is flagged: {f:?}"
+        );
+        assert!(
+            f[0].message.contains("REQ-3"),
+            "names REQ-3: {}",
+            f[0].message
+        );
+        assert!(
+            !f[0].message.contains("REQ-1"),
+            "must not flag the module req"
+        );
     }
 
     #[test]
@@ -1245,11 +1322,7 @@ mod tests {
                 { "kind": "depends_on", "from": "Mid1", "to": "Mid2" },
             ],
         });
-        let ordering = vec![
-            "application".into(),
-            "middleware".into(),
-            "driver".into(),
-        ];
+        let ordering = vec!["application".into(), "middleware".into(), "driver".into()];
         let f = layer_dependency_graph(&v, "attrs.layer", &ordering, "L1", Severity::Error);
         assert!(f.is_empty(), "{f:?}");
     }

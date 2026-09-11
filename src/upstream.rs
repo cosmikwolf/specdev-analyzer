@@ -83,11 +83,7 @@ pub fn read_upstream_unit(
     Ok(out)
 }
 
-fn walk_unit(
-    base: &Path,
-    cur: &Path,
-    out: &mut BTreeMap<PathBuf, Vec<u8>>,
-) -> Result<()> {
+fn walk_unit(base: &Path, cur: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
     for entry in std::fs::read_dir(cur).with_context(|| format!("reading {}", cur.display()))? {
         let entry = entry?;
         let path = entry.path();

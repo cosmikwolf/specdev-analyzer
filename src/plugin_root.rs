@@ -119,9 +119,8 @@ pub fn resolve(
 /// do NOT inherit it. Saying "export SPECDEV_PLUGIN_ROOT once" is the
 /// concrete fix; the parenthetical now names the inheritance gap.
 fn plugin_root_unresolvable_message(with_spec_field: bool) -> String {
-    let mut msg = String::from(
-        "[PLUGIN-001] plugin root not resolvable. Pass --plugin-root <path>",
-    );
+    let mut msg =
+        String::from("[PLUGIN-001] plugin root not resolvable. Pass --plugin-root <path>");
     if with_spec_field {
         msg.push_str(", set [paths].plugin_root in spec.toml,");
     }
@@ -143,10 +142,7 @@ fn nonempty_env(name: &str) -> Option<String> {
 
 fn validate(candidate: &Path) -> Result<PathBuf> {
     if !candidate.is_dir() {
-        return Err(anyhow!(
-            "{} is not a directory",
-            candidate.display()
-        ));
+        return Err(anyhow!("{} is not a directory", candidate.display()));
     }
     let marker = candidate.join(PLUGIN_MARKER);
     if !marker.is_file() {
@@ -222,9 +218,7 @@ source = "src"
         let plugin = dir.join("plug");
         fs::create_dir_all(&plugin).unwrap(); // no marker
         let (manifest, cfg) = mk_spec(&dir, None);
-        let inputs = PluginRootInputs {
-            flag: Some(plugin),
-        };
+        let inputs = PluginRootInputs { flag: Some(plugin) };
         let err = resolve(&inputs, &manifest, &cfg).unwrap_err();
         let s = format!("{err:#}");
         assert!(s.contains("PLUGIN-001"), "{s}");

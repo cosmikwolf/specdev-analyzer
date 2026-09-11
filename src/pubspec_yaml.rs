@@ -120,12 +120,8 @@ fn resolve_environment(
                 layout.architecture_toml_path.display(),
             )
         })?;
-    let flutter = arch_flutter.or_else(|| {
-        pubspec
-            .environment
-            .as_ref()
-            .and_then(|e| e.flutter.clone())
-    });
+    let flutter =
+        arch_flutter.or_else(|| pubspec.environment.as_ref().and_then(|e| e.flutter.clone()));
     Ok((sdk, flutter))
 }
 
@@ -172,7 +168,12 @@ fn render_package(
     let flutter_config = extract_flutter_config(&arch)?;
 
     let mut text = String::new();
-    write_header(&mut text, project, version.as_deref(), matches!(pubspec.shape, PubShapeKind::App));
+    write_header(
+        &mut text,
+        project,
+        version.as_deref(),
+        matches!(pubspec.shape, PubShapeKind::App),
+    );
     write_environment(&mut text, &sdk, flutter.as_deref());
     if workspace_member {
         text.push_str("resolution: workspace\n");
@@ -225,10 +226,10 @@ fn read_architecture(layout: &LayoutContext) -> Result<toml::value::Table> {
     if !path.is_file() {
         return Ok(toml::value::Table::new());
     }
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let value: toml::Value = toml::from_str(&text)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     match value {
         toml::Value::Table(t) => Ok(t),
         _ => Err(anyhow!("{} did not parse as a TOML table", path.display())),
@@ -332,7 +333,13 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
         .ok_or_else(|| anyhow!("PubReference must be a table; got {}", value.type_str()))?;
 
     const KNOWN: &[&str] = &[
-        "package", "version", "hosted", "git", "path", "sdk", "test_only",
+        "package",
+        "version",
+        "hosted",
+        "git",
+        "path",
+        "sdk",
+        "test_only",
     ];
     for k in t.keys() {
         if !KNOWN.contains(&k.as_str()) {
@@ -389,8 +396,9 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
     let source = match source_keys.first().copied() {
         None => None,
         Some("hosted") => Some(PubSource::Hosted {
-            hosted: opt_str("hosted")?
-                .ok_or_else(|| anyhow!("PubReference `{package}`: `hosted` must be a URL string"))?,
+            hosted: opt_str("hosted")?.ok_or_else(|| {
+                anyhow!("PubReference `{package}`: `hosted` must be a URL string")
+            })?,
         }),
         Some("path") => Some(PubSource::Path {
             path: opt_str("path")?
@@ -401,12 +409,15 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
                 .ok_or_else(|| anyhow!("PubReference `{package}`: `sdk` must be a string"))?,
         }),
         Some("git") => {
-            let g = t.get("git").and_then(toml::Value::as_table).ok_or_else(|| {
-                anyhow!(
-                    "PubReference `{package}`: `git` must be a table with `url` \
+            let g = t
+                .get("git")
+                .and_then(toml::Value::as_table)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "PubReference `{package}`: `git` must be a table with `url` \
                      (+ optional ref/path/tag_pattern)"
-                )
-            })?;
+                    )
+                })?;
             for k in g.keys() {
                 if !["url", "ref", "path", "tag_pattern"].contains(&k.as_str()) {
                     return Err(anyhow!(
@@ -430,8 +441,9 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
             };
             Some(PubSource::Git {
                 git: bd_module::PubGit {
-                    url: git_str("url")?
-                        .ok_or_else(|| anyhow!("PubReference `{package}`: `git.url` is required"))?,
+                    url: git_str("url")?.ok_or_else(|| {
+                        anyhow!("PubReference `{package}`: `git.url` is required")
+                    })?,
                     r#ref: git_str("ref")?,
                     path: git_str("path")?,
                     tag_pattern: git_str("tag_pattern")?,
@@ -462,7 +474,9 @@ fn parse_pub_ref(value: &toml::Value) -> Result<PubRef> {
 }
 
 fn extract_pub_ref_array(value: Option<&toml::Value>) -> Result<Vec<PubRef>> {
-    let Some(v) = value else { return Ok(Vec::new()) };
+    let Some(v) = value else {
+        return Ok(Vec::new());
+    };
     let Some(arr) = v.as_array() else {
         return Ok(Vec::new());
     };
@@ -482,10 +496,10 @@ fn collect_module_external_deps(layout: &LayoutContext) -> Result<Vec<PubRef>> {
         .collect();
     paths.sort();
     for path in &paths {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        let value: toml::Value = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let value: toml::Value =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         for r in extract_pub_ref_array(value.get("external_deps"))
             .with_context(|| format!("in {}", path.display()))?
         {
@@ -820,7 +834,10 @@ mod tests {
             "package = \"foo\"\ngit = { url = \"u\", rev = \"abc\" }",
         ))
         .unwrap_err();
-        assert!(format!("{err:#}").contains("unknown `git` key `rev`"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("unknown `git` key `rev`"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -962,7 +979,10 @@ mod tests {
     fn flutter_config_rejects_unknown_keys_and_wrong_types() {
         let arch = toml_value("[flutter]\nfonts = []");
         let err = extract_flutter_config(arch.as_table().unwrap()).unwrap_err();
-        assert!(format!("{err:#}").contains("unknown key `fonts`"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("unknown key `fonts`"),
+            "{err:#}"
+        );
 
         let arch = toml_value("version = 45");
         let err = extract_app_version(arch.as_table().unwrap()).unwrap_err();

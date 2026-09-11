@@ -413,11 +413,7 @@ impl Retrieve for MapRetriever {
         // tier uses a one-level-deeper path
         // `inlined/languages/<lang>/<name>`; substring-match the prefix
         // and let `self.docs` carry the full key.
-        for prefix in [
-            "inlined/blocks/",
-            "inlined/bridges/",
-            "inlined/languages/",
-        ] {
+        for prefix in ["inlined/blocks/", "inlined/bridges/", "inlined/languages/"] {
             if let Some(idx) = s.find(prefix) {
                 let suffix = &s[idx..];
                 if let Some(v) = self.docs.get(suffix) {

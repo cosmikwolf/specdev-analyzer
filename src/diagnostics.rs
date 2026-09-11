@@ -10,8 +10,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use jsonschema::ValidationError;
 use jsonschema::error::ValidationErrorKind;
+use jsonschema::ValidationError;
 
 /// Closed-enum threshold for full-options listing per F-012.
 ///
@@ -393,10 +393,15 @@ mod tests {
         });
         let instance = json!("z");
         let msg = first_error_for(&schema, &instance);
-        for letter in ["\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"e\"", "\"f\"", "\"g\"", "\"h\""] {
+        for letter in [
+            "\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"e\"", "\"f\"", "\"g\"", "\"h\"",
+        ] {
             assert!(msg.contains(letter), "missing {letter} in: {msg}");
         }
-        assert!(!msg.contains("other candidates"), "must not truncate at 8: {msg}");
+        assert!(
+            !msg.contains("other candidates"),
+            "must not truncate at 8: {msg}"
+        );
     }
 
     #[test]

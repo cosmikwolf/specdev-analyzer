@@ -72,8 +72,7 @@ fn manifest_path(target: &Path) -> PathBuf {
 #[test]
 fn bootstrap_copies_paired_stub_template_to_inlined_tree() {
     let (target, _layout) = fresh_audio_plugin("bootstrap-templates", "myfx");
-    let inlined =
-        target.join("specs/specdev/templates/standalone-stub.rs.template");
+    let inlined = target.join("specs/specdev/templates/standalone-stub.rs.template");
     assert!(
         inlined.is_file(),
         "bootstrap must copy templates/* to specs/specdev/templates/* — missing {}",

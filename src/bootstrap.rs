@@ -58,8 +58,8 @@ fn plugin_version(plugin_root: &Path) -> Result<String> {
     let manifest = plugin_root.join(crate::plugin_root::PLUGIN_MARKER);
     let text = std::fs::read_to_string(&manifest)
         .with_context(|| format!("reading {}", manifest.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .with_context(|| format!("parsing {}", manifest.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
     Ok(value
         .get("version")
         .and_then(|v| v.as_str())
@@ -323,9 +323,7 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             };
             plan.push(ProfileFile {
                 src_rel: PathBuf::from(format!("codegen/{language}/{file_name}")),
-                dst_rel: PathBuf::from(format!(
-                    "specs/specdev/codegen/{language}/{file_name}"
-                )),
+                dst_rel: PathBuf::from(format!("specs/specdev/codegen/{language}/{file_name}")),
                 substitute: false,
             });
         }
@@ -494,18 +492,16 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
                 continue;
             };
             let dst = lang_dst_dir.join(file_name);
-            let bytes = std::fs::read(&entry)
-                .with_context(|| format!("reading {}", entry.display()))?;
-            std::fs::write(&dst, bytes)
-                .with_context(|| format!("writing {}", dst.display()))?;
+            let bytes =
+                std::fs::read(&entry).with_context(|| format!("reading {}", entry.display()))?;
+            std::fs::write(&dst, bytes).with_context(|| format!("writing {}", dst.display()))?;
         }
     }
 
     // Create the empty directories the project layout expects.
     for d in EMPTY_DIRS {
         let abs = inputs.target_dir.join(d);
-        std::fs::create_dir_all(&abs)
-            .with_context(|| format!("creating {}", abs.display()))?;
+        std::fs::create_dir_all(&abs).with_context(|| format!("creating {}", abs.display()))?;
     }
 
     // Create the source root the rendered spec.toml declares
@@ -554,13 +550,15 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     // and it does not move when the manifest contract does. The contract
     // handshake is `profile.yaml`'s `contract_version` against
     // `manifest::profile::PROFILE_CONTRACT_VERSION` (#117).
-    let mut lineage = Lineage::default();
-    lineage.meta = Some(MetaSection {
-        plugin_version: plugin_version(plugin_root)?,
-        bootstrapped_at: now_iso8601(),
-        profile: inputs.profile.clone(),
-    });
-    lineage.profile_files = profile_files;
+    let lineage = Lineage {
+        meta: Some(MetaSection {
+            plugin_version: plugin_version(plugin_root)?,
+            bootstrapped_at: now_iso8601(),
+            profile: inputs.profile.clone(),
+        }),
+        profile_files,
+        ..Default::default()
+    };
     lineage.save(&specdev_root)?;
     Ok(())
 }
@@ -601,10 +599,7 @@ fn manifest_bootstrap_steps(profile_dir: &Path) -> Result<Option<Vec<BootstrapSt
         };
         anyhow!("{text}\nThat file is in the PLUGIN tree, not in your project — nothing was written.{remedy}")
     })?;
-    let steps = profile
-        .bootstrap
-        .map(|b| b.steps)
-        .unwrap_or_default();
+    let steps = profile.bootstrap.map(|b| b.steps).unwrap_or_default();
     if steps.is_empty() {
         Ok(None)
     } else {

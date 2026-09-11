@@ -109,8 +109,7 @@ fn embassy_block_contributes_executor_and_time() {
 
 #[test]
 fn stm32h5_rs_block_alone_contributes_no_crates() {
-    let (_target, layout) =
-        fresh_project(&full_plugin(), "firmware-layered", "demo", "stm32h5");
+    let (_target, layout) = fresh_project(&full_plugin(), "firmware-layered", "demo", "stm32h5");
     run_inline_block(&layout, &full_plugin(), "stm32h5-rs").unwrap();
     let out = render(&layout).unwrap().text;
     assert!(
@@ -144,8 +143,7 @@ fn bridge_contributes_embassy_stm32_with_chip_feature() {
 
 #[test]
 fn user_external_deps_win_on_version_conflict_with_block() {
-    let (target, layout) =
-        fresh_project(&full_plugin(), "firmware-layered", "demo", "conflict");
+    let (target, layout) = fresh_project(&full_plugin(), "firmware-layered", "demo", "conflict");
     run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
 
     // User authors embassy-executor at a different version in
@@ -172,7 +170,9 @@ source = "crates-io"
         rendered.text
     );
     assert!(
-        !rendered.text.contains(r#"embassy-executor = { version = "0.10""#)
+        !rendered
+            .text
+            .contains(r#"embassy-executor = { version = "0.10""#)
             && !rendered.text.contains(r#"embassy-executor = "0.10""#),
         "block's 0.10 version must NOT appear when user pinned 0.5:\n{}",
         rendered.text
@@ -239,8 +239,7 @@ target_triple = "thumbv8m.main-none-eabihf"
 
 #[test]
 fn audio_plugin_block_contributes_nih_plug_via_git_source() {
-    let (_target, layout) =
-        fresh_project(&full_plugin(), "audio-plugin", "myfx", "audio-nih");
+    let (_target, layout) = fresh_project(&full_plugin(), "audio-plugin", "myfx", "audio-nih");
     run_inline_block(&layout, &full_plugin(), "nih-plug").unwrap();
     let out = render(&layout).unwrap().text;
     assert!(
@@ -283,8 +282,12 @@ fn manifest_less_fixture_inline_no_block_deps_no_op() {
             .exists(),
         "minimal_plugin fixture must NOT ship deps.yaml (test premise)"
     );
-    let (_target, layout) =
-        fresh_project(&minimal_plugin(), "firmware-layered", "demo", "no-deps-yaml");
+    let (_target, layout) = fresh_project(
+        &minimal_plugin(),
+        "firmware-layered",
+        "demo",
+        "no-deps-yaml",
+    );
     run_inline_block(&layout, &minimal_plugin(), "embassy").unwrap();
     // The minimal_plugin fixture's embassy block ships no deps.yaml, so
     // the merge contributes nothing. The render should succeed with

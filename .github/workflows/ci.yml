@@ -112,6 +112,32 @@ jobs:
       - run: cargo test --locked --all-features
         working-directory: specdev-analyzer
 
+  msrv:
+    # The declared floor must be a tested claim, not a comment. `rust-version`
+    # sat at 1.75 for eleven minor versions while the dependency graph moved
+    # to 1.86 (clap_builder needs edition 2024; eleven icu_* packages require
+    # 1.86) — nothing ever built against the declared value, so nothing ever
+    # said it was wrong. Pin this job to the exact version in Cargo.toml and
+    # bump both together.
+    name: build on the declared MSRV (1.86.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout analyzer
+        uses: actions/checkout@v7
+        with:
+          path: specdev-analyzer
+      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
+        uses: actions/checkout@v7
+        with:
+          repository: cosmikwolf/specdev
+          path: specdev
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: specdev-analyzer
+      - run: cargo check --locked --all-targets
+        working-directory: specdev-analyzer
+
   install-smoke:
     name: cargo install smoke test
     runs-on: ubuntu-latest

@@ -280,7 +280,9 @@ fn hello_plugin_workspace_bootstraps_with_two_members() {
 
     // Engine member.
     assert!(target.join("crates/engine/spec.toml").is_file());
-    assert!(target.join("crates/engine/specs/modules/SineOsc.toml").is_file());
+    assert!(target
+        .join("crates/engine/specs/modules/SineOsc.toml")
+        .is_file());
     assert!(
         target
             .join("crates/engine/specs/specdev/schemas/module.schema.yaml")
@@ -290,7 +292,9 @@ fn hello_plugin_workspace_bootstraps_with_two_members() {
 
     // Plugin member.
     assert!(target.join("crates/plugin/spec.toml").is_file());
-    assert!(target.join("crates/plugin/specs/modules/MyPlugin.toml").is_file());
+    assert!(target
+        .join("crates/plugin/specs/modules/MyPlugin.toml")
+        .is_file());
     assert!(
         target
             .join("crates/plugin/specs/specdev/schemas/inlined/blocks/nih-plug.schema.yaml")
@@ -497,11 +501,15 @@ fn full_audio_plugin_stack_composes_end_to_end() {
     assert!(engine_cargo.text.contains("[lib]"), "engine has [lib]");
     let plugin_cargo = render(&plugin_layout).unwrap();
     assert!(
-        plugin_cargo.text.contains("[lib]\ncrate-type = [\"cdylib\"]"),
+        plugin_cargo
+            .text
+            .contains("[lib]\ncrate-type = [\"cdylib\"]"),
         "plugin has cdylib"
     );
     assert!(
-        plugin_cargo.text.contains("[[bin]]\nname = \"plugin-standalone\""),
+        plugin_cargo
+            .text
+            .contains("[[bin]]\nname = \"plugin-standalone\""),
         "plugin has standalone bin"
     );
 

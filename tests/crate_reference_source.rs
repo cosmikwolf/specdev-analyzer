@@ -150,7 +150,8 @@ source = { git = "https://github.com/example/upstream", rev = "abc1234" }
 
     let r = render(&layout).unwrap();
     assert!(
-        r.text.contains("git = \"https://github.com/example/upstream\""),
+        r.text
+            .contains("git = \"https://github.com/example/upstream\""),
         "expected git field; got:\n{}",
         r.text
     );
@@ -184,7 +185,9 @@ source = { git = "https://github.com/example/upstream", tag = "v0.5.0" }
     assert!(errors(&report).is_empty());
 
     let r = render(&layout).unwrap();
-    assert!(r.text.contains("git = \"https://github.com/example/upstream\""));
+    assert!(r
+        .text
+        .contains("git = \"https://github.com/example/upstream\""));
     assert!(r.text.contains("tag = \"v0.5.0\""));
     assert!(!r.text.contains("rev = "));
     assert!(!r.text.contains("branch = "));
@@ -235,7 +238,10 @@ source = "workspace"
         .lines()
         .find(|l| l.starts_with("shared-helper ="))
         .expect("shared-helper line present");
-    assert!(!line.contains("version"), "workspace dep must omit version: {line}");
+    assert!(
+        !line.contains("version"),
+        "workspace dep must omit version: {line}"
+    );
     assert!(
         !line.contains("default-features"),
         "workspace dep must omit default-features: {line}"
@@ -276,7 +282,10 @@ source = "crates-io"
         .lines()
         .find(|l| l.starts_with("thiserror ="))
         .unwrap();
-    assert!(!line.contains("source"), "no source key for crates-io: {line}");
+    assert!(
+        !line.contains("source"),
+        "no source key for crates-io: {line}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -368,9 +377,18 @@ source = { path = "../sibling-core" }
         .lines()
         .find(|l| l.starts_with("sibling-core ="))
         .expect("sibling-core present");
-    assert!(line.contains("version = \"0.1.0\""), "version present: {line}");
-    assert!(line.contains("default-features = false"), "default-features present: {line}");
-    assert!(line.contains("path = \"../sibling-core\""), "path present: {line}");
+    assert!(
+        line.contains("version = \"0.1.0\""),
+        "version present: {line}"
+    );
+    assert!(
+        line.contains("default-features = false"),
+        "default-features present: {line}"
+    );
+    assert!(
+        line.contains("path = \"../sibling-core\""),
+        "path present: {line}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +491,10 @@ optional = true
         line.contains("workspace = true"),
         "expected workspace inheritance: {line}"
     );
-    assert!(!line.contains("version"), "workspace dep must omit version: {line}");
+    assert!(
+        !line.contains("version"),
+        "workspace dep must omit version: {line}"
+    );
 }
 
 #[test]
@@ -546,7 +567,16 @@ features = ["defmt-03"]
         .lines()
         .find(|l| l.starts_with("embedded-hal ="))
         .expect("embedded-hal line present");
-    assert!(line.contains("workspace = true"), "workspace form kept: {line}");
-    assert!(!line.contains("version"), "no version on a workspace row: {line}");
-    assert!(line.contains("defmt-03"), "module features union in: {line}");
+    assert!(
+        line.contains("workspace = true"),
+        "workspace form kept: {line}"
+    );
+    assert!(
+        !line.contains("version"),
+        "no version on a workspace row: {line}"
+    );
+    assert!(
+        line.contains("defmt-03"),
+        "module features union in: {line}"
+    );
 }

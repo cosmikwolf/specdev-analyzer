@@ -15,9 +15,9 @@ use std::process::Command;
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     inline,
-    layout::LayoutContext,
     items::extract::extract_items_from_source,
     lang::rust::RustAdapter,
+    layout::LayoutContext,
 };
 
 fn full_plugin() -> PathBuf {
@@ -143,7 +143,9 @@ pub fn free_function() {}
 
     // The inherent impl dissolves into per-method items; the block is not an item.
     assert!(
-        !items.iter().any(|i| i.kind == "impl" && i.name == "Counter"),
+        !items
+            .iter()
+            .any(|i| i.kind == "impl" && i.name == "Counter"),
         "inherent impl block must not be an item; got: {names:?}"
     );
     for method in ["Counter::new", "Counter::incr", "Counter::get"] {
@@ -159,11 +161,17 @@ pub fn free_function() {}
 
     // The trait impl stays exactly one item; its methods are not surfaced.
     let impls: Vec<_> = items.iter().filter(|i| i.kind == "impl").collect();
-    assert_eq!(impls.len(), 1, "only the trait impl is an impl item; got: {names:?}");
+    assert_eq!(
+        impls.len(),
+        1,
+        "only the trait impl is an impl item; got: {names:?}"
+    );
     assert_eq!(impls[0].name, "Resettable for Counter");
     for method in ["reset", "is_reset"] {
         assert!(
-            !items.iter().any(|i| i.name.ends_with(method) && i.kind == "fn"),
+            !items
+                .iter()
+                .any(|i| i.name.ends_with(method) && i.kind == "fn"),
             "trait-impl method `{method}` must not be an item; got: {names:?}"
         );
     }
@@ -177,7 +185,12 @@ pub fn free_function() {}
     fns.sort();
     assert_eq!(
         fns,
-        vec!["Counter::get", "Counter::incr", "Counter::new", "free_function"],
+        vec![
+            "Counter::get",
+            "Counter::incr",
+            "Counter::new",
+            "free_function"
+        ],
         "got: {names:?}"
     );
 }
@@ -487,12 +500,24 @@ source_file = "src/tasks/blink.rs"
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert!(stdout.contains("src/tasks/blink.rs"), "stdout: {stdout}");
-    assert!(!stdout.contains("decoy"), "override must win over the convention file; stdout: {stdout}");
-    assert!(stdout.contains("name: init_peripherals"), "stdout: {stdout}");
+    assert!(
+        !stdout.contains("decoy"),
+        "override must win over the convention file; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("name: init_peripherals"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("name: DEBOUNCE_TICKS"), "stdout: {stdout}");
     assert!(stdout.contains("name: Led"), "stdout: {stdout}");
-    assert!(!stdout.contains("PRIVATE_TICKS"), "private const must drop; stdout: {stdout}");
-    assert!(!stdout.contains("narrower"), "pub(super) is below a pub(crate) floor; stdout: {stdout}");
+    assert!(
+        !stdout.contains("PRIVATE_TICKS"),
+        "private const must drop; stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("narrower"),
+        "pub(super) is below a pub(crate) floor; stdout: {stdout}"
+    );
 }
 
 #[test]

@@ -18,8 +18,7 @@ use specdev_analyzer::{
 };
 
 fn full_plugin() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/specs/full_plugin/_plugin")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/specs/full_plugin/_plugin")
 }
 
 fn tmp_dir(tag: &str) -> PathBuf {
@@ -70,7 +69,10 @@ fn crate_shape_library_renders_lib_not_bin() {
     std::fs::write(&spec, body).unwrap();
 
     let out = render_text(&target);
-    assert!(out.contains("[lib]"), "library member must emit [lib]:\n{out}");
+    assert!(
+        out.contains("[lib]"),
+        "library member must emit [lib]:\n{out}"
+    );
     assert!(
         out.contains(r#"name = "sensor_driver""#),
         "lib name must be the hyphen->underscore crate ident:\n{out}"
@@ -85,7 +87,10 @@ fn crate_shape_library_renders_lib_not_bin() {
     );
     // Dependencies are unchanged from the binary shape — the platform/runtime/
     // logger crates the firmware renderer emits are still present.
-    assert!(out.contains("cortex-m"), "deps still emitted for a lib:\n{out}");
+    assert!(
+        out.contains("cortex-m"),
+        "deps still emitted for a lib:\n{out}"
+    );
 }
 
 #[test]
@@ -95,7 +100,10 @@ fn default_shape_still_renders_bin() {
     let out = render_text(&target);
     assert!(out.contains("[[bin]]"), "default is still [[bin]]:\n{out}");
     assert!(out.contains(r#"path = "src/main.rs""#));
-    assert!(!out.contains("[lib]"), "no [lib] without the override:\n{out}");
+    assert!(
+        !out.contains("[lib]"),
+        "no [lib] without the override:\n{out}"
+    );
 }
 
 #[test]

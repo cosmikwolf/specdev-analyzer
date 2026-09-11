@@ -103,7 +103,10 @@ fn gate_hit_emits_standalone_bin() {
     write_arch_with_formats(&target, &["vst3", "clap", "standalone"]);
     let layout = LayoutContext::discover(&target, None).unwrap();
     let out = render(&layout).unwrap().text;
-    assert!(out.contains("[[bin]]"), "gate hit must emit [[bin]]:\n{out}");
+    assert!(
+        out.contains("[[bin]]"),
+        "gate hit must emit [[bin]]:\n{out}"
+    );
     assert!(
         out.contains(r#"name = "myfx-standalone""#),
         "bin name must be `<project>-standalone`:\n{out}"

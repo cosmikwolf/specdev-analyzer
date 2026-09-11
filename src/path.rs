@@ -243,9 +243,9 @@ fn resolve_template_path(expr: &str, scope: &Scope<'_>) -> Result<String> {
         if rest == "parent" || rest.starts_with("parent.") {
             bail!("only one level of `parent` is defined in v1 (offending path: `${{{expr}}}`)")
         }
-        let parent = scope.parent.ok_or_else(|| {
-            anyhow::anyhow!("`${{{expr}}}` referenced but no parent in scope")
-        })?;
+        let parent = scope
+            .parent
+            .ok_or_else(|| anyhow::anyhow!("`${{{expr}}}` referenced but no parent in scope"))?;
         let picks = select(parent, rest);
         return pick_to_string(&picks, expr);
     }

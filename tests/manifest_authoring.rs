@@ -26,9 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use specdev_analyzer::manifest::{
-    BindingLocality, BlockDeps, BridgeContract, Profile, ShapeKind,
-};
+use specdev_analyzer::manifest::{BindingLocality, BlockDeps, BridgeContract, Profile, ShapeKind};
 
 fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -217,8 +215,7 @@ fn live_plugin_tree_profiles_load_cleanly() {
     let root = live_plugin();
     for name in &profiles_in(&root) {
         let p = root.join("profiles").join(name).join("profile.yaml");
-        Profile::load(&p)
-            .unwrap_or_else(|e| panic!("live profile {name} failed to load: {e:#}"));
+        Profile::load(&p).unwrap_or_else(|e| panic!("live profile {name} failed to load: {e:#}"));
     }
 }
 
@@ -282,8 +279,7 @@ fn live_plugin_tree_bridge_deps_load_cleanly() {
             .join("codegen")
             .join("rust")
             .join("deps.yaml");
-        BlockDeps::load(&p)
-            .unwrap_or_else(|e| panic!("live bridge deps for {name} failed: {e:#}"));
+        BlockDeps::load(&p).unwrap_or_else(|e| panic!("live bridge deps for {name} failed: {e:#}"));
     }
 }
 
@@ -294,7 +290,8 @@ fn live_plugin_tree_bridge_deps_load_cleanly() {
 /// Recursively collect every file under `dir`, as paths relative to it.
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     fn walk(base: &Path, cur: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(cur).unwrap_or_else(|e| panic!("read {}: {e}", cur.display()))
+        for entry in
+            std::fs::read_dir(cur).unwrap_or_else(|e| panic!("read {}: {e}", cur.display()))
         {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
@@ -402,8 +399,14 @@ fn fixture_audio_plugin_paired_stub_template_file_exists() {
         stub_path.display()
     );
     let body = std::fs::read_to_string(&stub_path).unwrap();
-    assert!(body.contains("{project_name}"), "stub must use {{project_name}} token");
-    assert!(body.contains("compile_error!"), "stub must include the friendly reminder");
+    assert!(
+        body.contains("{project_name}"),
+        "stub must use {{project_name}} token"
+    );
+    assert!(
+        body.contains("compile_error!"),
+        "stub must include the friendly reminder"
+    );
 }
 
 #[test]
@@ -413,7 +416,10 @@ fn fixture_rust_workspace_has_workspace_shape_and_no_module_surface() {
     let cargo = manifest.cargo_toml.unwrap();
     assert_eq!(cargo.shape, ShapeKind::Workspace);
     let surf = manifest.surface.unwrap();
-    assert!(!surf.has_modules, "rust-workspace surface.has_modules must be false (F-009)");
+    assert!(
+        !surf.has_modules,
+        "rust-workspace surface.has_modules must be false (F-009)"
+    );
     assert!(!surf.has_requirements);
 }
 

@@ -69,11 +69,7 @@ fn profile_names(plugin_root: &Path) -> Result<Vec<String>> {
         .filter_map(|r| r.ok())
         .map(|e| e.path())
         .filter(|p| p.is_dir())
-        .filter_map(|p| {
-            p.file_name()
-                .and_then(|s| s.to_str())
-                .map(str::to_string)
-        })
+        .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_string))
         .collect();
     names.sort();
     Ok(names)

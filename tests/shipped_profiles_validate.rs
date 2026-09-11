@@ -100,7 +100,10 @@ fn every_shipped_profile_bootstraps_and_validates_clean() {
         // Bootstrap in each profile's own declared language (a Dart
         // profile has no rust codegen tier, and vice versa).
         let language = specdev_analyzer::manifest::Profile::load(
-            &plugin_root.join("profiles").join(profile).join("profile.yaml"),
+            &plugin_root
+                .join("profiles")
+                .join(profile)
+                .join("profile.yaml"),
         )
         .unwrap_or_else(|e| panic!("[{profile}] profile.yaml failed to load: {e:#}"))
         .language;

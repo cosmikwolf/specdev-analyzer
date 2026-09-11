@@ -104,13 +104,12 @@ fn mismatch_finding(report: &Report) -> Option<&specdev_analyzer::report::Findin
 fn workspace_shape_with_workspace_table_passes() {
     // Default rust-workspace bootstrap declares [workspace] in spec.toml,
     // and ships shape: workspace in profile.yaml. The two agree.
-    let (_target, layout) = fresh_project(
-        &full_plugin(),
-        "rust-workspace",
-        "demo-ws",
-        "ws-with-table",
+    let (_target, layout) =
+        fresh_project(&full_plugin(), "rust-workspace", "demo-ws", "ws-with-table");
+    assert!(
+        layout.spec.workspace.is_some(),
+        "[workspace] table expected"
     );
-    assert!(layout.spec.workspace.is_some(), "[workspace] table expected");
     let report = run_check(&layout);
     assert!(
         !has_finding(&report, "PROFILE-LAYOUT-MISMATCH"),
@@ -125,12 +124,8 @@ fn workspace_shape_with_workspace_table_passes() {
 
 #[test]
 fn workspace_shape_without_workspace_table_emits_error() {
-    let (target, _initial_layout) = fresh_project(
-        &full_plugin(),
-        "rust-workspace",
-        "broken",
-        "ws-no-table",
-    );
+    let (target, _initial_layout) =
+        fresh_project(&full_plugin(), "rust-workspace", "broken", "ws-no-table");
     // Strip [workspace] from spec.toml — manifest still claims
     // shape: workspace, so the validate check must flag the mismatch.
     std::fs::write(

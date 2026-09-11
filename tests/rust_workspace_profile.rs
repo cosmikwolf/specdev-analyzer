@@ -118,11 +118,9 @@ fn bootstrap_emits_workspace_conventions_not_module_conventions() {
         "spec.toml's [workspace] table is validated by the analyzer's embedded \
          spec.schema.yaml; the profile ships no copy of that schema"
     );
-    assert!(
-        target
-            .join("specs/specdev/schemas/architecture.schema.yaml")
-            .is_file()
-    );
+    assert!(target
+        .join("specs/specdev/schemas/architecture.schema.yaml")
+        .is_file());
     assert!(
         !target
             .join("specs/specdev/schemas/module.schema.yaml")
@@ -145,7 +143,10 @@ fn workspace_root_render_emits_full_workspace_block() {
     let r = render(&layout).unwrap();
     let t = r.text;
 
-    assert!(t.starts_with("[workspace]\n"), "first section is [workspace]\n{t}");
+    assert!(
+        t.starts_with("[workspace]\n"),
+        "first section is [workspace]\n{t}"
+    );
     assert!(t.contains("resolver = \"2\"\n"), "{t}");
     assert!(
         t.contains("members = [\n    \"crates/alpha\",\n    \"crates/beta\",\n]\n"),
@@ -260,10 +261,16 @@ source = "src"
     assert!(t.contains("version.workspace = true"), "{t}");
     assert!(t.contains("edition.workspace = true"), "{t}");
     assert!(t.contains("license = \"Apache-2.0\""), "{t}");
-    assert!(t.contains("repository = \"https://example.org/alpha\""), "{t}");
+    assert!(
+        t.contains("repository = \"https://example.org/alpha\""),
+        "{t}"
+    );
     assert!(!t.contains("license.workspace"), "{t}");
     assert!(!t.contains("repository.workspace"), "{t}");
-    assert!(!t.contains("rust-version"), "no rust-version anywhere:\n{t}");
+    assert!(
+        !t.contains("rust-version"),
+        "no rust-version anywhere:\n{t}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -700,7 +707,10 @@ source = "workspace"
     let sysex_t = render(&sysex_layout).unwrap().text;
     assert!(sysex_t.contains("name = \"ym2414b-sysex\""), "{sysex_t}");
     assert!(sysex_t.contains("version.workspace = true"), "{sysex_t}");
-    assert!(sysex_t.contains("rust-version.workspace = true"), "{sysex_t}");
+    assert!(
+        sysex_t.contains("rust-version.workspace = true"),
+        "{sysex_t}"
+    );
     assert!(
         sysex_t.contains("default = []\n"),
         "synthetic default line:\n{sysex_t}"
@@ -898,7 +908,11 @@ fn workspace_root_render_omits_default_members_and_exclude_when_undeclared() {
     // Empty lists are the same as absent lists.
     overwrite_spec_with_two_members_and_root_lists(&target, &[], &[]);
     let layout = discover(&target);
-    assert_eq!(render(&layout).unwrap().text, t, "empty lists render as absent");
+    assert_eq!(
+        render(&layout).unwrap().text,
+        t,
+        "empty lists render as absent"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -944,11 +958,7 @@ fn unknown_default_member_fails_validate_and_render() {
 #[test]
 fn workspace_table_stays_closed_and_valid_root_lists_validate_clean() {
     let target = fresh_workspace("ws-root-lists-valid");
-    overwrite_spec_with_two_members_and_root_lists(
-        &target,
-        &["alpha-shared"],
-        &["tools/bench"],
-    );
+    overwrite_spec_with_two_members_and_root_lists(&target, &["alpha-shared"], &["tools/bench"]);
     overwrite_workspace_arch_minimal(&target);
     let report = validate::run_project(&target, None).unwrap();
     let errors: Vec<_> = report
@@ -956,7 +966,11 @@ fn workspace_table_stays_closed_and_valid_root_lists_validate_clean() {
         .iter()
         .filter(|f| matches!(f.severity, Severity::Error))
         .collect();
-    assert!(errors.is_empty(), "expected 0 errors:\n{}", report.render_plain());
+    assert!(
+        errors.is_empty(),
+        "expected 0 errors:\n{}",
+        report.render_plain()
+    );
 
     let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
     std::fs::write(

@@ -33,11 +33,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 
+use crate::bootstrap::{self, BootstrapInputs};
 use crate::inline::{
     collect_block_files, collect_bridge_files, rollup_hash, write_unit_files, UnitFile,
 };
 use crate::layout::LayoutContext;
-use crate::bootstrap::{self, BootstrapInputs};
 use crate::lineage::Lineage;
 use crate::upstream::{self, UnitKind};
 
@@ -97,7 +97,11 @@ impl MigrateReport {
     pub fn total_files_written(&self) -> usize {
         self.profile_files_written.len()
             + self.profile_files_refreshed.len()
-            + self.migrated.iter().map(|m| m.files_written.len()).sum::<usize>()
+            + self
+                .migrated
+                .iter()
+                .map(|m| m.files_written.len())
+                .sum::<usize>()
     }
 }
 
@@ -155,13 +159,7 @@ pub fn run_migrate(
                     });
                     continue;
                 }
-                let written = apply_unit_migration(
-                    layout,
-                    UnitKind::Block,
-                    name,
-                    &files,
-                    dry_run,
-                )?;
+                let written = apply_unit_migration(layout, UnitKind::Block, name, &files, dry_run)?;
                 report.migrated.push(MigratedUnit {
                     kind: UnitKind::Block,
                     name: name.clone(),
@@ -178,9 +176,10 @@ pub fn run_migrate(
             Err(e) => {
                 let msg = format!("{e:#}");
                 if msg.contains("[INLINE-001]") {
-                    report
-                        .missing_in_plugin
-                        .push(format!("[MIGRATE-002] block `{name}` not found in plugin tree at {}", plugin_root.join("blocks").join(name).display()));
+                    report.missing_in_plugin.push(format!(
+                        "[MIGRATE-002] block `{name}` not found in plugin tree at {}",
+                        plugin_root.join("blocks").join(name).display()
+                    ));
                 } else {
                     return Err(e);
                 }
@@ -206,13 +205,8 @@ pub fn run_migrate(
                     });
                     continue;
                 }
-                let written = apply_unit_migration(
-                    layout,
-                    UnitKind::Bridge,
-                    name,
-                    &files,
-                    dry_run,
-                )?;
+                let written =
+                    apply_unit_migration(layout, UnitKind::Bridge, name, &files, dry_run)?;
                 report.migrated.push(MigratedUnit {
                     kind: UnitKind::Bridge,
                     name: name.clone(),
@@ -229,9 +223,10 @@ pub fn run_migrate(
             Err(e) => {
                 let msg = format!("{e:#}");
                 if msg.contains("[INLINE-001]") {
-                    report
-                        .missing_in_plugin
-                        .push(format!("[MIGRATE-002] bridge `{name}` not found in plugin tree at {}", plugin_root.join("bridges").join(name).display()));
+                    report.missing_in_plugin.push(format!(
+                        "[MIGRATE-002] bridge `{name}` not found in plugin tree at {}",
+                        plugin_root.join("bridges").join(name).display()
+                    ));
                 } else {
                     return Err(e);
                 }
@@ -364,8 +359,8 @@ fn plan_profile_shell(
             report.profile_files_locally_edited.push(dst_rel);
             continue;
         };
-        let current = std::fs::read(&dst_abs)
-            .map_err(|e| anyhow!("reading {}: {e}", dst_abs.display()))?;
+        let current =
+            std::fs::read(&dst_abs).map_err(|e| anyhow!("reading {}: {e}", dst_abs.display()))?;
         // `profile_file_hash` is the function that produced `base`, so it
         // is the one that may compare against it. Today the co-owned
         // branch above catches every path whose recorded hash is

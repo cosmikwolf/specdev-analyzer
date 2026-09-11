@@ -143,7 +143,10 @@ fn re_inline_after_lineage_reset_is_byte_identical() {
         target.join("specs/specdev/reductions/blocks/embassy.yaml"),
         target.join("specs/specdev/codegen/rust/blocks/embassy/README.md"),
     ];
-    let bytes_first: Vec<Vec<u8>> = dst_files.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    let bytes_first: Vec<Vec<u8>> = dst_files
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
     let hash_first = Lineage::load(&layout.specdev_root)
         .unwrap()
         .blocks
@@ -163,8 +166,10 @@ fn re_inline_after_lineage_reset_is_byte_identical() {
     lineage.save(&layout.specdev_root).unwrap();
 
     run_inline_block(&layout, &fixture_plugin(), "embassy").unwrap();
-    let bytes_second: Vec<Vec<u8>> =
-        dst_files.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    let bytes_second: Vec<Vec<u8>> = dst_files
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
     let hash_second = Lineage::load(&layout.specdev_root)
         .unwrap()
         .blocks
@@ -211,7 +216,10 @@ fn inline_bridge_lex_order_fails_fast() {
     );
     let s = format!("{err:#}");
     assert!(s.contains("BRIDGE-LEX-001"), "{s}");
-    assert!(s.contains("`embassy+lvgl`"), "did-you-mean hint missing: {s}");
+    assert!(
+        s.contains("`embassy+lvgl`"),
+        "did-you-mean hint missing: {s}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -274,11 +282,7 @@ fn plugin_lint_catches_misnamed_bridge_dir() {
     std::fs::create_dir_all(bad_plugin.join("bridges/lvgl+embassy")).unwrap();
     let offenders = lint_plugin_bridges(&bad_plugin).unwrap();
     assert_eq!(offenders.len(), 1);
-    assert!(
-        offenders[0].contains("BRIDGE-LEX-001"),
-        "{}",
-        offenders[0]
-    );
+    assert!(offenders[0].contains("BRIDGE-LEX-001"), "{}", offenders[0]);
     assert!(offenders[0].contains("lvgl+embassy"), "{}", offenders[0]);
 }
 
@@ -299,7 +303,10 @@ fn snapshot_lineage_after_bootstrap_and_inline() {
     // (origin, origin_version, hash-prefix).
     let mut lines = Vec::<String>::new();
     if let Some(m) = &lineage.meta {
-        lines.push(format!("meta: profile={}, version={}", m.profile, m.plugin_version));
+        lines.push(format!(
+            "meta: profile={}, version={}",
+            m.profile, m.plugin_version
+        ));
     } else {
         lines.push("meta: missing".into());
     }

@@ -1,20 +1,20 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
 use crate::lineage::Lineage;
 use crate::{
     bootstrap::{self, BootstrapInputs},
-    context as context_mod,
+    cargo_toml as cargo_toml_mod, context as context_mod,
     diagnostics::report_error,
-    cargo_toml as cargo_toml_mod, drift, extract, inline, package_json as package_json_mod,
-    pubspec_yaml as pubspec_yaml_mod,
+    drift, extract, inline,
     layout::LayoutContext,
     manifest::profile as profile_mod,
-    merge, migrate,
+    merge, migrate, package_json as package_json_mod,
     plugin_root::{self, PluginRootInputs},
-    prompt, prose_lint, reduction, reference_lint, resolve, validate,
+    prompt, prose_lint, pubspec_yaml as pubspec_yaml_mod, reduction, reference_lint, resolve,
+    validate,
 };
+use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 // This module was lifted verbatim out of the former `main.rs`, where it
@@ -624,9 +624,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             dry_run,
             refresh,
-        } => {
-            run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh)
-        }
+        } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gen {
             project,
@@ -679,9 +677,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             ReportAction::GenDrift { project } => {
                 run_report_gen_drift(project, spec_path.as_deref())
             }
-            ReportAction::GenPlan { project } => {
-                run_report_gen_plan(project, spec_path.as_deref())
-            }
+            ReportAction::GenPlan { project } => run_report_gen_plan(project, spec_path.as_deref()),
         },
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
@@ -875,11 +871,7 @@ fn run_manifest(
     }
 }
 
-fn run_prompt(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    module: String,
-) -> ExitCode {
+fn run_prompt(project: PathBuf, spec_path: Option<&std::path::Path>, module: String) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
         Err(e) => {
@@ -1042,13 +1034,15 @@ fn run_extract_items(
             source_root,
         );
         let items = match &source_file {
-            Some(p) => match extract::extract_items_from_path(p, adapter.as_ref(), floor.as_deref()) {
-                Ok(v) => v,
-                Err(e) => {
-                    errors.push(format!("{name}: {e}"));
-                    Vec::new()
+            Some(p) => {
+                match extract::extract_items_from_path(p, adapter.as_ref(), floor.as_deref()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        errors.push(format!("{name}: {e}"));
+                        Vec::new()
+                    }
                 }
-            },
+            }
             None => Vec::new(),
         };
 
@@ -1419,9 +1413,7 @@ fn run_bootstrap(
     // Bootstrap has no spec.toml yet (it's writing one), so the
     // [paths].plugin_root step in the resolution chain is bypassed.
     // The flag and env vars still apply.
-    let inputs = PluginRootInputs {
-        flag: plugin_flag,
-    };
+    let inputs = PluginRootInputs { flag: plugin_flag };
     let plugin = match plugin_root::resolve_for_bootstrap(&inputs) {
         Ok(p) => p,
         Err(e) => {
@@ -1627,9 +1619,16 @@ fn run_migrate(
     } else if report.profile_skipped {
         eprintln!("profile shell: {skip_phrase}");
     }
-    let refresh_verb = if dry_run { "would refresh" } else { "refreshed" };
+    let refresh_verb = if dry_run {
+        "would refresh"
+    } else {
+        "refreshed"
+    };
     for rel in &report.profile_files_refreshed {
-        eprintln!("profile shell: {refresh_verb} {} (was stale)", rel.display());
+        eprintln!(
+            "profile shell: {refresh_verb} {} (was stale)",
+            rel.display()
+        );
     }
     if !report.profile_files_locally_edited.is_empty() {
         // Not a failure. The user's edit is the more valuable artifact and

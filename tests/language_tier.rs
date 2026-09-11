@@ -53,8 +53,7 @@ fn bootstrap_inlines_languages_tier_for_rust() {
     )
     .unwrap();
 
-    let inlined = target
-        .join("specs/specdev/schemas/inlined/languages/rust/items.schema.yaml");
+    let inlined = target.join("specs/specdev/schemas/inlined/languages/rust/items.schema.yaml");
     assert!(
         inlined.is_file(),
         "expected items.schema.yaml at {}",
@@ -70,10 +69,8 @@ fn bootstrap_inlines_languages_tier_for_rust() {
 
     // Layout discover() resolves to the same path.
     let layout = LayoutContext::discover(&target, None).expect("discover");
-    let expected = std::fs::canonicalize(
-        target.join("specs/specdev/schemas/inlined/languages"),
-    )
-    .unwrap();
+    let expected =
+        std::fs::canonicalize(target.join("specs/specdev/schemas/inlined/languages")).unwrap();
     assert_eq!(layout.inlined_languages_dir, expected);
 }
 
@@ -138,8 +135,7 @@ fn aggregator_retriever_registers_languages_prefix() {
     .unwrap();
 
     let layout = LayoutContext::discover(&target, None).expect("discover");
-    let docs = specdev_analyzer::aggregator::build_retriever_docs(&layout)
-        .expect("retriever docs");
+    let docs = specdev_analyzer::aggregator::build_retriever_docs(&layout).expect("retriever docs");
 
     // Registered under: full prefixed path, plain filename, and $id.
     let prefixed = "inlined/languages/rust/items.schema.yaml";

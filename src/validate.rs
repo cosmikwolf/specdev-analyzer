@@ -251,7 +251,10 @@ fn validate_aux_toml(
             Finding::new(
                 schema_rule,
                 Severity::Error,
-                format!("{label}.toml: {}", crate::diagnostics::format_schema_error(&err)),
+                format!(
+                    "{label}.toml: {}",
+                    crate::diagnostics::format_schema_error(&err)
+                ),
             )
             .with_file(toml_path.display().to_string())
             .with_pointer(err.instance_path().to_string()),
@@ -403,9 +406,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
         } else {
             // Surface-driven suppressions. Each schema is
             // independently gated; the manifest authors per-schema control.
-            if suppress_module
-                && entry.label == "specs/specdev/schemas/module.schema.yaml"
-            {
+            if suppress_module && entry.label == "specs/specdev/schemas/module.schema.yaml" {
                 continue;
             }
             if suppress_requirements
@@ -648,8 +649,7 @@ pub fn validate_modules_for(
 
                 // Stage 5: run executor + project graph_checks.
                 let mut exec_report = Report::default();
-                let graph =
-                    reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
+                let graph = reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
                 report.extend(exec_report.findings().to_vec());
 
                 execute_graph_checks(
@@ -832,16 +832,12 @@ fn execute_graph_checks(
                             .map(|arr| {
                                 arr.iter()
                                     .filter_map(|e| {
-                                        e.get("name")
-                                            .and_then(|n| n.as_str())
-                                            .map(str::to_string)
+                                        e.get("name").and_then(|n| n.as_str()).map(str::to_string)
                                     })
                                     .collect()
                             })
                             .unwrap_or_default();
-                        if let Some(rels) =
-                            v.get_mut("relations").and_then(|r| r.as_array_mut())
-                        {
+                        if let Some(rels) = v.get_mut("relations").and_then(|r| r.as_array_mut()) {
                             rels.retain(|r| {
                                 let from_in = r
                                     .get("from")
@@ -883,13 +879,14 @@ fn execute_graph_checks(
             // noise. Collapse into a single summary line in that case;
             // populated trees keep per-requirement diagnostics.
             "requirements_have_satisfiers" => {
-                match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
+                match (
+                    check.entity_scope.as_deref(),
+                    check.relation_scope.as_deref(),
+                ) {
                     (Some(es), Some(rs)) => {
-                        let view =
-                            filter_for_layer_dependency(&graph_json, es, rs, kindset);
-                        let mut findings = graph_checks::requirements_have_satisfiers(
-                            &view, rule, severity,
-                        );
+                        let view = filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                        let mut findings =
+                            graph_checks::requirements_have_satisfiers(&view, rule, severity);
                         if findings.len() > 1 && count_modules(&graph_json) == 0 {
                             let count = findings.len();
                             findings = vec![Finding::new(
@@ -917,7 +914,10 @@ fn execute_graph_checks(
             // vocabulary-neutral diagnostic (audio-plugin's
             // `parameters_have_bindings` is the first consumer).
             "entity_has_inbound_relation" => {
-                match (check.entity_scope.as_deref(), check.relation_scope.as_deref()) {
+                match (
+                    check.entity_scope.as_deref(),
+                    check.relation_scope.as_deref(),
+                ) {
                     (Some(es), Some(rs)) => {
                         // Fail closed when `entity_scope` names a kind that
                         // isn't in the effective set — e.g. `nih-plug.Parameter`
@@ -944,8 +944,7 @@ fn execute_graph_checks(
                         if !entity_scope_known {
                             Vec::new()
                         } else {
-                            let view =
-                                filter_for_layer_dependency(&graph_json, es, rs, kindset);
+                            let view = filter_for_layer_dependency(&graph_json, es, rs, kindset);
                             graph_checks::entity_has_inbound_relation(
                                 &view,
                                 rs,
@@ -965,12 +964,9 @@ fn execute_graph_checks(
             // the other primitives, this one reads filesystem source via
             // the items extraction surface. The warning promotes to error
             // when items[] is the authoritative substrate.
-            "verified_by_resolves" => verified_by_resolves_dispatch(
-                &graph_json,
-                layout,
-                rule,
-                severity,
-            ),
+            "verified_by_resolves" => {
+                verified_by_resolves_dispatch(&graph_json, layout, rule, severity)
+            }
             // `decision_supersedes_chain_consistency`: filter
             // relations by `relation_scope`, then for each entity matching
             // the source-side filter, count inbound relations and compare
@@ -985,9 +981,7 @@ fn execute_graph_checks(
                     // Joint-filter the graph view: entity_scope filters
                     // entities[], relation_scope filters relations[].
                     let entity_scope = check.entity_scope.as_deref().unwrap_or("");
-                    let view = filter_for_layer_dependency(
-                        &graph_json, entity_scope, rs, kindset,
-                    );
+                    let view = filter_for_layer_dependency(&graph_json, entity_scope, rs, kindset);
                     graph_checks::entity_attr_inbound_count(&view, ea, eav, exp, rule, severity)
                 }
                 _ => Vec::new(),
@@ -1005,7 +999,16 @@ fn execute_graph_checks(
             ) {
                 (Some(ek), Some(ea), Some(eav), Some(taf), Some(tek), Some(ta), Some(tav)) => {
                     graph_checks::entity_attr_target_attr_equals(
-                        &graph_json, ek, ea, eav, taf, tek, ta, tav, rule, severity,
+                        &graph_json,
+                        ek,
+                        ea,
+                        eav,
+                        taf,
+                        tek,
+                        ta,
+                        tav,
+                        rule,
+                        severity,
                     )
                 }
                 _ => Vec::new(),
@@ -1016,9 +1019,7 @@ fn execute_graph_checks(
             // gen-side hard refusal lives in `gen.rs`; this primitive
             // mirrors the reachability informational at validate time.
             "module_reachable_through_open_question" => {
-                graph_checks::module_reachable_through_open_question(
-                    &graph_json, rule, severity,
-                )
+                graph_checks::module_reachable_through_open_question(&graph_json, rule, severity)
             }
             other => vec![Finding::new(
                 "DOMAIN-003",
@@ -1046,10 +1047,7 @@ fn execute_graph_checks(
 /// `entity_scope`) and relations (by `relation_scope`). We always start
 /// from the unfiltered graph and let `filter_for_layer_dependency` do
 /// its own joint filtering.
-fn graph_json_full<'a>(
-    full: &'a JsonValue,
-    _scope_filtered: &'a JsonValue,
-) -> &'a JsonValue {
+fn graph_json_full<'a>(full: &'a JsonValue, _scope_filtered: &'a JsonValue) -> &'a JsonValue {
     full
 }
 
@@ -1079,8 +1077,7 @@ fn layer_dependency_dispatch(
         check.layer_field.as_deref(),
         check.layer_ordering.as_ref(),
     ) {
-        let view =
-            filter_for_layer_dependency(full_graph, entity_scope, relation_scope, kindset);
+        let view = filter_for_layer_dependency(full_graph, entity_scope, relation_scope, kindset);
         return graph_checks::layer_dependency_graph(&view, layer_field, ordering, rule, severity);
     }
 
@@ -1166,8 +1163,10 @@ fn verified_by_resolves_dispatch(
             project_root,
             source_root,
         ) {
-            Some(p) => items_extract::extract_items_from_path(&p, adapter.as_ref(), floor.as_deref())
-                .unwrap_or_default(),
+            Some(p) => {
+                items_extract::extract_items_from_path(&p, adapter.as_ref(), floor.as_deref())
+                    .unwrap_or_default()
+            }
             None => Vec::new(),
         };
         items_by_module.insert(module_name.to_string(), items.clone());
@@ -1184,7 +1183,9 @@ fn verified_by_resolves_dispatch(
     // candidates across modules.
     let mut all_module_names: Vec<String> = Vec::new();
     for ent in entities {
-        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
         if !kind.ends_with("Module") && kind != "Module" {
             continue;
         }
@@ -1196,11 +1197,15 @@ fn verified_by_resolves_dispatch(
     let mut findings = Vec::new();
 
     for ent in entities {
-        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else { continue };
+        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else {
+            continue;
+        };
         if !kind.ends_with("Requirement") && kind != "Requirement" {
             continue;
         }
-        let Some(req_id) = ent.get("name").and_then(|n| n.as_str()) else { continue };
+        let Some(req_id) = ent.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
         let Some(verified_by) = ent
             .get("attrs")
             .and_then(|a| a.get("verified_by"))
@@ -1285,9 +1290,7 @@ fn filter_for_layer_dependency(
         let key = parsed.to_string();
         let is_entity = kindset.canonical_roots.contains(&key) || kindset.entity(&key).is_some();
         if is_entity {
-            if let Some(entities) =
-                filtered.get_mut("entities").and_then(|v| v.as_array_mut())
-            {
+            if let Some(entities) = filtered.get_mut("entities").and_then(|v| v.as_array_mut()) {
                 entities.retain(|e| {
                     let Some(ekind) = e.get("kind").and_then(|v| v.as_str()) else {
                         return false;
@@ -1303,9 +1306,7 @@ fn filter_for_layer_dependency(
         let is_relation =
             kindset.canonical_relations.contains(&key) || kindset.relation(&key).is_some();
         if is_relation {
-            if let Some(relations) =
-                filtered.get_mut("relations").and_then(|v| v.as_array_mut())
-            {
+            if let Some(relations) = filtered.get_mut("relations").and_then(|v| v.as_array_mut()) {
                 relations.retain(|r| {
                     let Some(rkind) = r.get("kind").and_then(|v| v.as_str()) else {
                         return false;
@@ -1356,9 +1357,7 @@ fn filter_graph_for_check(
                 relation_extends_to(kindset, rkind, &key)
             });
         }
-    } else if let Some(entities) =
-        filtered.get_mut("entities").and_then(|v| v.as_array_mut())
-    {
+    } else if let Some(entities) = filtered.get_mut("entities").and_then(|v| v.as_array_mut()) {
         entities.retain(|e| {
             let Some(ekind) = e.get("kind").and_then(|v| v.as_str()) else {
                 return false;
@@ -2039,8 +2038,7 @@ pub fn validate_profiles_root_only(layout: &LayoutContext, report: &mut Report) 
     if !declares {
         return Ok(());
     }
-    let Some(root) = crate::layout::find_workspace_root_spec(layout.project_root.as_path())?
-    else {
+    let Some(root) = crate::layout::find_workspace_root_spec(layout.project_root.as_path())? else {
         return Ok(());
     };
     report.push(

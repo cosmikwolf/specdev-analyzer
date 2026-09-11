@@ -347,7 +347,11 @@ panic_handler = "abort"
         .arg("--write")
         .output()
         .expect("running manifest --write");
-    assert!(out.status.success(), "stderr:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stub_path = target.join("src/bin/standalone.rs");
     assert!(
         stub_path.is_file(),
@@ -552,10 +556,7 @@ fn validate_quiet_flag_suppresses_info_lines() {
 
 #[test]
 fn bridge_reduce_unresolved_includes_co_residency_hint() {
-    use specdev_analyzer::{
-        bootstrap, inline,
-        layout::LayoutContext,
-    };
+    use specdev_analyzer::{bootstrap, inline, layout::LayoutContext};
 
     let workspace = tmp_workspace("f002-bridge-hint");
     let target = workspace.join("proj");
