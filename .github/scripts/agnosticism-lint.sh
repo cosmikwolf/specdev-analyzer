@@ -6,8 +6,9 @@
 #      doc-strings, in-source `#[cfg(test)] mod tests` blocks, and
 #      explicitly allowlisted lines).
 #   2. PLANNING references: no phase nomenclature / decision-ID / doc /
-#      specdev-next pointers in `src/` or `tests/` (.rs only). See the
-#      "Planning-references check" section near the bottom for carve-outs.
+#      planning-workspace pointers under `src/` or `tests/` — every file,
+#      not just `.rs`. See the "Planning-references check" section near the
+#      bottom for carve-outs.
 #
 # Both run every invocation; the script exits non-zero if either fails.
 #
@@ -39,6 +40,11 @@
 #
 # 4. PATH exclusion — `src/embedded/` is excluded via grep's `--exclude-dir`
 #    (those YAML schemas legitimately enumerate names in `enum:` lists).
+#
+# The NAME check below keeps an `--include='*.rs'` filter and that one is
+# load-bearing, not an oversight: D51 bans a name baked into Rust *code*,
+# while a schema `enum:` or a fixture tree is allowed to name units outright.
+# The PLANNING check has no such carve-out and therefore has no filter.
 #
 # Languages (`rust`, `c`, `cpp`, `python`) are NOT D51-restricted; they're
 # universal infrastructure. The NAMES set excludes the `languages/` tier.
@@ -193,11 +199,45 @@ echo
 #
 # The analyzer surface (its tests included) is what users and integrators
 # read; internal planning nomenclature there is a dangling pointer into a
-# workspace they cannot see. Ban it across `src/` and `tests/` (.rs only):
+# workspace they cannot see. Ban it across `src/` and `tests/`:
 #
 #   - phase nomenclature: `Phase N`, `phase_N`, `phase-N`, `phaseN`
 #   - decision-ID references: `D<N>` (e.g. `D51`, `D62`)
-#   - design-doc pointers: `doc N`, `specdev-next`
+#   - design-doc pointers: `doc N`
+#   - planning-workspace pointers, by name and by shape (see below)
+#
+# #147: there was an `--include='*.rs'` filter here, and it made this check
+# blind to `src/embedded/` — the eleven JSON Schemas that `include_str!`
+# embeds into the shipped binary. They are as shipped as any `.rs` file and
+# they carried 23 planning pointers. Proven by turning it off: a literal
+# `# Phase 99 marker` appended to `src/embedded/root_kinds.schema.yaml` left
+# the lint at exit 0 with 0 hits. The filter is deleted rather than extended,
+# for the same reason #145 deleted the plugin half's extension list: an
+# inclusion list fails silently and gets one more entry per file type. The
+# `tests/` fixture trees come into scope with it — that is intended, and it
+# cost 32 further edits the original report had not measured.
+#
+# `-I` skips binary files without naming them. Measured: no file under
+# `src/` or `tests/` is binary today, so it is a safety net rather than a
+# live need — it is here so a fixture that gains one cannot turn this gate
+# red on bytes nobody wrote. The walk needs no git: the analyzer's
+# `.gitignore` covers only `/target`, which is outside both scan roots, so
+# a plain walk and `git ls-files` see the same set here. That is NOT true
+# on the plugin side, where an installed `node_modules/` is ignored and
+# must drop out — hence the two halves scan differently.
+#
+# The workspace-name term is TWO terms, deliberately:
+#
+#   - `specdev-(next|planning|lab)` — the workspace has had three names, and
+#     the pattern previously banned only the first. A rename silently
+#     disarmed it for two renames running.
+#   - `[0-9]{2}-<name>.md` — the rename-proof half, and the one that matters.
+#     Every planning doc is a numbered markdown file (`10-metaschema.md`,
+#     `11-issues.md`), so this catches the pointer whatever the directory is
+#     called. Measured: 0 false positives across the analyzer and the plugin
+#     tree. A bare `specdev-*` pattern is NOT usable — `specdev-analyzer` is
+#     a legitimate name with 115 occurrences, and the test temp-dir prefixes
+#     (`specdev-merge-`, `specdev-hello-rtic-`, …) add ~90 more.
 #
 # Unlike the name check above, planning refs are banned in doc-strings too —
 # that is where most of them lived. Carve-outs:
@@ -209,9 +249,16 @@ echo
 #      line that genuinely must carry such a token (e.g. a string fixture
 #      the lint itself consumes).
 #
+#      CAUTION, now that YAML is in scope: inside a block scalar
+#      (`description: >` or `description: |`) a trailing `# PLANNING-OK:`
+#      is NOT a comment — YAML folds it into the string value. Verified
+#      with a parser: the description then ends `... # PLANNING-OK: ...`.
+#      So in a block scalar, STRIP the pointer; do not escape it. The
+#      escape is safe on a `#`-comment line, a TOML line, and Rust code.
+#
 # Languages, error-code families (`BRIDGE-LEX-001`, `TEST-KIND-001`, …), and
 # dogfood finding IDs (`F-006`) are not planning pointers and do not match.
-PLANNING_RE='[Pp]hase[ _-]?[0-9]|\bD[0-9]+\b|\bdoc [0-9]+|specdev-next'
+PLANNING_RE='[Pp]hase[ _-]?[0-9]|\bD[0-9]+\b|\bdoc [0-9]+|specdev-(next|planning|lab)\b|\b[0-9]{2}-[a-z][a-z-]*\.md'
 
 analyzer_root_dir="$(dirname "$analyzer_src")"
 tests_dir="$analyzer_root_dir/tests"
@@ -219,11 +266,11 @@ scan_dirs=("$analyzer_src")
 [ -d "$tests_dir" ] && scan_dirs+=("$tests_dir")
 
 planning_count=0
-planning_hits=$(grep -rnE --include='*.rs' "$PLANNING_RE" "${scan_dirs[@]}" 2>/dev/null \
+planning_hits=$(grep -rnEI "$PLANNING_RE" "${scan_dirs[@]}" 2>/dev/null \
   | grep -vE 'D51-fallback|PLANNING-OK' || true)
 
 if [ -n "$planning_hits" ]; then
-  echo "planning-reference violation(s) — strip phase/decision/doc/specdev-next pointers"
+  echo "planning-reference violation(s) — strip phase/decision/doc/workspace pointers"
   echo "(or escape a genuine keeper with a trailing \` // PLANNING-OK: <reason>\`):"
   echo "$planning_hits" | sed 's/^/  /'
   planning_count=$(printf '%s\n' "$planning_hits" | grep -c .)
@@ -293,7 +340,7 @@ fi
 
 if [ -n "$plugin_planning_hits" ]; then
   echo "plugin-tree planning-reference violation(s) — the shipped plugin surface"
-  echo "must carry no phase/decision/doc/specdev-next pointers (restate the rationale"
+  echo "must carry no phase/decision/doc/workspace pointers (restate the rationale"
   echo "inline, or escape a genuine keeper with a trailing \` # PLANNING-OK: <reason>\`):"
   echo "$plugin_planning_hits" | sed 's/^/  /'
   plugin_planning_count=$(printf '%s\n' "$plugin_planning_hits" | grep -c .)

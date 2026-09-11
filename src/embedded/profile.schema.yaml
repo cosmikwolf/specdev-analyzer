@@ -1,6 +1,6 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/schema/meta/v1/profile.schema.yaml"
-title: "profile manifest (Phase 16, D52 / doc 21 §3)"
+title: "profile manifest (v1)"
 description: |
   Validates `profiles/<name>/profile.yaml`. Authored on the plugin side;
   byte-copied into a project at `specs/specdev/profile.yaml` during
@@ -67,7 +67,7 @@ properties:
           ShapeKind (closed enum): which Cargo.toml shape this profile
           renders. `workspace` is descriptive metadata only; the
           `[workspace]` table presence in spec.toml is the actual
-          dispatch signal (doc 21 §3.5).
+          dispatch signal.
         type: string
         enum: [library, binary, workspace, plugin]
       default_edition:
@@ -526,8 +526,8 @@ properties:
       has_modules:
         description: |
           When false, validate-pass suppresses LAYOUT-003 on
-          module.schema.yaml absence (and any other no-module-surface
-          heuristics — see doc 21 §8 step 8 audit).
+          module.schema.yaml absence, and any other no-module-surface
+          heuristic.
         type: boolean
       has_requirements:
         description: |

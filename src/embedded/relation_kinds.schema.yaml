@@ -4,8 +4,8 @@ title: "Canonical relation kinds (v1)"
 description: >
   Closed vocabulary of relation kinds. Adding a new canonical relation
   requires a metaschema version bump. Block-/bridge-contributed relations
-  declare `extends:` against this enum. Embedded per doc 15 §11 invariant 5.
-  See specdev-lab/10-metaschema.md for the considered-and-deferred list.
+  declare `extends:` against this enum. Embedded in the analyzer rather
+  than read from the plugin tree, so analysis needs no plugin lookup.
 
 $defs:
   RelationKind:

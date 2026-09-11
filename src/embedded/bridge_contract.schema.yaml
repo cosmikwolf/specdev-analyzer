@@ -1,11 +1,11 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/schema/meta/v1/bridge_contract.schema.yaml"
-title: "bridge contract manifest (Phase 16, D52 / doc 21 §5)"
+title: "bridge contract manifest (v1)"
 description: |
   Validates `bridges/<a>+<b>/contract.yaml`. The endpoint pair is NOT
   restated in the manifest body — the directory name `<a>+<b>` is
-  canonical per doc 15 invariants 2 + 4 (structural ownership +
-  lex-ordered owner names). Inlined alongside the bridge's reduction
+  canonical: it carries both structural ownership and the lex-ordered
+  owner names. Inlined alongside the bridge's reduction
   file; participates in the bridge's per-unit content_hash.
 
 type: object
@@ -17,7 +17,7 @@ properties:
       BindingLocality (closed enum, 2 values shipping in v1):
         endpoint_module     — bindings table lives on the module owning
                               either endpoint block's table; intra-module
-                              wiring (Phase 7 v1 restriction).
+                              wiring (a v1 restriction).
         plugin_shell_unique — co-residency on the project's unique
                               plugin_shell-layer module. Auto-resolution
                               when there's exactly one such module.
