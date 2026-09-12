@@ -37,6 +37,11 @@ paired_files:
   - { template_file: templates/playwright.config.ts.template, target: playwright.config.ts }
   - { template_file: templates/gitignore.template,            target: .gitignore }
   - { template_file: templates/gitkeep.template,              target: app/.gitkeep }
+  # pnpm 10 blocks a dependency's install scripts by default and still
+  # exits 0, so a native binary silently never builds. The allowlist has
+  # to live here: package.json is gen output and `manifest --write`
+  # overwrites it.
+  - { template_file: templates/pnpm-workspace.yaml.template,  target: pnpm-workspace.yaml }
 
 # Route files derived per module by `specdev-analyzer derive --write`
 # (run by /spec-gen after the manifest, for every module on every gen).

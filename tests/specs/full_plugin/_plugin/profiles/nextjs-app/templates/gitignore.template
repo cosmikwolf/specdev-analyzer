@@ -21,6 +21,14 @@
 # production
 /build
 
+# local databases — a dev or test datasource writes these into the tree.
+# `-wal` / `-shm` are SQLite's WAL sidecars and `-journal` its rollback
+# journal; which pair appears depends on the journal mode, so ignore all.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # misc
 .DS_Store
 *.pem

@@ -8,6 +8,9 @@
 //! bootstrapped_at = "2026-04-28T10:00:00Z"
 //! profile         = "firmware-layered"
 //!
+//! [tooling]
+//! analyzer_version = "0.2.0"
+//!
 //! [blocks.embassy]
 //! origin         = "plugin"
 //! origin_version = "0.4.2"
@@ -63,6 +66,10 @@ pub const LINEAGE_FILE: &str = "lineage.toml";
 pub struct Lineage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<MetaSection>,
+    /// Which analyzer last wrote this file. Refreshed on every write; the
+    /// stamp lives in [`Lineage::save`], not here and not in `[meta]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tooling: Option<ToolingSection>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub blocks: BTreeMap<String, Entry>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -80,6 +87,18 @@ pub struct MetaSection {
     pub plugin_version: String,
     pub bootstrapped_at: String,
     pub profile: String,
+}
+
+/// Tooling provenance. Deliberately **not** a field of [`MetaSection`]:
+/// `[meta]` is frozen at bootstrap (`bootstrapped_at` never moves again),
+/// and a live field beside a frozen one is one table with two lifetimes —
+/// a shape that has produced defects in this file before. A reader can
+/// therefore trust every key in `[meta]` to describe the bootstrap, and
+/// every key here to describe the last write.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolingSection {
+    /// `CARGO_PKG_VERSION` of the analyzer that performed the last write.
+    pub analyzer_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,7 +136,16 @@ impl Lineage {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
-        let text = self.to_toml_string()?;
+        // Stamp here, not in `to_toml_string()`: that method is kept pure so
+        // the byte-stability test can compare two serializations of the same
+        // value. `save()` is the single funnel every writer already goes
+        // through (`bootstrap`, `inline` x2, `merge`, `migrate`), so a future
+        // sixth writer inherits the stamp with nothing to remember.
+        let mut stamped = self.clone();
+        stamped.tooling = Some(ToolingSection {
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+        });
+        let text = stamped.to_toml_string()?;
         std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }
@@ -204,7 +232,17 @@ mod tests {
         l.save(&dir).unwrap();
 
         let l2 = Lineage::load(&dir).unwrap();
-        assert_eq!(l, l2);
+        // `save()` stamps `[tooling]`, so save -> load is deliberately NOT
+        // the identity on that one field. Assert the stamp landed, then
+        // compare the rest.
+        assert_eq!(
+            l2.tooling.as_ref().map(|t| t.analyzer_version.as_str()),
+            Some(env!("CARGO_PKG_VERSION")),
+            "save() must stamp the running analyzer's version"
+        );
+        let mut l2_rest = l2;
+        l2_rest.tooling = l.tooling.clone();
+        assert_eq!(l, l2_rest);
     }
 
     #[test]
@@ -263,7 +301,17 @@ mod tests {
             lineage.save(&dir).unwrap();
             let loaded = Lineage::load(&dir).unwrap();
             let _ = fs::remove_dir_all(&dir);
-            proptest::prop_assert_eq!(loaded, lineage);
+            // Every field round-trips unchanged except `[tooling]`, which
+            // `save()` overwrites with the running analyzer's version -
+            // whatever the input carried. Check that first, because it is
+            // the one field where equality would be the bug.
+            proptest::prop_assert_eq!(
+                loaded.tooling.as_ref().map(|t| t.analyzer_version.as_str()),
+                Some(env!("CARGO_PKG_VERSION"))
+            );
+            let mut loaded_rest = loaded;
+            loaded_rest.tooling = lineage.tooling.clone();
+            proptest::prop_assert_eq!(loaded_rest, lineage);
         }
     }
 
@@ -289,15 +337,23 @@ mod tests {
         let bridges = btree_map(bridge_name, entry_strategy(), 0..4);
         let profile_files = btree_map(profile_path, hash, 0..8);
         let meta = option::of(meta_strategy());
+        // `[tooling]` is generated too, not pinned to None: the round-trip
+        // property is the only thing that would catch a serde attribute on
+        // the new table that silently drops it on the way back in.
+        let tooling = option::of(
+            "[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}(-[a-z]{1,8})?"
+                .prop_map(|analyzer_version| ToolingSection { analyzer_version }),
+        );
 
-        (meta, blocks, bridges, profile_files).prop_map(|(meta, blocks, bridges, profile_files)| {
-            Lineage {
+        (meta, tooling, blocks, bridges, profile_files).prop_map(
+            |(meta, tooling, blocks, bridges, profile_files)| Lineage {
                 meta,
+                tooling,
                 blocks,
                 bridges,
                 profile_files,
-            }
-        })
+            },
+        )
     }
 
     fn entry_strategy() -> impl proptest::strategy::Strategy<Value = Entry> {
