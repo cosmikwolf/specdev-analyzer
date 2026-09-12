@@ -66,6 +66,11 @@ fn manifest(project: &Path, args: &[&str]) -> (i32, String) {
     )
 }
 
+/// Every `paired_files` target the `nextjs-app` profile declares, in
+/// declaration order. This list is the ONE place the set is written down:
+/// the test below compares the profile's own declarations against it, so a
+/// new entry needs no second edit and no count in a test name (#140 added
+/// `pnpm-workspace.yaml` and had to change both).
 const PAIRED: &[&str] = &[
     "tsconfig.json",
     "next.config.ts",
@@ -73,13 +78,27 @@ const PAIRED: &[&str] = &[
     "playwright.config.ts",
     ".gitignore",
     "app/.gitkeep",
+    // pnpm 10 refuses a dependency's install scripts by default and still
+    // exits 0. The allowlist cannot live in package.json, which is gen
+    // output that `manifest --write` overwrites.
+    "pnpm-workspace.yaml",
 ];
 
 #[test]
-fn nextjs_app_profile_declares_six_paired_files_and_bootstrap_copies_templates() {
+fn nextjs_app_paired_files_match_the_declared_set_and_bootstrap_copies_every_template() {
     let project = fresh_nextjs_app("decl");
     let profile = Profile::load(&project.join("specs/specdev/profile.yaml")).unwrap();
-    assert_eq!(profile.paired_files.len(), 6);
+    let declared: Vec<&str> = profile
+        .paired_files
+        .iter()
+        .map(|r| r.target.as_str())
+        .collect();
+    assert_eq!(
+        declared, PAIRED,
+        "the profile's paired_files targets and this test's PAIRED list \
+         disagree. Update PAIRED — it is the single place the set is \
+         written down, and every other assertion in this file reads it."
+    );
     for row in &profile.paired_files {
         let t = project.join("specs/specdev").join(&row.template_file);
         assert!(t.is_file(), "bootstrap must copy {}", t.display());
@@ -115,9 +134,10 @@ fn write_creates_paired_files_once_and_keeps_them_after() {
     fs::write(project.join("next.config.ts"), "// user-owned\n").unwrap();
     let (code, err) = manifest(&project, &["--write"]);
     assert_eq!(code, 0, "{err}");
+    let expected_kept = format!("kept {} existing paired file(s):", PAIRED.len());
     assert!(
-        err.contains("kept 6 existing paired file(s):"),
-        "expected one summary line, got:\n{err}"
+        err.contains(&expected_kept),
+        "expected one summary line reading `{expected_kept}`, got:\n{err}"
     );
     assert_eq!(
         err.matches("kept ").count(),
@@ -135,7 +155,8 @@ fn write_creates_paired_files_once_and_keeps_them_after() {
     let (code, err) = manifest(&project, &["--write"]);
     assert_eq!(code, 0, "{err}");
     assert!(project.join("app/.gitkeep").is_file());
-    assert!(err.contains("kept 5 existing paired file(s):"), "{err}");
+    let kept_after_delete = format!("kept {} existing paired file(s):", PAIRED.len() - 1);
+    assert!(err.contains(&kept_after_delete), "{err}");
 }
 
 #[test]

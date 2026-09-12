@@ -35,6 +35,17 @@ fn full_plugin() -> PathBuf {
         .join("_plugin")
 }
 
+/// The LIVE plugin tree at the conventional sibling path, or `None`.
+/// `None` is a real state, not an error: CI checks out this repository
+/// alone, and the plugin lives in a second private repository it cannot
+/// read.
+fn live_plugin_tree() -> Option<PathBuf> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("specdev");
+    p.is_dir().then_some(p)
+}
+
 fn tmp_dir(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
         "specdev-ts-items-{tag}-{}-{}",
@@ -60,6 +71,13 @@ const TS_SOURCE: &str = r#"export const maxRetries = 3;
 export let mutableLimit = 10;
 const hidden = 1;
 export const [first, second] = [1, 2];
+export const [head, ...tail] = [1, 2, 3];
+export const [defaulted = 1] = [];
+export const { GET, POST } = handlers;
+export const { key: renamed } = shape;
+export const { withDefault = 2 } = shape;
+export const { kept, ...others } = shape;
+export const { annotated }: Shape = shape;
 
 export function add(a: number, b: number): number {
   return a + b;
@@ -190,6 +208,76 @@ export default function Page(): ReactNode {
 }
 "#;
 
+/// #139's root cause, guarded: a unit's own canonical code shape was
+/// invisible to the tool that audits it. `extract-items` returned `items: []`
+/// for `export const { GET, POST } = handlers;` — the exact line the
+/// `next-auth` block README prints under "Never add a third export" — so every
+/// item on the two auth modules sat in `in_spec_only` drift no source could
+/// clear.
+///
+/// The fixture assertions above cover the grammar. This covers the CONTRACT:
+/// each TypeScript reference package is the unit's certified code, so if a
+/// block starts prescribing a shape the extractor cannot see, this goes red at
+/// the block rather than in a dogfood tree three phases later.
+///
+/// Local-only, like the fixture mirror test: it reads the live plugin tree,
+/// which CI cannot check out from a second private repository. Skips cleanly
+/// when the sibling tree is absent — a skip is invisible in an exit code, so
+/// the reason is printed.
+#[test]
+fn every_typescript_reference_source_yields_items() {
+    let Some(plugin) = live_plugin_tree() else {
+        eprintln!("skip: live plugin tree not present at the sibling path");
+        return;
+    };
+    let mut checked = 0;
+    let mut empty = Vec::new();
+    for unit in ["blocks", "bridges"] {
+        let dir = plugin.join(unit);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let src_dir = entry.path().join("reference/typescript/src");
+            let Ok(files) = std::fs::read_dir(&src_dir) else {
+                continue;
+            };
+            for f in files.flatten() {
+                let path = f.path();
+                let ext = match path.extension().and_then(|e| e.to_str()) {
+                    Some(e @ ("ts" | "tsx")) => e,
+                    _ => continue,
+                };
+                let src = std::fs::read_to_string(&path).expect("read reference source");
+                // A file with no `export` legitimately has no items.
+                if !src.contains("export ") {
+                    continue;
+                }
+                let items = extract_items_from_source(&src, ext, &TypeScriptAdapter, None)
+                    .expect("extract items");
+                checked += 1;
+                if items.is_empty() {
+                    empty.push(path.display().to_string());
+                }
+            }
+        }
+    }
+    assert!(
+        checked > 0,
+        "walked zero TypeScript reference sources — a walk bug reads as a clean pass"
+    );
+    assert!(
+        empty.is_empty(),
+        "{} reference source(s) export something the item extractor cannot see. \
+         That is #139's shape: the unit prescribes a code form the tooling is \
+         blind to, so every item on a module written that way lands in \
+         permanent in_spec_only drift. Teach `languages/typescript/items.scm` \
+         the shape, then widen the schema wording to match:\n  {}",
+        empty.len(),
+        empty.join("\n  ")
+    );
+}
+
 fn pairs(src: &str, ext: &str) -> Vec<(String, String)> {
     extract_items_from_source(src, ext, &TypeScriptAdapter, None)
         .unwrap()
@@ -266,10 +354,36 @@ fn typescript_visibility_and_non_item_shapes_are_filtered() {
         !got.contains(&("const".to_string(), "hidden".to_string())),
         "got: {got:#?}"
     );
-    // Destructured bindings have no identifier name.
+    // Destructured exports ARE exports (#139). The next-auth block and its
+    // bridge both prescribe `export const { … } = …` as THE configuration
+    // form, so a shape the extractor cannot see puts every item on those
+    // modules into permanent, unresolvable drift. One item per bound
+    // identifier, for every binding form at one level of destructuring.
+    for n in [
+        // array pattern: plain, rest, and default
+        "first",
+        "second",
+        "head",
+        "tail",
+        "defaulted",
+        // object pattern: shorthand, rename, default, rest, and annotated
+        "GET",
+        "POST",
+        "renamed",
+        "withDefault",
+        "kept",
+        "others",
+        "annotated",
+    ] {
+        assert!(
+            got.contains(&("const".to_string(), n.to_string())),
+            "expected a `const` item named `{n}` from a destructured export; got: {got:#?}"
+        );
+    }
+    // The source KEY of a rename is not the binding, so it is not an item.
     assert!(
-        !names.contains(&"first") && !names.contains(&"second"),
-        "got: {names:?}"
+        !names.contains(&"key"),
+        "the rename's source key is not a local binding; got: {names:?}"
     );
 
     // Member rule.
