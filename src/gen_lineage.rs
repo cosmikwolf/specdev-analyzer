@@ -964,10 +964,7 @@ impl GenPlanCategory {
     /// tool did not put there". Neither regenerates; both must be surfaced
     /// rather than skipped silently, because a skipped module reads as done.
     pub fn needs_confirmation(self) -> bool {
-        matches!(
-            self,
-            GenPlanCategory::Edited | GenPlanCategory::Unrecorded
-        )
+        matches!(self, GenPlanCategory::Edited | GenPlanCategory::Unrecorded)
     }
 }
 

@@ -122,7 +122,10 @@ fn unrecorded_manifest_at_target_is_refused_and_left_intact() {
 
     let (code, _, err) = run(&project, "manifest", &["--write"]);
 
-    assert_eq!(code, 1, "refusal is a data-level refusal, not a crash: {err}");
+    assert_eq!(
+        code, 1,
+        "refusal is a data-level refusal, not a crash: {err}"
+    );
     assert!(
         err.contains("[MANIFEST-003]"),
         "refusal carries its code: {err}"
@@ -168,7 +171,10 @@ fn greenfield_write_is_untouched_by_the_guard() {
 
     let (code, _, err) = run(&project, "manifest", &["--write"]);
 
-    assert_eq!(code, 0, "nothing at the target means nothing to protect: {err}");
+    assert_eq!(
+        code, 0,
+        "nothing at the target means nothing to protect: {err}"
+    );
     assert!(project.join("Cargo.toml").exists());
 }
 
@@ -196,11 +202,7 @@ fn output_flag_is_the_callers_business_and_is_not_guarded() {
     write_handwritten_manifest(&project);
     let dest = project.join("elsewhere.toml");
 
-    let (code, _, err) = run(
-        &project,
-        "manifest",
-        &["--output", dest.to_str().unwrap()],
-    );
+    let (code, _, err) = run(&project, "manifest", &["--output", dest.to_str().unwrap()]);
 
     assert_eq!(code, 0, "{err}");
     assert!(dest.exists(), "--output wrote where it was told");
