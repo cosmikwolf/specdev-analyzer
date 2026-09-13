@@ -377,6 +377,41 @@ fn plan_module_with_no_lineage_is_new() {
 }
 
 #[test]
+fn gen_drift_says_when_it_has_no_data_rather_than_looking_clean() {
+    // `files: []` reads as "every generated file is clean". On a project that
+    // adopted specdev over existing code it means the opposite: nothing was
+    // ever recorded, so this command has no opinion about the tree at all.
+    // A reader who cannot tell those apart concludes a hand-written tree was
+    // audited when it was not.
+    let root = tmp("drift-nodata");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+
+    let report = run_gen_drift(&layout).unwrap();
+    assert!(report.files.is_empty());
+    assert!(
+        report.nothing_recorded,
+        "an empty lineage must say so, not just render an empty list"
+    );
+
+    // And the moment anything is recorded, the flag flips: the report now
+    // genuinely covers the tree.
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/widget.rs"), "// generated\n").unwrap();
+    record_files_accepting_edits(
+        &layout,
+        Some("Widget"),
+        &[root.join("src/widget.rs")],
+        "2026-09-13T00:00:00Z",
+    )
+    .unwrap();
+
+    let report = run_gen_drift(&layout).unwrap();
+    assert!(!report.nothing_recorded);
+    assert_eq!(report.files.len(), 1);
+}
+
+#[test]
 fn plan_module_whose_declared_source_already_exists_is_unrecorded_not_new() {
     // The brownfield case: a project adopted specdev over code it already
     // had. Nothing is recorded, so the old code called every module `new`
