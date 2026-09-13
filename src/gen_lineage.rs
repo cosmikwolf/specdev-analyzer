@@ -918,8 +918,21 @@ pub fn run_gen_drift(layout: &LayoutContext) -> Result<GenDriftReport> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GenPlanCategory {
-    /// No gen-lineage entry for the module — never generated. Regenerate.
+    /// No gen-lineage entry for the module, and nothing at its declared
+    /// `source_file` either — genuinely never generated. Regenerate.
     New,
+    /// No gen-lineage entry, but the module's declared `source_file` already
+    /// exists on disk. This tool did not write it, so it is hand-authored:
+    /// a project that adopted specdev over a tree it already had.
+    ///
+    /// Distinct from `New` because the action is different. `New` means
+    /// "emit it"; this means "ask first" — regenerating would overwrite
+    /// working code the plan never mentioned. Same fact `derive` reports as
+    /// `conflict: unrecorded file at target`, and the same one
+    /// `manifest --write` refuses on ([`MANIFEST-003`]).
+    ///
+    /// [`MANIFEST-003`]: crate::gen_lineage::is_recorded
+    Unrecorded,
     /// Output clean AND the recorded `input_hash` matches the freshly
     /// assembled prompt. Inputs unchanged → skip.
     Unchanged,
@@ -944,6 +957,18 @@ impl GenPlanCategory {
             GenPlanCategory::New | GenPlanCategory::Stale | GenPlanCategory::Missing
         )
     }
+
+    /// Whether this verdict needs a human decision before `/spec-gen` acts.
+    ///
+    /// `Edited` and `Unrecorded` both mean "there is work on disk that this
+    /// tool did not put there". Neither regenerates; both must be surfaced
+    /// rather than skipped silently, because a skipped module reads as done.
+    pub fn needs_confirmation(self) -> bool {
+        matches!(
+            self,
+            GenPlanCategory::Edited | GenPlanCategory::Unrecorded
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -961,9 +986,9 @@ pub struct GenPlanModule {
     /// skill's re-gate set is `category == unchanged && !verified`: run
     /// the compile gate again, do not regenerate.
     pub verified: bool,
-    /// Affected output files — populated only for `edited` / `missing` so
-    /// the skill can name them when it surfaces the module. Sorted; empty
-    /// for the other categories.
+    /// Affected output files — populated for `edited` / `missing` /
+    /// `unrecorded` so the skill can name them when it surfaces the module.
+    /// Sorted; empty for the other categories.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
 }
@@ -1089,11 +1114,36 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
             .collect();
 
         if entries.is_empty() {
+            // No lineage row. Before calling this `new`, ask the question the
+            // old code never asked: is there already a file at the path this
+            // module declares? If there is, we did not write it, and
+            // regenerating would overwrite hand-authored work that the plan
+            // gave no warning about.
+            //
+            // Only an explicit `source_file` is consulted. When the spec does
+            // not name one, the emission path is the codegen prose's to
+            // decide and is not knowable here — that stays `new`, which is
+            // the honest answer rather than a guess.
+            let module_path = layout.modules_dir.join(format!("{name}.toml"));
+            let declared = crate::items::source_map::load_source_file_override(&module_path);
+            let existing: Vec<String> = declared
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .filter(|rel| layout.project_root.join(rel).is_file())
+                .map(|rel| vec![rel_key(Path::new(rel))])
+                .unwrap_or_default();
+
+            let category = if existing.is_empty() {
+                GenPlanCategory::New
+            } else {
+                GenPlanCategory::Unrecorded
+            };
             report.modules.push(GenPlanModule {
                 module: name.clone(),
-                category: GenPlanCategory::New,
+                category,
                 verified,
-                files: Vec::new(),
+                files: existing,
             });
             continue;
         }
