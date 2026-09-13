@@ -155,6 +155,13 @@ pub enum Command {
         /// Directory to bootstrap into. Created if it doesn't exist;
         /// fails if `<target>/specs/specdev/` is already present.
         target: PathBuf,
+        /// Overwrite project files already sitting at a planned destination.
+        ///
+        /// Without it, bootstrap refuses and names every collision, so a tree
+        /// carrying hand-authored `specs/*.toml` cannot lose them to the
+        /// profile template.
+        #[arg(long)]
+        force: bool,
     },
     /// Inline a canonical block from the plugin into the project.
     Inline {
@@ -602,7 +609,8 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             language,
             name,
             target,
-        } => run_bootstrap(plugin_flag, profile, language, name, target),
+            force,
+        } => run_bootstrap(plugin_flag, profile, language, name, target, force),
         Command::Inline {
             project,
             block,
@@ -1491,6 +1499,7 @@ fn run_bootstrap(
     language: String,
     name: String,
     target: PathBuf,
+    force: bool,
 ) -> ExitCode {
     // Bootstrap has no spec.toml yet (it's writing one), so the
     // [paths].plugin_root step in the resolution chain is bypassed.
@@ -1509,7 +1518,11 @@ fn run_bootstrap(
         project_name: name,
         target_dir: target,
     };
-    match bootstrap::run_bootstrap(&plugin, &bootstrap_inputs) {
+    match bootstrap::run_bootstrap_with(
+        &plugin,
+        &bootstrap_inputs,
+        bootstrap::BootstrapOptions { force },
+    ) {
         Ok(()) => {
             eprintln!(
                 "bootstrapped {} from profile {} ({}) at {}",
