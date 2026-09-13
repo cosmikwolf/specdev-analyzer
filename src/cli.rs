@@ -207,6 +207,14 @@ pub enum Command {
         /// language-neutral.
         #[arg(long)]
         write: bool,
+        /// Overwrite a manifest that `gen-lineage.toml` has no row for.
+        ///
+        /// Without it, `--write` refuses to replace a build manifest this
+        /// tool did not write, because that file is hand-authored and
+        /// carries fields the spec has no place for. Pass this only when
+        /// the file at the target is genuinely disposable.
+        #[arg(long)]
+        accept_edits: bool,
     },
     /// Thin alias of `manifest` for rust-language projects (Cargo.toml
     /// emission). Errors on non-rust projects — use `manifest` there.
@@ -611,9 +619,17 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             output,
             write,
-        } => run_manifest(project, spec_path.as_deref(), output, write, false),
+            accept_edits,
+        } => run_manifest(
+            project,
+            spec_path.as_deref(),
+            output,
+            write,
+            false,
+            accept_edits,
+        ),
         Command::CargoToml { project, output } => {
-            run_manifest(project, spec_path.as_deref(), output, false, true)
+            run_manifest(project, spec_path.as_deref(), output, false, true, false)
         }
         Command::Context {
             project,
@@ -711,6 +727,7 @@ fn run_manifest(
     output: Option<PathBuf>,
     write: bool,
     require_rust: bool,
+    accept_edits: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -789,6 +806,71 @@ fn run_manifest(
     ) {
         report_error(&e);
         return ExitCode::from(1);
+    }
+
+    // Refuse to replace a build manifest this tool did not write.
+    //
+    // The manifest is pure output, rewritten on every `--write`. That is
+    // correct for a project specdev generated, and wrong for a project that
+    // adopted specdev over a tree it already had: there the file on disk is
+    // hand-authored, carries fields the spec has no place for (`version`,
+    // `authors`, a `postinstall` script, a `resolutions` block), and this
+    // write discards them with no warning and exit 0.
+    //
+    // The matrix is `derive`'s, and the order matters — identical bytes are
+    // tested BEFORE the lineage row, so a repeat `--write` with nothing to
+    // record (the analyzer driven directly, or a `/spec-gen` run interrupted
+    // between Step 6 and Step 6.5) is not a conflict. Only bytes that both
+    // differ from our render AND have no lineage row belong to the user:
+    //
+    //   absent                         -> write
+    //   identical to the render        -> write (nothing to lose)
+    //   recorded                       -> write (ours; the regenerate loop)
+    //   different AND unrecorded       -> REFUSE
+    //
+    // Scoped to the primary manifest under `--write`. The profile's gen-owned
+    // siblings (`pnpm-workspace.yaml`) are documented as overwritten on every
+    // write and are rendered wholly from `[workspace].members[]`, so they are
+    // left on that contract. `--output <path>` names a destination explicitly
+    // and is the caller's business, the same class as a shell redirection.
+    if write && !accept_edits {
+        let rel = PathBuf::from(default_filename);
+        let abs = layout.project_root.join(&rel);
+        let on_disk = match std::fs::read(&abs) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                eprintln!("error: reading {}: {e}", abs.display());
+                return ExitCode::from(2);
+            }
+        };
+        if let Some(bytes) = on_disk {
+            if bytes != text.as_bytes() {
+                match specdev_analyzer::gen_lineage::is_recorded(&layout.specdev_root, &rel) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        eprintln!(
+                            "error: [MANIFEST-003] refusing to overwrite {default_filename}: \
+                             unrecorded file at target\n\n\
+                             It has no row in specs/specdev/gen-lineage.toml, so this tool did \
+                             not write it, and its bytes differ from what the spec renders. \
+                             Overwriting would discard whatever it declares that the spec does \
+                             not yet carry.\n\n\
+                             If the file is yours to keep: fold what it declares into the spec \
+                             ([[external_deps]] in architecture.toml for project-wide \
+                             dependencies, external_deps[] in a module for module-scoped ones), \
+                             then delete it and re-run.\n\
+                             If it is genuinely disposable: re-run with --accept-edits."
+                        );
+                        return ExitCode::from(1);
+                    }
+                    Err(e) => {
+                        report_error(&e);
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+        }
     }
 
     let target = output.or_else(|| write.then(|| layout.project_root.join(default_filename)));

@@ -819,6 +819,23 @@ pub(crate) fn rel_key(rel: &Path) -> String {
         .join("/")
 }
 
+/// Whether `rel` — a project-root-relative path — carries a row in
+/// `gen-lineage.toml`.
+///
+/// The question is narrow and deliberate: **did this tool write the file that
+/// is standing at that path?** A `false` on a file that exists means the file
+/// is the user's, not an output of ours. That is the same fact `derive`
+/// reports as `conflict: unrecorded file at target` — see [`crate::derive`].
+///
+/// A missing `gen-lineage.toml` yields `false` for every path, which is the
+/// correct answer: a project that never ran `/spec-gen` owns everything in
+/// its own tree.
+pub fn is_recorded(specdev_root: &Path, rel: &Path) -> Result<bool> {
+    Ok(GenLineage::load(specdev_root)?
+        .files
+        .contains_key(&rel_key(rel)))
+}
+
 /// Per-file gen-drift classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
