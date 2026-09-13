@@ -125,10 +125,34 @@ fn proposal_path(target: &Path, module: &str) -> PathBuf {
         .join(format!("{module}.proposal.yaml"))
 }
 
+/// The audit log an apply wrote for `module`.
+///
+/// The filename carries the apply's timestamp (`<module>.<stamp>.applied.yaml`)
+/// so a second apply cannot overwrite the first one's provenance, which is the
+/// whole point of an audit log. Tests therefore have to look the file up rather
+/// than name it. Panics if there is not exactly one — two would mean an apply
+/// ran twice when the test expected once.
 fn audit_path(target: &Path, module: &str) -> PathBuf {
-    target
-        .join("specs/specdev/upstream/items-sync")
-        .join(format!("{module}.applied.yaml"))
+    let dir = target.join("specs/specdev/upstream/items-sync");
+    let mut hits: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| {
+                    let n = p.file_name().unwrap_or_default().to_string_lossy();
+                    n.starts_with(&format!("{module}.")) && n.ends_with(".applied.yaml")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    hits.sort();
+    match hits.len() {
+        1 => hits.pop().unwrap(),
+        // Return a non-existent path so `.exists()` assertions read false
+        // rather than panicking before the assertion runs.
+        0 => dir.join(format!("{module}.<none>.applied.yaml")),
+        n => panic!("expected one audit log for `{module}`, found {n}: {hits:?}"),
+    }
 }
 
 /// Mutate an existing proposal file, setting the top-level approval
@@ -658,4 +682,36 @@ satisfies = ["DEMO-1"]
     let new_text = std::fs::read_to_string(&module_path).unwrap();
     assert_eq!(new_text, original, "skip should leave file untouched");
     assert!(audit_path(&target, "Foo").exists());
+}
+
+#[test]
+fn two_applies_cannot_write_the_same_audit_path() {
+    // The audit log exists to record which entries were applied and when.
+    // A fixed `<module>.applied.yaml` meant the second apply silently
+    // discarded the first one's provenance -- losing exactly the history the
+    // file is for. The stamp in the name is what prevents that.
+    use specdev_analyzer::items::apply::audit_path_at;
+    use specdev_analyzer::layout::LayoutContext;
+
+    let target = tmp_dir("audit-stamp");
+    bootstrap_lib(&target);
+    let layout = LayoutContext::discover(&target, None).unwrap();
+
+    let first = audit_path_at(&layout, "Foo", "2026-09-13T10:00:00Z");
+    let second = audit_path_at(&layout, "Foo", "2026-09-13T11:30:00Z");
+
+    assert_ne!(
+        first, second,
+        "two applies at different times must not collide on one path"
+    );
+    for p in [&first, &second] {
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("Foo."), "{name}");
+        assert!(name.ends_with(".applied.yaml"), "{name}");
+        assert!(
+            !name.contains(':'),
+            "the stamp must be colon-free so the name is portable to \
+             filesystems that reject `:`: {name}"
+        );
+    }
 }

@@ -859,6 +859,15 @@ pub struct GenFileDrift {
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GenDriftReport {
+    /// Whether `gen-lineage.toml` records anything at all.
+    ///
+    /// An empty report is ambiguous without this: `files: []` reads as "every
+    /// generated file is clean" when it can equally mean "nothing was ever
+    /// generated, so this command has no opinion about your tree". The second
+    /// is the normal state of a project that adopted specdev over existing
+    /// code, and reading it as the first is how a hand-written tree looks
+    /// audited when it is not.
+    pub nothing_recorded: bool,
     /// Sorted by path (BTreeMap iteration order) for stable snapshots.
     pub files: Vec<GenFileDrift>,
 }
@@ -900,7 +909,10 @@ fn classify_recorded_file(
 /// never modifies files or the record.
 pub fn run_gen_drift(layout: &LayoutContext) -> Result<GenDriftReport> {
     let lineage = GenLineage::load(&layout.specdev_root)?;
-    let mut report = GenDriftReport::default();
+    let mut report = GenDriftReport {
+        nothing_recorded: lineage.files.is_empty(),
+        ..Default::default()
+    };
     for (path, entry) in &lineage.files {
         let category = classify_recorded_file(&layout.project_root, path, &entry.content_hash)?;
         report.files.push(GenFileDrift {
