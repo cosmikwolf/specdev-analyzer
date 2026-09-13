@@ -33,9 +33,19 @@ env:
 # composition-gates. `fmt` does not compile, so it omits it.
 #
 # The plugin repository is PRIVATE, so these checkouts need a token with read
-# access to it; until that lands (or both repositories are made public) the
-# plugin-checkout step fails with "Repository not found". Tracked with the
-# install-path visibility work.
+# access to it. The default GITHUB_TOKEN is scoped to THIS repository and
+# cannot read a different private one, which is why every plugin-checkout step
+# carries `token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}`.
+#
+# That secret must exist or every compiling job fails at checkout. Create it
+# once per repository, from a fine-grained PAT with `Contents: read` on
+# <org>/specdev and nothing else:
+#
+#   gh secret set SPECDEV_PLUGIN_READ_TOKEN \
+#     --repo <org>/specdev-analyzer --body "<pat>"
+#
+# Until it exists this workflow has never produced a green run -- see #150.
+# Do not read a missing run as a passing one.
 # ============================================================================
 
 jobs:
@@ -65,6 +75,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -91,6 +102,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -131,6 +143,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@1.86.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -151,6 +164,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -190,6 +204,7 @@ jobs:
           # the live tree rather than a fixture mirror.
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -241,6 +256,7 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/specdev
           path: specdev
+          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - name: Run agnosticism lint
         run: bash .github/scripts/agnosticism-lint.sh ../specdev
         working-directory: specdev-analyzer
