@@ -156,7 +156,11 @@ fn existing_source_and_manifest_do_not_block_adoption() {
     let target = tmp("adoption").join("proj");
     fs::create_dir_all(target.join("src")).unwrap();
     fs::write(target.join("src/main.rs"), format!("// {SENTINEL}\n")).unwrap();
-    fs::write(target.join("Cargo.toml"), format!("# {SENTINEL}\n[package]\n")).unwrap();
+    fs::write(
+        target.join("Cargo.toml"),
+        format!("# {SENTINEL}\n[package]\n"),
+    )
+    .unwrap();
 
     run(&target).expect("source and manifest are not the spec tree");
 
