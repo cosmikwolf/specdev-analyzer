@@ -263,3 +263,120 @@ fn only_bytes_that_differ_are_protected() {
         "and must leave the bytes alone"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The gen-owned SIBLING (`pnpm-workspace.yaml`) is on the same guard.
+//
+// The first cut of #148 scoped the guard to the primary manifest, on the
+// grounds that a sibling renders wholly from `[workspace].members[]` and is
+// documented as overwritten on every write. That reasoning holds only for a
+// tree this tool created. In the brownfield monorepo the issue was filed for,
+// the sibling is hand-authored, carries members the spec never saw, and the
+// first `--write` discarded it — the same data loss, on the same command, in
+// the same run.
+// ---------------------------------------------------------------------------
+
+/// A TypeScript workspace root whose `manifest --write` emits BOTH
+/// `package.json` and the `pnpm-workspace.yaml` sibling.
+fn fresh_ts_workspace(tag: &str) -> PathBuf {
+    let root = tmp_workspace(tag).join("proj");
+    fs::create_dir_all(root.join("specs/specdev")).unwrap();
+    fs::write(
+        root.join("spec.toml"),
+        r#"spec_version = "1.0"
+
+[project]
+name = "erp-suite"
+profile = "test-ts-app"
+language = "typescript"
+description = "ERP prototype suite"
+
+[paths]
+specs = "specs"
+source = "src"
+
+[workspace]
+members = [
+  { name = "app", path = "app" },
+]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("specs/specdev/profile.yaml"),
+        r#"name: test-ts-app
+language: typescript
+package_json:
+  shape: workspace
+  package_manager: "pnpm@10.15.0"
+  engines:
+    node: ">=22.18.0"
+"#,
+    )
+    .unwrap();
+    fs::write(root.join("specs/architecture.toml"), "").unwrap();
+    root
+}
+
+/// A hand-authored workspace file naming a member the spec has never seen.
+fn write_handwritten_workspace_sibling(project: &Path) -> String {
+    let body = format!(
+        "packages:\n  - 'app'\n  - 'legacy/{SENTINEL}'\n\nonlyBuiltDependencies:\n  - better-sqlite3\n"
+    );
+    fs::write(project.join("pnpm-workspace.yaml"), &body).unwrap();
+    body
+}
+
+#[test]
+fn unrecorded_sibling_workspace_file_is_refused_and_left_intact() {
+    let project = fresh_ts_workspace("sibling-refuse");
+    let before = write_handwritten_workspace_sibling(&project);
+
+    let (code, _, err) = run(&project, "manifest", &["--write"]);
+
+    assert_eq!(code, 1, "sibling refusal is a data-level refusal: {err}");
+    assert!(
+        err.contains("[MANIFEST-003]"),
+        "refusal must carry the rule id: {err}"
+    );
+    assert!(
+        err.contains("pnpm-workspace.yaml"),
+        "refusal must name the sibling, not the primary manifest: {err}"
+    );
+
+    let after = fs::read_to_string(project.join("pnpm-workspace.yaml")).unwrap();
+    assert_eq!(
+        after, before,
+        "the hand-authored sibling must be byte-identical after a refusal"
+    );
+
+    // The property that makes the guard safe rather than merely present: every
+    // target is checked BEFORE any is written, so a sibling refusal leaves the
+    // PRIMARY manifest unwritten too. Without the pre-flight pass, package.json
+    // lands and pnpm-workspace.yaml does not, and the tree is in a state
+    // neither the spec nor the user authored.
+    assert!(
+        !project.join("package.json").exists(),
+        "a sibling refusal must not leave a half-written tree: package.json was created"
+    );
+}
+
+#[test]
+fn accept_edits_lets_the_sibling_write_proceed() {
+    let project = fresh_ts_workspace("sibling-accept");
+    let before = write_handwritten_workspace_sibling(&project);
+
+    let (code, _, err) = run(&project, "manifest", &["--write", "--accept-edits"]);
+
+    assert_eq!(code, 0, "--accept-edits is the documented override: {err}");
+    let after = fs::read_to_string(project.join("pnpm-workspace.yaml")).unwrap();
+    assert_ne!(
+        after, before,
+        "--accept-edits must actually overwrite; an unchanged file means the \
+         guard is refusing silently instead of yielding"
+    );
+    assert!(
+        project.join("package.json").exists(),
+        "the primary manifest writes once the override is given"
+    );
+}
