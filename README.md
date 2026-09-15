@@ -2,37 +2,83 @@
 
 Domain-agnostic CLI that turns TOML specs into first-class engineering artifacts: schema-validated, graph-checked, extractable to codegen-ready YAML, and auditable against real source code.
 
-Pairs with the [`specdev`](https://github.com/cosmikwolf/specdev) Claude Code plugin, but works standalone — `cargo install`-able and has no runtime dependency on the plugin at analyze time (doc 15 §11 invariant 5: no resolution chain at analyze time).
+Pairs with the `specdev` Claude Code plugin, but works standalone — `cargo install`-able, with no
+runtime dependency on the plugin at analyze time (doc 15 §11 invariant 5: no resolution chain at
+analyze time).
 
-## Status — Phase 2 of the blocks + bridges + profiles arc
+## What it does
 
-This branch ships **Phase 2**: the metaschema amendment (path-qualified kinds + required `extends`), the open-vocabulary effective kind set, the compiled aggregated module schema, and the executor + extract + audit chain end-to-end. Canonical root-kind and relation-kind enums are embedded in the analyzer (doc 15 §11 invariant 5: no plugin lookup at analyze time). Subcommand behavior:
+Five things, in the order a project meets them:
 
-- **`validate`** — discovers `spec.toml`, builds a layout context, enumerates the `specs/specdev/` tree (`LAYOUT-002`/`LAYOUT-003`/`LAYOUT-004`), runs the aggregator `$ref` resolver and compiles the aggregated module schema (`AGGREGATOR-001` unresolved / `AGGREGATOR-002` duplicate-`$id` / `AGGREGATOR-003` cycle / `AGGREGATOR-005` compile-fail), resolves the open-vocabulary kind set from project + block + bridge reductions (`METASCHEMA-001..005`), validates each module TOML against the compiled schema (`SCHEMA`), and runs the reduction executor and `domain.toml` graph_checks against the resulting graph (`REDUCE_UNRESOLVED` / `DOMAIN-003`).
-- **`extract`** — runs validate, then the executor, and writes canonical YAML under `--output`: `modules/<Name>.yaml` (one per source module), `architecture.yaml` (full executor graph), `requirements.yaml` (entities whose `extends` chain reaches `statement`). Output is byte-stable across runs.
-- **`reduce`** — runs the executor and emits the `(entities, relations)` graph YAML to stdout or `--output`.
-- **`audit`** — validate → extract → tree-sitter compare via the configured language adapter (Rust, C, C++).
-- **`resolve`** — prints the discovered project layout as YAML for skill consumers.
+| | |
+|---|---|
+| **Scaffold** | `bootstrap` lays down a profile's spec tree; `inline` / `inline-bridge` pull in blocks and the bridges that wire them together; `migrate` back-fills manifests for projects that pre-date them. |
+| **Check** | `validate` resolves the open-vocabulary kind set, compiles the aggregated module schema, and runs the project's own `domain.toml` graph checks. `plugin-lint` checks a plugin tree instead of a project. |
+| **Project** | `reduce` emits the universal entity/relation graph; `extract` writes codegen-ready YAML; `context` cuts a one-hop dependency cone for one module; `resolve` and `report` answer layout and coverage questions. |
+| **Generate** | `gen` assembles the codegen prompt (shared preamble once, then a tail per module); `manifest` renders the build manifest; `derive` writes the profile's derived files. |
+| **Keep honest** | `gen-record` + `report gen-drift` detect hand-edits to generated files; `drift` compares inlined blocks against the plugin tree; `extract-items` + `items` reconcile a module's `items[]` against what tree-sitter finds in the source; `gate` runs the profile's declared compile gates and records the result. |
 
-Errors carry a structured `<path>:<line>:<col>: <message>` payload via `LocatedError` so editors and CI can jump to the failing site.
+Run `specdev-analyzer --help` for the full list; every subcommand has its own `--help`.
+
+Today it targets **5 languages** (`rust`, `c`, `cpp`, `dart`, `typescript` — not all have a manifest
+emitter), and the plugin it pairs with ships **7 profiles**, **16 blocks** and **6 bridges**.
+
+Errors carry a structured `<path>:<line>:<col>: <message>` payload via `LocatedError`, so editors and
+CI can jump to the failing site. Findings carry stable rule codes (`LAYOUT-00n`, `SCHEMA`,
+`AGGREGATOR-00n`, `METASCHEMA-00n`, `BOOTSTRAP-00n`, `INLINE-00n`, `MANIFEST-00n`, …).
+
+### Compatibility
+
+The version number is not the compatibility check — `contract_version` is. Each profile manifest
+declares one, and the analyzer refuses a manifest whose `contract_version` it does not implement
+(`MANIFEST-002`), naming the file. Upgrade the analyzer when that fires.
 
 ## Install
 
-```
-cargo install --git https://github.com/cosmikwolf/specdev-analyzer
+Both repositories are **private**, so the install URL depends on which organization you were granted
+access to. Read the org off the plugin's own remote rather than guessing it:
+
+```sh
+git -C "${CLAUDE_PLUGIN_ROOT}" remote get-url origin
+# git@github.com:<org>/specdev.git  ->  <org>
 ```
 
-Requires a stable Rust toolchain (MSRV 1.75).
+Then:
+
+```sh
+cargo install --git https://github.com/<org>/specdev-analyzer
+```
+
+That URL is HTTPS while every remote in this project is SSH, so `cargo` needs a working HTTPS
+credential for a private repo (a credential helper, or a `~/.gitconfig` `insteadOf` rule pointing
+HTTPS at SSH). If you have repo access and the command still fails to authenticate, that mismatch is
+why.
+
+Requires a stable Rust toolchain. MSRV is **1.86**, set by the dependency graph rather than by this
+crate's own source: `clap_builder` needs edition 2024, and eleven `icu_*` packages need 1.86.
+Measured with `cargo check --lib` — 1.81 and 1.85 fail, 1.86 and 1.88 pass. CI declares an `msrv`
+job that builds on exactly that toolchain, though note that workflow needs a cross-repo token it
+does not yet have, so treat the number as measured-by-hand until it has a green run behind it.
+
+Re-run `cargo install` with `--force` whenever the plugin updates. The two move together, and
+nothing warns you when the installed binary falls behind — a stale binary can silently lack guards
+the current plugin prose assumes.
 
 ## Usage
 
 ```
-specdev-analyzer validate [--project <dir>] [--strict] [--no-color]
-specdev-analyzer extract  --output <dir> [--project <dir>]
-specdev-analyzer audit    [--project <dir>] [--filter <Module>] [--show-uncovered] [--expand]
-specdev-analyzer reduce   [--project <dir>] [--output <path>]
-specdev-analyzer resolve  [--project <dir>]
+specdev-analyzer validate      [--project <dir>] [--strict] [--no-color]
+specdev-analyzer extract       --output <dir> [--project <dir>]
+specdev-analyzer extract-items [--project <dir>] [--module <Module>]
+specdev-analyzer items diff    <Module> [--project <dir>]
+specdev-analyzer reduce        [--project <dir>] [--output <path>]
+specdev-analyzer resolve       [--project <dir>]
+specdev-analyzer report        gen-plan | gen-drift | coverage [--project <dir>]
 ```
+
+`--help` is authoritative; the list above is the common path, not the whole surface. There is no
+`audit` subcommand — source-vs-spec comparison is `extract-items` plus the three-stage `items`
+flow (`diff` → `propose` → `apply`).
 
 Every subcommand also accepts `--spec-path <path>` to short-circuit `spec.toml` discovery.
 
@@ -62,11 +108,11 @@ Validated against an embedded JSON Schema at parse time. The analyzer is the sou
 ```
 my-firmware/
 ├── spec.toml                                   # project manifest
-├── src/                                        # source code (audit / reverse target)
+├── src/                                        # source code (items-sync / reverse target)
 └── specs/
     ├── modules/*.toml                          # user-authored module specs
-    ├── architecture.toml                       # cross-module wiring (Phase 2+)
-    ├── requirements.toml                       # requirements (Phase 2+)
+    ├── architecture.toml                       # cross-module wiring
+    ├── requirements.toml                       # requirements
     └── specdev/                                # CLI-managed machinery
         ├── domain.toml                         # project graph-check declarations
         ├── lineage.toml                        # provenance for inlined units
@@ -86,11 +132,24 @@ my-firmware/
             └── bridges/<name>/README.md
 ```
 
-Multi-package projects are per-package independent under doc 15 §9.2: each package owns its own `spec.toml` and `specs/specdev/` tree. There is no workspace-level `[[packages]]` table.
+Multi-package projects come in two shapes.
 
-## Library API (Phase 1)
+**Independent packages** own their own `spec.toml` and `specs/specdev/` tree and know nothing about
+each other; run the analyzer once per package, from that package's directory.
 
-The crate exports a small library surface for tools that want to drive the same plumbing. See `src/lib.rs` for the entry-point map. Phase 2 will reintroduce a contract test against `specdev-visualizer`'s consumption shape.
+**A declared workspace** (the `rust-workspace` profile) puts a `[workspace]` table with
+`[[workspace.members]]` in the root `spec.toml`. `manifest --write` then renders a workspace-root
+`Cargo.toml` (`[workspace]` + `[workspace.package]` + `[workspace.dependencies]`), and each member
+emits a member manifest that inherits from it (`version.workspace = true`, and so on). Members still
+carry their own `specs/specdev/` tree and their own profile.
+
+## Library API
+
+The crate exports a library surface for tools that want to drive the same plumbing rather than shell
+out to the binary. See `src/lib.rs` for the entry-point map; `bootstrap`, `gen_lineage`, `derive`,
+`inline` and the manifest renderers are the modules most worth reaching for. The binary in
+`src/cli.rs` is a thin argument-parsing layer over it, so anything the CLI does is reachable from
+the library.
 
 ## License
 

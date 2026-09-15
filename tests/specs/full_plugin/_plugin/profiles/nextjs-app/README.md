@@ -13,8 +13,8 @@ Its two compile gates are declared as data in `profile.yaml` (`gates:`):
 --noEmit`, `vitest run --passWithNoTests`) and `next-build` (`scope:
 batch` — `next build`). `/spec-gen` reads the registry and runs each
 step; a module is `verified` only with a current pass row from every
-module-scope gate. The analyzer-run gate (`specdev-analyzer gate`),
-which executes the steps and writes the rows itself, is not yet shipped.
+module-scope gate, executed by `specdev-analyzer gate`, which runs the steps
+and records the rows itself.
 
 ## When to use this profile
 
@@ -183,7 +183,14 @@ no inputs fails until typegen has written `next-env.d.ts`.
 
 ## Gates
 
-Two gates (the registry and the runner that execute them are not yet
+**Run the gates together, in declared order, in one job.** `fast` opens with
+`pnpm install`; `next-build` has no install step of its own and assumes
+`node_modules` is already there. Under `/spec-gen` that always holds — Step 8
+walks the registry in declared order — but nothing in `specdev-analyzer gate`
+enforces it. Wiring `gate --label next-build` alone into CI for speed fails on a
+fresh checkout, with an error that does not point at the missing `pnpm install`.
+
+Two gates (the registry and the runner that execute them are both
 shipped):
 
 | gate | scope | steps |

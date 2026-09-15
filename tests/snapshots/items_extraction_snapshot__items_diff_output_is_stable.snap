@@ -5,7 +5,7 @@ expression: rendered
 exit: Some(1)
 --- stdout ---
 module: Kitchen
-source_file: /private<root>/src/kitchen.rs
+source_file: <root>/src/kitchen.rs
 in_spec_only:
 - kind: extern_block
   name: extern_C_at_40
