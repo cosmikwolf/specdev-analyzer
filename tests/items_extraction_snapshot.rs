@@ -33,7 +33,13 @@ fn tmp_dir(tag: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
-    p
+    // Canonicalize AFTER creating the directory. On macOS `std::env::temp_dir()`
+    // is `/var/folders/…`, a symlink to `/private/var/folders/…`, while the CLI
+    // canonicalizes the paths it prints. A non-canonical root here strands the
+    // `/private` prefix in front of the `<root>` token, which makes the snapshot
+    // macOS-only: green on macOS, red on Linux. That is exactly how it shipped,
+    // and CI never ran to catch it.
+    std::fs::canonicalize(&p).unwrap_or(p)
 }
 
 fn analyzer_bin() -> PathBuf {
@@ -60,7 +66,14 @@ fn run_cli(project: &Path, args: &[&str]) -> (Option<i32>, String, String) {
 /// Replace the tmp project root with a stable token so snapshots are
 /// machine-independent.
 fn normalize(text: &str, root: &Path) -> String {
-    text.replace(&root.display().to_string(), "<root>")
+    // Replace the canonical form FIRST. It is the longer string and contains the
+    // non-canonical one (`/private/var/…` contains `/var/…`), so replacing the
+    // short form first would leave a stranded `/private<root>`.
+    let mut out = text.to_string();
+    if let Ok(canonical) = std::fs::canonicalize(root) {
+        out = out.replace(&canonical.display().to_string(), "<root>");
+    }
+    out.replace(&root.display().to_string(), "<root>")
 }
 
 const MODULE_SPEC: &str = r#"name = "Kitchen"
