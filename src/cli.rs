@@ -836,45 +836,64 @@ fn run_manifest(
     //   recorded                       -> write (ours; the regenerate loop)
     //   different AND unrecorded       -> REFUSE
     //
-    // Scoped to the primary manifest under `--write`. The profile's gen-owned
-    // siblings (`pnpm-workspace.yaml`) are documented as overwritten on every
-    // write and are rendered wholly from `[workspace].members[]`, so they are
-    // left on that contract. `--output <path>` names a destination explicitly
-    // and is the caller's business, the same class as a shell redirection.
+    // Covers the primary manifest AND every gen-owned sibling
+    // (`pnpm-workspace.yaml`) under `--write`. The siblings were previously
+    // left out on the grounds that they render wholly from
+    // `[workspace].members[]` and are documented as overwritten every write.
+    // That reasoning holds only for a tree this tool created: in a brownfield
+    // monorepo the sibling is hand-authored, carries members and settings the
+    // spec never saw, and the first `--write` discarded it — the same
+    // data-loss shape the primary manifest was guarded against, on the same
+    // command, in the same run.
+    //
+    // Every file the write would touch is checked BEFORE any of them is
+    // written. A refusal after a partial write leaves a tree that neither the
+    // spec nor the user authored.
+    //
+    // `--output <path>` names a destination explicitly and is the caller's
+    // business, the same class as a shell redirection.
     if write && !accept_edits {
-        let rel = PathBuf::from(default_filename);
-        let abs = layout.project_root.join(&rel);
-        let on_disk = match std::fs::read(&abs) {
-            Ok(b) => Some(b),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                eprintln!("error: reading {}: {e}", abs.display());
-                return ExitCode::from(2);
-            }
-        };
-        if let Some(bytes) = on_disk {
-            if bytes != text.as_bytes() {
-                match specdev_analyzer::gen_lineage::is_recorded(&layout.specdev_root, &rel) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        eprintln!(
-                            "error: [MANIFEST-003] refusing to overwrite {default_filename}: \
-                             unrecorded file at target\n\n\
-                             It has no row in specs/specdev/gen-lineage.toml, so this tool did \
-                             not write it, and its bytes differ from what the spec renders. \
-                             Overwriting would discard whatever it declares that the spec does \
-                             not yet carry.\n\n\
-                             If the file is yours to keep: fold what it declares into the spec \
-                             ([[external_deps]] in architecture.toml for project-wide \
-                             dependencies, external_deps[] in a module for module-scoped ones), \
-                             then delete it and re-run.\n\
-                             If it is genuinely disposable: re-run with --accept-edits."
-                        );
-                        return ExitCode::from(1);
-                    }
-                    Err(e) => {
-                        report_error(&e);
-                        return ExitCode::from(2);
+        let mut guarded: Vec<(PathBuf, &[u8])> =
+            vec![(PathBuf::from(default_filename), text.as_bytes())];
+        for (sib_rel, sib_body) in &sibling_files {
+            guarded.push((PathBuf::from(sib_rel), sib_body.as_bytes()));
+        }
+        for (rel, rendered) in guarded {
+            let display_name = rel.display().to_string();
+            let abs = layout.project_root.join(&rel);
+            let on_disk = match std::fs::read(&abs) {
+                Ok(b) => Some(b),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    eprintln!("error: reading {}: {e}", abs.display());
+                    return ExitCode::from(2);
+                }
+            };
+            if let Some(bytes) = on_disk {
+                if bytes != rendered {
+                    match specdev_analyzer::gen_lineage::is_recorded(&layout.specdev_root, &rel) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            eprintln!(
+                                "error: [MANIFEST-003] refusing to overwrite {display_name}: \
+                                 unrecorded file at target\n\n\
+                                 It has no row in specs/specdev/gen-lineage.toml, so this tool \
+                                 did not write it, and its bytes differ from what the spec \
+                                 renders. Overwriting would discard whatever it declares that \
+                                 the spec does not yet carry.\n\n\
+                                 If the file is yours to keep: fold what it declares into the \
+                                 spec ([[external_deps]] in architecture.toml for project-wide \
+                                 dependencies, external_deps[] in a module for module-scoped \
+                                 ones; [workspace].members[] for workspace membership), then \
+                                 delete it and re-run.\n\
+                                 If it is genuinely disposable: re-run with --accept-edits."
+                            );
+                            return ExitCode::from(1);
+                        }
+                        Err(e) => {
+                            report_error(&e);
+                            return ExitCode::from(2);
+                        }
                     }
                 }
             }
