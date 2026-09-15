@@ -259,7 +259,9 @@ pub fn apply_proposal(
     // Flip proposal status, add applied_at, rename to .applied.yaml.
     doc.status = "applied".into();
     let applied_at = chrono::Utc::now().to_rfc3339();
-    let audit_path = audit_path_for(layout, module_name);
+    // Same instant as the `applied_at` inside the file, so the name and the
+    // contents cannot disagree about when this apply happened.
+    let audit_path = audit_path_at(layout, module_name, &applied_at);
     let audit_yaml = serde_yaml::to_string(&AuditDocument {
         proposal: &doc,
         applied_at: &applied_at,
@@ -322,13 +324,24 @@ struct ApplySummary {
     skipped: usize,
 }
 
-/// `<specdev_root>/upstream/items-sync/<module>.applied.yaml`.
-pub fn audit_path_for(layout: &LayoutContext, module_name: &str) -> PathBuf {
+/// `<specdev_root>/upstream/items-sync/<module>.<stamp>.applied.yaml` —
+/// the audit path for one apply, stamped with the moment it happened.
+///
+/// A fixed `<module>.applied.yaml` meant the second apply silently discarded
+/// the first one's provenance — which entries were applied, and when. The
+/// sibling writer (`items::propose::write_proposal`) already refuses to clobber
+/// without `--clobber`; an audit log that overwrites itself is worse than one
+/// that refuses, because losing history is the one thing it exists to prevent.
+///
+/// The stamp is colon-free so the name is portable to filesystems that reject
+/// `:` (Windows, some network mounts).
+pub fn audit_path_at(layout: &LayoutContext, module_name: &str, stamp: &str) -> PathBuf {
+    let safe = stamp.replace(':', "-");
     layout
         .specdev_root
         .join("upstream")
         .join("items-sync")
-        .join(format!("{module_name}.applied.yaml"))
+        .join(format!("{module_name}.{safe}.applied.yaml"))
 }
 
 fn items_array_mut(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::ArrayOfTables> {

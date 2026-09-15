@@ -377,6 +377,129 @@ fn plan_module_with_no_lineage_is_new() {
 }
 
 #[test]
+fn gen_drift_says_when_it_has_no_data_rather_than_looking_clean() {
+    // `files: []` reads as "every generated file is clean". On a project that
+    // adopted specdev over existing code it means the opposite: nothing was
+    // ever recorded, so this command has no opinion about the tree at all.
+    // A reader who cannot tell those apart concludes a hand-written tree was
+    // audited when it was not.
+    let root = tmp("drift-nodata");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+
+    let report = run_gen_drift(&layout).unwrap();
+    assert!(report.files.is_empty());
+    assert!(
+        report.nothing_recorded,
+        "an empty lineage must say so, not just render an empty list"
+    );
+
+    // And the moment anything is recorded, the flag flips: the report now
+    // genuinely covers the tree.
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/widget.rs"), "// generated\n").unwrap();
+    record_files_accepting_edits(
+        &layout,
+        Some("Widget"),
+        &[root.join("src/widget.rs")],
+        "2026-09-13T00:00:00Z",
+    )
+    .unwrap();
+
+    let report = run_gen_drift(&layout).unwrap();
+    assert!(!report.nothing_recorded);
+    assert_eq!(report.files.len(), 1);
+}
+
+#[test]
+fn plan_module_whose_declared_source_already_exists_is_unrecorded_not_new() {
+    // The brownfield case: a project adopted specdev over code it already
+    // had. Nothing is recorded, so the old code called every module `new`
+    // and /spec-gen queued them all for emission over working source.
+    let root = tmp("plan-unrecorded");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "source_file = \"src/widget.rs\"\n");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/widget.rs"), "// hand-authored\n").unwrap();
+
+    let plan = run_gen_plan(&layout).unwrap();
+    let m = plan
+        .modules
+        .into_iter()
+        .find(|m| m.module == "Widget")
+        .unwrap();
+
+    assert_eq!(m.category, GenPlanCategory::Unrecorded);
+    assert_eq!(
+        m.files,
+        vec!["src/widget.rs".to_string()],
+        "the verdict must name the file it is protecting"
+    );
+    assert!(
+        !m.category.regenerates(),
+        "regenerating would overwrite hand-authored source"
+    );
+    assert!(
+        m.category.needs_confirmation(),
+        "and it must not be skipped silently either — a skip reads as done"
+    );
+}
+
+#[test]
+fn plan_module_declaring_a_source_that_does_not_exist_is_still_new() {
+    // The control. A declared-but-unimplemented module is the ordinary
+    // greenfield case and must keep regenerating without a prompt.
+    let root = tmp("plan-declared-absent");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "source_file = \"src/widget.rs\"\n");
+
+    let m = category_of(&layout, "Widget");
+    assert_eq!(m, GenPlanCategory::New);
+    assert!(m.regenerates());
+    assert!(!m.needs_confirmation());
+}
+
+#[test]
+fn plan_module_with_no_declared_source_stays_new_even_with_files_around() {
+    // When the spec names no `source_file`, the emission path belongs to the
+    // codegen prose and is not knowable here. `new` is the honest answer;
+    // guessing a path would be worse than saying nothing.
+    let root = tmp("plan-no-declared-source");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/widget.rs"), "// hand-authored\n").unwrap();
+
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::New);
+}
+
+#[test]
+fn recording_the_source_moves_it_off_unrecorded() {
+    // Closes the loop: once /spec-gen owns the file, the verdict is an
+    // ordinary one again and the brownfield warning stops firing forever.
+    let root = tmp("plan-unrecorded-cleared");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "source_file = \"src/widget.rs\"\n");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/widget.rs"), "// hand-authored\n").unwrap();
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Unrecorded);
+
+    record_files_accepting_edits(
+        &layout,
+        Some("Widget"),
+        &[root.join("src/widget.rs")],
+        "2026-09-13T00:00:00Z",
+    )
+    .unwrap();
+
+    assert_ne!(
+        category_of(&layout, "Widget"),
+        GenPlanCategory::Unrecorded,
+        "a recorded file is ours; the verdict must move on"
+    );
+}
+
+#[test]
 fn plan_clean_output_matching_input_is_unchanged() {
     let root = tmp("plan-unchanged");
     let layout = minimal_project(&root);

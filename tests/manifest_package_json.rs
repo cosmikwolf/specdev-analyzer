@@ -15,6 +15,8 @@
 //!     error (manifest-driven, no fallback).
 //!   * Workspace root: `--write` emits package.json AND the gen-owned
 //!     sibling `pnpm-workspace.yaml`; a second write is byte-identical;
+//!     an EDITED, unrecorded sibling is refused (#148) and `--accept-edits`
+//!     restores it;
 //!     `--output` skips the sibling with a note. A member renders a plain
 //!     package.json.
 //!   * Live (when `pnpm` is on PATH): `pnpm install` resolves the emitted
@@ -416,18 +418,58 @@ fn pnpm_workspace_root_writes_package_json_and_workspace_file_and_member_is_plai
         w.stderr
     );
 
-    // The sibling is gen-owned: a hand-edit is overwritten on the next write.
+    // A repeat write with the sibling untouched is NOT a conflict: the bytes
+    // match the render, so the identical-bytes row fires before the lineage
+    // check. This is the regenerate loop, and #148's guard must not break it.
+    let w1b = run_cli(&root, &["manifest", "--write"]);
+    assert_eq!(
+        w1b.exit_code,
+        Some(0),
+        "an unedited repeat write must stay exit 0: {}",
+        w1b.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap(),
+        ws
+    );
+
+    // The sibling is gen-owned, but a hand-edit is no longer DISCARDED
+    // silently. Extended with #148: the sibling takes the same matrix as the
+    // primary manifest, because bytes that differ from the render and carry no
+    // lineage row are indistinguishable from a file the tool has never seen —
+    // which in a brownfield monorepo is exactly what they are. This assertion
+    // was `Some(0)` + "restores byte-for-byte" before that change.
     std::fs::write(
         root.join("pnpm-workspace.yaml"),
         "packages:\n  - \"nope\"\n",
     )
     .unwrap();
     let w2 = run_cli(&root, &["manifest", "--write"]);
-    assert_eq!(w2.exit_code, Some(0), "stderr: {}", w2.stderr);
+    assert_eq!(
+        w2.exit_code,
+        Some(1),
+        "an edited, unrecorded sibling is refused: {}",
+        w2.stderr
+    );
+    assert!(
+        w2.stderr.contains("[MANIFEST-003]") && w2.stderr.contains("pnpm-workspace.yaml"),
+        "the refusal names the rule and the sibling: {}",
+        w2.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap(),
+        "packages:\n  - \"nope\"\n",
+        "a refusal must leave the user's bytes untouched"
+    );
+
+    // `--accept-edits` is the documented override, and it restores the sibling
+    // byte-for-byte — the behaviour the bare `--write` used to have.
+    let w2b = run_cli(&root, &["manifest", "--write", "--accept-edits"]);
+    assert_eq!(w2b.exit_code, Some(0), "stderr: {}", w2b.stderr);
     assert_eq!(
         std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap(),
         ws,
-        "second --write must restore the sibling byte-for-byte"
+        "--accept-edits must restore the sibling byte-for-byte"
     );
 
     // --output redirects the manifest text alone and says so.

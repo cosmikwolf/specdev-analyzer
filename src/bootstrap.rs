@@ -383,7 +383,32 @@ const EMPTY_DIRS: &[&str] = &[
     "specs/modules",
 ];
 
+/// Knobs that are not part of the project's identity.
+///
+/// Kept out of [`BootstrapInputs`] deliberately: that struct describes *what
+/// project to scaffold* and is constructed in a hundred places. This one
+/// describes *how to behave when the target is not empty*.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BootstrapOptions {
+    /// Overwrite project files that already exist at a planned destination.
+    ///
+    /// Without it, bootstrap refuses and names every collision. See
+    /// `BOOTSTRAP-003`.
+    pub force: bool,
+}
+
+/// Scaffold a profile into `inputs.target_dir` with default options.
 pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()> {
+    run_bootstrap_with(plugin_root, inputs, BootstrapOptions::default())
+}
+
+/// [`run_bootstrap`], with control over what happens when the target already
+/// holds a file bootstrap plans to write.
+pub fn run_bootstrap_with(
+    plugin_root: &Path,
+    inputs: &BootstrapInputs,
+    opts: BootstrapOptions,
+) -> Result<()> {
     // Refuse if `<target>/specs/specdev/` already exists; that's the
     // signal someone bootstrapped here before. Refuses to overwrite even
     // if `<target>/` itself is non-empty for other reasons (e.g. a fresh
@@ -444,6 +469,44 @@ pub fn run_bootstrap(plugin_root: &Path, inputs: &BootstrapInputs) -> Result<()>
     // Copy files per the plan. Substitute templates; verbatim-copy schema
     // and codegen content (analyzer never re-emits YAML/Markdown).
     let expected = profile_expected_bytes(&profile_dir, inputs)?;
+
+    // Refuse before the first byte if the plan would land on a file that is
+    // already there.
+    //
+    // BOOTSTRAP-001 above tests one directory, `specs/specdev/`. Everything
+    // else the plan writes -- `spec.toml` and every `specs/*.toml` -- had no
+    // check at all, so a tree carrying hand-authored requirements, decisions
+    // or architecture lost them to the template, silently, at exit 0.
+    //
+    // The reachable paths are narrow but real: specs hand-written or copied
+    // from a sibling project before the first bootstrap, a part-finished
+    // bootstrap, or an unrelated `spec.toml` (a generic filename that says
+    // nothing about specdev). All three are cases where the user's bytes
+    // matter more than the template's commented-out hints.
+    if !opts.force {
+        let mut collisions: Vec<String> = expected
+            .keys()
+            .filter(|rel| inputs.target_dir.join(rel).exists())
+            .cloned()
+            .collect();
+        collisions.sort();
+        if !collisions.is_empty() {
+            return Err(anyhow!(
+                "[BOOTSTRAP-003] {} file(s) already exist at paths this bootstrap \
+                 would write:\n{}\n\n\
+                 Bootstrap scaffolds a new project; it does not merge into one. \
+                 Overwriting would discard whatever those files already declare.\n\n\
+                 Move them aside and re-run, or pass --force to overwrite them.",
+                collisions.len(),
+                collisions
+                    .iter()
+                    .map(|p| format!("  - {p}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+    }
+
     let mut profile_files: BTreeMap<String, String> = BTreeMap::new();
     for (dst_rel, bytes) in &expected {
         let dst = inputs.target_dir.join(dst_rel);
