@@ -121,7 +121,7 @@ jobs:
           node-version: 22.18.0
       - run: cargo build --locked
         working-directory: specdev-analyzer
-      - run: cargo test --locked --all-features
+      - run: cargo test --locked --all-features --no-fail-fast
         working-directory: specdev-analyzer
 
   msrv:
