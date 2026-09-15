@@ -1,9 +1,15 @@
 # Manifest — Cargo deps the mk20dx block contributes.
 # Schema: specdev-analyzer/src/embedded/block_deps.schema.yaml.
 #
-# Versions resolved from the registry at authoring time, not recalled:
-# mk20dx-hal 0.1.1 (2026-08-31), which depends on mk20d7-pac / mk20d5-pac
-# 0.1.1 by version.
+# Versions resolved from the registry, not recalled: mk20dx-hal 0.2.0
+# (2026-09-14), which depends on mk20d7-pac / mk20d5-pac 0.1.1 by version.
+#
+# 0.2.0 is a MAJOR bump for a reason that matters here: the HAL takes fugit
+# types in its public API, and 0.2.0 moved from fugit ^0.3 to ^0.6. fugit 0.6
+# changed `Duration`/`Rate`'s const generics from u32 to u64, so a project
+# mixing the two gets `E0308: mismatched types` at any call site that passes a
+# duration. The `fugit` pin below therefore MUST track the HAL's -- it is not
+# an independent choice.
 #
 # NAMING TRAP — name the HAL alone, never a PAC. `mk20d7` on crates.io is
 # an unrelated 2018 crate; the real PACs are `mk20d7-pac` / `mk20d5-pac`,
@@ -21,7 +27,7 @@
 
 crates:
   - name: mk20dx-hal
-    version: "^0.1.1"
+    version: "^0.2.0"
     features: [mk20d7, rt, critical-section]
     source: crates-io
 
@@ -29,7 +35,7 @@ crates:
   # ExtU32 — the HAL takes fugit durations in its public API but does not
   # re-export the crate. Version matched to the HAL's own requirement.
   - name: fugit
-    version: "0.3"
+    version: "0.6"
     source: crates-io
 
   # Driving the emitted pin handles goes through embedded-hal's digital
