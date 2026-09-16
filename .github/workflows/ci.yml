@@ -152,23 +152,33 @@ jobs:
         working-directory: specdev-analyzer
 
   install-smoke:
-    name: cargo install smoke test
+    name: cargo install smoke test (NO sibling — models the real user)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout analyzer
+      # DELIBERATELY the only checkout in this job. This job used to check the
+      # plugin out as a sibling and run `cargo install --path .`, which models a
+      # DEVELOPER, not the user it is named for. With the sibling present it
+      # stayed green while `cargo install --git <url>` — the command all three
+      # of the plugin's install sites tell a co-worker to run — failed for every
+      # user, because `src/lang/*.rs` reached across the repository boundary
+      # with `include_str!("../../../specdev/...")`.
+      #
+      # Do NOT add a plugin checkout here. Its absence is the assertion.
+      - name: Checkout analyzer (and nothing else)
         uses: actions/checkout@v7
         with:
           path: specdev-analyzer
-      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ github.repository_owner }}/specdev
-          path: specdev
-          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: specdev-analyzer
+      - name: Confirm no sibling plugin tree exists
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/specdev" ]; then
+            echo "::error::a specdev/ sibling exists; this job asserts the crate builds WITHOUT one"
+            exit 1
+          fi
+          echo "no sibling present — a standalone build is what follows"
       - run: cargo install --path . --root "$RUNNER_TEMP/install" --locked
         working-directory: specdev-analyzer
       - run: "$RUNNER_TEMP/install/bin/specdev-analyzer --version"
