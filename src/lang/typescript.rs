@@ -24,8 +24,8 @@ use super::{LanguageAdapter, ParsedParameter};
 
 pub struct TypeScriptAdapter;
 
-const QUERY: &str = include_str!("../../../specdev/languages/typescript/audit.scm");
-const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/typescript/items.scm");
+const QUERY: &str = include_str!("../embedded/languages/typescript/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../embedded/languages/typescript/items.scm");
 
 impl LanguageAdapter for TypeScriptAdapter {
     fn name(&self) -> &'static str {

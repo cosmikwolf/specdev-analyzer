@@ -6,7 +6,7 @@ use super::{LanguageAdapter, ParsedParameter};
 
 pub struct CAdapter;
 
-const QUERY: &str = include_str!("../../../specdev/languages/c/audit.scm");
+const QUERY: &str = include_str!("../embedded/languages/c/audit.scm");
 
 impl LanguageAdapter for CAdapter {
     fn name(&self) -> &'static str {
