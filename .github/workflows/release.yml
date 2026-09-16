@@ -1,0 +1,54 @@
+# Create a GitHub Release when a v* tag is pushed.
+#
+# Source-only by decision: the Release is the tag plus its notes, and users
+# install with `cargo install --git … --tag`. Per-platform binaries were
+# considered and deferred — a build matrix is the larger half of this work and
+# nothing yet needs it.
+#
+# Actions are pinned to a major tag checked against the release API at
+# authoring time (2026-09-15). Re-check before adding a new one; do not assume
+# these are current.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: publish the GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Extract this tag's CHANGELOG section
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # The section runs from its own heading to the next one. A missing
+          # section must FAIL rather than publish an empty release body — an
+          # empty body reads as "nothing changed", which is never true.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; print; next }
+            inside && /^## \[/     { exit }
+            inside                 { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for [$version]; refusing to publish an empty release"
+            exit 1
+          fi
+          echo "wrote $(wc -l < release-notes.md) lines of notes"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "specdev-analyzer $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag
