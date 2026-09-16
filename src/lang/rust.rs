@@ -6,8 +6,8 @@ use super::{LanguageAdapter, ParsedParameter};
 
 pub struct RustAdapter;
 
-const QUERY: &str = include_str!("../../../specdev/languages/rust/audit.scm");
-const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/rust/items.scm");
+const QUERY: &str = include_str!("../embedded/languages/rust/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../embedded/languages/rust/items.scm");
 
 impl LanguageAdapter for RustAdapter {
     fn name(&self) -> &'static str {

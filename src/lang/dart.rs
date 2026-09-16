@@ -6,8 +6,8 @@ use super::{LanguageAdapter, ParsedParameter};
 
 pub struct DartAdapter;
 
-const QUERY: &str = include_str!("../../../specdev/languages/dart/audit.scm");
-const ITEMS_QUERY: &str = include_str!("../../../specdev/languages/dart/items.scm");
+const QUERY: &str = include_str!("../embedded/languages/dart/audit.scm");
+const ITEMS_QUERY: &str = include_str!("../embedded/languages/dart/items.scm");
 
 impl LanguageAdapter for DartAdapter {
     fn name(&self) -> &'static str {
