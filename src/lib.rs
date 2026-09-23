@@ -38,6 +38,9 @@
 //! Bootstrap / inline error codes (returned as `anyhow::Error` payloads, not
 //! findings — these abort a CLI run rather than accumulate into a [`Report`]):
 //! - `PLUGIN-001` — plugin root not resolvable.
+//! - `ANALYZER-VERSION-001` / `-002` — a stderr warning, not an error: this
+//!   binary is older than the plugin's `shared/min-analyzer-version`, or that
+//!   file does not parse. Checked on every command; see [`analyzer_version`].
 //! - `BOOTSTRAP-001` — target tree already exists / profile invalid.
 //! - `BOOTSTRAP-002` — unknown placeholder in profile template.
 //! - `INLINE-001` — block / bridge not found in plugin tree.
@@ -77,6 +80,7 @@
 //!   `from_spec`/`endpoints`, etc).
 
 pub mod aggregator;
+pub mod analyzer_version;
 pub mod bootstrap;
 pub mod canonical;
 pub mod cargo_toml;

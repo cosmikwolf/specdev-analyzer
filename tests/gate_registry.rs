@@ -223,7 +223,7 @@ fn missing_registry_without_a_plugin_root_is_the_plugin_root_error() {
     let root = tmp("no-plugin");
     project(&root, Some(""));
     let (code, _, err) = run(&root, &["gen", "--module", "Widget", "--tail"]);
-    assert_eq!(code, 1, "{err}");
+    assert_eq!(code, 2, "could not run, not a refusal\n{err}");
     assert!(err.contains("PLUGIN-001"), "{err}");
 }
 
