@@ -460,15 +460,37 @@ fn plan_module_declaring_a_source_that_does_not_exist_is_still_new() {
 }
 
 #[test]
-fn plan_module_with_no_declared_source_stays_new_even_with_files_around() {
-    // When the spec names no `source_file`, the emission path belongs to the
-    // codegen prose and is not knowable here. `new` is the honest answer;
-    // guessing a path would be worse than saying nothing.
-    let root = tmp("plan-no-declared-source");
+fn plan_module_with_no_declared_source_is_unrecorded_at_the_convention_path() {
+    // #216: with no `source_file`, the path is resolved the way
+    // `extract-items` resolves it — `<paths.source>/<snake_case(name)>.<ext>`.
+    // The field case: every `nextjs-app` module relies on this path, and a
+    // committed hand-authored file there read as `new`, so `--all` would
+    // have overwritten it.
+    let root = tmp("plan-convention-source");
     let layout = minimal_project(&root);
     write_module(&root, "Widget", "");
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/widget.rs"), "// hand-authored\n").unwrap();
+
+    let report = run_gen_plan(&layout).unwrap();
+    let m = report
+        .modules
+        .iter()
+        .find(|m| m.module == "Widget")
+        .unwrap();
+    assert_eq!(m.category, GenPlanCategory::Unrecorded);
+    assert_eq!(m.files, vec!["src/widget.rs".to_string()]);
+}
+
+#[test]
+fn plan_module_with_no_declared_source_stays_new_when_nothing_is_at_the_convention_path() {
+    // A file at some other path is not this module's: no guess past the
+    // adapter's candidates.
+    let root = tmp("plan-no-declared-source");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    fs::create_dir_all(root.join("src/other")).unwrap();
+    fs::write(root.join("src/other/widget_impl.rs"), "// hand-authored\n").unwrap();
 
     assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::New);
 }
@@ -1290,4 +1312,46 @@ fn registry_schema_refuses_empty_steps_and_bad_scope() {
         let msg = format!("{err:#}");
         assert!(msg.contains("MANIFEST-001"), "{bad}\n{msg}");
     }
+}
+
+#[test]
+fn a_module_record_retires_its_rows_this_gen_did_not_emit() {
+    // A module that once emitted two files and now emits one must not read
+    // `stale` forever: the row left behind keeps the old input_hash.
+    let root = tmp("retire-unemitted");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    let body = root.join("src/widget.rs");
+    let extra = root.join("src/widget_tests.rs");
+    fs::write(&body, "pub fn widget() {}\n").unwrap();
+    fs::write(&extra, "// tests\n").unwrap();
+    record_files(&layout, Some("Widget"), &[body.clone(), extra], TS).unwrap();
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Unchanged);
+
+    // The spec moves; the next gen emits only the body.
+    write_module(&root, "Widget", "description = \"now documented\"\n");
+    record_files_accepting_edits(&layout, Some("Widget"), &[body], TS).unwrap();
+
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert!(lineage.files.contains_key("src/widget.rs"));
+    assert!(!lineage.files.contains_key("src/widget_tests.rs"));
+    assert_eq!(category_of(&layout, "Widget"), GenPlanCategory::Unchanged);
+}
+
+#[test]
+fn a_module_record_leaves_other_modules_rows_alone() {
+    let root = tmp("retire-scope");
+    let layout = minimal_project(&root);
+    write_module(&root, "Widget", "");
+    write_module(&root, "Gadget", "");
+    let w = root.join("src/widget.rs");
+    let g = root.join("src/gadget.rs");
+    fs::write(&w, "pub fn widget() {}\n").unwrap();
+    fs::write(&g, "pub fn gadget() {}\n").unwrap();
+    record_files(&layout, Some("Gadget"), &[g], TS).unwrap();
+    record_files(&layout, Some("Widget"), &[w], TS).unwrap();
+
+    let lineage = GenLineage::load(&layout.specdev_root).unwrap();
+    assert!(lineage.files.contains_key("src/gadget.rs"));
+    assert!(lineage.files.contains_key("src/widget.rs"));
 }

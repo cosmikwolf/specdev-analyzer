@@ -802,9 +802,13 @@ pub fn collect_decision_oq_context(
 
     if !in_scope_decisions.is_empty() {
         for (id, d) in &in_scope_decisions {
-            out.push_str(&format!("Decision {id}: {}.\n{}\n", d.title, d.text));
-            if let Some(c) = &d.consequences {
-                out.push_str(&format!("Consequences: {c}\n"));
+            out.push_str(&format!("Decision {id}: {}.\n", d.title));
+            for (_, label, value) in &d.prose {
+                if label.is_empty() {
+                    out.push_str(&format!("{value}\n"));
+                } else {
+                    out.push_str(&format!("{label}: {value}\n"));
+                }
             }
             out.push('\n');
         }
@@ -847,9 +851,28 @@ pub fn collect_decision_oq_context(
 struct DecisionEntry {
     title: String,
     status: String,
-    text: String,
-    consequences: Option<String>,
+    /// The prose fields the prompt inlines, in [`DECISION_PROSE_FIELDS`]
+    /// order, each `(field, label, value)`. Selected by the decision's
+    /// `codegen_include`; `[text, consequences]` when it is absent.
+    prose: Vec<(&'static str, &'static str, String)>,
 }
+
+/// The decision prose fields `codegen_include` may name, in render order,
+/// with the label each is printed under (`text` is printed bare, under the
+/// title line). Render order is fixed, not the order the author listed, so
+/// the prompt stays byte-stable when the list is reordered.
+const DECISION_PROSE_FIELDS: [(&str, &str); 5] = [
+    ("text", ""),
+    ("context", "Context"),
+    ("consequences", "Consequences"),
+    ("alternatives", "Alternatives"),
+    ("verification", "Verification"),
+];
+
+/// `codegen_include` when a decision omits it — the schema's documented
+/// default, and byte-for-byte what the prompt carried before the field was
+/// honoured.
+const DECISION_DEFAULT_INCLUDE: [&str; 2] = ["text", "consequences"];
 
 #[derive(Debug, Clone)]
 pub(crate) struct OpenQuestionEntry {
@@ -887,22 +910,38 @@ fn read_decisions(
                 .and_then(toml::Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let text = item
-                .get("text")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let consequences = item
-                .get("consequences")
-                .and_then(toml::Value::as_str)
-                .map(str::to_string);
+            let include: Vec<String> =
+                match item.get("codegen_include").and_then(toml::Value::as_array) {
+                    Some(arr) => arr
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
+                    None => DECISION_DEFAULT_INCLUDE
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                };
+            let prose = DECISION_PROSE_FIELDS
+                .iter()
+                .filter(|(field, _)| include.iter().any(|i| i == field))
+                .filter_map(|(field, label)| {
+                    // `text` is required by the schema; an absent one still
+                    // prints as an empty body, as it always has.
+                    let value = item.get(*field).and_then(toml::Value::as_str);
+                    match (*field, value) {
+                        ("text", v) => Some((*field, *label, v.unwrap_or("").to_string())),
+                        (_, Some(v)) => Some((*field, *label, v.to_string())),
+                        (_, None) => None,
+                    }
+                })
+                .collect();
             out.insert(
                 id.to_string(),
                 DecisionEntry {
                     title,
                     status,
-                    text,
-                    consequences,
+                    prose,
                 },
             );
         }
