@@ -381,7 +381,12 @@ pub enum Command {
     /// preview. One line per path: `wrote` / `kept` / `edited` /
     /// `conflict` / `deleted` / `skipped`. A hand-edited target
     /// (`edited`) or an unrecorded file at a target (`conflict`) is never
-    /// overwritten without `--accept-edits`.
+    /// overwritten without `--accept-edits`. Exit 0 when nothing is held
+    /// back; 3 when any `edited` / `conflict` line remains (every other
+    /// target was still written, with or without `--write` the same); 1 an
+    /// error stopped the run (the refusals — two modules on one target,
+    /// unreachable rules, a stale inlined profile — come before any write);
+    /// 2 the command could not start.
     Derive {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -994,8 +999,9 @@ fn run_prompt(project: PathBuf, spec_path: Option<&std::path::Path>, module: Str
             ExitCode::SUCCESS
         }
         Err(e) => {
+            // Could not assemble: 2, the same class as `gen`'s (#165).
             report_error(&e);
-            ExitCode::from(1)
+            ExitCode::from(2)
         }
     }
 }
@@ -1890,6 +1896,11 @@ fn run_drift(
 /// source. With `--module <Name>`, writes the assembled prompt to
 /// stdout (equivalent to `prompt --module <Name>`); without it, prints
 /// a routing hint pointing at the right invocation.
+///
+/// Exit codes follow the rest of this file: 0 prompt printed; 1 the spec
+/// was evaluated and codegen is refused (an open question, no module-scope
+/// gate declared); 2 the command could not run (usage, an unreadable or
+/// unparsable file, no plugin root).
 fn run_gen(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
@@ -1919,7 +1930,7 @@ fn run_gen(
             }
             Err(e) => {
                 report_error(&e);
-                Some(ExitCode::from(1))
+                Some(ExitCode::from(2))
             }
         }
     };
@@ -1933,7 +1944,7 @@ fn run_gen(
                 Ok(m) => m,
                 Err(e) => {
                     report_error(&e);
-                    return ExitCode::from(1);
+                    return ExitCode::from(2);
                 }
             }
         } else {
@@ -1946,7 +1957,7 @@ fn run_gen(
             }
             Err(e) => {
                 report_error(&e);
-                ExitCode::from(1)
+                ExitCode::from(2)
             }
         };
     }
@@ -1976,7 +1987,7 @@ fn run_gen(
             Ok(None) => {}
             Err(e) => {
                 report_error(&e);
-                return ExitCode::from(1);
+                return ExitCode::from(2);
             }
         }
         return match specdev_analyzer::prompt::assemble_tail(&layout, &name) {
@@ -1986,7 +1997,7 @@ fn run_gen(
             }
             Err(e) => {
                 report_error(&e);
-                ExitCode::from(1)
+                ExitCode::from(2)
             }
         };
     }
@@ -2009,7 +2020,7 @@ fn run_gen(
                 Ok(None) => {}
                 Err(e) => {
                     report_error(&e);
-                    return ExitCode::from(1);
+                    return ExitCode::from(2);
                 }
             }
             match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
@@ -2019,7 +2030,7 @@ fn run_gen(
                 }
                 Err(e) => {
                     report_error(&e);
-                    ExitCode::from(1)
+                    ExitCode::from(2)
                 }
             }
         }
@@ -2105,7 +2116,19 @@ fn run_derive(
             for line in &report.lines {
                 println!("{}", line.render());
             }
-            ExitCode::SUCCESS
+            // 3, not 1: the run completed and every other target was
+            // written, but some were held back. 1 means an error stopped
+            // the run; a caller must not read the two the same way.
+            match report.held() {
+                0 => ExitCode::SUCCESS,
+                n => {
+                    eprintln!(
+                        "derive: {n} target(s) held back (`edited` / `conflict` above); \
+                         resolve by hand or run `derive --write --accept-edits`"
+                    );
+                    ExitCode::from(3)
+                }
+            }
         }
         Err(e) => {
             report_error(&e);
