@@ -12,6 +12,17 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Added
+
+- **A warning when the installed analyzer is older than the plugin.** Every
+  command reads `shared/min-analyzer-version` from the plugin root it was
+  given (`--plugin-root`, else `SPECDEV_PLUGIN_ROOT`, else
+  `CLAUDE_PLUGIN_ROOT`) and prints one `ANALYZER-VERSION-001` line on stderr
+  when this binary is older; `--version` prints it too. It never changes an
+  exit code or stdout, and it is silent when no plugin root is named or the
+  plugin has no such file. Before this, a binary a major version behind ran
+  for months with nothing to say so.
+
 ### Changed
 
 - **`derive` exits 3 when it holds a target back.** A run whose report has an

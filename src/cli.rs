@@ -575,7 +575,21 @@ pub fn init_tracing() {
 /// This is the analyzer bin's entry point and the standalone-run path.
 pub fn run() -> ExitCode {
     init_tracing();
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // `--version` is where a user looks when asking "am I current?",
+            // and clap answers it before `dispatch` runs its check. No
+            // global flag is parsed on this path, so only the environment
+            // names a plugin root.
+            if e.kind() == clap::error::ErrorKind::DisplayVersion {
+                if let Some(warning) = crate::analyzer_version::check(None) {
+                    eprintln!("{warning}");
+                }
+            }
+            e.exit()
+        }
+    };
     dispatch(cli.command, cli.globals)
 }
 
@@ -585,6 +599,9 @@ pub fn run() -> ExitCode {
 pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
     let spec_path = globals.spec_path;
     let plugin_flag = globals.plugin_root;
+    if let Some(warning) = crate::analyzer_version::check(plugin_flag.as_deref()) {
+        eprintln!("{warning}");
+    }
     match command {
         Command::Validate {
             project,
