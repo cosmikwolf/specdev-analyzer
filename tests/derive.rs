@@ -430,7 +430,10 @@ fn edited_shim_is_reported_kept_and_only_accept_edits_overwrites() {
     fs::write(&shim, &edited).unwrap();
 
     let (code, out, err) = derive(&project, &["--write"]);
-    assert_eq!(code, 0, "an edited line is a report, not a failure\n{err}");
+    assert_eq!(
+        code, 3,
+        "an edited line is held back: exit 3, not a refusal (1)\n{err}"
+    );
     assert_eq!(
         lines_with(&out, "edited"),
         vec!["edited app/events/page.tsx".to_string()],
@@ -481,7 +484,7 @@ fn stale_shim_with_a_hand_edit_is_kept_and_reported() {
     fs::write(&shim, "// hand edit\n").unwrap();
     fs::remove_file(project.join("specs/modules/HealthRoute.toml")).unwrap();
     let (code, out, err) = derive(&project, &["--write"]);
-    assert_eq!(code, 0, "{err}");
+    assert_eq!(code, 3, "a kept stale file is held back: exit 3\n{err}");
     let line = lines_with(&out, "edited");
     assert_eq!(line.len(), 1, "{out}");
     assert!(
@@ -529,7 +532,7 @@ fn unrecorded_file_at_target_is_a_conflict_until_accepted() {
     let shim = project.join("app/events/page.tsx");
     fs::write(&shim, "// hand-written route file\n").unwrap();
     let (code, out, err) = derive(&project, &["--write"]);
-    assert_eq!(code, 0, "{err}");
+    assert_eq!(code, 3, "a conflict is held back: exit 3\n{err}");
     assert_eq!(
         lines_with(&out, "conflict"),
         vec!["conflict app/events/page.tsx: unrecorded file at target".to_string()],
@@ -545,6 +548,11 @@ fn unrecorded_file_at_target_is_a_conflict_until_accepted() {
     );
     // The other shims are written normally.
     assert_eq!(lines_with(&out, "wrote").len(), DERIVED.len() - 1, "{out}");
+
+    // A preview reports the same held target with the same code.
+    let (code, _, err) = derive(&project, &[]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("1 target(s) held back"), "{err}");
 
     let (code, out, err) = derive(&project, &["--write", "--accept-edits"]);
     assert_eq!(code, 0, "{err}");
