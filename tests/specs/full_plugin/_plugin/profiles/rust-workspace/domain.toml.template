@@ -14,6 +14,7 @@ name = "{{project_name}}"
 unique_member_names                          = "error"
 member_paths_unique                          = "error"
 workspace_dependencies_unique                = "error"
+decision_ids_unique                          = "error"
 # Triad consistency at workspace tier (Module/Requirement-anchored
 # checks live in member crates).
 decision_supersedes_acyclic                  = "error"
@@ -47,6 +48,14 @@ field = "entities[].attrs.path"
 kind = "unique"
 rule = "workspace_dependencies_unique"
 scope = "WorkspaceDependency"
+field = "entities[].name"
+
+# Decision ids must be unique. Without this check, two `[[decision]]`
+# entries with one id both reach the graph and validate exits 0.
+[[project.graph_checks]]
+kind = "unique"
+rule = "decision_ids_unique"
+scope = "Decision"
 field = "entities[].name"
 
 # ---------------------------------------------------------------------------
