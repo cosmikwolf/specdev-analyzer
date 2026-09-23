@@ -20,6 +20,7 @@ layer_dependency                             = "error"
 connection_endpoints_resolve                 = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
+decision_ids_unique                          = "error"
 requirements_have_satisfiers                 = "warning"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
@@ -112,6 +113,14 @@ field = "entities[].name"
 kind = "unique"
 rule = "requirement_ids_unique"
 scope = "Requirement"
+field = "entities[].name"
+
+# Decision ids must be unique. Without this check, two `[[decision]]`
+# entries with one id both reach the graph and validate exits 0.
+[[project.graph_checks]]
+kind = "unique"
+rule = "decision_ids_unique"
+scope = "Decision"
 field = "entities[].name"
 
 # Every Requirement with `nature = "module"` (the default) must be

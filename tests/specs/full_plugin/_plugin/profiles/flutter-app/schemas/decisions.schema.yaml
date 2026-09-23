@@ -13,8 +13,8 @@ description: >
   open prefix grammar (DEC-002, OQ-005, REQ-API-001, ZFM-001) lets a
   project keep a single id namespace across all four artifact types.
   The `decision_ids_unique` graph check enforces uniqueness inside
-  this file; cross-artifact id collisions are surfaced by the
-  reduction-level `unique_qualified_names` check.
+  this file. No check spans artifact types: a decision and a
+  requirement that share one id both validate.
 
   Existing projects with no `decisions.toml` continue to validate
   unchanged — the file is optional, and the typed cross-references
