@@ -10,6 +10,22 @@ The analyzer and the `specdev` plugin version **independently**. They are not
 meant to match. `contract_version` is the compatibility number between them,
 and it is `1`.
 
+## [Unreleased]
+
+### Changed
+
+- **`derive` exits 3 when it holds a target back.** A run whose report has an
+  `edited` or `conflict` line used to exit 0, so `derive --write && next-step`
+  in CI proceeded past a file it did not write. It now exits **3**; every
+  other target is still written, and 0 still means nothing was held back. The
+  preview (no `--write`) uses the same code. `specdev`'s `/spec-gen` treats 3
+  as "report and continue"; an older `/spec-gen` treats it as a refusal and
+  stops before recording lineage, so update the plugin with the analyzer.
+- **`gen` and `prompt` exit 2, not 1, when they cannot run.** An unparsable
+  module, an unreadable `context_files` entry or a missing plugin root used to
+  exit 1 — the same code as the open-question refusal. Exit 1 is now only the
+  two codegen refusals (an open question; no module-scope gate declared).
+
 ## [0.2.0] — 2026-09-15
 
 First tagged release. Pairs with `specdev` **v0.2.1**.

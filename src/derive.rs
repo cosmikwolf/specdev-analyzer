@@ -123,6 +123,16 @@ pub struct DeriveReport {
 }
 
 impl DeriveReport {
+    /// Lines whose target was held back: an `edited` or `conflict` path
+    /// the run did not overwrite. The CLI exits non-zero when any exist,
+    /// so a non-LLM caller learns of a skipped file without reading stdout.
+    pub fn held(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|l| matches!(l.outcome, Outcome::Edited | Outcome::Conflict))
+            .count()
+    }
+
     fn push(&mut self, outcome: Outcome, path: impl Into<String>, note: Option<String>) {
         self.lines.push(DeriveLine {
             outcome,

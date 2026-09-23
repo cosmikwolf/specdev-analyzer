@@ -532,13 +532,42 @@ satisfies = ["REQ-1"]
         .arg(&target)
         .output()
         .expect("gen --module Gated --tail");
-    assert!(
-        !out.status.success(),
-        "tail must refuse when a reachable OQ is open"
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an open question is a refusal on an evaluated spec: exit 1"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("OQ-1") && stderr.contains("Refusing to generate"),
         "refusal must name the open question; got: {stderr}"
     );
+}
+
+// 18 — a module file that does not parse is "could not run", exit 2, not
+// the refusal code 1: a caller must be able to tell a crash from the
+// open-question gate. Same for `prompt`, which `gen --module` mirrors.
+#[test]
+fn cli_unparsable_module_exits_2_not_the_refusal_code() {
+    let (target, _layout) = fresh_firmware_project("cli-unparsable");
+    std::fs::write(target.join("specs/modules/Broken.toml"), "name = \n").unwrap();
+    let bin = env!("CARGO_BIN_EXE_specdev-analyzer");
+    for args in [
+        &["gen", "--module", "Broken"][..],
+        &["gen", "--module", "Broken", "--tail"][..],
+        &["prompt", "--module", "Broken"][..],
+    ] {
+        let out = std::process::Command::new(bin)
+            .args(args)
+            .arg("--project")
+            .arg(&target)
+            .output()
+            .expect("run analyzer");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains("Refusing to generate"),
+            "{args:?}: {stderr}"
+        );
+    }
 }
