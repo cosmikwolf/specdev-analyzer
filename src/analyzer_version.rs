@@ -6,7 +6,7 @@
 //! on, such as a `gen-plan` verdict or an exit code. That binary ran silently
 //! for months on one workstation (0.1.0 against a 0.2.0 plugin).
 //!
-//! The plugin states the oldest analyzer it works with in one file,
+//! The plugin states the analyzer version it is released with in one file,
 //! [`MIN_VERSION_FILE`], holding one `MAJOR.MINOR.PATCH` line. On every
 //! command this module reads it through the plugin root the caller already
 //! named — `--plugin-root` when given (and only it), else
@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 
 use crate::plugin_root::PLUGIN_MARKER;
 
-/// The plugin-relative file that names the oldest analyzer the plugin
-/// supports. One line, `MAJOR.MINOR.PATCH`.
+/// The plugin-relative file that names the analyzer version the plugin is
+/// released with; an older binary warns. One line, `MAJOR.MINOR.PATCH`.
 pub const MIN_VERSION_FILE: &str = "shared/min-analyzer-version";
 
 /// This binary's version.
