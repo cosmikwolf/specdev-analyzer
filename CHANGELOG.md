@@ -37,6 +37,15 @@ and it is `1`.
   exit 1 — the same code as the open-question refusal. Exit 1 is now only the
   two codegen refusals (an open question; no module-scope gate declared).
 
+### Fixed
+
+- **`validate` no longer drops its whole report when a spec file does not
+  parse.** A module, `decisions.toml` or sibling file with a TOML syntax error
+  stopped the run at exit 2 with only the raw parse message: no count line,
+  and every other finding lost, including the `LAYOUT-005` for the same file.
+  It is now a counted `REDUCE-001` error ("no graph check ran"), the rest of
+  the report is printed, and the exit code is 1 like any error finding.
+
 ## [0.2.0] — 2026-09-15
 
 First tagged release. Pairs with `specdev` **v0.2.1**.
