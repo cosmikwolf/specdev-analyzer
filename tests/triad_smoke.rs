@@ -937,6 +937,38 @@ fn prompt_includes_module_decisions_and_default_committed_oq() {
 }
 
 #[test]
+fn prompt_honours_codegen_include() {
+    // The field selects which prose fields the prompt inlines. It was
+    // documented in every decisions schema and read by nothing: the prompt
+    // always carried `text` + `consequences`.
+    let (target, layout) = build_triad_smoke("prompt-codegen-include");
+    let path = target.join("specs/decisions.toml");
+    let decisions = std::fs::read_to_string(&path).unwrap().replace(
+        "consequences = \"Downstream knows X.\"\n",
+        "consequences = \"Downstream knows X.\"\n\
+         alternatives = \"ALT-MARK\"\n\
+         codegen_include = [\"alternatives\", \"text\"]\n",
+    );
+    std::fs::write(&path, decisions).unwrap();
+
+    let p = prompt::assemble_module_prompt(&layout, "module_ok").expect("prompt");
+    assert!(
+        p.contains("We do the thing this way."),
+        "text missing:\n{p}"
+    );
+    assert!(
+        p.contains("Alternatives: ALT-MARK"),
+        "alternatives not included:\n{p}"
+    );
+    assert!(
+        !p.contains("Downstream knows X."),
+        "consequences included although not listed:\n{p}"
+    );
+    // Render order is fixed (text before alternatives), not list order.
+    assert!(p.find("We do the thing this way.") < p.find("Alternatives: ALT-MARK"));
+}
+
+#[test]
 fn prompt_blocked_module_surfaces_open_oq() {
     let (_, layout) = build_triad_smoke("prompt-module-blocked");
     // module_blocked satisfies ZFM-002 which is affected by OQ-002 (open).

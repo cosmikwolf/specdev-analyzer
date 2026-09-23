@@ -592,11 +592,18 @@ fn body_less_module_is_skipped_and_reads_new_in_gen_plan() {
     assert!(out.contains("skipped EventsPage: no body"), "{out}");
     assert!(out.contains("deleted app/events/page.tsx"), "{out}");
 
-    // A module whose only rows are derived reads `new`.
+    // A module whose only rows are derived, and whose body is gone, reads
+    // `new`. The fixture's other modules have hand-written bodies at the
+    // convention path and no body rows, so they read `unrecorded` (#216).
     let layout = LayoutContext::discover(&project, None).unwrap();
     let plan = run_gen_plan(&layout).unwrap();
     for m in &plan.modules {
-        assert_eq!(m.category, GenPlanCategory::New, "{}: {:?}", m.module, m);
+        let expected = if m.module == "EventsPage" {
+            GenPlanCategory::New
+        } else {
+            GenPlanCategory::Unrecorded
+        };
+        assert_eq!(m.category, expected, "{}: {:?}", m.module, m);
     }
 }
 
