@@ -402,6 +402,31 @@ fn record_files_inner(
         );
         recorded.push(key);
     }
+    // A module record is the module's whole emission (`/spec-gen` Step 6.5
+    // passes every file it wrote). A body row this run did not re-record
+    // belongs to an earlier emission: left in place it keeps the old
+    // `input_hash`, and `gen-plan` reads the module `stale` on every run
+    // afterwards, however often it is regenerated. Retire such rows.
+    // Derived rows are `derive`'s and stay.
+    if let Some(name) = module {
+        let retired: Vec<String> = lineage
+            .files
+            .iter()
+            .filter(|(k, e)| {
+                e.module.as_deref() == Some(name) && !e.derived && !recorded.contains(k)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in retired {
+            lineage.files.remove(&key);
+            tracing::warn!(
+                target: "specdev_analyzer::gen_lineage",
+                "gen-record: retired `{key}` — recorded for module `{name}` by an \
+                 earlier gen and not emitted by this one. The file itself is left \
+                 on disk; delete it if the spec no longer produces it."
+            );
+        }
+    }
     lineage.save(&layout.specdev_root)?;
     recorded.sort();
     Ok(recorded)
@@ -1091,6 +1116,7 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
     batch.sort_by(|a, b| a.label.cmp(&b.label));
     report.batch = batch;
 
+    let adapter = crate::lang::adapter_for(&layout.spec.project.language);
     for (name, input_hash) in &inputs {
         // Second axis: a passing gate row at the current key. Computed for
         // every category — a `new` or `stale` module is trivially
@@ -1129,18 +1155,35 @@ pub fn run_gen_plan(layout: &LayoutContext) -> Result<GenPlanReport> {
             // regenerating would overwrite hand-authored work that the plan
             // gave no warning about.
             //
-            // Only an explicit `source_file` is consulted. When the spec does
-            // not name one, the emission path is the codegen prose's to
-            // decide and is not knowable here — that stays `new`, which is
-            // the honest answer rather than a guess.
+            // The path is resolved the way `extract-items` resolves it: an
+            // explicit `source_file`, else the language adapter's convention
+            // candidates under `[paths].source` (#216). Consulting only the
+            // explicit key called every convention-path module `new` — in a
+            // profile where no module names a `source_file`, that is all of
+            // them — while `extract-items` found the file. A language with
+            // no adapter falls back to the explicit key alone.
             let module_path = layout.modules_dir.join(format!("{name}.toml"));
             let declared = crate::items::source_map::load_source_file_override(&module_path);
-            let existing: Vec<String> = declared
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .filter(|rel| layout.project_root.join(rel).is_file())
-                .map(|rel| vec![rel_key(Path::new(rel))])
+            let resolved: Option<PathBuf> = match adapter.as_deref() {
+                Some(a) => crate::items::source_map::resolve_source_path(
+                    name,
+                    declared.as_deref(),
+                    a,
+                    &layout.project_root,
+                    &layout.spec.paths.source,
+                ),
+                None => declared
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|rel| layout.project_root.join(rel))
+                    .filter(|p| p.is_file()),
+            };
+            let existing: Vec<String> = resolved
+                .map(|p| {
+                    let rel = p.strip_prefix(&layout.project_root).unwrap_or(&p);
+                    vec![rel_key(rel)]
+                })
                 .unwrap_or_default();
 
             let category = if existing.is_empty() {
