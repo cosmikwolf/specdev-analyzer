@@ -88,6 +88,7 @@ pub mod cli;
 pub mod config;
 pub mod context;
 pub mod coverage;
+pub mod decision_report;
 pub mod derive;
 pub mod diagnostics;
 pub mod domain;
