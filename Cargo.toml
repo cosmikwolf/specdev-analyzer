@@ -1,6 +1,6 @@
 [package]
 name = "specdev-analyzer"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 # Set by the DEPENDENCY graph, not by this crate's own source: clap_builder
 # needs edition 2024, and eleven icu_* packages require 1.86. Measured with
