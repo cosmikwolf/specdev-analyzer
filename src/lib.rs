@@ -97,6 +97,7 @@ pub mod extract;
 pub mod gates;
 pub mod gen_lineage;
 pub mod graph;
+pub mod graph_report;
 pub mod hash;
 pub mod inline;
 pub mod items;

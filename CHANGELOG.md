@@ -14,6 +14,15 @@ and it is `1`.
 
 ### Added
 
+- **`report graph`** renders the module dependency graph as Mermaid
+  (default) or DOT. When `domain.toml` declares a `layer_dependency` graph
+  check, nodes are grouped by that check's layer field in its declared
+  order, and every edge the check flags is drawn thick and red — the same
+  rule `validate` applies, so the two cannot disagree. Each node shows how
+  many modules it uses and how many use it. Block entities nested inside a
+  module file are left out. The output is deterministic, so a committed map
+  shows a new edge in a diff. `--check <rule>` picks the layer check when
+  there is more than one; `-o <file>` writes to a file.
 - **A warning when the installed analyzer is older than the plugin.** Every
   command reads `shared/min-analyzer-version` from the plugin root it was
   given (`--plugin-root`, else `SPECDEV_PLUGIN_ROOT`, else
