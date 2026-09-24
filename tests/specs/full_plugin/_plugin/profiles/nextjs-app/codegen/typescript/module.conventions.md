@@ -284,7 +284,7 @@ Four generators may touch a Next.js tree; only two are spec-owned.
 | `/spec-gen` (LLM step)         | `src/**` bodies, `src/**/*.test.ts(x)`, `e2e/**`                                      | always        |
 | `specdev-analyzer manifest`    | `package.json`                                                                        | always        |
 | `specdev-analyzer derive`      | the route shims it writes under `app/` (`page.tsx`, `layout.tsx`, `route.ts`, boundary files) | always, as `derived` rows |
-| profile `paired_files` (written once when absent) | `tsconfig.json`, `next.config.ts`, `vitest.config.ts`, `playwright.config.ts`, `.gitignore`, `app/.gitkeep` | **never** |
+| profile `paired_files` (written once when absent) | `tsconfig.json`, `next.config.ts`, `vitest.config.ts`, `playwright.config.ts`, `.gitignore`, `pnpm-workspace.yaml`, `app/.gitkeep` | **never** |
 | Next.js / pnpm / tooling       | `node_modules/`, `.next/`, `pnpm-lock.yaml`, `next-env.d.ts`, `*.tsbuildinfo`, the `AGENTS.md`/`CLAUDE.md` blocks `next dev` writes | **never** |
 
 Gen owns the derived files it writes, **not `app/**`**: a hand-written
@@ -293,3 +293,10 @@ hand-written file at a derived target blocks that shim and is reported,
 never overwritten silently. `next build` rewrites `tsconfig.json` on
 its first run when Next's keys are missing, which is why that file can
 only ever be written once and never recorded.
+
+`pnpm-workspace.yaml` is a paired file here, not manifest output: in a
+single app it carries `onlyBuiltDependencies`, and the project owns it
+after the first write. Only at a TypeScript **workspace root** — a
+`spec.toml` with `[workspace]` — does `manifest` write it (with
+`packages:`) and `/spec-gen` record it. The analyzer refuses a project
+where both would write the one path.
