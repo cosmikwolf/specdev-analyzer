@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-24
+
 ### Added
 
 - **`report imports`** lists packages a module's source file imports but
