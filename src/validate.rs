@@ -649,7 +649,28 @@ pub fn validate_modules_for(
 
                 // Stage 5: run executor + project graph_checks.
                 let mut exec_report = Report::default();
-                let graph = reduction::execute_kindset(&kindset, layout, &mut exec_report)?;
+                let graph = match reduction::execute_kindset(&kindset, layout, &mut exec_report) {
+                    Ok(graph) => graph,
+                    Err(e) => {
+                        // A spec file that does not parse (a module, or
+                        // `decisions.toml` and its siblings) stops the
+                        // reduction. Report it as a counted error and keep
+                        // every other finding: aborting here dropped the
+                        // whole report, `LAYOUT-005` included, and printed
+                        // no count line (#196). The graph checks cannot run
+                        // without the graph, and the finding says so.
+                        report.extend(exec_report.findings().to_vec());
+                        report.push(Finding::new(
+                            "REDUCE-001",
+                            Severity::Error,
+                            format!(
+                                "the entity graph could not be built, so no graph check ran: \
+                                 {e:#}"
+                            ),
+                        ));
+                        return Ok(());
+                    }
+                };
                 report.extend(exec_report.findings().to_vec());
 
                 execute_graph_checks(
