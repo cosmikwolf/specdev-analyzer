@@ -45,6 +45,10 @@ and it is `1`.
   and every other finding lost, including the `LAYOUT-005` for the same file.
   It is now a counted `REDUCE-001` error ("no graph check ran"), the rest of
   the report is printed, and the exit code is 1 like any error finding.
+- **`--no-color` is accepted by every subcommand.** It was declared on
+  `validate` alone, so `drift --no-color`, `report gen-plan --no-color` and
+  the rest exited 2 on an unknown argument. It is now a global flag; output
+  without color is unchanged by it.
 
 ## [0.2.0] — 2026-09-15
 
