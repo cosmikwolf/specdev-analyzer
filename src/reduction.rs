@@ -42,6 +42,10 @@ pub struct Entity {
 #[derive(Debug, Clone, Serialize)]
 pub struct Relation {
     pub kind: String,
+    /// Canonical relation kind the `kind` classifies under (`depends_on`,
+    /// `contains`, …). Consumers that bucket relations by meaning read
+    /// this instead of re-walking the kind set.
+    pub extends: String,
     pub from_kind: String,
     pub to_kind: String,
     pub from: String,
@@ -135,6 +139,7 @@ pub fn execute_kindset(
         materialize_relation(
             qualified_path,
             decl,
+            kindset,
             layout,
             &index,
             &mut graph,
@@ -228,9 +233,11 @@ fn materialize_entity(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn materialize_relation(
     qualified_path: &str,
     decl: &ResolvedRelationDecl,
+    kindset: &EffectiveKindSet,
     layout: &LayoutContext,
     index: &std::collections::HashMap<(String, String), usize>,
     graph: &mut Graph,
@@ -239,6 +246,13 @@ fn materialize_relation(
 ) -> Result<()> {
     let project_root = layout.project_root.as_path();
     let body = decl_body(&decl.raw);
+    let canonical = kindset
+        .relation_canonical(qualified_path)
+        .unwrap_or_else(|| "depends_on".to_string());
+    if let Some(m) = body.get("match").and_then(|v| v.as_object()) {
+        materialize_match_relation(qualified_path, decl, &canonical, m, project_root, graph);
+        return Ok(());
+    }
     let from_spec = body
         .get("from_spec")
         .and_then(|v| v.as_str())
@@ -368,6 +382,7 @@ fn materialize_relation(
 
             graph.relations.push(Relation {
                 kind: qualified_path.to_string(),
+                extends: canonical.clone(),
                 from_kind: from_kind_str.clone(),
                 to_kind: to_kind_str.clone(),
                 from: from_name,
@@ -581,6 +596,94 @@ fn resolve_opposite_module(
 /// Translate the YAML body retained on a [`ResolvedEntityDecl`] /
 /// [`ResolvedRelationDecl`] into a JSON map for selector evaluation. The
 /// YAML carries the verbatim `from`/`name`/`attrs`/`endpoints` fields.
+/// Materialize a `match:` relation: one edge from every already-built
+/// entity of `from_kind` whose attribute is in the `from` value list to
+/// every entity of `to_kind` whose attribute is in the `to` list. It
+/// reads no spec file, so it has no TOML provenance; the provenance names
+/// the reduction file and the relation kind instead, which keeps `reduce`
+/// output deterministic. The shape was checked at resolve time
+/// (`reductions::check_match_shape`), so a malformed body yields no edges
+/// here without a second finding.
+fn materialize_match_relation(
+    qualified_path: &str,
+    decl: &ResolvedRelationDecl,
+    canonical: &str,
+    m: &Map<String, Value>,
+    project_root: &Path,
+    graph: &mut Graph,
+) {
+    let from_kind = decl.from_kind.to_string();
+    let to_kind = decl.to_kind.to_string();
+    let (Some(from_f), Some(to_f)) = (
+        m.get("from").and_then(MatchFilter::parse),
+        m.get("to").and_then(MatchFilter::parse),
+    ) else {
+        return;
+    };
+    let pick = |kind: &str, f: &MatchFilter| -> Vec<String> {
+        let mut names: Vec<String> = graph
+            .entities
+            .iter()
+            .filter(|e| e.kind == kind && f.admits(e))
+            .map(|e| e.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let froms = pick(&from_kind, &from_f);
+    let tos = pick(&to_kind, &to_f);
+    let source_file = relpath(&decl.source_path, project_root);
+    for f in &froms {
+        for t in &tos {
+            if f == t && from_kind == to_kind {
+                continue;
+            }
+            graph.relations.push(Relation {
+                kind: qualified_path.to_string(),
+                extends: canonical.to_string(),
+                from_kind: from_kind.clone(),
+                to_kind: to_kind.clone(),
+                from: f.clone(),
+                to: t.clone(),
+                attrs: BTreeMap::new(),
+                provenance: Provenance::new(
+                    source_file.clone(),
+                    format!("/relations/{qualified_path}"),
+                )
+                .into(),
+            });
+        }
+    }
+}
+
+/// One side of a `match:` relation: `{ attr: <name>, in: [<value>, …] }`.
+struct MatchFilter {
+    attr: String,
+    values: Vec<String>,
+}
+
+impl MatchFilter {
+    fn parse(v: &Value) -> Option<Self> {
+        let o = v.as_object()?;
+        let attr = o.get("attr")?.as_str()?.to_string();
+        let values = o
+            .get("in")?
+            .as_array()?
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+        Some(Self { attr, values })
+    }
+
+    fn admits(&self, e: &Entity) -> bool {
+        e.attrs
+            .get(&self.attr)
+            .and_then(Value::as_str)
+            .is_some_and(|a| self.values.iter().any(|v| v == a))
+    }
+}
+
 fn decl_body(raw: &serde_yaml::Value) -> serde_json::Map<String, Value> {
     let json: Value = match serde_json::to_value(raw) {
         Ok(v) => v,

@@ -23,6 +23,7 @@ name = "{{project_name}}"
 unique_qualified_names                       = "error"
 modules_acyclic                              = "error"
 role_dependency                              = "warning"
+single_app_module                            = "warning"
 requirement_ids_unique                       = "error"
 decision_ids_unique                          = "error"
 requirements_have_satisfiers                 = "warning"
@@ -68,6 +69,18 @@ entity_scope = "Module"
 relation_scope = "depends_on"
 layer_field = "attrs.role"
 layer_ordering = ["app", "layout", "page", "route_handler", "boundary", "component", "server_action", "service", "model"]
+
+# Exactly one composition root. The `renders` relation hangs every
+# layout, page and boundary off the `app` module; with none, the cone is
+# empty with no message, and with two, every page hangs off both. A
+# project with no modules yet passes.
+[[project.graph_checks]]
+kind = "entity_count"
+rule = "single_app_module"
+entity_scope = "Module"
+entity_attr = "role"
+entity_attr_value = "app"
+expected_count = 1
 
 # Requirement ids must be unique.
 [[project.graph_checks]]

@@ -8,6 +8,7 @@ pub struct DartAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/dart/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/dart/items.scm");
+const IMPORTS_QUERY: &str = include_str!("../embedded/languages/dart/imports.scm");
 
 impl LanguageAdapter for DartAdapter {
     fn name(&self) -> &'static str {
@@ -32,6 +33,19 @@ impl LanguageAdapter for DartAdapter {
 
     fn items_query(&self) -> Option<&'static str> {
         Some(ITEMS_QUERY)
+    }
+
+    fn imports_query(&self) -> Option<&'static str> {
+        Some(IMPORTS_QUERY)
+    }
+
+    /// `'package:name/x.dart'` → `name`, unless `name` is the project's
+    /// own package. `dart:` URIs and relative URIs name no package.
+    fn import_package(&self, specifier: &str, self_package: &str) -> Option<String> {
+        let s = specifier.trim().trim_matches(|c| c == '\'' || c == '"');
+        let rest = s.strip_prefix("package:")?;
+        let name = rest.split('/').next().filter(|n| !n.is_empty())?;
+        (name != self_package).then(|| name.to_string())
     }
 
     fn lockfile_candidates(&self) -> &'static [&'static str] {

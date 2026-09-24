@@ -74,6 +74,11 @@ pub struct RelatedModules {
     /// Modules referenced by M's `[[items]]` `kind = "re_export"`
     /// `target` field (library-api).
     pub re_export_targets: Vec<String>,
+    /// Modules M contains: a Module → Module relation whose kind extends
+    /// canonical `contains`, M is `from`. A change to M reaches them.
+    pub contains: Vec<String>,
+    /// Modules that contain M (reverse `contains`, M is `to`).
+    pub contained_by: Vec<String>,
 }
 
 /// Library-friendly entry point. Discovers layout, runs reduction,
@@ -220,6 +225,8 @@ impl RelatedModules {
             &self.binding_endpoints,
             &self.hardware_owners,
             &self.re_export_targets,
+            &self.contains,
+            &self.contained_by,
         ] {
             for n in v {
                 s.insert(n.clone());
@@ -258,11 +265,24 @@ fn compute_related(layout: &LayoutContext, module: &str, graph: &Graph) -> Resul
     let mut downstream: BTreeSet<String> = BTreeSet::new();
     let mut port_endpoints: BTreeSet<String> = BTreeSet::new();
     let mut binding_endpoints: BTreeSet<String> = BTreeSet::new();
+    let mut contains: BTreeSet<String> = BTreeSet::new();
+    let mut contained_by: BTreeSet<String> = BTreeSet::new();
 
     for r in &graph.relations {
         let m_is_from_module = r.from_kind == "Module" && r.from == module;
         let m_is_to_module = r.to_kind == "Module" && r.to == module;
 
+        if r.from_kind == "Module" && r.to_kind == "Module" && r.extends == "contains" {
+            // Containment is not dependency: keep it out of
+            // upstream/downstream so those keep their meaning.
+            if m_is_from_module && r.to != module {
+                contains.insert(r.to.clone());
+            }
+            if m_is_to_module && r.from != module {
+                contained_by.insert(r.from.clone());
+            }
+            continue;
+        }
         if r.from_kind == "Module" && r.to_kind == "Module" {
             // depends_on (or any Module→Module relation, e.g. extends
             // depends_on). Direction matters for upstream/downstream.
@@ -394,6 +414,8 @@ fn compute_related(layout: &LayoutContext, module: &str, graph: &Graph) -> Resul
         binding_endpoints: binding_endpoints.into_iter().collect(),
         hardware_owners: hardware_owners.into_iter().collect(),
         re_export_targets: re_export_targets.into_iter().collect(),
+        contains: contains.into_iter().collect(),
+        contained_by: contained_by.into_iter().collect(),
     })
 }
 

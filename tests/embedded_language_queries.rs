@@ -17,7 +17,7 @@
 //! `cargo install --path .` with the sibling present. It modelled a developer,
 //! not the user it was named for.
 //!
-//! **The fix.** The eight `.scm` files are committed under
+//! **The fix.** The `.scm` files are committed under
 //! `src/embedded/languages/`, included with crate-relative paths, exactly as
 //! the eleven schemas in `src/embedded/` already are. The plugin tree stays the
 //! source of truth; these are mirrors, and `embedded_queries_match_the_live_plugin_tree`
@@ -30,10 +30,12 @@ const QUERIES: &[(&str, &str)] = &[
     ("c", "audit"),
     ("cpp", "audit"),
     ("dart", "audit"),
+    ("dart", "imports"),
     ("dart", "items"),
     ("rust", "audit"),
     ("rust", "items"),
     ("typescript", "audit"),
+    ("typescript", "imports"),
     ("typescript", "items"),
 ];
 

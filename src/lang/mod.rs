@@ -110,6 +110,23 @@ pub trait LanguageAdapter: Send + Sync {
         None
     }
 
+    /// The built-in `imports.scm` query source, if the language tier ships
+    /// one. Its single `@import.source` capture is the module specifier of
+    /// each import; [`LanguageAdapter::import_package`] maps it to a
+    /// package name. `report imports` compares those names with the
+    /// module's declared `external_deps`.
+    fn imports_query(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The external package one captured import specifier names, or
+    /// `None` when it names none: a relative or alias path, the
+    /// language's own standard library, or `self_package` (the project's
+    /// own package name). The specifier arrives exactly as captured.
+    fn import_package(&self, _specifier: &str, _self_package: &str) -> Option<String> {
+        None
+    }
+
     /// Comparable identity for joining a spec item against an extracted
     /// source item. Default: the name verbatim. Languages whose
     /// synthesized names carry purely-syntactic variance an author
