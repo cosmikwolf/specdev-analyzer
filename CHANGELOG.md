@@ -35,21 +35,14 @@ and it is `1`.
   carries (#208).
 - **`context` lists containment** in two new buckets, `contains` and
   `contained_by`, for Module → Module relations that extend canonical
-  `contains`. They are not dependencies, so `upstream` / `downstream` keep
-  their meaning; they count in `related_files` and `excluded_module_count`.
-- **`entity_count` graph-check primitive**: the number of scoped entities
-  with an attribute value must equal `expected_count`; a project with none
-  of the scope yet passes.
+  `contains` (#208). They are not dependencies, so `upstream` / `downstream`
+  keep their meaning; they count in `related_files` and
+  `excluded_module_count`.
+- **`entity_count` graph-check primitive** (#208): the number of scoped
+  entities with an attribute value must equal `expected_count`; a project with
+  none of the scope yet passes.
 - Every relation in the graph (`reduce` output) now carries `extends`, its
   canonical relation kind, as entities already did.
-
-### Changed
-
-- **A reduction relation with neither or both of `from_spec` and `match`, or
-  a misshapen `match`, is `METASCHEMA-006`** — for profile reductions too, not
-  only block reductions. Before, a relation with no `from_spec` built no edges
-  and said nothing.
-
 - **`report decisions`** shows which decision text reaches which module's
   codegen prompt. `modules`: per module, its decisions and open questions,
   why each is there (`guided_by`, a satisfied requirement's `decided_by`, the
@@ -58,7 +51,7 @@ and it is `1`.
   empty when no prompt carries it. Computed by the function the prompt is
   rendered from; the prompt text itself is byte-identical (checked on 170
   real module prompts). `--module` / `--decision` narrow either view.
-- **`report graph`** renders the module dependency graph as Mermaid
+- **`report graph`** (#203) renders the module dependency graph as Mermaid
   (default) or DOT. When `domain.toml` declares a `layer_dependency` graph
   check, nodes are grouped by that check's layer field in its declared
   order, and every edge the check flags is drawn thick and red — the same
@@ -67,9 +60,9 @@ and it is `1`.
   module file are left out. The output is deterministic, so a committed map
   shows a new edge in a diff. `--check <rule>` picks the layer check when
   there is more than one; `-o <file>` writes to a file.
-- **A warning when the installed analyzer is older than the plugin.** Every
-  command reads `shared/min-analyzer-version` from the plugin root it was
-  given (`--plugin-root`, else `SPECDEV_PLUGIN_ROOT`, else
+- **A warning when the installed analyzer is older than the plugin** (#179).
+  Every command reads `shared/min-analyzer-version` from the plugin root it
+  was given (`--plugin-root`, else `SPECDEV_PLUGIN_ROOT`, else
   `CLAUDE_PLUGIN_ROOT`) and prints one `ANALYZER-VERSION-001` line on stderr
   when this binary is older; `--version` prints it too. It never changes an
   exit code or stdout, and it is silent when no plugin root is named or the
@@ -78,30 +71,54 @@ and it is `1`.
 
 ### Changed
 
-- **`derive` exits 3 when it holds a target back.** A run whose report has an
-  `edited` or `conflict` line used to exit 0, so `derive --write && next-step`
-  in CI proceeded past a file it did not write. It now exits **3**; every
-  other target is still written, and 0 still means nothing was held back. The
-  preview (no `--write`) uses the same code. `specdev`'s `/spec-gen` treats 3
-  as "report and continue"; an older `/spec-gen` treats it as a refusal and
-  stops before recording lineage, so update the plugin with the analyzer.
-- **`gen` and `prompt` exit 2, not 1, when they cannot run.** An unparsable
-  module, an unreadable `context_files` entry or a missing plugin root used to
-  exit 1 — the same code as the open-question refusal. Exit 1 is now only the
-  two codegen refusals (an open question; no module-scope gate declared).
+- **A reduction relation with neither or both of `from_spec` and `match`, or
+  a misshapen `match`, is `METASCHEMA-006`** (#208) — for profile reductions
+  too, not only block reductions. Before, a relation with no `from_spec` built
+  no edges and said nothing.
+- **`derive` exits 3 when it holds a target back** (#160). A run whose report
+  has an `edited` or `conflict` line used to exit 0, so
+  `derive --write && next-step` in CI proceeded past a file it did not write.
+  It now exits **3**; every other target is still written, and 0 still means
+  nothing was held back. The preview (no `--write`) uses the same code.
+  `specdev`'s `/spec-gen` treats 3 as "report and continue"; an older
+  `/spec-gen` treats it as a refusal and stops before recording lineage, so
+  update the plugin with the analyzer.
+- **`gen` and `prompt` exit 2, not 1, when they cannot run** (#165). An
+  unparsable module, an unreadable `context_files` entry or a missing plugin
+  root used to exit 1 — the same code as the open-question refusal. Exit 1 is
+  now only the two codegen refusals (an open question; no module-scope gate
+  declared).
+- **`codegen_include` is honoured** (#217). It was documented in every
+  decisions schema and read by nothing; the prompt always carried `text` +
+  `consequences`. It now selects the prose fields, in a fixed order. The
+  default is byte-identical to the old output, so no recorded `input_hash`
+  moves.
 
 ### Fixed
 
+- **`gen-plan` finds a module's file at the convention path** (#216). It
+  consulted only an explicit `source_file` before calling a module with no
+  lineage row `new`, while `extract-items` resolved the same module by the
+  language's convention path. In nextjs-app, where no module names a
+  `source_file`, a committed file read `new` and `/spec-gen --all` would have
+  overwritten it. It now reads `unrecorded`.
+- **A module record retires the module's stale body rows** (#218). A row left
+  behind kept the old `input_hash`, so the module read `stale` on every run
+  however often it was regenerated. Derived rows stay.
 - **`validate` no longer drops its whole report when a spec file does not
-  parse.** A module, `decisions.toml` or sibling file with a TOML syntax error
-  stopped the run at exit 2 with only the raw parse message: no count line,
-  and every other finding lost, including the `LAYOUT-005` for the same file.
-  It is now a counted `REDUCE-001` error ("no graph check ran"), the rest of
-  the report is printed, and the exit code is 1 like any error finding.
-- **`--no-color` is accepted by every subcommand.** It was declared on
+  parse** (#196). A module, `decisions.toml` or sibling file with a TOML
+  syntax error stopped the run at exit 2 with only the raw parse message: no
+  count line, and every other finding lost, including the `LAYOUT-005` for the
+  same file. It is now a counted `REDUCE-001` error ("no graph check ran"),
+  the rest of the report is printed, and the exit code is 1 like any error
+  finding.
+- **`--no-color` is accepted by every subcommand** (#123). It was declared on
   `validate` alone, so `drift --no-color`, `report gen-plan --no-color` and
   the rest exited 2 on an unknown argument. It is now a global flag; output
   without color is unchanged by it.
+- Test fixtures mirror the plugin's `decision_ids_unique` check (#197) and its
+  one-owner rule for `pnpm-workspace.yaml` (#214); no analyzer change was
+  needed for either.
 
 ## [0.2.0] — 2026-09-15
 
