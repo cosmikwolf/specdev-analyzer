@@ -662,22 +662,82 @@ pub fn collect_decision_oq_context(
     module_name: &str,
     module_toml: &toml::Value,
 ) -> Result<String> {
+    let ctx = decision_context(layout, module_toml)?;
+    Ok(render_decision_context(module_name, &ctx))
+}
+
+/// Why a decision or open question reaches a module's prompt.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "via", content = "id")]
+pub enum ContextReason {
+    /// Named in the module's own `guided_by`.
+    GuidedBy,
+    /// The `decided_by` of a requirement the module `satisfies`.
+    Requirement(String),
+    /// A workspace-tier decision: it reaches every member module.
+    Workspace,
+    /// An open question whose `affects` names a satisfied requirement.
+    Affects(String),
+}
+
+/// One decision in a module's prompt.
+#[derive(Debug, Clone)]
+pub struct ScopedDecision {
+    pub id: String,
+    pub title: String,
+    /// `true` when the entry was read from the workspace root's file.
+    pub workspace: bool,
+    /// The prose fields that reach the prompt, in render order.
+    pub fields: Vec<&'static str>,
+    pub reasons: Vec<ContextReason>,
+    entry: DecisionEntry,
+}
+
+/// One open question in a module's prompt.
+#[derive(Debug, Clone)]
+pub struct ScopedQuestion {
+    pub id: String,
+    pub status: String,
+    pub reasons: Vec<ContextReason>,
+    entry: OpenQuestionEntry,
+}
+
+/// The decisions and open questions that reach one module's prompt, and
+/// why. Computed once; [`collect_decision_oq_context`] renders it into the
+/// prompt, and `report decisions` prints it (the only view of "which
+/// decision text does this module's prompt carry" short of assembling the
+/// prompt and searching it).
+#[derive(Debug, Clone, Default)]
+pub struct DecisionContext {
+    /// By id.
+    pub decisions: Vec<ScopedDecision>,
+    /// By id.
+    pub open_questions: Vec<ScopedQuestion>,
+}
+
+/// Compute a module's [`DecisionContext`]. Three decision sources,
+/// deduplicated: (a) `guided_by`, (b) `satisfies` → requirement
+/// `decided_by`, (c) every workspace-tier decision. Superseded decisions are
+/// skipped. A decision id present in both tiers takes the workspace entry.
+pub fn decision_context(
+    layout: &LayoutContext,
+    module_toml: &toml::Value,
+) -> Result<DecisionContext> {
     use std::collections::BTreeMap;
 
-    // -- gather requirements + decisions + OQs per tier ---------------------
-
-    // Per-project requirements + sources file → list of requirement
-    // (id, decided_by). The module is rooted at `layout.project_root`;
-    // we read this project's requirements.toml as primary.
-    let satisfies: Vec<String> = module_toml
-        .get("satisfies")
-        .and_then(toml::Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
+    let strings = |key: &str| -> Vec<String> {
+        module_toml
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let satisfies = strings("satisfies");
+    let guided_by = strings("guided_by");
 
     // Local decisions/oqs.
     let local_decisions = read_decisions(&layout.specs_dir.join("decisions.toml"))?;
@@ -692,60 +752,42 @@ pub fn collect_decision_oq_context(
     // it as workspace tier.
     let mut workspace_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
     let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
-    if let Some(parent) = layout.project_root.parent() {
-        let parent_specs = parent.join("specs");
-        let parent_dec = parent_specs.join("decisions.toml");
-        let parent_spec_toml = parent.join("spec.toml");
-        if parent_dec.is_file() && parent_spec_toml.is_file() {
-            // Confirm this parent is a workspace.
-            if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
-                if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
-                    if parsed.get("workspace").is_some() {
-                        for (k, v) in read_decisions(&parent_dec)? {
-                            workspace_decisions.insert(k, v);
-                        }
-                        for (k, v) in
-                            read_open_questions(&parent_specs.join("open_questions.toml"))?
-                        {
-                            workspace_oqs.insert(k, v);
-                        }
-                    }
-                }
-            }
-        }
+    if let Some(parent_specs) = workspace_specs_dir(layout) {
+        workspace_decisions = read_decisions(&parent_specs.join("decisions.toml"))?;
+        workspace_oqs = read_open_questions(&parent_specs.join("open_questions.toml"))?;
     }
 
     // Per-project requirements: id → decided_by[].
     let req_decided_by = read_requirement_decided_by(&layout.requirements_toml_path)?;
-    // Per-project OQs: keyed by (id → entry), already in local_oqs.
     // Per-project requirement → affecting OQs (reverse of OQ.affects).
     let req_to_oqs = build_req_to_oqs(&local_oqs);
 
-    // -- compute the in-scope decision id set -----------------------------
+    // -- the in-scope decision set: (entry, from workspace?, reasons) ------
 
-    let mut in_scope_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
-    let mut emit_decision = |id: &str, decisions: &BTreeMap<String, DecisionEntry>| {
-        if let Some(d) = decisions.get(id) {
-            if d.status == "superseded" {
-                return;
-            }
-            in_scope_decisions.insert(id.to_string(), d.clone());
+    let mut in_scope: BTreeMap<String, (DecisionEntry, bool, Vec<ContextReason>)> = BTreeMap::new();
+    // A later insert of the same id replaces the entry (workspace after
+    // local) and keeps the reasons gathered so far.
+    let mut emit = |id: &str, d: &DecisionEntry, workspace: bool, why: ContextReason| {
+        if d.status == "superseded" {
+            return;
+        }
+        let slot = in_scope
+            .entry(id.to_string())
+            .or_insert_with(|| (d.clone(), workspace, Vec::new()));
+        slot.0 = d.clone();
+        slot.1 = workspace;
+        if !slot.2.contains(&why) {
+            slot.2.push(why);
         }
     };
 
     // (a) module.guided_by
-    let guided_by: Vec<String> = module_toml
-        .get("guided_by")
-        .and_then(toml::Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
     for id in &guided_by {
-        emit_decision(id, &local_decisions);
-        emit_decision(id, &workspace_decisions);
+        for (tier, workspace) in [(&local_decisions, false), (&workspace_decisions, true)] {
+            if let Some(d) = tier.get(id) {
+                emit(id, d, workspace, ContextReason::GuidedBy);
+            }
+        }
     }
 
     // (b) module.satisfies → Requirement.decided_by
@@ -754,27 +796,36 @@ pub fn collect_decision_oq_context(
             continue;
         };
         for id in decision_ids {
-            emit_decision(id, &local_decisions);
-            emit_decision(id, &workspace_decisions);
+            for (tier, workspace) in [(&local_decisions, false), (&workspace_decisions, true)] {
+                if let Some(d) = tier.get(id) {
+                    emit(id, d, workspace, ContextReason::Requirement(req_id.clone()));
+                }
+            }
         }
     }
 
     // (c) workspace-tier decisions
     for (id, entry) in &workspace_decisions {
-        if entry.status == "superseded" {
-            continue;
-        }
-        in_scope_decisions.insert(id.clone(), entry.clone());
+        emit(id, entry, true, ContextReason::Workspace);
     }
 
-    // -- compute in-scope OQs ---------------------------------------------
+    // -- in-scope OQs -----------------------------------------------------
 
-    let mut in_scope_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
+    let mut oqs: BTreeMap<String, (OpenQuestionEntry, Vec<ContextReason>)> = BTreeMap::new();
+    let mut emit_oq = |id: &str, e: &OpenQuestionEntry, why: ContextReason| {
+        let slot = oqs
+            .entry(id.to_string())
+            .or_insert_with(|| (e.clone(), Vec::new()));
+        slot.0 = e.clone();
+        if !slot.1.contains(&why) {
+            slot.1.push(why);
+        }
+    };
     for req_id in &satisfies {
         if let Some(oq_ids) = req_to_oqs.get(req_id) {
             for oq_id in oq_ids {
                 if let Some(entry) = local_oqs.get(oq_id) {
-                    in_scope_oqs.insert(oq_id.clone(), entry.clone());
+                    emit_oq(oq_id, entry, ContextReason::Affects(req_id.clone()));
                 }
             }
         }
@@ -785,66 +836,123 @@ pub fn collect_decision_oq_context(
     for (oq_id, entry) in &workspace_oqs {
         for affects in &entry.affects {
             if satisfies.iter().any(|s| s == affects) {
-                in_scope_oqs.insert(oq_id.clone(), entry.clone());
+                emit_oq(oq_id, entry, ContextReason::Affects(affects.clone()));
             }
         }
     }
 
-    // -- render -----------------------------------------------------------
+    Ok(DecisionContext {
+        decisions: in_scope
+            .into_iter()
+            .map(|(id, (entry, workspace, reasons))| ScopedDecision {
+                id,
+                title: entry.title.clone(),
+                workspace,
+                fields: entry.prose.iter().map(|(f, _, _)| *f).collect(),
+                reasons,
+                entry,
+            })
+            .collect(),
+        open_questions: oqs
+            .into_iter()
+            .map(|(id, (entry, reasons))| ScopedQuestion {
+                id,
+                status: entry.status.clone(),
+                reasons,
+                entry,
+            })
+            .collect(),
+    })
+}
 
+/// The workspace root's `specs/` when this project is a member: the parent
+/// directory holds `specs/decisions.toml` and a `spec.toml` declaring
+/// `[workspace]`.
+fn workspace_specs_dir(layout: &LayoutContext) -> Option<std::path::PathBuf> {
+    let parent = layout.project_root.parent()?;
+    let parent_specs = parent.join("specs");
+    let parent_spec_toml = parent.join("spec.toml");
+    if !parent_specs.join("decisions.toml").is_file() || !parent_spec_toml.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&parent_spec_toml).ok()?;
+    let parsed = toml::from_str::<toml::Value>(&text).ok()?;
+    parsed.get("workspace").is_some().then_some(parent_specs)
+}
+
+/// Every decision this project's prompts could carry: its own, then the
+/// workspace root's. `(id, title, status, from the workspace?)`, by id per
+/// tier.
+pub fn project_decisions(layout: &LayoutContext) -> Result<Vec<(String, String, String, bool)>> {
+    let mut out: Vec<(String, String, String, bool)> =
+        read_decisions(&layout.specs_dir.join("decisions.toml"))?
+            .into_iter()
+            .map(|(id, d)| (id, d.title, d.status, false))
+            .collect();
+    if let Some(dir) = workspace_specs_dir(layout) {
+        out.extend(
+            read_decisions(&dir.join("decisions.toml"))?
+                .into_iter()
+                .map(|(id, d)| (id, d.title, d.status, true)),
+        );
+    }
+    Ok(out)
+}
+
+/// The prompt text for a [`DecisionContext`]. Byte-for-byte what the
+/// prompt carried before the context was split out: a changed byte would
+/// move every recorded `input_hash`.
+fn render_decision_context(module_name: &str, ctx: &DecisionContext) -> String {
     let mut out = String::new();
-    if in_scope_decisions.is_empty() && in_scope_oqs.is_empty() {
-        return Ok(out);
+    if ctx.decisions.is_empty() && ctx.open_questions.is_empty() {
+        return out;
     }
 
     // Module header.
     out.push_str(&format!("Context for module `{module_name}`:\n\n"));
 
-    if !in_scope_decisions.is_empty() {
-        for (id, d) in &in_scope_decisions {
-            out.push_str(&format!("Decision {id}: {}.\n", d.title));
-            for (_, label, value) in &d.prose {
-                if label.is_empty() {
-                    out.push_str(&format!("{value}\n"));
-                } else {
-                    out.push_str(&format!("{label}: {value}\n"));
-                }
+    for d in &ctx.decisions {
+        out.push_str(&format!("Decision {}: {}.\n", d.id, d.entry.title));
+        for (_, label, value) in &d.entry.prose {
+            if label.is_empty() {
+                out.push_str(&format!("{value}\n"));
+            } else {
+                out.push_str(&format!("{label}: {value}\n"));
             }
-            out.push('\n');
+        }
+        out.push('\n');
+    }
+
+    for q in &ctx.open_questions {
+        let (id, oq) = (&q.id, &q.entry);
+        match oq.status.as_str() {
+            "default_committed" => {
+                out.push_str(&format!(
+                    "Open question {id} (working assumption): {}.",
+                    oq.text
+                ));
+                if let Some(v) = &oq.verify {
+                    out.push_str(&format!(" Verify by: {v}"));
+                }
+                out.push('\n');
+            }
+            "closed" => {
+                let cb = oq.closed_by.as_deref().unwrap_or("(unknown)");
+                out.push_str(&format!(
+                    "Open question {id} (resolved): see Decision {cb}.\n"
+                ));
+            }
+            "open" => {
+                out.push_str(&format!(
+                    "Open question {id} (UNRESOLVED — gen will refuse): {}.\n",
+                    oq.text
+                ));
+            }
+            _ => {}
         }
     }
 
-    if !in_scope_oqs.is_empty() {
-        for (id, oq) in &in_scope_oqs {
-            match oq.status.as_str() {
-                "default_committed" => {
-                    out.push_str(&format!(
-                        "Open question {id} (working assumption): {}.",
-                        oq.text
-                    ));
-                    if let Some(v) = &oq.verify {
-                        out.push_str(&format!(" Verify by: {v}"));
-                    }
-                    out.push('\n');
-                }
-                "closed" => {
-                    let cb = oq.closed_by.as_deref().unwrap_or("(unknown)");
-                    out.push_str(&format!(
-                        "Open question {id} (resolved): see Decision {cb}.\n"
-                    ));
-                }
-                "open" => {
-                    out.push_str(&format!(
-                        "Open question {id} (UNRESOLVED — gen will refuse): {}.\n",
-                        oq.text
-                    ));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    Ok(out)
+    out
 }
 
 #[derive(Debug, Clone)]
