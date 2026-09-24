@@ -37,6 +37,12 @@ pub struct GlobalArgs {
     /// [`plugin_root`]).
     #[arg(long, global = true)]
     pub plugin_root: Option<PathBuf>,
+    /// Suppress ANSI colors. Accepted by every subcommand, so a caller can
+    /// pass it everywhere; only output that has color changes (today,
+    /// `validate`). Per-subcommand before, it made every other subcommand
+    /// exit 2 on an unknown argument (#123).
+    #[arg(long, global = true)]
+    pub no_color: bool,
 }
 
 #[derive(Parser)]
@@ -62,9 +68,6 @@ pub enum Command {
         /// Treat missing layout entries as errors, not warnings.
         #[arg(long)]
         strict: bool,
-        /// Suppress ANSI colors.
-        #[arg(long)]
-        no_color: bool,
         /// Suppress info-severity lines from the rendered output (F-006).
         /// Errors, warnings, and the summary/counts tail still print.
         #[arg(long, short = 'q')]
@@ -599,6 +602,7 @@ pub fn run() -> ExitCode {
 pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
     let spec_path = globals.spec_path;
     let plugin_flag = globals.plugin_root;
+    let no_color = globals.no_color;
     if let Some(warning) = crate::analyzer_version::check(plugin_flag.as_deref()) {
         eprintln!("{warning}");
     }
@@ -606,7 +610,6 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
         Command::Validate {
             project,
             strict,
-            no_color,
             quiet,
             scope_for,
         } => run_validate(
