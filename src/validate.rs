@@ -1299,7 +1299,7 @@ fn verified_by_resolves_dispatch(
 /// `entities[]`) and `relation_scope` (applies to `relations[]`). Used by
 /// the graph-shape `layer_dependency` dispatch which needs both filters
 /// at once.
-fn filter_for_layer_dependency(
+pub(crate) fn filter_for_layer_dependency(
     graph_json: &JsonValue,
     entity_scope: &str,
     relation_scope: &str,

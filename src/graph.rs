@@ -864,13 +864,89 @@ pub fn layer_dependency_graph(
     rule: &str,
     severity: Severity,
 ) -> Vec<Finding> {
-    let order_index: HashMap<&str, usize> = ordering
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.as_str(), i))
-        .collect();
+    let layer_by_name = entity_layers(root, layer_field);
+    let mut out = Vec::new();
+    for edge in relation_edges(root) {
+        let Some(from_layer) = layer_by_name.get(&edge.from) else {
+            continue;
+        };
+        let Some(to_layer) = layer_by_name.get(&edge.to) else {
+            continue;
+        };
+        match edge_direction(ordering, from_layer, to_layer) {
+            EdgeDirection::UnknownFrom => out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "module `{}` declares unknown layer `{from_layer}` (not in ordering)",
+                    edge.from
+                ),
+            )),
+            EdgeDirection::UnknownTo => out.push(Finding::new(
+                rule,
+                severity,
+                format!(
+                    "module `{}` declares unknown layer `{to_layer}` (not in ordering)",
+                    edge.to
+                ),
+            )),
+            EdgeDirection::Upward => out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!(
+                        "module `{}` (layer {from_layer}) depends on `{}` (layer {to_layer}); upward dependency violates ordering {ordering:?}",
+                        edge.from, edge.to
+                    ),
+                )
+                .with_pointer(edge.pointer),
+            ),
+            EdgeDirection::Allowed => {}
+        }
+    }
+    out
+}
 
-    // Build name → layer over the (already filtered) entities[].
+/// One `relations[]` entry of a pre-filtered graph view: its endpoints by
+/// name and the JSON pointer of its `to` field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationEdge {
+    pub from: String,
+    pub to: String,
+    pub pointer: String,
+}
+
+/// How one edge sits against a top-down layer ordering. Shared by the
+/// `layer_dependency` check and `report graph`, so the report marks
+/// exactly the edges the check flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeDirection {
+    /// Same layer or downward.
+    Allowed,
+    /// From a lower layer to a higher one: the check's violation.
+    Upward,
+    /// The `from` entity's layer is not in the ordering.
+    UnknownFrom,
+    /// The `to` entity's layer is not in the ordering.
+    UnknownTo,
+}
+
+/// Top-down ordering: lower index = higher layer. `from` may depend on
+/// the same or lower layers (= same-or-higher index).
+pub fn edge_direction(ordering: &[String], from_layer: &str, to_layer: &str) -> EdgeDirection {
+    let pos = |l: &str| ordering.iter().position(|o| o == l);
+    match (pos(from_layer), pos(to_layer)) {
+        (None, _) => EdgeDirection::UnknownFrom,
+        (_, None) => EdgeDirection::UnknownTo,
+        (Some(f), Some(t)) if f > t => EdgeDirection::Upward,
+        _ => EdgeDirection::Allowed,
+    }
+}
+
+/// `name → layer` over the (already filtered) `entities[]`, reading the
+/// layer at `layer_field` (e.g. `"attrs.layer"`). Entities without a
+/// string at that path are absent from the map.
+pub fn entity_layers(root: &Value, layer_field: &str) -> HashMap<String, String> {
     let mut layer_by_name: HashMap<String, String> = HashMap::new();
     let layer_lookup_path = format!("entities[].{layer_field}");
     let name_picks = select(root, "entities[].name");
@@ -892,69 +968,38 @@ pub fn layer_dependency_graph(
             }
         }
     }
+    layer_by_name
+}
 
-    // Walk relations[] paired by ancestor: each relations[i] has a from
-    // and a to. Check the from-layer / to-layer ordering.
+/// Every `relations[]` entry with a string `from` and `to`, paired by
+/// array ancestor, in `relations[]` order.
+pub fn relation_edges(root: &Value) -> Vec<RelationEdge> {
     let froms = select(root, "relations[].from");
     let tos = select(root, "relations[].to");
-    let mut from_by_anc: HashMap<String, (String, String)> = HashMap::new();
+    let mut from_by_anc: HashMap<String, String> = HashMap::new();
     for p in &froms {
         if let Some(anc) = ancestor_at_array(&p.pointer, 0) {
             if let Some(s) = p.value.as_str() {
-                from_by_anc.insert(anc, (s.to_string(), p.pointer.clone()));
+                from_by_anc.insert(anc, s.to_string());
             }
         }
     }
-
     let mut out = Vec::new();
     for p in tos {
         let Some(anc) = ancestor_at_array(&p.pointer, 0) else {
             continue;
         };
-        let Some((from_name, _from_ptr)) = from_by_anc.get(&anc) else {
+        let Some(from) = from_by_anc.get(&anc) else {
             continue;
         };
-        let Some(to_name) = p.value.as_str() else {
+        let Some(to) = p.value.as_str() else {
             continue;
         };
-        let Some(from_layer) = layer_by_name.get(from_name) else {
-            continue;
-        };
-        let Some(to_layer) = layer_by_name.get(to_name) else {
-            continue;
-        };
-        let Some(&from_pos) = order_index.get(from_layer.as_str()) else {
-            out.push(Finding::new(
-                rule,
-                severity,
-                format!(
-                    "module `{from_name}` declares unknown layer `{from_layer}` (not in ordering)"
-                ),
-            ));
-            continue;
-        };
-        let Some(&to_pos) = order_index.get(to_layer.as_str()) else {
-            out.push(Finding::new(
-                rule,
-                severity,
-                format!("module `{to_name}` declares unknown layer `{to_layer}` (not in ordering)"),
-            ));
-            continue;
-        };
-        // Top-down ordering: lower index = higher layer. `from` may
-        // depend on same or lower layers (= same-or-higher index).
-        if from_pos > to_pos {
-            out.push(
-                Finding::new(
-                    rule,
-                    severity,
-                    format!(
-                        "module `{from_name}` (layer {from_layer}) depends on `{to_name}` (layer {to_layer}); upward dependency violates ordering {ordering:?}"
-                    ),
-                )
-                .with_pointer(p.pointer),
-            );
-        }
+        out.push(RelationEdge {
+            from: from.clone(),
+            to: to.to_string(),
+            pointer: p.pointer,
+        });
     }
     out
 }
