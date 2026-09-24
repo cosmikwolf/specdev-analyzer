@@ -499,6 +499,28 @@ pub enum ReportAction {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Render the module dependency graph as Mermaid (default) or DOT.
+    /// When `domain.toml` declares a `layer_dependency` graph check, nodes
+    /// are grouped by its layer field in its declared order and every edge
+    /// the check flags is drawn thick and red; otherwise the graph is not
+    /// grouped. Each node shows how many modules it uses and how many use
+    /// it. Deterministic, so a committed map diffs when an edge is added.
+    /// Exit 0 on success, 2 on hard error.
+    Graph {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Output format: `mermaid` (default) or `dot`.
+        #[arg(long, default_value = "mermaid")]
+        format: String,
+        /// The `layer_dependency` rule to group by, when there is more
+        /// than one. Default: the first declared.
+        #[arg(long)]
+        check: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -724,6 +746,18 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 run_report_gen_drift(project, spec_path.as_deref())
             }
             ReportAction::GenPlan { project } => run_report_gen_plan(project, spec_path.as_deref()),
+            ReportAction::Graph {
+                project,
+                format,
+                check,
+                output,
+            } => run_report_graph(
+                project,
+                spec_path.as_deref(),
+                &format,
+                check.as_deref(),
+                output,
+            ),
         },
         Command::Items { action } => match action {
             ItemsAction::Diff { project, module } => {
@@ -2293,6 +2327,63 @@ fn run_report_gen_plan(project: PathBuf, spec_path: Option<&std::path::Path>) ->
         Err(e) => {
             report_error(&e);
             ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_graph(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    format: &str,
+    check: Option<&str>,
+    output: Option<PathBuf>,
+) -> ExitCode {
+    use specdev_analyzer::graph_report::{self, GraphFormat};
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let format = match GraphFormat::parse(format) {
+        Ok(f) => f,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let view = match graph_report::build(&layout, check) {
+        Ok(v) => v,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let body = match format {
+        GraphFormat::Mermaid => graph_report::render_mermaid(&view),
+        GraphFormat::Dot => graph_report::render_dot(&view),
+    };
+    eprintln!(
+        "{} module(s), {} edge(s), {} flagged by the layer check",
+        view.node_count(),
+        view.edges.len(),
+        view.violation_count()
+    );
+    match output {
+        Some(path) => match std::fs::write(&path, &body) {
+            Ok(()) => {
+                eprintln!("wrote graph to {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", path.display());
+                ExitCode::from(2)
+            }
+        },
+        None => {
+            print!("{body}");
+            ExitCode::SUCCESS
         }
     }
 }
