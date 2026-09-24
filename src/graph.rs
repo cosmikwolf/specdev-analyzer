@@ -612,6 +612,56 @@ pub fn entity_attr_inbound_count(
     out
 }
 
+/// ENTITY_COUNT: count the entities (already filtered to the check's
+/// `entity_scope`) whose `entity_attr` equals `entity_attr_value`, and
+/// assert the count equals `expected_count`. An empty scope passes: a
+/// project with no entity of the kind yet (a fresh bootstrap) has
+/// nothing to count, and a finding there would be noise.
+pub fn entity_count(
+    root: &Value,
+    entity_scope: &str,
+    entity_attr: &str,
+    entity_attr_value: &str,
+    expected_count: usize,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let Some(entities) = root.get("entities").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    if entities.is_empty() {
+        return Vec::new();
+    }
+    let mut names: Vec<&str> = entities
+        .iter()
+        .filter(|e| {
+            e.get("attrs")
+                .and_then(|a| a.get(entity_attr))
+                .and_then(|v| v.as_str())
+                == Some(entity_attr_value)
+        })
+        .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
+        .collect();
+    names.sort_unstable();
+    if names.len() == expected_count {
+        return Vec::new();
+    }
+    let listed = if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
+    };
+    vec![Finding::new(
+        rule,
+        severity,
+        format!(
+            "{} `{entity_scope}` entities have `{entity_attr} = \"{entity_attr_value}\"` \
+             ({listed}); expected {expected_count}",
+            names.len()
+        ),
+    )]
+}
+
 /// ENTITY_ATTR_TARGET_ATTR_EQUALS: for every entity matching the source
 /// filter (`entity_attr == entity_attr_value`), follow the source entity's
 /// `target_attr_field` attribute to a target entity (must exist, must be

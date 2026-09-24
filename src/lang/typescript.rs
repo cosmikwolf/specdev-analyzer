@@ -26,6 +26,54 @@ pub struct TypeScriptAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/typescript/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/typescript/items.scm");
+const IMPORTS_QUERY: &str = include_str!("../embedded/languages/typescript/imports.scm");
+
+/// Node's built-in modules, importable without a declared dependency
+/// (with or without the `node:` prefix, which is dropped earlier).
+const NODE_BUILTINS: &[&str] = &[
+    "assert",
+    "async_hooks",
+    "buffer",
+    "child_process",
+    "cluster",
+    "console",
+    "constants",
+    "crypto",
+    "dgram",
+    "diagnostics_channel",
+    "dns",
+    "domain",
+    "events",
+    "fs",
+    "http",
+    "http2",
+    "https",
+    "inspector",
+    "module",
+    "net",
+    "os",
+    "path",
+    "perf_hooks",
+    "process",
+    "punycode",
+    "querystring",
+    "readline",
+    "repl",
+    "stream",
+    "string_decoder",
+    "sys",
+    "timers",
+    "tls",
+    "trace_events",
+    "tty",
+    "url",
+    "util",
+    "v8",
+    "vm",
+    "wasi",
+    "worker_threads",
+    "zlib",
+];
 
 impl LanguageAdapter for TypeScriptAdapter {
     fn name(&self) -> &'static str {
@@ -62,6 +110,36 @@ impl LanguageAdapter for TypeScriptAdapter {
 
     fn items_query(&self) -> Option<&'static str> {
         Some(ITEMS_QUERY)
+    }
+
+    fn imports_query(&self) -> Option<&'static str> {
+        Some(IMPORTS_QUERY)
+    }
+
+    /// `pkg`, `pkg/sub` → `pkg`; `@scope/pkg/sub` → `@scope/pkg`. Relative
+    /// (`./`, `../`, `/`), path-alias (`@/`, `~/`), subpath-import (`#`)
+    /// and scheme (`node:`, `data:`, …) specifiers name no package, and
+    /// neither does a Node built-in.
+    fn import_package(&self, specifier: &str, _self_package: &str) -> Option<String> {
+        let s = specifier.trim();
+        if s.is_empty()
+            || s.starts_with('.')
+            || s.starts_with('/')
+            || s.starts_with("@/")
+            || s.starts_with("~/")
+            || s.starts_with('#')
+            || s.contains(':')
+        {
+            return None;
+        }
+        let mut parts = s.split('/');
+        let first = parts.next()?;
+        let name = if first.starts_with('@') {
+            format!("{first}/{}", parts.next().filter(|p| !p.is_empty())?)
+        } else {
+            first.to_string()
+        };
+        (!NODE_BUILTINS.contains(&name.as_str())).then_some(name)
     }
 
     fn default_visibility_floor(&self) -> Option<&'static str> {

@@ -136,8 +136,18 @@ $defs:
       - extends
       - from_kind
       - to_kind
-      - from_spec
-      - endpoints
+    # Exactly one edge source: authored spec files (`from_spec` +
+    # `endpoints`), or already-built entities (`match`).
+    oneOf:
+      - required: [from_spec, endpoints]
+        not: { required: [match] }
+      - required: [match]
+        not:
+          anyOf:
+            - required: [from_spec]
+            - required: [endpoints]
+            - required: [for_each]
+            - required: [attrs]
     properties:
       kind:
         description: >
@@ -183,6 +193,34 @@ $defs:
       attrs:
         type: object
         additionalProperties:
+          type: string
+      match:
+        description: >
+          Build the edges from entities already in the graph instead of
+          from spec files: one edge from every `from_kind` entity whose
+          attribute `from.attr` is one of `from.in` to every `to_kind`
+          entity whose attribute `to.attr` is one of `to.in`.
+        type: object
+        additionalProperties: false
+        required: [from, to]
+        properties:
+          from:
+            $ref: "#/$defs/MatchFilter"
+          to:
+            $ref: "#/$defs/MatchFilter"
+
+  MatchFilter:
+    type: object
+    additionalProperties: false
+    required: [attr, in]
+    properties:
+      attr:
+        type: string
+        minLength: 1
+      in:
+        type: array
+        minItems: 1
+        items:
           type: string
 
   RenderHint:
