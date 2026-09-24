@@ -14,6 +14,14 @@ and it is `1`.
 
 ### Added
 
+- **`report decisions`** shows which decision text reaches which module's
+  codegen prompt. `modules`: per module, its decisions and open questions,
+  why each is there (`guided_by`, a satisfied requirement's `decided_by`, the
+  workspace tier, an open question's `affects`) and which prose fields go in
+  (`codegen_include`). `decisions`: per decision, the modules it reaches —
+  empty when no prompt carries it. Computed by the function the prompt is
+  rendered from; the prompt text itself is byte-identical (checked on 170
+  real module prompts). `--module` / `--decision` narrow either view.
 - **`report graph`** renders the module dependency graph as Mermaid
   (default) or DOT. When `domain.toml` declares a `layer_dependency` graph
   check, nodes are grouped by that check's layer field in its declared
