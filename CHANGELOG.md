@@ -14,6 +14,15 @@ and it is `1`.
 
 ### Added
 
+- **`report graph`** renders the module dependency graph as Mermaid
+  (default) or DOT. When `domain.toml` declares a `layer_dependency` graph
+  check, nodes are grouped by that check's layer field in its declared
+  order, and every edge the check flags is drawn thick and red — the same
+  rule `validate` applies, so the two cannot disagree. Each node shows how
+  many modules it uses and how many use it. Block entities nested inside a
+  module file are left out. The output is deterministic, so a committed map
+  shows a new edge in a diff. `--check <rule>` picks the layer check when
+  there is more than one; `-o <file>` writes to a file.
 - **A warning when the installed analyzer is older than the plugin.** Every
   command reads `shared/min-analyzer-version` from the plugin root it was
   given (`--plugin-root`, else `SPECDEV_PLUGIN_ROOT`, else
@@ -36,6 +45,19 @@ and it is `1`.
   module, an unreadable `context_files` entry or a missing plugin root used to
   exit 1 — the same code as the open-question refusal. Exit 1 is now only the
   two codegen refusals (an open question; no module-scope gate declared).
+
+### Fixed
+
+- **`validate` no longer drops its whole report when a spec file does not
+  parse.** A module, `decisions.toml` or sibling file with a TOML syntax error
+  stopped the run at exit 2 with only the raw parse message: no count line,
+  and every other finding lost, including the `LAYOUT-005` for the same file.
+  It is now a counted `REDUCE-001` error ("no graph check ran"), the rest of
+  the report is printed, and the exit code is 1 like any error finding.
+- **`--no-color` is accepted by every subcommand.** It was declared on
+  `validate` alone, so `drift --no-color`, `report gen-plan --no-color` and
+  the rest exited 2 on an unknown argument. It is now a global flag; output
+  without color is unchanged by it.
 
 ## [0.2.0] — 2026-09-15
 
