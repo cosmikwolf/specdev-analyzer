@@ -37,6 +37,13 @@ and it is `1`.
   exit 1 — the same code as the open-question refusal. Exit 1 is now only the
   two codegen refusals (an open question; no module-scope gate declared).
 
+### Fixed
+
+- **`--no-color` is accepted by every subcommand.** It was declared on
+  `validate` alone, so `drift --no-color`, `report gen-plan --no-color` and
+  the rest exited 2 on an unknown argument. It is now a global flag; output
+  without color is unchanged by it.
+
 ## [0.2.0] — 2026-09-15
 
 First tagged release. Pairs with `specdev` **v0.2.1**.
