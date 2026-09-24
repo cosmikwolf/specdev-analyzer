@@ -502,6 +502,23 @@ pub enum ReportAction {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Which decision text reaches which module's codegen prompt. Two
+    /// YAML views over the function the prompt is rendered from: `modules`
+    /// (per module: its decisions and open questions, why each is there,
+    /// and which decision prose fields go in) and `decisions` (per
+    /// decision: the modules it reaches; empty when no prompt carries it).
+    /// Exit 0 on success, 2 on hard error.
+    Decisions {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Limit the `modules` view to this module.
+        #[arg(long)]
+        module: Option<String>,
+        /// Limit the `decisions` view to this decision id.
+        #[arg(long)]
+        decision: Option<String>,
+    },
     /// Render the module dependency graph as Mermaid (default) or DOT.
     /// When `domain.toml` declares a `layer_dependency` graph check, nodes
     /// are grouped by its layer field in its declared order and every edge
@@ -749,6 +766,16 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 run_report_gen_drift(project, spec_path.as_deref())
             }
             ReportAction::GenPlan { project } => run_report_gen_plan(project, spec_path.as_deref()),
+            ReportAction::Decisions {
+                project,
+                module,
+                decision,
+            } => run_report_decisions(
+                project,
+                spec_path.as_deref(),
+                module.as_deref(),
+                decision.as_deref(),
+            ),
             ReportAction::Graph {
                 project,
                 format,
@@ -2327,6 +2354,38 @@ fn run_report_gen_plan(project: PathBuf, spec_path: Option<&std::path::Path>) ->
                 ExitCode::from(2)
             }
         },
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_decisions(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: Option<&str>,
+    decision: Option<&str>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match specdev_analyzer::decision_report::build(&layout, module, decision) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match specdev_analyzer::decision_report::render_yaml(&report) {
+        Ok(y) => {
+            print!("{y}");
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             report_error(&e);
             ExitCode::from(2)
