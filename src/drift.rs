@@ -149,6 +149,31 @@ impl DriftReport {
     /// need to know should ask [`Self::profile_substrate_unrecorded`] —
     /// silence and cleanliness are different answers and get different
     /// questions.
+    /// Files the plugin moved since this project took its copy:
+    /// `(plugin_moved, both)` over units and the profile substrate. The
+    /// `validate` notice reads this; `Both` counts because the plugin side
+    /// moved there too.
+    pub fn plugin_ahead_counts(&self) -> (usize, usize) {
+        let cats = self
+            .units
+            .iter()
+            .flat_map(|u| u.files.iter().map(|f| f.category))
+            .chain(
+                self.profile
+                    .iter()
+                    .flat_map(|p| p.files.iter().map(|f| f.category)),
+            );
+        let (mut moved, mut both) = (0, 0);
+        for c in cats {
+            match c {
+                FileCategory::PluginMoved => moved += 1,
+                FileCategory::Both => both += 1,
+                _ => {}
+            }
+        }
+        (moved, both)
+    }
+
     pub fn is_clean(&self) -> bool {
         self.invariants.is_empty()
             && self

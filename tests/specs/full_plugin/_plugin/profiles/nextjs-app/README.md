@@ -55,6 +55,9 @@ app > layout > page > route_handler > boundary > component > server_action > ser
 
 `app` owns the one root layout (`app/layout.tsx`); `model` is pure
 types. The `role_dependency` graph check warns on upward dependencies.
+Every `layout`, `page` and `boundary` module also gets a `renders` edge
+from the `app` module (built from the roles, extends `contains`), so
+`context --module <app module>` lists them under `contains`.
 Same-role and downward dependencies are allowed.
 
 Four more Next-shaped fields, each conditional on the role:
@@ -215,6 +218,7 @@ is never generated or recorded.
 
 - `unique_qualified_names`, `modules_acyclic`, `requirement_ids_unique`
 - `role_dependency` (warning) — role ordering over `depends_on`
+- `single_app_module` (warning) — exactly one module has `role = "app"`
 - `requirements_have_satisfiers`, `test_requirements_have_verifiers`
 - Triad consistency: supersession chain shape, OQ status consistency,
   `codegen_unblocked`

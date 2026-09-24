@@ -1007,6 +1007,18 @@ fn execute_graph_checks(
                 }
                 _ => Vec::new(),
             },
+            "entity_count" => match (
+                check.entity_attr.as_deref(),
+                check.entity_attr_value.as_deref(),
+                check.expected_count,
+            ) {
+                (Some(ea), Some(eav), Some(exp)) => {
+                    let entity_scope = check.entity_scope.as_deref().unwrap_or("");
+                    let view = filter_for_layer_dependency(&graph_json, entity_scope, "", kindset);
+                    graph_checks::entity_count(&view, entity_scope, ea, eav, exp, rule, severity)
+                }
+                _ => Vec::new(),
+            },
             // `open_question_status_consistency`: cross-entity
             // attr-target-attr consistency check.
             "entity_attr_target_attr_equals" => match (
@@ -1616,7 +1628,7 @@ fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
 fn primitive_tags(name: &str) -> &'static [Capability] {
     use Capability::*;
     match name {
-        "unique" | "reference_exists" | "reachability" | "acyclic" => &[Schema],
+        "unique" | "reference_exists" | "reachability" | "acyclic" | "entity_count" => &[Schema],
         "layer_dependency" => &[Schema],
         // Orphan-requirements is a structural check on the spec graph;
         // strict-gen consumes the spec, so an unsatisfied requirement
