@@ -14,6 +14,42 @@ and it is `1`.
 
 ### Added
 
+- **`report imports`** lists packages a module's source file imports but
+  the module may not rely on: not in its own `external_deps`, the
+  architecture-level `external_deps`, or the deps of the blocks and bridges
+  it uses. Such an import resolves only because a sibling declares the
+  package, so every gate passes until the sibling drops it (#207). Exit 1
+  when any is found. TypeScript and Dart, through a new `imports.scm` query
+  and `LanguageAdapter::import_package`; a language without the query reports
+  `checked: false`, never clean. Runtime deps only; test files are not read.
+- **`validate` says when the plugin is ahead** (`PLUGIN-AHEAD-001`, info): when
+  a plugin root is named (`--plugin-root`, `SPECDEV_PLUGIN_ROOT`,
+  `CLAUDE_PLUGIN_ROOT`) and it holds newer copies of files this project
+  inlined or bootstrapped, one line counts them and names `/spec-drift`.
+  Decided by content hash through `drift`'s classifier, so a release that
+  changes nothing this project uses stays silent (#210).
+- **Relations built from entity attributes** (`match:` in a reduction, in
+  place of `from_spec` + `endpoints`): one edge from every `from_kind`
+  entity whose attribute is in a list to every `to_kind` entity whose
+  attribute is in another list. Lets a profile state an edge no spec field
+  carries (#208).
+- **`context` lists containment** in two new buckets, `contains` and
+  `contained_by`, for Module → Module relations that extend canonical
+  `contains`. They are not dependencies, so `upstream` / `downstream` keep
+  their meaning; they count in `related_files` and `excluded_module_count`.
+- **`entity_count` graph-check primitive**: the number of scoped entities
+  with an attribute value must equal `expected_count`; a project with none
+  of the scope yet passes.
+- Every relation in the graph (`reduce` output) now carries `extends`, its
+  canonical relation kind, as entities already did.
+
+### Changed
+
+- **A reduction relation with neither or both of `from_spec` and `match`, or
+  a misshapen `match`, is `METASCHEMA-006`** — for profile reductions too, not
+  only block reductions. Before, a relation with no `from_spec` built no edges
+  and said nothing.
+
 - **`report decisions`** shows which decision text reaches which module's
   codegen prompt. `modules`: per module, its decisions and open questions,
   why each is there (`guided_by`, a satisfied requirement's `decided_by`, the

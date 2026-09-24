@@ -92,6 +92,20 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
+  # Render containment: every layout, page and boundary renders inside
+  # the root layout the `app` module owns, though no module names it in
+  # `depends_on`. Built from the roles, not from any spec field, so the
+  # context cone of the `app` module lists what a change to it reaches.
+  # It extends `contains`, not `depends_on`: a page does not import the
+  # composition root, and `role_dependency` would flag it as upward.
+  - kind: renders
+    extends: contains
+    from_kind: Module
+    to_kind: Module
+    match:
+      from: { attr: role, in: [app] }
+      to: { attr: role, in: [layout, page, boundary] }
+
   # Requirement-to-parent traceability.
   - kind: satisfies
     extends: depends_on

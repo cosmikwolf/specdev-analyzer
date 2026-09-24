@@ -519,6 +519,22 @@ pub enum ReportAction {
         #[arg(long)]
         decision: Option<String>,
     },
+    /// Packages a module's source file imports that the module may not
+    /// rely on: not in its own `external_deps`, the architecture-level
+    /// `external_deps`, or the deps of the blocks and bridges it uses.
+    /// Such an import resolves only because a sibling module declares the
+    /// package, and breaks when the sibling drops it. Runtime entries only;
+    /// test files are not read. YAML on stdout. Exit 0 when every import is
+    /// declared (or the language ships no import query — `checked: false`),
+    /// 1 when any is not, 2 on hard error.
+    Imports {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Check this module only.
+        #[arg(long)]
+        module: Option<String>,
+    },
     /// Render the module dependency graph as Mermaid (default) or DOT.
     /// When `domain.toml` declares a `layer_dependency` graph check, nodes
     /// are grouped by its layer field in its declared order and every edge
@@ -654,6 +670,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
         } => run_validate(
             project,
             spec_path.as_deref(),
+            plugin_flag.as_deref(),
             strict,
             no_color,
             quiet,
@@ -776,6 +793,9 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 module.as_deref(),
                 decision.as_deref(),
             ),
+            ReportAction::Imports { project, module } => {
+                run_report_imports(project, spec_path.as_deref(), module.as_deref())
+            }
             ReportAction::Graph {
                 project,
                 format,
@@ -1090,6 +1110,7 @@ fn run_prompt(project: PathBuf, spec_path: Option<&std::path::Path>, module: Str
 fn run_validate(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<&std::path::Path>,
     strict: bool,
     no_color: bool,
     quiet: bool,
@@ -1114,13 +1135,16 @@ fn run_validate(
             }
         },
     };
-    let report = match validate::run_for(&layout, filter) {
+    let mut report = match validate::run_for(&layout, filter) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
         }
     };
+    if let Some(notice) = plugin_ahead_notice(&layout, plugin_flag) {
+        report.push(notice);
+    }
     let (errors, warnings, infos) = report.counts();
     let rendered = if no_color {
         report.render_plain_filtered(quiet)
@@ -1141,6 +1165,40 @@ fn run_validate(
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// One info line when the plugin the caller names (the same lookup as the
+/// analyzer-version warning: `--plugin-root`, else `SPECDEV_PLUGIN_ROOT`,
+/// then `CLAUDE_PLUGIN_ROOT`) holds newer copies of files this project
+/// inlined or bootstrapped. Decided by content hash through `drift`'s
+/// classifier, not by version strings: a plugin release that changes
+/// nothing this project uses stays silent, and a file the plugin moved is
+/// never missed. Silent when no plugin root is named, and when `drift`
+/// cannot run — the notice must never turn into a `validate` failure.
+fn plugin_ahead_notice(
+    layout: &LayoutContext,
+    plugin_flag: Option<&std::path::Path>,
+) -> Option<specdev_analyzer::report::Finding> {
+    let root = crate::analyzer_version::named_plugin_root(plugin_flag)?;
+    let drift = specdev_analyzer::drift::run_drift(layout, &root).ok()?;
+    let (moved, both) = drift.plugin_ahead_counts();
+    if moved + both == 0 {
+        return None;
+    }
+    let mut msg = format!(
+        "{} inlined or profile file(s) are behind the plugin at {}",
+        moved + both,
+        root.display()
+    );
+    if both > 0 {
+        msg.push_str(&format!(" ({both} also changed in this project)"));
+    }
+    msg.push_str("; run /spec-drift to see them and bring them forward");
+    Some(specdev_analyzer::report::Finding::new(
+        "PLUGIN-AHEAD-001",
+        specdev_analyzer::domain::Severity::Info,
+        msg,
+    ))
 }
 
 fn run_extract(project: PathBuf, spec_path: Option<&std::path::Path>, output: PathBuf) -> ExitCode {
@@ -2390,6 +2448,49 @@ fn run_report_decisions(
             report_error(&e);
             ExitCode::from(2)
         }
+    }
+}
+
+fn run_report_imports(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    module: Option<&str>,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let report = match specdev_analyzer::imports::run(&layout, module) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match report.to_yaml() {
+        Ok(y) => print!("{y}"),
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    }
+    if !report.checked {
+        eprintln!(
+            "imports: language `{}` ships no import query; nothing was checked",
+            report.language
+        );
+    }
+    if report.undeclared.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "{} undeclared import(s): add each package to the module's `external_deps`",
+            report.undeclared.len()
+        );
+        ExitCode::from(1)
     }
 }
 

@@ -68,7 +68,7 @@ pub fn check(plugin_flag: Option<&Path>) -> Option<String> {
 /// plugin marker. A named path without the marker is not reported here:
 /// plugin-root errors belong to the commands that need the root
 /// (`PLUGIN-001`).
-fn named_plugin_root(plugin_flag: Option<&Path>) -> Option<PathBuf> {
+pub fn named_plugin_root(plugin_flag: Option<&Path>) -> Option<PathBuf> {
     let is_plugin = |p: &PathBuf| p.join(PLUGIN_MARKER).is_file();
     if let Some(flag) = plugin_flag {
         return Some(flag.to_path_buf()).filter(is_plugin);

@@ -636,6 +636,19 @@ fn walk_relation(
         }
     };
 
+    if let Err(msg) = check_relation_source(obj) {
+        findings.push(
+            Finding::new(
+                "METASCHEMA-006",
+                Severity::Error,
+                format!("relation `{qualified_path}`: {msg}"),
+            )
+            .with_file(r.source_path.display().to_string())
+            .with_line(source_line),
+        );
+        return;
+    }
+
     let raw_yaml: serde_yaml::Value = serde_json::from_value(JsonValue::Object(obj.clone()))
         .ok()
         .and_then(|j: JsonValue| serde_yaml::to_value(j).ok())
@@ -655,6 +668,74 @@ fn walk_relation(
         extends_string: extends_str,
         decl,
     });
+}
+
+/// A relation reads its edges from exactly one source: spec files
+/// (`from_spec` + `endpoints`) or already-built entities (`match`). A
+/// relation with neither would materialize nothing and say nothing — an
+/// empty result a reader takes for "no edges" — so it is an error here,
+/// for every reduction, not only for block reductions the metaschema
+/// lint covers.
+fn check_relation_source(obj: &serde_json::Map<String, JsonValue>) -> Result<(), String> {
+    let has_spec = obj.contains_key("from_spec");
+    let has_match = obj.contains_key("match");
+    match (has_spec, has_match) {
+        (true, true) => Err("declares both `from_spec` and `match`; use one".into()),
+        (false, false) => {
+            Err("declares neither `from_spec` nor `match`, so it would produce no edges".into())
+        }
+        (true, false) => {
+            if obj.contains_key("endpoints") {
+                Ok(())
+            } else {
+                Err("`from_spec` needs `endpoints`".into())
+            }
+        }
+        (false, true) => {
+            for k in ["endpoints", "for_each", "attrs"] {
+                if obj.contains_key(k) {
+                    return Err(format!("`{k}` does not apply to a `match` relation"));
+                }
+            }
+            let m = obj["match"]
+                .as_object()
+                .ok_or("`match` must be a map with `from` and `to`")?;
+            for k in m.keys() {
+                if k != "from" && k != "to" {
+                    return Err(format!("unknown key `{k}` in `match` (allowed: from, to)"));
+                }
+            }
+            for side in ["from", "to"] {
+                let f = m
+                    .get(side)
+                    .and_then(JsonValue::as_object)
+                    .ok_or(format!("`match.{side}` must be a map with `attr` and `in`"))?;
+                for k in f.keys() {
+                    if k != "attr" && k != "in" {
+                        return Err(format!(
+                            "unknown key `{k}` in `match.{side}` (allowed: attr, in)"
+                        ));
+                    }
+                }
+                if f.get("attr")
+                    .and_then(JsonValue::as_str)
+                    .is_none_or(str::is_empty)
+                {
+                    return Err(format!("`match.{side}.attr` must be a non-empty string"));
+                }
+                let ok = f
+                    .get("in")
+                    .and_then(JsonValue::as_array)
+                    .is_some_and(|a| !a.is_empty() && a.iter().all(JsonValue::is_string));
+                if !ok {
+                    return Err(format!(
+                        "`match.{side}.in` must be a non-empty list of strings"
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Rewrite a `kind:` value to its qualified form based on the file's
@@ -1267,5 +1348,39 @@ relations:
             ResolvedExtends::Canonical("depends_on".into())
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn source_check(yaml: &str) -> Result<(), String> {
+        let v: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let j: JsonValue = serde_json::to_value(v).unwrap();
+        check_relation_source(j.as_object().unwrap())
+    }
+
+    #[test]
+    fn relation_source_is_exactly_one_of_from_spec_or_match() {
+        let spec = "from_spec: a\nendpoints: {from: x, to: y}";
+        let matched = "match: {from: {attr: r, in: [a]}, to: {attr: r, in: [b]}}";
+        assert!(source_check(spec).is_ok());
+        assert!(source_check(matched).is_ok());
+        assert!(source_check("kind: k").unwrap_err().contains("neither"));
+        assert!(source_check(&format!("{spec}\n{matched}"))
+            .unwrap_err()
+            .contains("both"));
+        assert!(source_check("from_spec: a")
+            .unwrap_err()
+            .contains("endpoints"));
+        assert!(
+            source_check(&format!("{matched}\nendpoints: {{from: x, to: y}}"))
+                .unwrap_err()
+                .contains("`endpoints` does not apply")
+        );
+        assert!(
+            source_check("match: {from: {attr: r, in: []}, to: {attr: r, in: [b]}}")
+                .unwrap_err()
+                .contains("non-empty list")
+        );
+        assert!(source_check("match: {from: {attr: r, in: [a]}}")
+            .unwrap_err()
+            .contains("`match.to`"));
     }
 }
