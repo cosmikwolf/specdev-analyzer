@@ -14,7 +14,7 @@ Five things, in the order a project meets them:
 |---|---|
 | **Scaffold** | `bootstrap` lays down a profile's spec tree; `inline` / `inline-bridge` pull in blocks and the bridges that wire them together; `migrate` back-fills manifests for projects that pre-date them. |
 | **Check** | `validate` resolves the open-vocabulary kind set, compiles the aggregated module schema, and runs the project's own `domain.toml` graph checks. `plugin-lint` checks a plugin tree instead of a project. |
-| **Project** | `reduce` emits the universal entity/relation graph; `extract` writes codegen-ready YAML; `context` cuts a one-hop dependency cone for one module; `resolve` and `report` answer layout and coverage questions. |
+| **Project** | `reduce` emits the universal entity/relation graph; `extract` writes codegen-ready YAML; `context` cuts a one-hop dependency cone for one module; `report graph` renders the whole module graph as Mermaid or DOT, grouped by the project's declared layers, with every edge the layer check flags drawn red; `resolve` and `report` answer layout and coverage questions. |
 | **Generate** | `gen` assembles the codegen prompt (shared preamble once, then a tail per module); `manifest` renders the build manifest; `derive` writes the profile's derived files. |
 | **Keep honest** | `gen-record` + `report gen-drift` detect hand-edits to generated files; `drift` compares inlined blocks against the plugin tree; `extract-items` + `items` reconcile a module's `items[]` against what tree-sitter finds in the source; `gate` runs the profile's declared compile gates and records the result. |
 
