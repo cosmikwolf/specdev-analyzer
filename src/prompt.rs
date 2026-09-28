@@ -19,6 +19,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use tracing::warn;
 
+use crate::entries::{EntryKind, EntryStore};
 use crate::layout::LayoutContext;
 use crate::lineage::Lineage;
 
@@ -390,8 +391,16 @@ fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) 
     }
 
     // Lazy-load the requirement and decision tables once.
-    let reqs = load_toml_array(&layout.specs_dir.join("requirements.toml"), "requirement");
-    let decisions = load_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
+    let store = EntryStore::for_layout(layout);
+    let values = |kind| -> Vec<toml::Value> {
+        store
+            .load_lenient(kind)
+            .into_iter()
+            .map(|e| e.value)
+            .collect()
+    };
+    let reqs = values(EntryKind::Requirement);
+    let decisions = values(EntryKind::Decision);
     let req_by_id = |id: &str| {
         reqs.iter()
             .find(|r| r.get("id").and_then(toml::Value::as_str) == Some(id))
@@ -463,16 +472,6 @@ fn collect_test_item_context(layout: &LayoutContext, module_toml: &toml::Value) 
     Ok(out)
 }
 
-/// Best-effort load of a top-level array-of-tables from a TOML file.
-/// Missing / unparseable files yield an empty vec.
-fn load_toml_array(path: &std::path::Path, key: &str) -> Vec<toml::Value> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-        .and_then(|v| v.get(key).and_then(toml::Value::as_array).cloned())
-        .unwrap_or_default()
-}
-
 /// Codegen-gate refusal returned by [`check_codegen_gate`] when an open
 /// OpenQuestion is reachable from the target module via Module.satisfies
 /// → Requirement → OpenQuestion.affects^-1.
@@ -524,9 +523,10 @@ pub fn check_codegen_gate(
         })
         .unwrap_or_default();
 
-    let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
+    let local_store = EntryStore::for_layout(layout);
+    let local_oqs = read_open_questions(&local_store)?;
     let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
-    let mut workspace_specs: Option<std::path::PathBuf> = None;
+    let mut workspace_store: Option<EntryStore> = None;
     if let Some(parent) = layout.project_root.parent() {
         let parent_specs = parent.join("specs");
         let parent_spec_toml = parent.join("spec.toml");
@@ -534,9 +534,9 @@ pub fn check_codegen_gate(
             if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
                 if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
                     if parsed.get("workspace").is_some() {
-                        workspace_oqs =
-                            read_open_questions(&parent_specs.join("open_questions.toml"))?;
-                        workspace_specs = Some(parent_specs);
+                        let store = EntryStore::at(&parent_specs);
+                        workspace_oqs = read_open_questions(&store)?;
+                        workspace_store = Some(store);
                     }
                 }
             }
@@ -553,13 +553,15 @@ pub fn check_codegen_gate(
         if !intersects {
             continue;
         }
-        let title = read_open_question_title(&layout.specs_dir.join("open_questions.toml"), oq_id)
-            .unwrap_or_default();
+        let title = read_open_question_title(&local_store, oq_id).unwrap_or_default();
         let message = build_refusal_message(
             module_name,
             oq_id,
             &title,
-            "the project's `specs/open_questions.toml`",
+            &format!(
+                "the project's {}",
+                EntryStore::location_hint(EntryKind::OpenQuestion, oq_id)
+            ),
         );
         return Ok(Some(GateRefusal {
             module: module_name.to_string(),
@@ -586,15 +588,18 @@ pub fn check_codegen_gate(
         if !intersects {
             continue;
         }
-        let title = workspace_specs
+        let title = workspace_store
             .as_ref()
-            .and_then(|p| read_open_question_title(&p.join("open_questions.toml"), oq_id))
+            .and_then(|store| read_open_question_title(store, oq_id))
             .unwrap_or_default();
         let message = build_refusal_message(
             module_name,
             oq_id,
             &title,
-            "the workspace's `specs/open_questions.toml`",
+            &format!(
+                "the workspace's {}",
+                EntryStore::location_hint(EntryKind::OpenQuestion, oq_id)
+            ),
         );
         return Ok(Some(GateRefusal {
             module: module_name.to_string(),
@@ -625,15 +630,11 @@ fn build_refusal_message(module_name: &str, oq_id: &str, title: &str, pointer: &
     )
 }
 
-fn read_open_question_title(path: &std::path::Path, oq_id: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let parsed: toml::Value = toml::from_str(&text).ok()?;
-    let arr = parsed
-        .get("open_question")
-        .and_then(toml::Value::as_array)?;
-    for item in arr {
-        if item.get("id").and_then(toml::Value::as_str) == Some(oq_id) {
-            return item
+fn read_open_question_title(store: &EntryStore, oq_id: &str) -> Option<String> {
+    for entry in store.load(EntryKind::OpenQuestion).ok()? {
+        if entry.id() == Some(oq_id) {
+            return entry
+                .value
                 .get("title")
                 .and_then(toml::Value::as_str)
                 .map(str::to_string);
@@ -740,8 +741,9 @@ pub fn decision_context(
     let guided_by = strings("guided_by");
 
     // Local decisions/oqs.
-    let local_decisions = read_decisions(&layout.specs_dir.join("decisions.toml"))?;
-    let local_oqs = read_open_questions(&layout.specs_dir.join("open_questions.toml"))?;
+    let local_store = EntryStore::for_layout(layout);
+    let local_decisions = read_decisions(&local_store)?;
+    let local_oqs = read_open_questions(&local_store)?;
 
     // Workspace-tier decisions/oqs. The workspace's
     // specs/decisions.toml lives one level up from a member crate's
@@ -753,12 +755,13 @@ pub fn decision_context(
     let mut workspace_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
     let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
     if let Some(parent_specs) = workspace_specs_dir(layout) {
-        workspace_decisions = read_decisions(&parent_specs.join("decisions.toml"))?;
-        workspace_oqs = read_open_questions(&parent_specs.join("open_questions.toml"))?;
+        let store = EntryStore::at(&parent_specs);
+        workspace_decisions = read_decisions(&store)?;
+        workspace_oqs = read_open_questions(&store)?;
     }
 
     // Per-project requirements: id → decided_by[].
-    let req_decided_by = read_requirement_decided_by(&layout.requirements_toml_path)?;
+    let req_decided_by = read_requirement_decided_by(&local_store)?;
     // Per-project requirement → affecting OQs (reverse of OQ.affects).
     let req_to_oqs = build_req_to_oqs(&local_oqs);
 
@@ -872,7 +875,7 @@ fn workspace_specs_dir(layout: &LayoutContext) -> Option<std::path::PathBuf> {
     let parent = layout.project_root.parent()?;
     let parent_specs = parent.join("specs");
     let parent_spec_toml = parent.join("spec.toml");
-    if !parent_specs.join("decisions.toml").is_file() || !parent_spec_toml.is_file() {
+    if !EntryStore::at(&parent_specs).has_any(EntryKind::Decision) || !parent_spec_toml.is_file() {
         return None;
     }
     let text = std::fs::read_to_string(&parent_spec_toml).ok()?;
@@ -885,13 +888,13 @@ fn workspace_specs_dir(layout: &LayoutContext) -> Option<std::path::PathBuf> {
 /// tier.
 pub fn project_decisions(layout: &LayoutContext) -> Result<Vec<(String, String, String, bool)>> {
     let mut out: Vec<(String, String, String, bool)> =
-        read_decisions(&layout.specs_dir.join("decisions.toml"))?
+        read_decisions(&EntryStore::for_layout(layout))?
             .into_iter()
             .map(|(id, d)| (id, d.title, d.status, false))
             .collect();
     if let Some(dir) = workspace_specs_dir(layout) {
         out.extend(
-            read_decisions(&dir.join("decisions.toml"))?
+            read_decisions(&EntryStore::at(&dir))?
                 .into_iter()
                 .map(|(id, d)| (id, d.title, d.status, true)),
         );
@@ -991,159 +994,133 @@ pub(crate) struct OpenQuestionEntry {
     pub(crate) affects: Vec<String>,
 }
 
-fn read_decisions(
-    path: &std::path::Path,
-) -> Result<std::collections::BTreeMap<String, DecisionEntry>> {
+fn read_decisions(store: &EntryStore) -> Result<std::collections::BTreeMap<String, DecisionEntry>> {
     use std::collections::BTreeMap;
     let mut out: BTreeMap<String, DecisionEntry> = BTreeMap::new();
-    if !path.is_file() {
-        return Ok(out);
-    }
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed: toml::Value =
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    if let Some(arr) = parsed.get("decision").and_then(toml::Value::as_array) {
-        for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            let title = item
-                .get("title")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let status = item
-                .get("status")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let include: Vec<String> =
-                match item.get("codegen_include").and_then(toml::Value::as_array) {
-                    Some(arr) => arr
-                        .iter()
-                        .filter_map(toml::Value::as_str)
-                        .map(str::to_string)
-                        .collect(),
-                    None => DECISION_DEFAULT_INCLUDE
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect(),
-                };
-            let prose = DECISION_PROSE_FIELDS
+    for entry in store.load(EntryKind::Decision)? {
+        let item = &entry.value;
+        let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let title = item
+            .get("title")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let status = item
+            .get("status")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let include: Vec<String> = match item.get("codegen_include").and_then(toml::Value::as_array)
+        {
+            Some(arr) => arr
                 .iter()
-                .filter(|(field, _)| include.iter().any(|i| i == field))
-                .filter_map(|(field, label)| {
-                    // `text` is required by the schema; an absent one still
-                    // prints as an empty body, as it always has.
-                    let value = item.get(*field).and_then(toml::Value::as_str);
-                    match (*field, value) {
-                        ("text", v) => Some((*field, *label, v.unwrap_or("").to_string())),
-                        (_, Some(v)) => Some((*field, *label, v.to_string())),
-                        (_, None) => None,
-                    }
-                })
-                .collect();
-            out.insert(
-                id.to_string(),
-                DecisionEntry {
-                    title,
-                    status,
-                    prose,
-                },
-            );
-        }
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            None => DECISION_DEFAULT_INCLUDE
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        };
+        let prose = DECISION_PROSE_FIELDS
+            .iter()
+            .filter(|(field, _)| include.iter().any(|i| i == field))
+            .filter_map(|(field, label)| {
+                // `text` is required by the schema; an absent one still
+                // prints as an empty body, as it always has.
+                let value = item.get(*field).and_then(toml::Value::as_str);
+                match (*field, value) {
+                    ("text", v) => Some((*field, *label, v.unwrap_or("").to_string())),
+                    (_, Some(v)) => Some((*field, *label, v.to_string())),
+                    (_, None) => None,
+                }
+            })
+            .collect();
+        out.insert(
+            id.to_string(),
+            DecisionEntry {
+                title,
+                status,
+                prose,
+            },
+        );
     }
     Ok(out)
 }
 
 pub(crate) fn read_open_questions(
-    path: &std::path::Path,
+    store: &EntryStore,
 ) -> Result<std::collections::BTreeMap<String, OpenQuestionEntry>> {
     use std::collections::BTreeMap;
     let mut out: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
-    if !path.is_file() {
-        return Ok(out);
-    }
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed: toml::Value =
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    if let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) {
-        for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            let status = item
-                .get("status")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let text = item
-                .get("text")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let closed_by = item
-                .get("closed_by")
-                .and_then(toml::Value::as_str)
-                .map(str::to_string);
-            let verify = item
-                .get("verify")
-                .and_then(toml::Value::as_str)
-                .map(str::to_string);
-            let affects: Vec<String> = item
-                .get("affects")
-                .and_then(toml::Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            out.insert(
-                id.to_string(),
-                OpenQuestionEntry {
-                    status,
-                    text,
-                    closed_by,
-                    verify,
-                    affects,
-                },
-            );
-        }
+    for entry in store.load(EntryKind::OpenQuestion)? {
+        let item = &entry.value;
+        let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let status = item
+            .get("status")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let text = item
+            .get("text")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let closed_by = item
+            .get("closed_by")
+            .and_then(toml::Value::as_str)
+            .map(str::to_string);
+        let verify = item
+            .get("verify")
+            .and_then(toml::Value::as_str)
+            .map(str::to_string);
+        let affects: Vec<String> = item
+            .get("affects")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.insert(
+            id.to_string(),
+            OpenQuestionEntry {
+                status,
+                text,
+                closed_by,
+                verify,
+                affects,
+            },
+        );
     }
     Ok(out)
 }
 
 fn read_requirement_decided_by(
-    path: &std::path::Path,
+    store: &EntryStore,
 ) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
     use std::collections::BTreeMap;
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if !path.is_file() {
-        return Ok(out);
-    }
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let parsed: toml::Value =
-        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    if let Some(arr) = parsed.get("requirement").and_then(toml::Value::as_array) {
-        for item in arr {
-            let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            let decisions: Vec<String> = item
-                .get("decided_by")
-                .and_then(toml::Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            out.insert(id.to_string(), decisions);
-        }
+    for entry in store.load(EntryKind::Requirement)? {
+        let item = &entry.value;
+        let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let decisions: Vec<String> = item
+            .get("decided_by")
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.insert(id.to_string(), decisions);
     }
     Ok(out)
 }

@@ -22,6 +22,7 @@ use tracing::{info, instrument};
 
 use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
+use crate::entries::{EntryKind, EntryStore};
 use crate::graph as graph_checks;
 use crate::kinds;
 use crate::layout::LayoutContext;
@@ -147,15 +148,29 @@ pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Res
 /// `SCHEMA-REQ`.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_requirements(layout: &LayoutContext, report: &mut Report) -> Result<()> {
-    validate_aux_toml(
-        layout,
-        &layout.requirements_schema_path,
-        &layout.requirements_toml_path,
-        "requirements",
-        "SCHEMA-REQ",
-        "LAYOUT-006",
-        report,
-    )
+    let store = EntryStore::for_layout(layout);
+    let mut files = store.files(EntryKind::Requirement);
+    for file in store.files(EntryKind::Source) {
+        if !files.contains(&file) {
+            files.push(file);
+        }
+    }
+    if files.is_empty() {
+        // `validate_aux_toml` reports the absent file (`LAYOUT-006`).
+        files.push(store.expected_file(EntryKind::Requirement));
+    }
+    for file in files {
+        validate_aux_toml(
+            layout,
+            &layout.requirements_schema_path,
+            &file,
+            "requirements",
+            "SCHEMA-REQ",
+            "LAYOUT-006",
+            report,
+        )?;
+    }
+    Ok(())
 }
 
 /// Shared core for `architecture` + `requirements` schema validation.
@@ -1560,7 +1575,9 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
 
     let (requirements, sources) = count_requirements_and_sources(layout);
     let graph_checks = count_graph_checks(layout);
-    let decisions = count_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
+    let decisions = EntryStore::for_layout(layout)
+        .load_lenient(EntryKind::Decision)
+        .len();
     let (open_questions, open_questions_open) = count_open_questions(layout);
 
     Summary {
@@ -1574,46 +1591,15 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
     }
 }
 
-/// Best-effort count of a top-level array-of-tables in a TOML file.
-/// Missing or unparseable files count as zero, mirroring
-/// [`count_requirements_and_sources`].
-fn count_toml_array(path: &std::path::Path, key: &str) -> usize {
-    if !path.is_file() {
-        return 0;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return 0;
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return 0;
-    };
-    parsed
-        .get(key)
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0)
-}
-
-/// Best-effort (total, open) counts over `specs/open_questions.toml`.
+/// Best-effort (total, open) counts over the open questions. Unreadable
+/// files count as zero.
 fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
-    let path = layout.specs_dir.join("open_questions.toml");
-    if !path.is_file() {
-        return (0, 0);
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return (0, 0);
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return (0, 0);
-    };
-    let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) else {
-        return (0, 0);
-    };
-    let open = arr
+    let all = EntryStore::for_layout(layout).load_lenient(EntryKind::OpenQuestion);
+    let open = all
         .iter()
-        .filter(|q| q.get("status").and_then(toml::Value::as_str) == Some("open"))
+        .filter(|q| q.value.get("status").and_then(toml::Value::as_str) == Some("open"))
         .count();
-    (arr.len(), open)
+    (all.len(), open)
 }
 
 /// Capability tags carried by each registered graph-check primitive.
@@ -1890,26 +1876,11 @@ fn count_modules(graph_json: &JsonValue) -> usize {
 }
 
 fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize) {
-    if !layout.requirements_toml_path.is_file() {
-        return (0, 0);
-    }
-    let Ok(text) = std::fs::read_to_string(&layout.requirements_toml_path) else {
-        return (0, 0);
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return (0, 0);
-    };
-    let reqs = parsed
-        .get("requirement")
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let srcs = parsed
-        .get("source")
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-    (reqs, srcs)
+    let store = EntryStore::for_layout(layout);
+    (
+        store.load_lenient(EntryKind::Requirement).len(),
+        store.load_lenient(EntryKind::Source).len(),
+    )
 }
 
 fn count_graph_checks(layout: &LayoutContext) -> usize {
