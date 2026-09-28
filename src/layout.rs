@@ -63,8 +63,6 @@ pub struct LayoutContext {
     /// authoring (firmware-layered: connections; library-api: features).
     /// Lives alongside the existing module TOMLs.
     pub architecture_toml_path: PathBuf,
-    /// `<specs_dir>/requirements.toml` — sources + requirements.
-    pub requirements_toml_path: PathBuf,
     /// `<schemas_dir>/architecture.schema.yaml` — schema validating
     /// architecture.toml.
     pub architecture_schema_path: PathBuf,
@@ -114,7 +112,6 @@ impl LayoutContext {
         let domain_toml_path = specdev_root.join("domain.toml");
         let modules_dir = specs_dir.join("modules");
         let architecture_toml_path = specs_dir.join("architecture.toml");
-        let requirements_toml_path = specs_dir.join("requirements.toml");
         let architecture_schema_path = schemas_dir.join("architecture.schema.yaml");
         let requirements_schema_path = schemas_dir.join("requirements.schema.yaml");
 
@@ -139,7 +136,6 @@ impl LayoutContext {
             domain_toml_path,
             modules_dir,
             architecture_toml_path,
-            requirements_toml_path,
             architecture_schema_path,
             requirements_schema_path,
         }
