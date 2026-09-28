@@ -305,6 +305,16 @@ fn fixture_is_sound_in_the_1x_layout() {
     ] {
         assert!(yaml.contains(id), "{id} did not reach the graph");
     }
+    // Proves the drift parser used by the re-baseline test on today's output.
+    let categories = profile_file_categories(&project);
+    assert_eq!(
+        categories.get("spec.toml").map(String::as_str),
+        Some("Clean")
+    );
+    assert_eq!(
+        categories.get("specs/decisions.toml").map(String::as_str),
+        Some("LocallyEdited")
+    );
 }
 
 #[test]
@@ -333,6 +343,14 @@ fn gen_still_refuses_on_an_open_question_after_migrate() {
         text(&out).contains("Refusing to generate code for module `writer`"),
         "refusal text missing:\n{}",
         text(&out)
+    );
+    // The refusal points the user at the file to edit. After the move the
+    // old path is a tombstone.
+    assert!(
+        !refusal.message.contains("specs/open_questions.toml")
+            && refusal.message.contains("specs/open_questions/"),
+        "the refusal names the tombstone, not the new location:\n{}",
+        refusal.message
     );
 }
 
@@ -415,6 +433,96 @@ fn migrate_splits_entries_keeps_their_bytes_and_leaves_tombstones() {
         &project,
         "specs/open_questions.toml",
         "specs/open_questions/",
+    );
+
+    // The parallel-agent limit is written by migrate, default 1.
+    let spec: toml::Value = toml::from_str(&read("spec.toml")).unwrap();
+    assert_eq!(
+        spec["project"]
+            .get("max_parallel_agents")
+            .and_then(|v| v.as_integer()),
+        Some(1),
+        "migrate did not write [project].max_parallel_agents = 1"
+    );
+    // The bootstrap-time plugin version is renamed; the old name is gone.
+    let lineage: toml::Value = toml::from_str(&read("specs/specdev/lineage.toml")).unwrap();
+    assert!(
+        lineage["meta"].get("bootstrapped_with").is_some()
+            && lineage["meta"].get("plugin_version").is_none(),
+        "lineage.toml [meta] still has plugin_version, or lacks bootstrapped_with"
+    );
+}
+
+/// `drift`'s profile-file categories, path → category.
+fn profile_file_categories(project: &Path) -> BTreeMap<String, String> {
+    let out = analyzer(project, &["drift"]);
+    let report: serde_json::Value = serde_yaml::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("drift output is not YAML ({e}):\n{}", text(&out)));
+    report["profile"]["files"]
+        .as_array()
+        .expect("drift lists profile files")
+        .iter()
+        .map(|f| {
+            (
+                f["path"].as_str().unwrap().to_string(),
+                f["category"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Files migrate rewrites (spec.toml, inlined reductions) are re-baselined,
+/// so they do not read as hand-edited and block a later `--refresh`; files
+/// it moves leave the profile-file list.
+#[test]
+fn migrate_rebaselines_the_profile_files_it_rewrites() {
+    let project = build_v1_project("rebaseline");
+    let before = profile_file_categories(&project);
+    migrate(&project);
+    let after = profile_file_categories(&project);
+
+    for moved in [
+        "specs/decisions.toml",
+        "specs/requirements.toml",
+        "specs/open_questions.toml",
+    ] {
+        assert!(
+            !after.contains_key(moved),
+            "{moved} is still a profile file after the move"
+        );
+    }
+    for (path, category) in &after {
+        let expected = before.get(path).map(String::as_str).unwrap_or("Clean");
+        assert_eq!(
+            category, expected,
+            "{path}: {expected} before migrate, {category} after"
+        );
+    }
+}
+
+/// A 1.x project gets one `info` line naming the migration; a migrated one
+/// gets none.
+#[test]
+fn validate_names_the_migration_once_and_only_before_it() {
+    let count = |project: &Path| {
+        let out = analyzer(project, &["validate"]);
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .chain(String::from_utf8_lossy(&out.stderr).lines())
+            .filter(|l| l.to_lowercase().contains("info") && l.contains("migrate"))
+            .count()
+    };
+    let project = build_v1_project("info-line");
+    assert_eq!(
+        count(&project),
+        1,
+        "a 1.x project must get exactly one info line naming migrate"
+    );
+    migrate(&project);
+    assert_eq!(
+        count(&project),
+        0,
+        "a migrated project must get no migration info line"
     );
 }
 
