@@ -22,7 +22,7 @@ use tracing::{info, instrument};
 
 use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
-use crate::entries::{EntryKind, EntryStore};
+use crate::entries::{EntryKind, EntryLayout, EntryStore};
 use crate::graph as graph_checks;
 use crate::kinds;
 use crate::layout::LayoutContext;
@@ -118,7 +118,7 @@ pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Rep
     validate_layout(layout, &mut report)?;
     validate_modules_for(layout, filter, &mut report)?;
     validate_architecture(layout, &mut report)?;
-    validate_requirements(layout, &mut report)?;
+    validate_entries(layout, &mut report)?;
     validate_items_present(layout, filter, &mut report);
     validate_reserved_test_kinds(layout, filter, &mut report);
     validate_context_files_when_strict(layout, filter, &mut report);
@@ -138,39 +138,141 @@ pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Res
         &layout.architecture_toml_path,
         "architecture",
         "SCHEMA-ARCH",
-        "LAYOUT-005",
+        Some("LAYOUT-005"),
         report,
     )
 }
 
-/// Schema-validate `specs/requirements.toml` against
-/// `specs/specdev/schemas/requirements.schema.yaml`. Findings emitted via
-/// `SCHEMA-REQ`.
+/// Schema-validate every entry file — decisions, requirements, sources and
+/// open questions — against the profile's schema for its kind, one file at
+/// a time. In the per-entry layout (`spec_version` `2.x`) also check that
+/// each file holds exactly one entry of its kind and that its stem is the
+/// entry's id.
+///
+/// Findings: `SCHEMA-REQ` (requirements and sources), `SCHEMA-DEC`,
+/// `SCHEMA-OQ`, `ENTRY-FILE-001` (shape), `ENTRY-FILE-002` (stem),
+/// `ENTRY-LEGACY-001` (a `1.x` file with content in a `2.x` project);
+/// `LAYOUT-006` (info) when no requirement or source is authored.
 #[instrument(level = "info", skip(layout, report))]
-pub fn validate_requirements(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+pub fn validate_entries(layout: &LayoutContext, report: &mut Report) -> Result<()> {
     let store = EntryStore::for_layout(layout);
-    let mut files = store.files(EntryKind::Requirement);
+    let per_entry = store.layout() == EntryLayout::PerEntry;
+
+    for path in store.legacy_content() {
+        report.push(
+            Finding::new(
+                "ENTRY-LEGACY-001",
+                Severity::Error,
+                EntryStore::legacy_message(&path),
+            )
+            .with_file(path.display().to_string()),
+        );
+    }
+
+    // Requirements and sources share a schema and, in `1.x`, a file.
+    let mut req_files = store.files(EntryKind::Requirement);
     for file in store.files(EntryKind::Source) {
-        if !files.contains(&file) {
-            files.push(file);
+        if !req_files.contains(&file) {
+            req_files.push(file);
         }
     }
-    if files.is_empty() {
-        // `validate_aux_toml` reports the absent file (`LAYOUT-006`).
-        files.push(store.expected_file(EntryKind::Requirement));
+    if req_files.is_empty() && layout.requirements_schema_path.is_file() {
+        let expected = store.expected_file(EntryKind::Requirement);
+        report.push(Finding::new(
+            "LAYOUT-006",
+            Severity::Info,
+            if per_entry {
+                format!(
+                    "no requirement or source entries under {} — none authored yet",
+                    expected.display()
+                )
+            } else {
+                format!(
+                    "{} absent at {} — no requirements-level entries authored yet",
+                    file_label(&expected),
+                    expected.display()
+                )
+            },
+        ));
     }
-    for file in files {
+    for file in &req_files {
         validate_aux_toml(
             layout,
             &layout.requirements_schema_path,
-            &file,
+            file,
             "requirements",
             "SCHEMA-REQ",
-            "LAYOUT-006",
+            None,
             report,
         )?;
     }
+
+    for (kind, schema, rule) in [
+        (EntryKind::Decision, "decisions.schema.yaml", "SCHEMA-DEC"),
+        (
+            EntryKind::OpenQuestion,
+            "open_questions.schema.yaml",
+            "SCHEMA-OQ",
+        ),
+    ] {
+        let schema_path = layout.schemas_dir.join(schema);
+        for file in store.files(kind) {
+            validate_aux_toml(layout, &schema_path, &file, schema, rule, None, report)?;
+        }
+    }
+
+    if per_entry {
+        for kind in EntryKind::ALL {
+            for file in store.files(kind) {
+                check_entry_file(&file, kind, report);
+            }
+        }
+    }
     Ok(())
+}
+
+/// `ENTRY-FILE-001` / `ENTRY-FILE-002`: a per-entry file holds exactly one
+/// table of its kind and nothing else, and its stem is that entry's id. A
+/// file that does not parse is left to the schema pass, which reports it.
+fn check_entry_file(file: &Path, kind: EntryKind, report: &mut Report) {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Table>(&text) else {
+        return;
+    };
+    let table = kind.table();
+    let entries = parsed.get(table).and_then(toml::Value::as_array);
+    let only_its_kind = parsed.keys().all(|k| k == table);
+    let Some([entry]) = entries.map(Vec::as_slice).filter(|_| only_its_kind) else {
+        report.push(
+            Finding::new(
+                "ENTRY-FILE-001",
+                Severity::Error,
+                format!(
+                    "{} must hold exactly one [[{table}]] and nothing else — one entry per file",
+                    file.display()
+                ),
+            )
+            .with_file(file.display().to_string()),
+        );
+        return;
+    };
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let id = entry.get("id").and_then(toml::Value::as_str).unwrap_or("");
+    if stem != id {
+        report.push(
+            Finding::new(
+                "ENTRY-FILE-002",
+                Severity::Error,
+                format!(
+                    "{} holds `{id}`; the file name must be `{id}.toml` (the id names the file)",
+                    file.display()
+                ),
+            )
+            .with_file(file.display().to_string()),
+        );
+    }
 }
 
 /// Shared core for `architecture` + `requirements` schema validation.
@@ -184,7 +286,7 @@ fn validate_aux_toml(
     toml_path: &Path,
     label: &str,
     schema_rule: &str,
-    absent_rule: &str,
+    absent_rule: Option<&str>,
     report: &mut Report,
 ) -> Result<()> {
     if !schema_path.is_file() {
@@ -193,14 +295,16 @@ fn validate_aux_toml(
         return Ok(());
     }
     if !toml_path.is_file() {
-        report.push(Finding::new(
-            absent_rule,
-            Severity::Info,
-            format!(
-                "{label}.toml absent at {} — no {label}-level entries authored yet",
-                toml_path.display()
-            ),
-        ));
+        if let Some(absent_rule) = absent_rule {
+            report.push(Finding::new(
+                absent_rule,
+                Severity::Info,
+                format!(
+                    "{label}.toml absent at {} — no {label}-level entries authored yet",
+                    toml_path.display()
+                ),
+            ));
+        }
         return Ok(());
     }
 
@@ -253,7 +357,7 @@ fn validate_aux_toml(
                 Finding::new(
                     schema_rule,
                     Severity::Error,
-                    format!("{label}.toml is not valid TOML: {e}"),
+                    format!("{} is not valid TOML: {e}", file_label(toml_path)),
                 )
                 .with_file(toml_path.display().to_string()),
             );
@@ -267,7 +371,8 @@ fn validate_aux_toml(
                 schema_rule,
                 Severity::Error,
                 format!(
-                    "{label}.toml: {}",
+                    "{}: {}",
+                    file_label(toml_path),
                     crate::diagnostics::format_schema_error(&err)
                 ),
             )
@@ -277,6 +382,14 @@ fn validate_aux_toml(
     }
 
     Ok(())
+}
+
+/// The file name a schema finding leads with (`requirements.toml`,
+/// `DEC-001.toml`).
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Map-backed `Retrieve` for resolving `$ref` between sibling schema

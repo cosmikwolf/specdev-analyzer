@@ -525,23 +525,13 @@ pub fn check_codegen_gate(
 
     let local_store = EntryStore::for_layout(layout);
     let local_oqs = read_open_questions(&local_store)?;
-    let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
-    let mut workspace_store: Option<EntryStore> = None;
-    if let Some(parent) = layout.project_root.parent() {
-        let parent_specs = parent.join("specs");
-        let parent_spec_toml = parent.join("spec.toml");
-        if parent_spec_toml.is_file() {
-            if let Ok(text) = std::fs::read_to_string(&parent_spec_toml) {
-                if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
-                    if parsed.get("workspace").is_some() {
-                        let store = EntryStore::at(&parent_specs);
-                        workspace_oqs = read_open_questions(&store)?;
-                        workspace_store = Some(store);
-                    }
-                }
-            }
-        }
-    }
+    // The workspace root, found by its `[workspace].members[].path` listing
+    // this project, read in the root's own layout.
+    let workspace_store = EntryStore::workspace_root_of(layout)?;
+    let workspace_oqs: BTreeMap<String, OpenQuestionEntry> = match &workspace_store {
+        Some(store) => read_open_questions(store)?,
+        None => BTreeMap::new(),
+    };
 
     // Local-tier OQs gate when their affects[] overlaps the module's
     // satisfies[]. Iteration is deterministic via BTreeMap ordering.
@@ -560,7 +550,7 @@ pub fn check_codegen_gate(
             &title,
             &format!(
                 "the project's {}",
-                EntryStore::location_hint(EntryKind::OpenQuestion, oq_id)
+                local_store.location_hint(EntryKind::OpenQuestion, oq_id)
             ),
         );
         return Ok(Some(GateRefusal {
@@ -588,17 +578,18 @@ pub fn check_codegen_gate(
         if !intersects {
             continue;
         }
-        let title = workspace_store
-            .as_ref()
-            .and_then(|store| read_open_question_title(store, oq_id))
-            .unwrap_or_default();
+        // Non-empty `workspace_oqs` implies a workspace store.
+        let Some(store) = workspace_store.as_ref() else {
+            continue;
+        };
+        let title = read_open_question_title(store, oq_id).unwrap_or_default();
         let message = build_refusal_message(
             module_name,
             oq_id,
             &title,
             &format!(
                 "the workspace's {}",
-                EntryStore::location_hint(EntryKind::OpenQuestion, oq_id)
+                store.location_hint(EntryKind::OpenQuestion, oq_id)
             ),
         );
         return Ok(Some(GateRefusal {
@@ -745,17 +736,13 @@ pub fn decision_context(
     let local_decisions = read_decisions(&local_store)?;
     let local_oqs = read_open_questions(&local_store)?;
 
-    // Workspace-tier decisions/oqs. The workspace's
-    // specs/decisions.toml lives one level up from a member crate's
-    // project_root when the project sits inside a `<workspace>/<member>/`
-    // shape. The detection heuristic: a workspace's spec.toml lives at
-    // `<parent>/spec.toml` and declares `[workspace]`. We probe the
-    // parent directory; if `<parent>/specs/decisions.toml` exists, treat
-    // it as workspace tier.
+    // Workspace-tier decisions/oqs: the root whose `[workspace].members[]`
+    // lists this project, at any depth (a member at `crates/<m>` included),
+    // read in the root's own layout. Open questions load whether or not the
+    // root holds any decision.
     let mut workspace_decisions: BTreeMap<String, DecisionEntry> = BTreeMap::new();
     let mut workspace_oqs: BTreeMap<String, OpenQuestionEntry> = BTreeMap::new();
-    if let Some(parent_specs) = workspace_specs_dir(layout) {
-        let store = EntryStore::at(&parent_specs);
+    if let Some(store) = EntryStore::workspace_root_of(layout)? {
         workspace_decisions = read_decisions(&store)?;
         workspace_oqs = read_open_questions(&store)?;
     }
@@ -868,21 +855,6 @@ pub fn decision_context(
     })
 }
 
-/// The workspace root's `specs/` when this project is a member: the parent
-/// directory holds `specs/decisions.toml` and a `spec.toml` declaring
-/// `[workspace]`.
-fn workspace_specs_dir(layout: &LayoutContext) -> Option<std::path::PathBuf> {
-    let parent = layout.project_root.parent()?;
-    let parent_specs = parent.join("specs");
-    let parent_spec_toml = parent.join("spec.toml");
-    if !EntryStore::at(&parent_specs).has_any(EntryKind::Decision) || !parent_spec_toml.is_file() {
-        return None;
-    }
-    let text = std::fs::read_to_string(&parent_spec_toml).ok()?;
-    let parsed = toml::from_str::<toml::Value>(&text).ok()?;
-    parsed.get("workspace").is_some().then_some(parent_specs)
-}
-
 /// Every decision this project's prompts could carry: its own, then the
 /// workspace root's. `(id, title, status, from the workspace?)`, by id per
 /// tier.
@@ -892,9 +864,9 @@ pub fn project_decisions(layout: &LayoutContext) -> Result<Vec<(String, String, 
             .into_iter()
             .map(|(id, d)| (id, d.title, d.status, false))
             .collect();
-    if let Some(dir) = workspace_specs_dir(layout) {
+    if let Some(store) = EntryStore::workspace_root_of(layout)? {
         out.extend(
-            read_decisions(&EntryStore::at(&dir))?
+            read_decisions(&store)?
                 .into_iter()
                 .map(|(id, d)| (id, d.title, d.status, true)),
         );

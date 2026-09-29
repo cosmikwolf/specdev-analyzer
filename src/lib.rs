@@ -59,12 +59,19 @@
 //! - `DRIFT-INVARIANT-002` — upstream entry present, no inlined file.
 //! - `DRIFT-INVARIANT-003` — lineage entry points at no files at all.
 //!
-//! Architecture / requirements finding codes (in [`Report`] alongside the rest):
+//! Architecture and entry finding codes (in [`Report`] alongside the rest):
 //! - `LAYOUT-005` — `specs/architecture.toml` absent (info; project may
 //!   have no architecture-level wiring yet).
-//! - `LAYOUT-006` — `specs/requirements.toml` absent (info).
+//! - `LAYOUT-006` — no requirement or source authored (info).
 //! - `SCHEMA-ARCH` — `architecture.toml` fails its profile-shipped schema.
-//! - `SCHEMA-REQ` — `requirements.toml` fails its profile-shipped schema.
+//! - `SCHEMA-REQ` — a requirements or sources file fails its schema.
+//! - `SCHEMA-DEC` — a decisions file fails its schema.
+//! - `SCHEMA-OQ` — an open-questions file fails its schema.
+//! - `ENTRY-FILE-001` — a per-entry file (`spec_version` `2.x`) does not
+//!   hold exactly one entry of its kind.
+//! - `ENTRY-FILE-002` — a per-entry file's stem is not its entry's id.
+//! - `ENTRY-LEGACY-001` — a `2.x` project still holds entries in a `1.x`
+//!   file; they are not read until `migrate` moves them.
 //!
 //! Plugin-lint codes (emitted by `plugin-lint`, not via Report —
 //! these run at plugin-author CI time, before any project context):
