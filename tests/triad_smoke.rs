@@ -55,8 +55,8 @@ fn tmp_workspace(tag: &str) -> PathBuf {
 /// spec set into it. Returns (project_root, layout).
 ///
 /// The cross-references are deliberately authored one-way per pair —
-/// e.g. `DEC-001.closes_questions = ["OQ-resolved"]` is paired with
-/// `OQ-resolved.closed_by = "DEC-005"` (not DEC-001) — to avoid
+/// e.g. `DEC-001.closes_questions = ["OQ-003"]` is paired with
+/// `OQ-003.closed_by = "DEC-005"` (not DEC-001) — to avoid
 /// forming 2-cycles in the canonical `depends_on` view that the
 /// existing `modules_acyclic` graph check operates on. The proposal
 /// allows the dual-direction reference to be missing or to disagree
@@ -72,7 +72,7 @@ fn tmp_workspace(tag: &str) -> PathBuf {
 ///   affected by an open OQ — gates `module_blocked`); ZFM-003 has no
 ///   decided_by (closed OQ resolved against it).
 /// - `decisions.toml` with five entries:
-///     - DEC-001 (accepted, closes_questions = ["OQ-resolved"])
+///     - DEC-001 (accepted, closes_questions = ["OQ-003"])
 ///     - DEC-002 (superseded — replaced by DEC-004)
 ///     - DEC-003 (accepted, defaults_for = ["OQ-001"])
 ///     - DEC-004 (accepted, supersedes = ["DEC-002"])
@@ -82,7 +82,7 @@ fn tmp_workspace(tag: &str) -> PathBuf {
 ///       string, affects = ["ZFM-001"])
 ///     - OQ-002 (open, no default_via, affects = ["ZFM-002"]) — this
 ///       is what blocks codegen for `module_blocked`.
-///     - OQ-resolved (closed, closed_by = "DEC-005", affects =
+///     - OQ-003 (closed, closed_by = "DEC-005", affects =
 ///       ["ZFM-003"])
 /// - `modules/module_ok.toml`: satisfies ["ZFM-001"], guided_by
 ///   ["DEC-001"]. Codegen-unblocked.
@@ -150,7 +150,7 @@ title = "Smoke decision"
 status = "accepted"
 text = "We do the thing this way."
 consequences = "Downstream knows X."
-closes_questions = ["OQ-resolved"]
+closes_questions = ["OQ-003"]
 
 [[decision]]
 id = "DEC-002"
@@ -176,7 +176,7 @@ supersedes = ["DEC-002"]
 id = "DEC-005"
 title = "Plain accepted decision"
 status = "accepted"
-text = "Serves as the closed_by target for OQ-resolved (one-way pairing)."
+text = "Serves as the closed_by target for OQ-003 (one-way pairing)."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), decisions).unwrap();
 
@@ -197,10 +197,10 @@ text = "Genuinely unknown — blocks module_blocked until resolved."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
-text = "Was a question; resolved by DEC-005 (DEC-001 also lists OQ-resolved in closes_questions for one-way coverage of graph check #6)."
+text = "Was a question; resolved by DEC-005 (DEC-001 also lists OQ-003 in closes_questions for one-way coverage of graph check #6)."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
@@ -489,7 +489,7 @@ title = "Smoke decision"
 status = "accepted"
 text = "We do the thing this way."
 consequences = "Downstream knows X."
-closes_questions = ["OQ-resolved"]
+closes_questions = ["OQ-003"]
 
 [[decision]]
 id = "DEC-003"
@@ -509,7 +509,7 @@ supersedes = ["DEC-996"]
 id = "DEC-005"
 title = "Plain accepted decision"
 status = "accepted"
-text = "Serves as the closed_by target for OQ-resolved."
+text = "Serves as the closed_by target for OQ-003."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
     let report = validate::run_project(&target, None).expect("validate");
@@ -541,7 +541,7 @@ supersedes = ["DEC-A"]
 id = "DEC-005"
 title = "Plain accepted decision"
 status = "accepted"
-text = "Serves as the closed_by target for OQ-resolved."
+text = "Serves as the closed_by target for OQ-003."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
     // Strip references to removed decisions from arch + reqs.
@@ -589,7 +589,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -612,7 +612,7 @@ title = "Smoke decision"
 status = "accepted"
 text = "We do the thing this way."
 consequences = "Downstream knows X."
-closes_questions = ["OQ-resolved"]
+closes_questions = ["OQ-003"]
 
 [[decision]]
 id = "DEC-002"
@@ -662,7 +662,7 @@ status = "accepted"
 text = "Plain."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
-    // Drop the OQ-resolved entry since DEC-001 no longer closes it.
+    // Drop the OQ-003 entry since DEC-001 no longer closes it.
     let open_questions = r#"[[open_question]]
 id = "OQ-001"
 title = "Default-committed question"
@@ -680,7 +680,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 "#;
     std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
-    // Drop ZFM-003 since OQ-resolved is gone.
+    // Drop ZFM-003 since OQ-003 is gone.
     let reqs = r#"[[source]]
 id = "triad-doc"
 kind = "derived"
@@ -712,7 +712,7 @@ id = "DEC-001"
 title = "Smoke decision"
 status = "accepted"
 text = "Plain."
-closes_questions = ["OQ-resolved"]
+closes_questions = ["OQ-003"]
 
 [[decision]]
 id = "DEC-003"
@@ -744,7 +744,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -776,7 +776,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -808,7 +808,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -840,7 +840,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by a missing decision"
 status = "closed"
 text = "Resolved."
@@ -854,7 +854,7 @@ affects = ["ZFM-003"]
 
 #[test]
 fn triad_red_open_question_status_consistency_closed_with_non_accepted_target() {
-    // OQ-resolved is `closed` and `closed_by = "DEC-002"`, but DEC-002 is
+    // OQ-003 is `closed` and `closed_by = "DEC-002"`, but DEC-002 is
     // `superseded`, not `accepted`. Status-consistency check should fire.
     let (target, _) = build_triad_smoke("red-status-consistency");
     let open_questions = r#"[[open_question]]
@@ -874,7 +874,7 @@ text = "Genuinely unknown."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by a superseded decision"
 status = "closed"
 text = "DEC-002 is superseded; the OQ shouldn't claim closure via a non-accepted Decision."
@@ -1067,7 +1067,7 @@ verify = "Run scenario Z."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -1100,7 +1100,7 @@ text = "Genuinely unknown — blocks module_blocked until resolved."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-005"
 status = "closed"
 text = "Resolved."
@@ -1120,7 +1120,7 @@ fn triad_red_codegen_unblocked_warning() {
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "codegen_unblocked", "module_blocked");
     // Ensure module_ok is NOT flagged (its only OQ in scope is OQ-001
-    // which is `default_committed`, and OQ-resolved which is `closed`).
+    // which is `default_committed`, and OQ-003 which is `closed`).
     let any_ok_flagged = report
         .findings()
         .iter()
@@ -1143,7 +1143,7 @@ fn triad_red_codegen_unblocked_warning() {
 fn modules_acyclic_ignores_triad_dual_back_references() {
     let (target, _layout) = build_triad_smoke("acyclic-joint-filter");
 
-    // Author the dual back-reference on DEC-001 ↔ OQ-resolved AND on
+    // Author the dual back-reference on DEC-001 ↔ OQ-003 AND on
     // DEC-003 ↔ OQ-001 (both pair directions present). Previously this
     // would form 2-cycles in the canonical depends_on view and trip
     // modules_acyclic.
@@ -1153,7 +1153,7 @@ title = "Smoke decision"
 status = "accepted"
 text = "We do the thing this way."
 consequences = "Downstream knows X."
-closes_questions = ["OQ-resolved"]
+closes_questions = ["OQ-003"]
 
 [[decision]]
 id = "DEC-002"
@@ -1179,7 +1179,7 @@ supersedes = ["DEC-002"]
 id = "DEC-005"
 title = "Plain accepted decision"
 status = "accepted"
-text = "Co-target for OQ-resolved (kept for parity with the smoke fixture)."
+text = "Co-target for OQ-003 (kept for parity with the smoke fixture)."
 "#;
     std::fs::write(target.join("specs/decisions.toml"), decisions).unwrap();
 
@@ -1200,10 +1200,10 @@ text = "Blocks module_blocked until resolved."
 affects = ["ZFM-002"]
 
 [[open_question]]
-id = "OQ-resolved"
+id = "OQ-003"
 title = "Closed by DEC-001"
 status = "closed"
-text = "Symmetric back-reference: DEC-001 closes OQ-resolved AND OQ-resolved.closed_by = DEC-001."
+text = "Symmetric back-reference: DEC-001 closes OQ-003 AND OQ-003.closed_by = DEC-001."
 closed_by = "DEC-001"
 affects = ["ZFM-003"]
 "#;

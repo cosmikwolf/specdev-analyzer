@@ -12,8 +12,12 @@ required: [spec_version, project, paths]
 properties:
   spec_version:
     type: string
-    description: Schema version line. v1 accepts only `1.x`; later versions widen.
-    pattern: "^1\\.[0-9]+$"
+    description: |
+      Project format version. `1.x` keeps decisions, requirements, sources
+      and open questions in one file per kind under `specs/`; `2.x` keeps
+      one file per entry (`specs/decisions/<id>.toml`, …). This analyzer
+      reads both; `migrate` moves a `1.x` project to `2.0`.
+    pattern: "^[12]\\.[0-9]+$"
   project:
     type: object
     additionalProperties: false

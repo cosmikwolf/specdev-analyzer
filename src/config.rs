@@ -37,6 +37,18 @@ pub struct SpecConfig {
     pub workspace: Option<WorkspaceSection>,
 }
 
+impl SpecConfig {
+    /// The major number of `spec_version` (`"2.0"` → 2). The schema admits
+    /// only `<digit>.<digits>`, so a parsed config always has one.
+    pub fn format_major(&self) -> u32 {
+        self.spec_version
+            .split('.')
+            .next()
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(1)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectSection {
     pub name: String,
@@ -390,7 +402,7 @@ name = "demo"
     #[test]
     fn rejects_invalid_spec_version() {
         let bad = r#"
-spec_version = "2.0"
+spec_version = "3.0"
 
 [project]
 name = "demo"
