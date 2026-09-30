@@ -1,0 +1,28 @@
+name = "Blinky"
+layer = "application"
+description = "Liveness LED toggled by a software task."
+satisfies = ["REQ-LED-001"]
+
+[[items]]
+kind = "fn"
+name = "blink"
+description = "RTIC software task: toggle the LED pin, tracking state in a local."
+satisfies = ["REQ-LED-001"]
+signature_hint = "async fn blink(cx: blink::Context)"
+
+[[mk20dx.pins]]
+name = "status_led"
+port = "C"
+pin = 5
+mode = "push_pull_output"
+
+[[rtic.tasks]]
+name = "blink"
+kind = "software"
+priority = 1
+uses = ["led_on"]
+
+[[rtic.resources]]
+name = "led_on"
+sharing = "local"
+type = "bool"
