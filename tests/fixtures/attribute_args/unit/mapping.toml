@@ -1,0 +1,14 @@
+# Capture -> spec-attribute mapping (data, not code).
+query = "tasks.scm"
+# Dotted path to the array of tables in a module spec that holds the entities.
+entity_table = "rtic.tasks"
+# The spec attribute that is the entity's key, and the capture that carries it.
+spec_key = "name"
+key_capture = "entity.key"
+arg_key_capture = "arg.key"
+arg_value_capture = "arg.value"
+
+# Source argument name -> spec attribute name. Only these are compared.
+[attributes]
+binds = "binds"
+priority = "priority"

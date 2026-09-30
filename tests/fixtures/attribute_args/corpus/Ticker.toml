@@ -1,0 +1,48 @@
+name = "Ticker"
+layer = "driver"
+description = "1 kHz PIT tick feeding a shared counter across two priorities."
+satisfies = ["REQ-TICK-001"]
+
+[[items]]
+kind = "fn"
+name = "on_tick"
+description = "RTIC hardware task in PIT0: clear the timer flag, bump the shared counter."
+satisfies = ["REQ-TICK-001"]
+signature_hint = "fn on_tick(cx: on_tick::Context)"
+
+[[items]]
+kind = "fn"
+name = "drain"
+description = "RTIC software task: read and reset the shared counter, log it."
+satisfies = ["REQ-TICK-001"]
+signature_hint = "async fn drain(cx: drain::Context)"
+
+[mk20dx.clock]
+speed = "mhz72"
+
+[[mk20dx.timers]]
+name = "tick"
+channel = 0
+period_us = 1000
+
+[[mk20dx.interrupts]]
+name = "tick_irq"
+vector = "PIT0"
+
+[[rtic.tasks]]
+name = "on_tick"
+kind = "hardware"
+binds = "PIT0"
+priority = 3
+uses = ["count"]
+
+[[rtic.tasks]]
+name = "drain"
+kind = "software"
+priority = 1
+uses = ["count"]
+
+[[rtic.resources]]
+name = "count"
+sharing = "shared"
+type = "u32"
