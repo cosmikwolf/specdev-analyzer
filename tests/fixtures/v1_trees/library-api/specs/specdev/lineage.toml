@@ -1,0 +1,24 @@
+[meta]
+plugin_version = "0.2.2"
+bootstrapped_at = "2026-09-30T22:06:14Z"
+profile = "library-api"
+
+[tooling]
+analyzer_version = "0.2.1"
+
+[profile_files]
+"spec.toml" = "sha256:741f0cfda8e4e60b541b86b5b29a7547b2473968814406f33087df26aa75acc9"
+"specs/architecture.toml" = "sha256:366312b378a7d20a7348512756743d3fbe9a2605b48f3be1f46be2485010b797"
+"specs/decisions.toml" = "sha256:70642f299f283f674d9435c6c054aefdaf10812a4fbb44a6e766cb6c4b4b5e06"
+"specs/open_questions.toml" = "sha256:c999575541ee6a84e07d91a1bf6d59e0efa42d794f4afa5ed7b1859da3083458"
+"specs/requirements.toml" = "sha256:8655c26031bb6ef3a01938fe05a23e37d7a1d3cc70e3c29d0f26874b96fec571"
+"specs/specdev/codegen/rust/module.conventions.md" = "sha256:666d136ea9f67f5bdf729e5f05a9a785d5d48ab271ffb04801409cacd6392273"
+"specs/specdev/domain.toml" = "sha256:7a1c6f8c0318795c09119449832c7c234e0c440e8f87fcb97c8b00d7b81711a3"
+"specs/specdev/profile.yaml" = "sha256:f60f76cf6f7f8adf14372f2cc4269181774f934103cd9d45eb2544ee757d5230"
+"specs/specdev/reductions/project.yaml" = "sha256:7a42cf1327cd3fcf32e9eacb601c65460d9d8cdb22c2d76a967fe56440dc8c88"
+"specs/specdev/schemas/architecture.schema.yaml" = "sha256:eb4a275f165f92df42863bfb1874ede1ef8572b37889a0ba9413331cd601794b"
+"specs/specdev/schemas/decisions.schema.yaml" = "sha256:9d3d7d892d022abf223d7821d66790d071e7144bcc6116f6bc5079bc10d50821"
+"specs/specdev/schemas/enums.schema.yaml" = "sha256:8b33adc740605ebf8f8a1cba92b1c8367ec012fae4d1d6daccb9aac1ce4c7826"
+"specs/specdev/schemas/module.schema.yaml" = "sha256:aae27cc340548c765e0d429d2f92d690a20063c72287d798a8924c8882ca34e1"
+"specs/specdev/schemas/open_questions.schema.yaml" = "sha256:3f0b20ddaf83cfad3e3b6bcf28de92f74d04d317a00fb5b8b6e46a64e31b5132"
+"specs/specdev/schemas/requirements.schema.yaml" = "sha256:16a60c3c9f0a0acde09ae834c2a5cda796c7b335e34b2e4b50d6c8ad00533e0f"

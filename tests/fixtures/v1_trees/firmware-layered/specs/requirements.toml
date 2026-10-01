@@ -1,0 +1,51 @@
+# Project requirements.
+#
+# Two top-level arrays:
+#   [[source]]      — external documents the requirements are derived from
+#                     (protocol specs, user research, regulations, ...).
+#                     Sources are referenced by their `id` from each
+#                     [[requirement]] entry.
+#   [[requirement]] — the requirements themselves.
+#
+# Modules reference requirements via their top-level `satisfies = [...]`
+# array using requirement ids. The analyzer's
+# `module_satisfies_resolves` and `requirement_satisfies_resolves` graph
+# checks verify that every reference resolves.
+#
+# Requirement ids follow the pattern `REQ-AREA-NUMBER` (e.g. REQ-AUDIO-001,
+# REQ-PROTO-MIDI2-014). Use uppercase letters/digits and hyphens.
+#
+# Source kinds:
+#   protocol   — external technical spec (MIDI 2.0, USB, BLE)
+#   user       — stakeholder/user requirements
+#   regulatory — compliance or certification (FCC, CE, UL)
+#   derived    — internal decisions with no external document
+#
+# Delete the EXAMPLE entries below once your project has real
+# requirements.
+
+# EXAMPLE: declare an external source document.
+# [[source]]
+# id = "midi2-ump"
+# kind = "protocol"
+# title = "Universal MIDI Packet Format and MIDI 2.0 Protocol Specification"
+# version = "1.1"
+# url = "https://midi.org/spec-midi-2-0"
+
+# EXAMPLE: a leaf requirement derived from the source above.
+# [[requirement]]
+# id = "REQ-PROTO-MIDI2-001"
+# text = "The device shall accept incoming UMP packets at the rate specified by the host."
+# source = ["midi2-ump"]
+# source_ref = "Section 4.3"
+# verified_by = ["UmpInbox.accept_packet"]
+
+# EXAMPLE: a parent/derived requirement chain.
+# [[requirement]]
+# id = "REQ-AUDIO-001"
+# text = "Audio output shall not drop frames under nominal CPU load."
+#
+# [[requirement]]
+# id = "REQ-AUDIO-002"
+# text = "DAC output buffer shall hold at least 4ms of samples."
+# satisfies = ["REQ-AUDIO-001"]

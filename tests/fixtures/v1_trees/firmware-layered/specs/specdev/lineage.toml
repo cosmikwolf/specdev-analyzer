@@ -1,0 +1,25 @@
+[meta]
+plugin_version = "0.2.2"
+bootstrapped_at = "2026-09-30T22:06:14Z"
+profile = "firmware-layered"
+
+[tooling]
+analyzer_version = "0.2.1"
+
+[profile_files]
+"spec.toml" = "sha256:b685cda2d15fab60c3d3c51ecb9f5a50005ca5a35efbf2ff343d35e9c1a2071d"
+"specs/architecture.toml" = "sha256:f629b6ee498ca5fbdf2dd7078995df5fdd42deef7316cd6005855f6d1f4b9860"
+"specs/decisions.toml" = "sha256:70642f299f283f674d9435c6c054aefdaf10812a4fbb44a6e766cb6c4b4b5e06"
+"specs/open_questions.toml" = "sha256:c999575541ee6a84e07d91a1bf6d59e0efa42d794f4afa5ed7b1859da3083458"
+"specs/requirements.toml" = "sha256:8bcf47016ccfdc9a08cf9377bdbf79a358a82c2e0cc415f9875a16cc0d8f442e"
+"specs/specdev/codegen/rust/module.conventions.md" = "sha256:a89a37e933ecabd7be2d1a6c2ed3810f9cabb11061f253a42bd9b22906ffe2de"
+"specs/specdev/domain.toml" = "sha256:58e4098730cd2ec71054bf9d634bc44c2ec430fea2fe8dfdb5979bab0db171a2"
+"specs/specdev/profile.yaml" = "sha256:229a3a98f750368704321a1c9ca9c5cf47b56f14c3b7edad284ca708d5311774"
+"specs/specdev/reductions/project.yaml" = "sha256:0fd59b3142ae9e8af4ecaaaa1b105400d70d3b3494eb3fdcf276f0c47def7458"
+"specs/specdev/schemas/architecture.schema.yaml" = "sha256:0d0e3e84c228b65e6d67097ad1162e1215334ff65317b1fc00a2baa90fefd07e"
+"specs/specdev/schemas/decisions.schema.yaml" = "sha256:1e1bbfd71dfd65de194b6a595d3c472e25e8828129748800caae7d25dd332b56"
+"specs/specdev/schemas/enums.schema.yaml" = "sha256:a8db0733982a21fcc1467a30ee888c10c3593cf2d0c0042dbec2c25b82b0fb6b"
+"specs/specdev/schemas/metadata.schema.yaml" = "sha256:b339de23d3d75d6ce34533cdeee794c6863c943e41d918a82fde04d556b4f4b6"
+"specs/specdev/schemas/module.schema.yaml" = "sha256:67a215f2556df6ef30aba71da70f2bb0ef09990d761f9e2129e7deb60977bce2"
+"specs/specdev/schemas/open_questions.schema.yaml" = "sha256:3b2f54ee0f60e563222e9f4ef8a829735c85f3406db89016765e3260227f5163"
+"specs/specdev/schemas/requirements.schema.yaml" = "sha256:b7cba668bdd058dd0be65ceffc10ce64d8944fe6c3c533985267279fcb3f1c7a"

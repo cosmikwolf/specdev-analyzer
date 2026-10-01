@@ -90,11 +90,11 @@ fn modules_by_internal_edges() {
         .write("src/built_ok.rs", "use crate::target::poke;\npub fn built() { poke() }\n")
         .write("src/planned_built.rs", "use crate::target::poke;\npub fn built() { poke() }\n");
     let c = t.check(&[]);
-    c.fires("internal_edges", "BuiltOk", "error")
-        .silent("internal_edges", "Missing")
-        .silent("internal_edges", "PlannedEmpty")
-        .fires("internal_edges", "PlannedBuilt", "error")
-        .silent("internal_edges", "Declared");
+    c.fires("internal_edges_declared", "BuiltOk", "error")
+        .silent("internal_edges_declared", "Missing")
+        .silent("internal_edges_declared", "PlannedEmpty")
+        .fires("internal_edges_declared", "PlannedBuilt", "error")
+        .silent("internal_edges_declared", "Declared");
 }
 
 /// The rtic + mk20dx pack: tasks in one `#[rtic::app]` (RTIC allows one

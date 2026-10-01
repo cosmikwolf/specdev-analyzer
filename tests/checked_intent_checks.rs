@@ -156,7 +156,7 @@ fn verified_by_resolves_on_every_entity_kind() {
         .fires("verified_by_resolves", "Screen.swipe", "error");
 }
 
-// ---- Per-language discovery: `report tests --language L --root R --format json`.
+// ---- Per-language discovery: `report tests --language L --root R --format yaml`.
 
 struct Found {
     identity: String,
@@ -164,8 +164,8 @@ struct Found {
 }
 
 fn discover(t: &Tree, language: &str, root: &str) -> Vec<Found> {
-    let out = t.analyzer(&["report", "tests", "--language", language, "--root", root, "--format", "json"]);
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout)
+    let out = t.analyzer(&["report", "tests", "--language", language, "--root", root, "--format", "yaml"]);
+    let v: serde_json::Value = serde_yaml::from_slice(&out.stdout)
         .unwrap_or_else(|_| panic!("`report tests` did not run and report:\n{}", ci::text(&out)));
     v["tests"]
         .as_array()
@@ -270,13 +270,18 @@ fn internal_edges_scope_and_shared_files() {
         .write("specs/modules/Blinky.toml", &fw_module("Blinky", "source_file = \"src/main.rs\"\n"))
         .write("src/main.rs", "mod x { pub fn a() {} }\nuse crate::x::a;\nfn main() { a() }\n")
         .write("specs/modules/Undeclared.toml", &fw_module("Undeclared", ""))
-        .write("src/undeclared.rs", "use crate::uses::f;\npub fn g() { f() }\n");
+        .write("src/undeclared.rs", "use crate::uses::f;\npub fn g() { f() }\n")
+        .write("specs/modules/Root.toml", &fw_module("Root", "source_file = \"src/lib.rs\"\n"))
+        .write("src/lib.rs", "mod uses;\nmod undeclared;\nuse uses::f;\npub fn h() { f() }\n");
     t.check(&[])
         // A sibling workspace crate and `core` are external: the manifest owns them.
-        .silent("internal_edges", "Uses")
-        // Two modules in one file: one node; the edge between them is skipped and said so.
+        .silent("internal_edges_declared", "Uses")
+        // Two modules in one file: one node; each is told its edges are not checked.
         .fires("internal_edges_skipped", "Ticker", "info")
-        .fires("internal_edges", "Undeclared", "error");
+        .fires("internal_edges_skipped", "Blinky", "info")
+        // A crate-root file may name a sibling module without `crate::`.
+        .fires("internal_edges_declared", "Root", "error")
+        .fires("internal_edges_declared", "Undeclared", "error");
 }
 
 fn ts_service(name: &str, file: &str, extra: &str) -> String {
@@ -297,9 +302,9 @@ fn internal_edges_resolve_typescript_aliases_and_barrels() {
         .write("specs/modules/ViaBarrel.toml", &ts_service("ViaBarrel", "src/viabarrel.ts", ""))
         .write("specs/modules/Declared.toml", &ts_service("Declared", "src/declared.ts", "depends_on = [\"B\"]\n"));
     t.check(&[])
-        .fires("internal_edges", "ViaAlias", "error")
-        .fires("internal_edges", "ViaBarrel", "error")
-        .silent("internal_edges", "Declared");
+        .fires("internal_edges_declared", "ViaAlias", "error")
+        .fires("internal_edges_declared", "ViaBarrel", "error")
+        .silent("internal_edges_declared", "Declared");
 }
 
 // ---- Open-question gate, workspace tier.
@@ -308,7 +313,9 @@ fn internal_edges_resolve_typescript_aliases_and_barrels() {
 fn open_question_gate_reads_the_workspace_tier() {
     let root = tree("oq-ws", "rust-workspace", &[]);
     let spec = root.read("spec.toml");
-    let start = spec.find("[[workspace.members]]").expect("template lists a member");
+    // The first *uncommented* member table: the template also carries
+    // commented-out examples of the same header.
+    let start = spec.find("\n[[workspace.members]]").map(|i| i + 1).expect("template lists a member");
     root.write("spec.toml", &format!("{}[[workspace.members]]\nname = \"core\"\npath = \"crates/core\"\n", &spec[..start]))
         .write(
             "specs/open_questions/OQ-WS-001.toml",
@@ -376,10 +383,13 @@ fn ids_in_document_is_configured_in_domain_toml() {
         .write("docs/PRD.md", "# PRD\n\nPer DEC-D-001 we parse in one pass.\n")
         .write("specs/decisions/DEC-D-001.toml", "[[decision]]\nid = \"DEC-D-001\"\ntitle = \"In the PRD\"\nstatus = \"accepted\"\ntext = \"One pass.\"\n")
         .write("specs/decisions/DEC-D-002.toml", "[[decision]]\nid = \"DEC-D-002\"\ntitle = \"Missing from the PRD\"\nstatus = \"accepted\"\ntext = \"Two pass.\"\n");
+    // Severity lives in [validation.rules], like every graph check's.
     let domain = t.read("specs/specdev/domain.toml");
+    assert!(domain.contains("[validation.rules]\n"), "{domain}");
+    let domain = domain.replacen("[validation.rules]\n", "[validation.rules]\nids_in_document = \"error\"\n", 1);
     t.write(
         "specs/specdev/domain.toml",
-        &format!("{domain}\n[[project.graph_checks]]\nkind = \"ids_in_document\"\nrule = \"ids_in_document\"\nentity_scope = \"Decision\"\ndocument = \"docs/PRD.md\"\nseverity = \"error\"\n"),
+        &format!("{domain}\n[[project.graph_checks]]\nkind = \"ids_in_document\"\nrule = \"ids_in_document\"\nentity_scope = \"Decision\"\ndocument = \"docs/PRD.md\"\n"),
     );
     t.check(&[])
         .silent("ids_in_document", "DEC-D-001")

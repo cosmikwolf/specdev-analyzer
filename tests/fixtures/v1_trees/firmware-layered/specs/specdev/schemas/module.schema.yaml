@@ -1,0 +1,241 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/firmware-layered/module.schema.yaml"
+title: "firmware-layered module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module per
+  file; filename should match the `name` field. Layered firmware projects
+  use the `layer` field to drive the layer_dependency graph check (HAL/PAC
+  may not depend on application, etc.).
+
+  `bindings` is an open object in v1; canonical bridges close
+  `bindings.<bridge-name>` to a bridge-specific shape. Projects may
+  author `[bindings.<key>]` tables freely under any bridge name.
+type: object
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas (e.g.
+# `[embassy]`, `[stm32f4]`) even when those are valid via the aggregator
+# `allOf:` slot. unevaluatedProperties IS allOf-aware: a property is
+# "evaluated" if any subschema in allOf/$ref references it.
+unevaluatedProperties: false
+required: [name, layer]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  layer:
+    $ref: "enums.schema.yaml#/$defs/LayerKind"
+  description:
+    type: string
+  depends_on:
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  external_deps:
+    description: |
+      External crate dependencies this module needs (CrateReference
+      shape). Each entry becomes a Cargo.toml
+      `[dependencies]` line at gen time; the union with
+      architecture-level `[[external_deps]]` determines the project's
+      full dep set. Use this for module-scoped crates that aren't
+      project-wide infrastructure (e.g., a UART driver pulling in
+      `nb` for non-blocking traits).
+    type: array
+    items:
+      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
+  satisfies:
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  metadata:
+    $ref: "metadata.schema.yaml#/$defs/MetadataObject"
+  hardware:
+    $ref: "#/$defs/Hardware"
+  ports:
+    type: array
+    items: { $ref: "#/$defs/Port" }
+  actions:
+    type: array
+    items: { $ref: "#/$defs/Action" }
+  state_machines:
+    type: array
+    items: { $ref: "#/$defs/StateMachine" }
+  errors:
+    type: array
+    items: { $ref: "#/$defs/ErrorVariant" }
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Each canonical bridge
+      `<a>+<b>` adds a `bindings.<a>+<b>` entry under this object.
+      Open in v1 to avoid blocking authoring under bridges that haven't
+      shipped yet.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Top-level Rust constructs that carry spec significance — items[]
+      entry per `pub` function, struct, enum, trait, impl, type, const,
+      static, re-export, or macro contributing to the module's
+      contractual surface. Sparseness rule (enforced by the language
+      schema): every item except `kind = "re_export"` must carry
+      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
+      symbol emission and by the three-stage agentic sync
+      (`items diff` / `items propose` / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/rust/items.schema.yaml"
+    uniqueItems: true
+  source_file:
+    description: >
+      Explicit source-file override for items[] extraction and sync
+      (#101(a)). Project-root-relative path (the same base as
+      `[paths].source`), e.g. `src/tasks/blink.rs`, `src/display/canvas.rs`
+      or `src/lib.rs` for a single-file crate root. When absent the
+      analyzer resolves by convention: `<paths.source>/<snake_case(name)>.<ext>`
+      plus the language adapter's own candidates (Rust also tries
+      `<snake_case(name)>/mod.rs`). Precedence: this override, then the
+      adapter candidates, then no source (pre-implementation module — no
+      items extracted, never an error). A declared file that does not
+      exist on disk resolves to no source as well.
+    type: string
+    minLength: 1
+  context_files:
+    description: >
+      Per-module list of project-prose files inlined into the codegen
+      prompt. Paths are spec-root-relative (directory containing
+      `spec.toml`). Validate-time checks ensure each file exists, is
+      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
+      `CONTEXT-003`). Order is preserved at prompt-assembly time;
+      files inline in declared order between architecture.toml and the
+      module spec. Globs and section anchors are bounded deferrals.
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). Resolved into the codegen prompt walk
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+
+$defs:
+  Port:
+    type: object
+    additionalProperties: false
+    required: [name, port_type, direction]
+    properties:
+      name:       { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      port_type:  { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      direction:  { $ref: "enums.schema.yaml#/$defs/PortDirection" }
+      conjugated: { type: boolean }
+      flow_type:  { type: string }
+
+  ActionParam:
+    type: object
+    additionalProperties: false
+    required: [name, type, direction]
+    properties:
+      name:      { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      type:      { type: string, minLength: 1 }
+      direction: { $ref: "enums.schema.yaml#/$defs/ParamDirection" }
+
+  Action:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name:        { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      description: { type: string }
+      params:
+        type: array
+        items: { $ref: "#/$defs/ActionParam" }
+      returns:     { type: string }
+      blocking:    { type: boolean }
+      isr_safe:    { type: boolean }
+
+  Transition:
+    type: object
+    additionalProperties: false
+    required: [from, to, event]
+    properties:
+      name:   { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      from:   { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      to:     { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      event:  { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      guard:  { type: string }
+      action: { type: string }
+
+  StateMachine:
+    type: object
+    additionalProperties: false
+    required: [name, initial, states]
+    properties:
+      name:    { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      initial: { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      states:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      transitions:
+        type: array
+        items: { $ref: "#/$defs/Transition" }
+
+  ErrorVariant:
+    type: object
+    additionalProperties: false
+    required: [variant]
+    properties:
+      variant:     { $ref: "enums.schema.yaml#/$defs/Identifier" }
+      description: { type: string }
+
+  Hardware:
+    description: >
+      Hardware attributes for this module. Loosely typed in v1; each entry
+      type below has known keys but accepts unknown keys too, so domain
+      evolution does not break existing specs.
+    type: object
+    additionalProperties: false
+    properties:
+      pins:
+        type: array
+        items: { $ref: "#/$defs/HardwarePin" }
+      clocks:
+        type: array
+        items: { $ref: "#/$defs/HardwareClock" }
+      peripherals:
+        type: array
+        items: { $ref: "#/$defs/HardwarePeripheral" }
+
+  HardwarePin:
+    type: object
+    additionalProperties: true
+    required: [name]
+    properties:
+      name:   { type: string }
+      port:   { type: string }
+      pin:    { type: integer, minimum: 0 }
+      alt_fn: { type: integer, minimum: 0 }
+      role:   { type: string }
+
+  HardwareClock:
+    type: object
+    additionalProperties: true
+    required: [name]
+    properties:
+      name:         { type: string }
+      frequency_hz: { type: integer, minimum: 0 }
+
+  HardwarePeripheral:
+    type: object
+    additionalProperties: true
+    required: [name]
+    properties:
+      name:         { type: string }
+      base_address: { type: integer, minimum: 0 }
+      role:         { type: string }
