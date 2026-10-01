@@ -22,7 +22,7 @@ fn tmp(tag: &str) -> PathBuf {
 fn write_profile(root: &Path, extra: &str) {
     fs::write(
         root.join("specs/specdev/profile.yaml"),
-        format!("name: test-profile\nlanguage: rust\n{extra}"),
+        format!("name: test-profile\nlanguage: rust\ncontract_version: 2\n{extra}"),
     )
     .unwrap();
 }
@@ -63,23 +63,24 @@ fn duplicate_gate_labels_are_refused_at_profile_load() {
     let layout = minimal_project(&root);
     write_profile(
         &root,
-        "gates:\n  - label: check\n    scope: module\n    steps: [[cargo, check]]\n  - label: check\n    scope: batch\n    steps: [[cargo, build]]\n",
+        "gates:\n  - label: check\n    steps: [[cargo, check]]\n  - label: check\n    steps: [[cargo, build]]\n",
     );
     let msg = load_error(&layout);
     assert!(msg.contains("declares label `check` twice"), "{msg}");
 }
 
 #[test]
-fn registry_schema_refuses_empty_steps_and_bad_scope() {
+fn registry_schema_refuses_empty_steps_and_a_scope() {
     let root = tmp("registry-schema");
     let layout = minimal_project(&root);
     for bad in [
-        "gates:\n  - label: check\n    scope: module\n    steps: []\n",
-        "gates:\n  - label: check\n    scope: module\n    steps: [[]]\n",
-        "gates:\n  - label: check\n    scope: always\n    steps: [[cargo]]\n",
-        "gates:\n  - label: \"has space\"\n    scope: module\n    steps: [[cargo]]\n",
-        "gates:\n  - label: check\n    steps: [[cargo]]\n",
-        "gates:\n  - label: check\n    scope: module\n    steps: [\"cargo check\"]\n",
+        "gates:\n  - label: check\n    steps: []\n",
+        "gates:\n  - label: check\n    steps: [[]]\n",
+        // Contract 2 retired `scope`.
+        "gates:\n  - label: check\n    scope: module\n    steps: [[cargo]]\n",
+        "gates:\n  - label: \"has space\"\n    steps: [[cargo]]\n",
+        "gates:\n  - label: check\n",
+        "gates:\n  - label: check\n    steps: [\"cargo check\"]\n",
     ] {
         write_profile(&root, bad);
         let msg = load_error(&layout);

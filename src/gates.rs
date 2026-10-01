@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::layout::LayoutContext;
-use crate::manifest::{Gate, GateScope, Profile};
+use crate::manifest::{Gate, Profile};
 use crate::path::{eval_template, Scope};
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,6 @@ use crate::path::{eval_template, Scope};
 /// What one `gate` invocation established.
 pub struct GateRun {
     pub label: String,
-    pub scope: GateScope,
     /// Every step exited zero.
     pub pass: bool,
     /// The process exit code the command must return: `0` on a pass, else
@@ -45,7 +44,7 @@ pub struct GateRun {
 /// `Ok` with `pass: false`.
 ///
 /// No timeout in v1.
-pub fn run_gate(layout: &LayoutContext, label: &str, modules: &[String]) -> Result<GateRun> {
+pub fn run_gate(layout: &LayoutContext, label: &str) -> Result<GateRun> {
     let profile = Profile::load_inlined(&layout.specdev_root)?
         .ok_or_else(|| anyhow!("gate: no inlined profile.yaml"))?;
     let gate = profile
@@ -56,7 +55,7 @@ pub fn run_gate(layout: &LayoutContext, label: &str, modules: &[String]) -> Resu
             let declared: Vec<String> = profile
                 .gates
                 .iter()
-                .map(|g| format!("`{}` ({})", g.label, g.scope.as_str()))
+                .map(|g| format!("`{}`", g.label))
                 .collect();
             anyhow!(
                 "gate: `{label}` is not declared in {}. Declared: {}. \
@@ -65,24 +64,6 @@ pub fn run_gate(layout: &LayoutContext, label: &str, modules: &[String]) -> Resu
                 declared.join(", ")
             )
         })?;
-
-    // A module-scope gate's steps name the modules of the run.
-    match gate.scope {
-        GateScope::Module => {
-            if modules.is_empty() {
-                bail!("gate: `{label}` is `scope: module` and needs at least one `--module`.");
-            }
-            check_modules_exist(layout, modules)?;
-        }
-        GateScope::Batch => {
-            if !modules.is_empty() {
-                eprintln!(
-                    "gate: `{label}` is `scope: batch`; ignoring {} `--module` argument(s).",
-                    modules.len()
-                );
-            }
-        }
-    }
 
     // Resolve every token before running anything.
     let steps = resolve_steps(layout, gate)?;
@@ -138,28 +119,9 @@ pub fn run_gate(layout: &LayoutContext, label: &str, modules: &[String]) -> Resu
 
     Ok(GateRun {
         label: label.to_string(),
-        scope: gate.scope,
         pass,
         code,
     })
-}
-
-/// A `--module` the spec set does not hold names nothing the gate can check.
-fn check_modules_exist(layout: &LayoutContext, modules: &[String]) -> Result<()> {
-    let known = crate::prompt::list_module_names(layout)?;
-    let unknown: Vec<&String> = modules.iter().filter(|m| !known.contains(m)).collect();
-    if !unknown.is_empty() {
-        bail!(
-            "gate: no module spec under {} for {}.",
-            layout.modules_dir.display(),
-            unknown
-                .iter()
-                .map(|m| format!("`{m}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    Ok(())
 }
 
 /// Resolve `${root.<table>.<field>}` tokens in every argv element against

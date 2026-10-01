@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use specdev_analyzer::manifest::{BindingLocality, BridgeContract, Profile, ShapeKind};
+use specdev_analyzer::manifest::{BindingLocality, BridgeContract, Profile};
 
 fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -121,16 +121,11 @@ fn fixture_profiles_load_cleanly() {
             &m.name, name,
             "manifest .name must match dir name for {name}"
         );
-        // Each profile must declare the manifest-emission section
-        // matching its language.
-        match m.language.as_str() {
-            "rust" => assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml"),
-            "dart" => assert!(m.pubspec_yaml.is_some(), "{name} must declare pubspec_yaml"),
-            "typescript" => {
-                assert!(m.package_json.is_some(), "{name} must declare package_json")
-            }
-            other => panic!("profile {name} declares unexpected language `{other}`"),
-        }
+        assert!(
+            ["rust", "dart", "typescript"].contains(&m.language.as_str()),
+            "profile {name} declares unexpected language `{}`",
+            m.language
+        );
     }
 }
 
@@ -276,11 +271,9 @@ fn every_fixture_file_matches_the_live_plugin_tree() {
 // ===========================================================================
 
 #[test]
-fn fixture_rust_workspace_has_workspace_shape_and_no_module_surface() {
+fn fixture_rust_workspace_has_no_module_surface() {
     let root = full_plugin();
     let manifest = Profile::load(&root.join("profiles/rust-workspace/profile.yaml")).unwrap();
-    let cargo = manifest.cargo_toml.unwrap();
-    assert_eq!(cargo.shape, ShapeKind::Workspace);
     let surf = manifest.surface.unwrap();
     assert!(
         !surf.has_modules,

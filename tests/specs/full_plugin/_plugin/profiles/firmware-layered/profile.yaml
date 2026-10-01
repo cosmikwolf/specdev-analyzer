@@ -4,29 +4,10 @@
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
-contract_version: 1
+contract_version: 2
 
 name: firmware-layered
 language: rust
-
-cargo_toml:
-  shape: binary
-  default_edition: "2021"
-  bin:
-    name_template: "{project_name}"
-    path_template: "src/main.rs"
-  features:                       # descriptive — the binary-shape renderer drains
-    synthesize_default: true      #   architecture.toml's [[features]] by fixed key and
-    drain_from: ["features"]      #   always writes `default = [...]` when any exist
-  architecture_deps:
-    typed_slots:
-      - table: "platform"
-        keys: ["mcu_core", "mcu_runtime"]
-      - table: "runtime"
-        keys: ["panic_handler", "allocator", "critical_section_impl"]
-      - table: "logger"
-        keys: ["provider", "backend"]
-    open_arrays: ["external_deps"]
 
 items:
   # #101(b): a binary crate's contract surface is crate-wide, so the
@@ -36,14 +17,13 @@ items:
   # edit the inlined copy if this crate's floor differs.
   visibility_floor: "pub(crate)"
 
-# Compile gate, as data: the codegen skill runs each `steps` argv in order
-# in the project root and records one row per module under `label`. The
+# Compile gate, as data: the gate script (and CI) runs each `steps` argv
+# in order in the project root; the first non-zero exit fails the gate. The
 # `${root.platform.target_triple}` token resolves against
 # `specs/architecture.toml`; a missing field is an error, never an empty
 # string. Warnings do not fail the gate; `cargo check` errors do.
 gates:
   - label: cargo-check
-    scope: module
     steps:
       - [cargo, check, --quiet, --target, "${root.platform.target_triple}"]
 
@@ -51,8 +31,6 @@ bootstrap:
   steps: []                       # standalone binary; no workspace machinery
 
 context:
-  module_fields_for_prompt:
-    [items, satisfies, depends_on, context_files, external_deps, layer]
   context_subcommand_extras:
     - field: layer
       from_attr: layer

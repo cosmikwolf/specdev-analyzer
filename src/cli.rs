@@ -293,15 +293,10 @@ pub enum Command {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
         project: PathBuf,
-        /// The gate's `label` from the registry, verbatim. It is also the
-        /// row key, so a near miss writes rows nothing reads — an
-        /// undeclared label is refused.
+        /// The gate's `label` from the registry, verbatim. An undeclared
+        /// label is refused.
         #[arg(long)]
         label: String,
-        /// Module(s) this run covers. Repeatable. Required for a
-        /// `scope: module` gate; ignored for a `scope: batch` gate.
-        #[arg(long)]
-        module: Vec<String>,
     },
 }
 
@@ -561,11 +556,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             plan_unresolved,
         } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh, plan_unresolved),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
-        Command::Gate {
-            project,
-            label,
-            module,
-        } => run_gate(project, spec_path.as_deref(), &label, module),
+        Command::Gate { project, label } => run_gate(project, spec_path.as_deref(), &label),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -1614,7 +1605,6 @@ fn run_gate(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
     label: &str,
-    modules: Vec<String>,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1623,7 +1613,7 @@ fn run_gate(
             return ExitCode::from(2);
         }
     };
-    match specdev_analyzer::gates::run_gate(&layout, label, &modules) {
+    match specdev_analyzer::gates::run_gate(&layout, label) {
         Ok(run) => {
             println!("gate {} {}", run.label, if run.pass { "pass" } else { "fail" });
             if run.pass {

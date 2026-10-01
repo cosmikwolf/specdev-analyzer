@@ -1,4 +1,4 @@
-//! The gate runner: `specdev-analyzer gate --label <l> [--module <m>]…`.
+//! The gate runner: `specdev-analyzer gate --label <l>`.
 //!
 //! Binary-level, because every property under test is a property of the
 //! process: the working directory the steps run in, stdin being closed,
@@ -18,38 +18,30 @@ fn tmp(tag: &str) -> PathBuf {
     p
 }
 
-const HEAD: &str = "name: test-profile\nlanguage: rust\n";
+const HEAD: &str = "name: test-profile\nlanguage: rust\ncontract_version: 2\n";
 
-/// One module-scope gate. `verified` needs a current pass row from
-/// *every* declared module-scope gate, so a fixture that declares three
-/// of them can never read `verified: true` off one run — that is unit
-/// 3's rule, and it is held by `tests/gen_lineage.rs`, not here.
+/// One gate.
 const ONE_GATE: &str = r#"gates:
   - label: ok
-    scope: module
     steps:
       - [/bin/echo, hello-stdout]
       - [/bin/sh, -c, "echo warn-stderr 1>&2"]
 "#;
 
-/// Registry used by most cases: a passing module gate, a failing one, a
-/// batch gate, and one whose executable does not exist.
+/// Registry used by most cases: a passing gate, a failing one, a
+/// one-step gate, and one whose executable does not exist.
 const GATES: &str = r#"gates:
   - label: ok
-    scope: module
     steps:
       - [/bin/echo, hello-stdout]
       - [/bin/sh, -c, "echo warn-stderr 1>&2"]
   - label: bad
-    scope: module
     steps:
       - [/bin/sh, -c, "echo out; echo err 1>&2; exit 3"]
       - [/bin/sh, -c, "touch second-step-ran"]
   - label: build
-    scope: batch
     steps: [[/bin/echo, built]]
   - label: nostart
-    scope: module
     steps: [[definitely-not-a-real-binary-xyz, --go]]
 "#;
 
@@ -104,7 +96,7 @@ fn a_passing_gate_prints_pass_and_records_nothing() {
     let (code, out, err) = run(
         &root,
         &[
-            "gate", "--label", "ok", "--module", "Widget", "--module", "Gadget",
+            "gate", "--label", "ok",
         ],
     );
     assert_eq!(code, 0, "{out}{err}");
@@ -120,7 +112,7 @@ fn a_passing_gate_prints_pass_and_records_nothing() {
 fn a_failing_step_stops_the_gate_and_prints_both_streams() {
     let root = tmp("fail");
     project(&root, GATES);
-    let (code, out, err) = run(&root, &["gate", "--label", "bad", "--module", "Widget"]);
+    let (code, out, err) = run(&root, &["gate", "--label", "bad"]);
     // The gate's own exit code, not a fixed 1.
     assert_eq!(code, 3, "{out}{err}");
     assert!(err.contains("step 1 of 2 failed (exit 3)"), "{err}");
@@ -139,7 +131,7 @@ fn a_failing_step_stops_the_gate_and_prints_both_streams() {
 fn a_step_that_cannot_start_is_exit_2() {
     let root = tmp("nostart");
     project(&root, GATES);
-    let (code, out, err) = run(&root, &["gate", "--label", "nostart", "--module", "Widget"]);
+    let (code, out, err) = run(&root, &["gate", "--label", "nostart"]);
     assert_eq!(code, 2, "the gate did not run: {out}{err}");
     assert!(err.contains("could not start"), "{err}");
 }
@@ -153,9 +145,9 @@ fn steps_run_in_the_project_root_with_stdin_closed() {
     // would wait forever.
     project(
         &root,
-        "gates:\n  - label: env\n    scope: module\n    steps:\n      - [/bin/sh, -c, \"test -f spec.toml\"]\n      - [/bin/sh, -c, \"read line\"]\n",
+        "gates:\n  - label: env\n    steps:\n      - [/bin/sh, -c, \"test -f spec.toml\"]\n      - [/bin/sh, -c, \"read line\"]\n",
     );
-    let (code, out, err) = run(&root, &["gate", "--label", "env", "--module", "Widget"]);
+    let (code, out, err) = run(&root, &["gate", "--label", "env"]);
     assert_eq!(code, 1, "step 1 passed in the project root: {out}{err}");
     assert!(err.contains("step 2 of 2 failed"), "{err}");
 }
@@ -165,10 +157,10 @@ fn a_token_resolves_against_architecture_toml_and_a_missing_field_is_an_error() 
     let root = tmp("token");
     project(
         &root,
-        "gates:\n  - label: t\n    scope: module\n    steps: [[/bin/echo, \"${root.platform.target_triple}\"]]\n",
+        "gates:\n  - label: t\n    steps: [[/bin/echo, \"${root.platform.target_triple}\"]]\n",
     );
     // No architecture.toml at all: exit 2.
-    let (code, _, err) = run(&root, &["gate", "--label", "t", "--module", "Widget"]);
+    let (code, _, err) = run(&root, &["gate", "--label", "t"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("architecture.toml"), "{err}");
 
@@ -179,7 +171,7 @@ fn a_token_resolves_against_architecture_toml_and_a_missing_field_is_an_error() 
         "[platform]\ntarget_triple = \"\"\n",
     )
     .unwrap();
-    let (code, _, err) = run(&root, &["gate", "--label", "t", "--module", "Widget"]);
+    let (code, _, err) = run(&root, &["gate", "--label", "t"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("resolved to nothing"), "{err}");
 
@@ -188,41 +180,18 @@ fn a_token_resolves_against_architecture_toml_and_a_missing_field_is_an_error() 
         "[platform]\ntarget_triple = \"thumbv7em-none-eabihf\"\n",
     )
     .unwrap();
-    let (code, out, err) = run(&root, &["gate", "--label", "t", "--module", "Widget"]);
+    let (code, out, err) = run(&root, &["gate", "--label", "t"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(out.trim(), "gate t pass", "{out}");
 }
 
 #[test]
-fn scope_decides_what_module_means() {
-    let root = tmp("scope");
-    project(&root, GATES);
-    // A module-scope gate's steps name the modules of the run.
-    let (code, _, err) = run(&root, &["gate", "--label", "ok"]);
-    assert_eq!(code, 2, "{err}");
-    assert!(err.contains("needs at least one `--module`"), "{err}");
-
-    // A batch gate ignores `--module`, and says so.
-    let (code, out, err) = run(&root, &["gate", "--label", "build", "--module", "Widget"]);
-    assert_eq!(code, 0, "{out}{err}");
-    assert!(err.contains("ignoring 1 `--module`"), "{err}");
-    assert_eq!(out.trim(), "gate build pass", "{out}");
-}
-
-#[test]
-fn an_undeclared_label_and_an_unknown_module_are_refused() {
+fn an_undeclared_label_is_refused() {
     let root = tmp("refuse");
     project(&root, GATES);
-    let (code, _, err) = run(&root, &["gate", "--label", "nope", "--module", "Widget"]);
+    let (code, _, err) = run(&root, &["gate", "--label", "nope"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("is not declared in"), "{err}");
-    assert!(
-        err.contains("`ok` (module)"),
-        "the message lists what is: {err}"
-    );
-
-    let (code, _, err) = run(&root, &["gate", "--label", "ok", "--module", "Nope"]);
-    assert_eq!(code, 2, "{err}");
-    assert!(err.contains("no module spec under"), "{err}");
+    assert!(err.contains("`ok`"), "the message lists what is: {err}");
     assert_eq!(lineage(&root), "");
 }

@@ -63,7 +63,6 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
     validate_modules(layout, &mut report)?;
     validate_architecture(layout, &mut report)?;
     validate_entries(layout, &mut report)?;
-    validate_profile_layout_match(layout, &mut report);
     validate_profiles_root_only(layout, &mut report)?;
     Ok(report)
 }
@@ -430,9 +429,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
     // `MANIFEST-001` finding; the suppression then degrades to the
     // legacy heuristic so we don't double-fire a "missing schema"
     // warning on top of "manifest unloadable" noise. Other validate
-    // passes continue (validate_profile_layout_match also surfaces
-    // MANIFEST-001 for the same file — duplicate-rule emission is
-    // tolerated; deduping is a v1.x cleanup).
+    // passes continue.
     let (suppress_module, suppress_requirements) = compute_surface_suppressions(layout, report);
 
     for entry in &inv.directories {
@@ -1601,77 +1598,6 @@ fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> 
             let legacy = layout.spec.workspace.is_some();
             (legacy, legacy)
         }
-    }
-}
-
-/// Validate-time consistency check between
-/// the inlined `profile.yaml` (`cargo_toml.shape`) and the project's
-/// spec.toml `[workspace]` table presence.
-///
-/// `shape: workspace` is descriptive metadata: a profile claims its
-/// projects are workspace-shaped, but actual workspace dispatch is
-/// layout-driven (the `[workspace]` table in spec.toml is canonical).
-/// When the two disagree, the project is in an unrenderable
-/// state — `cargo-toml render` will eventually error, but surfacing
-/// the mismatch at validate time gives the user a structural prompt
-/// before they hit the render path.
-///
-/// No-op when `profile.yaml` is absent (backward compat) or
-/// has no `cargo_toml` section. Manifest load errors surface as
-/// `MANIFEST-001` findings; cargo-toml render will produce a
-/// matching diagnostic, so consumers see the same root cause from
-/// either path.
-pub fn validate_profile_layout_match(layout: &LayoutContext, report: &mut Report) {
-    use crate::manifest::{Profile, ShapeKind};
-    let manifest_path = layout.specdev_root.join("profile.yaml");
-    if !manifest_path.is_file() {
-        return;
-    }
-    let manifest = match Profile::load(&manifest_path) {
-        Ok(p) => p,
-        Err(e) => {
-            report.push(
-                Finding::new("MANIFEST-001", Severity::Error, format!("{e:#}"))
-                    .with_file(manifest_path.display().to_string()),
-            );
-            return;
-        }
-    };
-    let Some(cargo) = manifest.cargo_toml.as_ref() else {
-        return;
-    };
-    let has_workspace_table = layout.spec.workspace.is_some();
-    let is_workspace_shape = matches!(cargo.shape, ShapeKind::Workspace);
-    match (is_workspace_shape, has_workspace_table) {
-        (true, false) => report.push(
-            Finding::new(
-                "PROFILE-LAYOUT-MISMATCH",
-                Severity::Error,
-                format!(
-                    "profile.yaml declares `cargo_toml.shape: workspace` but \
-                     spec.toml at {} has no [workspace] table; add \
-                     [workspace] with [[workspace.members]] entries or \
-                     change the profile",
-                    layout.spec_toml_path.display(),
-                ),
-            )
-            .with_file(manifest_path.display().to_string()),
-        ),
-        (false, true) => report.push(
-            Finding::new(
-                "PROFILE-LAYOUT-MISMATCH",
-                Severity::Error,
-                format!(
-                    "spec.toml at {} declares a [workspace] table but \
-                     profile.yaml `cargo_toml.shape` is non-workspace; \
-                     workspace projects must use a profile with \
-                     `cargo_toml.shape: workspace`",
-                    layout.spec_toml_path.display(),
-                ),
-            )
-            .with_file(manifest_path.display().to_string()),
-        ),
-        _ => {}
     }
 }
 
