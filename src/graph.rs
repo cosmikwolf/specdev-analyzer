@@ -369,15 +369,23 @@ pub fn requirements_have_satisfiers(root: &Value, rule: &str, severity: Severity
         if satisfied.contains(name) {
             continue;
         }
-        out.push(Finding::new(
-            rule,
-            severity,
-            format!(
-                "requirement `{name}` (nature = \"module\") has no module satisfier; \
-                 add it to a module's `satisfies = [...]` array, or set `nature = \
-                 \"architecture\" | \"build\" | \"test\"` to exempt"
-            ),
-        ));
+        // `planned = true`: not built yet, so a missing satisfier is expected.
+        if ent.get("attrs").and_then(|a| a.get("planned")).and_then(|p| p.as_bool()) == Some(true) {
+            continue;
+        }
+        out.push(
+            Finding::new(
+                rule,
+                severity,
+                format!(
+                    "requirement `{name}` (nature = \"module\") has no module satisfier; \
+                     add it to a module's `satisfies = [...]` array, set `planned = true` while \
+                     it is not built, or set `nature = \"architecture\" | \"build\" | \"test\"` \
+                     to exempt"
+                ),
+            )
+            .with_entity(name),
+        );
     }
     out
 }
@@ -765,126 +773,6 @@ pub fn entity_attr_target_attr_equals(
                      expected `\"{target_attr_value}\"`"
                 ),
             ));
-        }
-    }
-    out
-}
-
-/// MODULE_REACHABLE_THROUGH_OPEN_QUESTION (codegen-gate informational
-/// warning): for each Module entity, walk Module.satisfies →
-/// Requirement → OpenQuestion (via open_question_affects_requirement
-/// reversed). If any reachable OQ has `attrs.status == "open"`, fire one
-/// finding per (module, oq) pair. The companion gate in `gen.rs` produces
-/// the hard refusal; this primitive surfaces the same condition at
-/// validate time as a warning.
-///
-/// Operates on the unfiltered graph view because it traverses two
-/// relation kinds and two entity kinds; the call site doesn't pre-filter.
-pub fn module_reachable_through_open_question(
-    root: &Value,
-    rule: &str,
-    severity: Severity,
-) -> Vec<Finding> {
-    let entities = root
-        .get("entities")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let relations = root
-        .get("relations")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Index entities by name for kind + attr lookup.
-    let mut by_name: HashMap<String, Value> = HashMap::new();
-    for ent in &entities {
-        if let Some(n) = ent.get("name").and_then(|v| v.as_str()) {
-            by_name.insert(n.to_string(), ent.clone());
-        }
-    }
-
-    // module_satisfies edges: Module → Requirement.
-    let mut module_to_reqs: HashMap<String, Vec<String>> = HashMap::new();
-    // affects edges (reversed): Requirement → OpenQuestion.
-    let mut req_to_oqs: HashMap<String, Vec<String>> = HashMap::new();
-    for rel in &relations {
-        let Some(kind) = rel.get("kind").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(from) = rel.get("from").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(to) = rel.get("to").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        match kind {
-            "module_satisfies" => {
-                module_to_reqs
-                    .entry(from.to_string())
-                    .or_default()
-                    .push(to.to_string());
-            }
-            "open_question_affects_requirement" => {
-                // Edge is OQ → Requirement; we want Requirement → OQ.
-                req_to_oqs
-                    .entry(to.to_string())
-                    .or_default()
-                    .push(from.to_string());
-            }
-            _ => {}
-        }
-    }
-
-    let mut out = Vec::new();
-    let mut module_names: Vec<&String> = by_name
-        .iter()
-        .filter_map(|(n, e)| {
-            let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-            (kind == "Module").then_some(n)
-        })
-        .collect();
-    module_names.sort();
-
-    for module in module_names {
-        let mut emitted: BTreeSet<String> = BTreeSet::new();
-        let Some(reqs) = module_to_reqs.get(module) else {
-            continue;
-        };
-        for req in reqs {
-            let Some(oqs) = req_to_oqs.get(req) else {
-                continue;
-            };
-            for oq in oqs {
-                if emitted.contains(oq) {
-                    continue;
-                }
-                let Some(oq_ent) = by_name.get(oq) else {
-                    continue;
-                };
-                let status = oq_ent
-                    .get("attrs")
-                    .and_then(|a| a.get("status"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if status == "open" {
-                    let title = oq_ent
-                        .get("attrs")
-                        .and_then(|a| a.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    out.push(Finding::new(
-                        rule,
-                        severity,
-                        format!(
-                            "module `{module}` is reachable through open question \
-                             `{oq}` (`{title}`) via requirement `{req}`; resolve the \
-                             question or commit a default before implementing it"
-                        ),
-                    ));
-                    emitted.insert(oq.clone());
-                }
-            }
         }
     }
     out

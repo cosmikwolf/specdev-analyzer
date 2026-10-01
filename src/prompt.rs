@@ -256,8 +256,8 @@ pub fn check_codegen_gate(
 
 fn build_refusal_message(module_name: &str, oq_id: &str, title: &str, pointer: &str) -> String {
     format!(
-        "Refusing to generate code for module `{module_name}`: open question \
-         `{oq_id}` (`{title}`) is unresolved.\n\n\
+        "Module `{module_name}` is blocked: open question `{oq_id}` (`{title}`) is \
+         unresolved, and code for it exists. Resolve the question before building on it.\n\n\
          Three exit options:\n\
          \x20\x201. Resolve via a decision: record a status=accepted Decision \
          that answers the question, list it in the OQ's `closed_by`, and set \

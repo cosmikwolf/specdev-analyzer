@@ -72,6 +72,24 @@ pub enum Command {
         #[arg(long, short = 'q')]
         quiet: bool,
     },
+    /// The spec checked against the code: `validate`, then the source rule,
+    /// stale `planned` flags, the open-question gate (it keys on code
+    /// existing), and with `--since <ref>` every new flag and `hard_gate`
+    /// change since that git ref. Exit 0 when no error finding, 1 when any,
+    /// 2 when the check could not run.
+    Check {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Report every new `planned` / `test_pending` flag, every `hard_gate`
+        /// flip, and every default committed on a `hard_gate = false`
+        /// question between this git ref and the working tree.
+        #[arg(long)]
+        since: Option<String>,
+        /// Output format: `text` (default, like `validate`) or `yaml`.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Extract structured items (top-level language constructs) from each module's
     /// source file. Output is the substrate the items[] sync diffs run
     /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
@@ -457,6 +475,11 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             no_color,
             quiet,
         ),
+        Command::Check {
+            project,
+            since,
+            format,
+        } => run_check(project, spec_path.as_deref(), since, &format, no_color),
         Command::ExtractItems { project, module } => {
             run_extract_items(project, spec_path.as_deref(), module.as_deref())
         }
@@ -628,6 +651,58 @@ fn plugin_ahead_notice(
         specdev_analyzer::domain::Severity::Info,
         msg,
     ))
+}
+
+fn run_check(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    since: Option<String>,
+    format: &str,
+    no_color: bool,
+) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let opts = specdev_analyzer::check::CheckOptions { since };
+    let report = match specdev_analyzer::check::run(&layout, &opts) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    match format {
+        "yaml" => match specdev_analyzer::check::to_yaml(&report) {
+            Ok(y) => print!("{y}"),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(2);
+            }
+        },
+        "text" => {
+            let (e, w, i) = report.counts();
+            let rendered = if no_color {
+                report.render_plain_filtered(false)
+            } else {
+                report.render_colored_filtered(false)
+            };
+            print!("{rendered}");
+            eprintln!("{e} error(s), {w} warning(s), {i} info(s)");
+        }
+        other => {
+            eprintln!("error: --format `{other}`: expected `text` or `yaml`");
+            return ExitCode::from(2);
+        }
+    }
+    if report.has_errors() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn run_extract_items(

@@ -147,6 +147,11 @@ pub struct PathsSection {
     /// full resolution chain.
     #[serde(default)]
     pub plugin_root: Option<String>,
+    /// Optional extra test roots (relative to `spec.toml`) that test
+    /// discovery walks besides `source` and the language's conventional
+    /// test locations.
+    #[serde(default)]
+    pub tests: Vec<String>,
 }
 
 impl SpecConfig {

@@ -81,6 +81,13 @@ $defs:
           when `status = "closed"` (the question is settled).
         type: string
         minLength: 1
+      hard_gate:
+        description: >
+          `true` (the default): a person resolves this question or commits
+          its default. `false`, set by a person: an agent may commit a
+          recorded default; `check --since` reports each one.
+        type: boolean
+        default: true
       affects:
         description: >
           Requirement ids this question affects. The codegen gate
