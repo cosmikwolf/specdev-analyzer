@@ -4,7 +4,7 @@
 //!
 //! ```toml
 //! [meta]
-//! plugin_version  = "0.4.2"
+//! bootstrapped_with = "0.4.2"   # `plugin_version` in a 1.x tree
 //! bootstrapped_at = "2026-04-28T10:00:00Z"
 //! profile         = "firmware-layered"
 //!
@@ -84,7 +84,13 @@ pub struct Lineage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MetaSection {
-    pub plugin_version: String,
+    /// The plugin version at bootstrap. Never advances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrapped_with: Option<String>,
+    /// The `1.x` name of [`Self::bootstrapped_with`]. Read, and kept as it
+    /// is, in a `1.x` tree; `migrate` renames it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_version: Option<String>,
     pub bootstrapped_at: String,
     pub profile: String,
 }
@@ -95,6 +101,13 @@ pub struct MetaSection {
 /// a shape that has produced defects in this file before. A reader can
 /// therefore trust every key in `[meta]` to describe the bootstrap, and
 /// every key here to describe the last write.
+impl MetaSection {
+    /// The plugin version at bootstrap, under either name.
+    pub fn bootstrapped_with(&self) -> &str {
+        self.bootstrapped_with.as_deref().or(self.plugin_version.as_deref()).unwrap_or("")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolingSection {
     /// `CARGO_PKG_VERSION` of the analyzer that performed the last write.
@@ -205,7 +218,8 @@ mod tests {
         let dir = tmp("roundtrip");
         let mut l = Lineage {
             meta: Some(MetaSection {
-                plugin_version: "0.4.2".into(),
+                bootstrapped_with: Some("0.4.2".into()),
+                plugin_version: None,
                 bootstrapped_at: "2026-04-28T10:00:00Z".into(),
                 profile: "firmware-layered".into(),
             }),
@@ -378,9 +392,10 @@ mod tests {
         use proptest::strategy::Strategy;
         let printable = "[a-zA-Z0-9_./:-]+";
         let timestamp = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z";
-        (printable, timestamp, printable).prop_map(|(plugin_version, bootstrapped_at, profile)| {
+        (printable, timestamp, printable).prop_map(|(version, bootstrapped_at, profile)| {
             MetaSection {
-                plugin_version,
+                bootstrapped_with: Some(version),
+                plugin_version: None,
                 bootstrapped_at,
                 profile,
             }

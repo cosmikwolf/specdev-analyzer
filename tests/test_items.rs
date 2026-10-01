@@ -3,14 +3,19 @@
 //! Coverage:
 //!   * A `[[items]]` entry with `test = true` + `verifies` against a
 //!     `nature = "test"` requirement validates clean.
-//!   * `test_requirements_have_verifiers` warns (not errors) on a
-//!     `nature = "test"` requirement that no test item verifies.
+//!   * (No longer here: `test_requirements_have_verifiers`. The 2.0
+//!     templates drop it — `check`'s `requirements_have_tests` covers a
+//!     `nature = "test"` requirement, and `migrate` moves every test
+//!     item's `verifies` to `requirement.verified_by`.)
 //!   * The module-orphan check (`requirements_have_satisfiers`) is
 //!     unaffected — `nature = "test"` requirements remain exempt there.
 //!   * `verifies` naming an unknown requirement surfaces REDUCE_UNRESOLVED.
 //!   * Schema mutual-exclusion: `test = true` + `satisfies` rejected;
 //!     non-test item carrying `verifies` rejected; `test = true` on a
 //!     non-fn kind rejected.
+
+#[path = "common/ledger.rs"]
+mod ledger;
 
 use std::path::{Path, PathBuf};
 
@@ -116,7 +121,7 @@ verifies = ["REQ-TEST-001"]
 #[test]
 fn verified_test_requirement_validates_clean() {
     let (target, _) = fresh_library("clean");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
+    ledger::write(&target, "requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", MODULE_WITH_TEST_ITEM);
     let report = validate::run_project(&target, None).unwrap();
     assert!(
@@ -136,54 +141,6 @@ fn verified_test_requirement_validates_clean() {
 }
 
 #[test]
-fn unverified_test_requirement_warns_not_errors() {
-    // Drop the test item; REQ-TEST-001 now has no verifier.
-    let module = r#"name = "Lib"
-visibility = "pub"
-satisfies = ["REQ-API-001"]
-
-[[items]]
-name = "value"
-kind = "struct"
-description = "The public value type."
-satisfies = ["REQ-API-001"]
-"#;
-    let (target, _) = fresh_library("orphan-test");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
-    write(&target, "specs/modules/Lib.toml", module);
-    let report = validate::run_project(&target, None).unwrap();
-    assert!(
-        errors(&report).is_empty(),
-        "orphan test req is a warning; got:\n{:#?}",
-        errors(&report)
-    );
-    let warns = findings_for(
-        &report,
-        "test_requirements_have_verifiers",
-        Severity::Warning,
-    );
-    assert_eq!(
-        warns.len(),
-        1,
-        "exactly one unverified test req; got:\n{warns:#?}"
-    );
-    let msg = &warns[0].message;
-    assert!(
-        msg.contains("REQ-TEST-001"),
-        "names the unverified req: {msg}"
-    );
-    assert!(msg.contains("test_verifies"), "names the relation: {msg}");
-    // The module-orphan check must NOT fire on the test-nature req.
-    let mod_warns = findings_for(&report, "requirements_have_satisfiers", Severity::Warning);
-    assert!(
-        mod_warns
-            .iter()
-            .all(|f| !f.message.contains("REQ-TEST-001")),
-        "test req must not be flagged by the module-orphan check: {mod_warns:#?}"
-    );
-}
-
-#[test]
 fn verifies_unknown_requirement_unresolves() {
     let module = r#"name = "Lib"
 visibility = "pub"
@@ -198,7 +155,7 @@ test_kind = "unit"
 verifies = ["REQ-NOPE-999"]
 "#;
     let (target, _) = fresh_library("unresolved");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
+    ledger::write(&target, "requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
     let unresolved = findings_for(&report, "REDUCE_UNRESOLVED", Severity::Error);
@@ -231,7 +188,7 @@ verifies = ["REQ-TEST-001"]
 satisfies = ["REQ-API-001"]
 "#;
     let (target, _) = fresh_library("test-and-satisfies");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
+    ledger::write(&target, "requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
     assert!(
@@ -254,7 +211,7 @@ satisfies = ["REQ-API-001"]
 verifies = ["REQ-TEST-001"]
 "#;
     let (target, _) = fresh_library("nontest-verifies");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
+    ledger::write(&target, "requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
     assert!(
@@ -278,7 +235,7 @@ test_kind = "unit"
 verifies = ["REQ-TEST-001"]
 "#;
     let (target, _) = fresh_library("test-non-fn");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
+    ledger::write(&target, "requirements.toml", REQS_MODULE_AND_TEST);
     write(&target, "specs/modules/Lib.toml", module);
     let report = validate::run_project(&target, None).unwrap();
     assert!(

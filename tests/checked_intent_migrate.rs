@@ -292,3 +292,110 @@ fn migrate_refreshes_an_old_inlined_profile_schema() {
     let profile = d.split("profile:").nth(1).unwrap_or("");
     assert!(!profile.contains("not_recorded"), "profile files must have a baseline after migrate:\n{d}");
 }
+
+/// A new project starts in the 2.0 format: no step of `migrate` has work
+/// to do on it, and `validate` does not name a migration.
+#[test]
+fn bootstrap_writes_the_2_0_format() {
+    use specdev_analyzer::bootstrap::{self, BootstrapInputs};
+    let root = std::env::temp_dir().join(format!(
+        "specdev-checked-intent-boot2-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    for profile in ["library-api", "firmware-layered"] {
+        let target = root.join(profile);
+        std::fs::create_dir_all(&target).unwrap();
+        bootstrap::run_bootstrap(
+            &ci::plugin_root(),
+            &BootstrapInputs {
+                profile: profile.into(),
+                language: "rust".into(),
+                project_name: "boot_two".into(),
+                target_dir: target.clone(),
+            },
+        )
+        .unwrap();
+        let read = |rel: &str| std::fs::read_to_string(target.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        let spec: toml::Table = read("spec.toml").parse().unwrap();
+        assert_eq!(spec["spec_version"].as_str(), Some("2.0"), "{profile}");
+        assert_eq!(spec["project"].get("max_parallel_agents").and_then(|v| v.as_integer()), Some(1), "{profile}");
+        for ledger in ["requirements", "decisions", "open_questions"] {
+            assert!(!target.join(format!("specs/{ledger}.toml")).exists(), "{profile}: no combined {ledger}.toml");
+        }
+        assert!(!target.join("specs/specdev/codegen").exists(), "{profile}: no inlined codegen/");
+        let reduction = read("specs/specdev/reductions/project.yaml");
+        for ledger in ["requirements", "decisions", "open_questions"] {
+            assert!(!reduction.contains(&format!("\"specs/{ledger}.toml\"")), "{profile}: {ledger} not globbed");
+        }
+        assert!(reduction.contains("\"specs/requirements/*.toml\""), "{profile}");
+        let domain = read("specs/specdev/domain.toml");
+        assert_eq!(severity(&domain, "requirements_have_satisfiers").as_deref(), Some("error"), "{profile}");
+        assert_eq!(severity(&domain, "implementation_unblocked").as_deref(), Some("error"), "{profile}");
+        assert!(!domain.contains("codegen_unblocked"), "{profile}");
+        assert!(!domain.contains("test_requirements_have_verifiers"), "{profile}");
+        let lineage: toml::Table = read("specs/specdev/lineage.toml").parse().unwrap();
+        assert!(
+            lineage["meta"].get("bootstrapped_with").is_some() && lineage["meta"].get("plugin_version").is_none(),
+            "{profile}: {lineage:?}"
+        );
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_specdev-analyzer"))
+            .args(["validate", "--no-color"])
+            .current_dir(&target)
+            .env("SPECDEV_PLUGIN_ROOT", ci::plugin_root())
+            .output()
+            .unwrap();
+        let all = text(&out);
+        assert!(out.status.success() && all.contains("0 error(s)"), "{profile}:\n{all}");
+        assert!(!all.lines().any(|l| l.to_lowercase().contains("info") && l.contains("migrate")), "{profile}:\n{all}");
+    }
+}
+
+/// Every file under the project root, path → bytes.
+fn snapshot(t: &Tree) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(root, &p, out);
+            } else {
+                out.insert(p.strip_prefix(root).unwrap().to_path_buf(), std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(&t.root, &t.root, &mut out);
+    out
+}
+
+fn migrate_refused(t: &Tree) -> String {
+    let plugin = t.plugin.to_str().unwrap().to_string();
+    let out = t.analyzer(&["migrate", "--plugin-root", plugin.as_str()]);
+    assert_eq!(out.status.code(), Some(1), "migrate must refuse:\n{}", text(&out));
+    text(&out)
+}
+
+/// A schema the project edited since bootstrap cannot be replaced without
+/// losing the edit, and has no merge base: `migrate` names it and writes
+/// nothing at all, `spec_version` included.
+#[test]
+fn migrate_refuses_an_edited_schema_and_writes_nothing() {
+    let t = v1_project("mig-refuse-schema");
+    let rel = "specs/specdev/schemas/requirements.schema.yaml";
+    t.write(rel, &format!("{}# a local edit\n", t.read(rel)));
+    let before = snapshot(&t);
+    let out = migrate_refused(&t);
+    assert!(out.contains("MIGRATE-014") && out.contains(rel), "{out}");
+    assert_eq!(before, snapshot(&t), "a refused migrate wrote to disk");
+}
+
+/// An entry file that already exists with other bytes is never overwritten.
+#[test]
+fn migrate_refuses_a_conflicting_entry_file() {
+    let t = v1_project("mig-refuse-entry");
+    t.write("specs/requirements/REQ-M-001.toml", "[[requirement]]\nid = \"REQ-M-001\"\ntext = \"Another text.\"\n");
+    let before = snapshot(&t);
+    let out = migrate_refused(&t);
+    assert!(out.contains("MIGRATE-010") && out.contains("REQ-M-001.toml"), "{out}");
+    assert_eq!(before, snapshot(&t), "a refused migrate wrote to disk");
+}

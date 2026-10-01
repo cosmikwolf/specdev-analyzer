@@ -48,6 +48,13 @@ properties:
           profile schema's `language` enum — a language is admitted to
           both enums in the same change, alongside its adapter.
         enum: [rust, c, cpp, dart, typescript]
+      max_parallel_agents:
+        type: integer
+        minimum: 1
+        description: |
+          How many agents may edit this project at once, each in its own
+          git worktree. `bootstrap` and `migrate` write `1`; a person
+          raises it. Skills read it before they launch parallel work.
       edition:
         type: string
         description: |

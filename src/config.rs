@@ -37,6 +37,10 @@ pub struct SpecConfig {
     pub workspace: Option<WorkspaceSection>,
 }
 
+/// The newest project-format major this analyzer writes. `validate` names
+/// `migrate` once for an older project.
+pub const NEWEST_FORMAT_MAJOR: u32 = 2;
+
 impl SpecConfig {
     /// The major number of `spec_version` (`"2.0"` → 2). The schema admits
     /// only `<digit>.<digits>`, so a parsed config always has one.

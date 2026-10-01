@@ -251,6 +251,12 @@ pub enum Command {
         /// against. Run `drift` to see them.
         #[arg(long)]
         refresh: bool,
+        /// Moving a `1.x` project to `2.0`: mark every module whose source
+        /// does not resolve `planned = true`. Without it those modules are
+        /// only reported — set `source_file` on a built one, `planned` on an
+        /// unbuilt one. Use it for a tree that is not built yet.
+        #[arg(long)]
+        plan_unresolved: bool,
     },
     /// Observational drift report — classify each inlined file as
     /// clean / plugin-moved / locally-edited / both. Pure reporter.
@@ -552,7 +558,8 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             dry_run,
             refresh,
-        } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh),
+            plan_unresolved,
+        } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh, plan_unresolved),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gate {
             project,
@@ -1378,6 +1385,7 @@ fn run_migrate(
     plugin_flag: Option<PathBuf>,
     dry_run: bool,
     refresh: bool,
+    plan_unresolved: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1391,6 +1399,45 @@ fn run_migrate(
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
+        }
+    };
+    // The format step first: a `1.x` tree moves to `2.0`, then the unit and
+    // profile-shell steps below run on the moved tree.
+    let opts = specdev_analyzer::format_migration::FormatOptions { dry_run, plan_unresolved };
+    let format = match specdev_analyzer::format_migration::run(&layout, &plugin, opts) {
+        Ok(r) => r,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(1);
+        }
+    };
+    if !format.already_current {
+        println!("format: {}", if dry_run { "plan (nothing written)" } else { "moved" });
+        for l in &format.lines {
+            println!("  {l}");
+        }
+        for m in &format.planned {
+            println!("  module `{m}`: no source file resolves; marked planned = true (--plan-unresolved)");
+        }
+        for m in &format.unresolved {
+            println!(
+                "  module `{m}`: no source file resolves. Set `source_file` if it is built, or \
+                 `planned = true` if it is not; `check` reports it as an error until then"
+            );
+        }
+        for m in &format.tests_only {
+            println!("  module `{m}`: its source file holds only tests; check that it is the right file");
+        }
+    }
+    let layout = if format.already_current || dry_run {
+        layout
+    } else {
+        match LayoutContext::discover(&project, spec_path) {
+            Ok(l) => l,
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(2);
+            }
         }
     };
     let report = match migrate::run_migrate(&layout, &plugin, dry_run, refresh) {

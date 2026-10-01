@@ -12,6 +12,9 @@
 //! is not re-tested here; it is stack-independent and covered on the
 //! embassy firmware stack.
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -66,18 +69,14 @@ fn hello_rtic_project(tag: &str) -> (PathBuf, LayoutContext) {
     run_inline_block(&layout, &full_plugin(), "rtic").unwrap();
     run_inline_block(&layout, &full_plugin(), "mk20dx").unwrap();
 
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"[[requirement]]
+    ledger::write(&target, "requirements.toml", r#"[[requirement]]
 id = "REQ-TICK-001"
 text = "A periodic tick shall increment a counter that a lower-priority task drains."
 
 [[requirement]]
 id = "REQ-LED-001"
 text = "The board LED shall toggle as a liveness indicator."
-"#,
-    )
-    .unwrap();
+"#);
 
     std::fs::write(
         target.join("specs/modules/Ticker.toml"),

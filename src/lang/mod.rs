@@ -137,6 +137,13 @@ pub trait LanguageAdapter: Send + Sync {
         true
     }
 
+    /// Whether a top-level syntax node of this kind is not code of its own
+    /// (a comment, an attribute, an import). A source file holds only tests
+    /// when every other top-level node sits inside a test or a test group.
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment")
+    }
+
     /// The built-in `imports.scm` query source, if the language tier ships
     /// one: `@import.source` for each import specifier and `@import.reexport`
     /// for each re-export (a barrel is followed through it). `check` resolves

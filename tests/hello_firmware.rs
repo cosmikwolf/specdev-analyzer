@@ -11,6 +11,9 @@
 //! manifest gap would hide exactly in prompt assembly / cargo-toml
 //! dispatch / lineage recording, not in schema validation.
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -73,18 +76,14 @@ fn hello_firmware_project(tag: &str) -> (PathBuf, LayoutContext) {
     )
     .unwrap();
 
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"[[requirement]]
+    ledger::write(&target, "requirements.toml", r#"[[requirement]]
 id = "REQ-LED-001"
 text = "The board LED shall blink at 1 Hz as a liveness indicator."
 
 [[requirement]]
 id = "REQ-UART-001"
 text = "Bytes received on USART3 shall be echoed back unmodified."
-"#,
-    )
-    .unwrap();
+"#);
 
     std::fs::write(
         target.join("specs/modules/Blinky.toml"),

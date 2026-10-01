@@ -3,6 +3,9 @@
 //! more tests here; doc-only findings (F-008, F-015 part 1) are not
 //! covered (no behavior to assert).
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -12,11 +15,12 @@ use specdev_analyzer::{
     validate, Severity,
 };
 
+/// The coverage rule's findings at the 2.0 template severity, error.
 fn warnings_for_rule(report: &Report, rule: &str) -> Vec<Finding> {
     report
         .findings()
         .iter()
-        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Warning))
+        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Error))
         .cloned()
         .collect()
 }
@@ -115,9 +119,7 @@ fn audio_plugin_architecture_template_substitutes_project_name() {
 #[test]
 fn requirements_have_satisfiers_collapses_on_zero_modules() {
     let (target, _layout) = fresh_library("f003-collapse");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"
+    ledger::write(&target, "requirements.toml", r#"
 [[requirement]]
 id = "ZFM-001"
 text = "First."
@@ -129,9 +131,7 @@ text = "Second."
 [[requirement]]
 id = "ZFM-003"
 text = "Third."
-"#,
-    )
-    .unwrap();
+"#);
     let report = validate::run_project(&target, None).unwrap();
     let warns = warnings_for_rule(&report, "requirements_have_satisfiers");
     assert_eq!(
@@ -151,9 +151,7 @@ text = "Third."
 #[test]
 fn requirements_have_satisfiers_per_line_when_modules_present() {
     let (target, _layout) = fresh_library("f003-perline");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"
+    ledger::write(&target, "requirements.toml", r#"
 [[requirement]]
 id = "ZFM-001"
 text = "First."
@@ -161,9 +159,7 @@ text = "First."
 [[requirement]]
 id = "ZFM-002"
 text = "Second."
-"#,
-    )
-    .unwrap();
+"#);
     // One module that satisfies neither — both requirements still
     // orphan, but the project has Module entities, so we want the
     // per-line shape (not the summary).
@@ -204,9 +200,7 @@ fn coverage_report_populates_matrix_from_singular_requirement_key() {
     use specdev_analyzer::coverage;
 
     let (target, layout) = fresh_library("f014-coverage");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"
+    ledger::write(&target, "requirements.toml", r#"
 [[source]]
 id = "rfc"
 title = "Project RFC"
@@ -220,9 +214,7 @@ source = "rfc"
 id = "REQ-API-002"
 text = "Errors carry context."
 source = "rfc"
-"#,
-    )
-    .unwrap();
+"#);
     std::fs::write(
         target.join("specs/modules/Core.toml"),
         r#"name = "Core"

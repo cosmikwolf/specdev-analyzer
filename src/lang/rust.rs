@@ -12,6 +12,10 @@ const TESTS_QUERY: &str = include_str!("../embedded/languages/rust/tests.scm");
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/rust/imports.scm");
 
 impl LanguageAdapter for RustAdapter {
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment") || ["attribute_item", "inner_attribute_item", "use_declaration", "extern_crate_declaration"].contains(&kind)
+    }
+
     fn tests_query(&self) -> Option<&'static str> {
         Some(TESTS_QUERY)
     }
@@ -191,39 +195,6 @@ fn visibility_rank(vis: Option<&str>) -> u8 {
     }
 }
 
-#[cfg(test)]
-mod visibility_tests {
-    use super::*;
-    use crate::lang::LanguageAdapter;
-
-    #[test]
-    fn pub_floor_admits_only_pub() {
-        let a = RustAdapter;
-        assert!(a.visibility_at_least(Some("pub"), "pub"));
-        assert!(!a.visibility_at_least(Some("pub(crate)"), "pub"));
-        assert!(!a.visibility_at_least(Some("pub(super)"), "pub"));
-        assert!(!a.visibility_at_least(None, "pub"));
-    }
-
-    #[test]
-    fn crate_floor_admits_pub_and_pub_crate() {
-        let a = RustAdapter;
-        assert!(a.visibility_at_least(Some("pub"), "pub(crate)"));
-        assert!(a.visibility_at_least(Some("pub (crate)"), "pub(crate)"));
-        assert!(!a.visibility_at_least(Some("pub(super)"), "pub(crate)"));
-        assert!(!a.visibility_at_least(Some("pub(in crate::x)"), "pub(crate)"));
-        assert!(!a.visibility_at_least(None, "pub(crate)"));
-    }
-
-    #[test]
-    fn re_export_visibility_follows_the_spec_enum() {
-        let a = RustAdapter;
-        assert_eq!(a.re_export_visibility("pub"), Some("pub"));
-        assert_eq!(a.re_export_visibility("pub(crate)"), Some("crate"));
-        assert_eq!(a.re_export_visibility("pub(super)"), None);
-        assert_eq!(a.re_export_visibility("pub(in crate::a)"), None);
-    }
-}
 
 /// The directory a file's child modules live in: its own directory for a
 /// `mod.rs` / `lib.rs` / `main.rs`, else `<dir>/<stem>/`.
@@ -276,4 +247,38 @@ fn expand_use(spec: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use crate::lang::LanguageAdapter;
+
+    #[test]
+    fn pub_floor_admits_only_pub() {
+        let a = RustAdapter;
+        assert!(a.visibility_at_least(Some("pub"), "pub"));
+        assert!(!a.visibility_at_least(Some("pub(crate)"), "pub"));
+        assert!(!a.visibility_at_least(Some("pub(super)"), "pub"));
+        assert!(!a.visibility_at_least(None, "pub"));
+    }
+
+    #[test]
+    fn crate_floor_admits_pub_and_pub_crate() {
+        let a = RustAdapter;
+        assert!(a.visibility_at_least(Some("pub"), "pub(crate)"));
+        assert!(a.visibility_at_least(Some("pub (crate)"), "pub(crate)"));
+        assert!(!a.visibility_at_least(Some("pub(super)"), "pub(crate)"));
+        assert!(!a.visibility_at_least(Some("pub(in crate::x)"), "pub(crate)"));
+        assert!(!a.visibility_at_least(None, "pub(crate)"));
+    }
+
+    #[test]
+    fn re_export_visibility_follows_the_spec_enum() {
+        let a = RustAdapter;
+        assert_eq!(a.re_export_visibility("pub"), Some("pub"));
+        assert_eq!(a.re_export_visibility("pub(crate)"), Some("crate"));
+        assert_eq!(a.re_export_visibility("pub(super)"), None);
+        assert_eq!(a.re_export_visibility("pub(in crate::a)"), None);
+    }
 }

@@ -16,6 +16,9 @@
 //!   * F-006 parity — `requirements_have_satisfiers` fires on
 //!     orphan module-nature requirements.
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -140,7 +143,8 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
     // Templates rendered into project root.
     assert!(target.join("spec.toml").is_file());
     assert!(target.join("specs/architecture.toml").is_file());
-    assert!(target.join("specs/requirements.toml").is_file());
+    // 2.0: one file per entry, so no combined ledger is scaffolded.
+    assert!(!target.join("specs/requirements.toml").exists());
     assert!(target.join("specs/specdev/domain.toml").is_file());
 
     // languages tier (items.schema.yaml inlined).
@@ -301,9 +305,7 @@ panic_handler = "abort"
 fn requirements_have_satisfiers_fires_on_orphan_module_requirement() {
     let (target, _) = fresh_plugin("orphan-req");
     write_arch(&target, ARCH_DEFAULT);
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"[[requirement]]
+    ledger::write(&target, "requirements.toml", r#"[[requirement]]
 id = "REQ-AUDIO-001"
 text = "Plugin must not allocate on the audio thread."
 
@@ -311,9 +313,7 @@ text = "Plugin must not allocate on the audio thread."
 id = "REQ-FORMAT-001"
 text = "Plugin ships as VST3 + CLAP."
 nature = "architecture"
-"#,
-    )
-    .unwrap();
+"#);
     write_module(
         &target,
         "MyPlugin",
@@ -323,7 +323,7 @@ layer = "plugin_shell"
     );
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = errors_for(&report, "requirements_have_satisfiers");
     assert_eq!(
         warnings.len(),
         1,
@@ -417,9 +417,7 @@ fn parameters_have_bindings_silent_when_parameter_kind_absent() {
     write_arch(&target, ARCH_DEFAULT);
     // Requirements + sources, no modules, no nih-plug block inlined: the
     // `nih-plug.Parameter` kind never enters the effective kind set.
-    std::fs::write(
-        target.join("specs/requirements.toml"),
-        r#"[[source]]
+    ledger::write(&target, "requirements.toml", r#"[[source]]
 id = "user-stories"
 kind = "user"
 title = "stories"
@@ -432,9 +430,7 @@ source = ["user-stories"]
 [[requirement]]
 id = "ZX7-002"
 text = "SysEx import loads voices."
-"#,
-    )
-    .unwrap();
+"#);
 
     let report = validate::run_project(&target, None).unwrap();
     let flood = warnings_for(&report, "parameters_have_bindings");

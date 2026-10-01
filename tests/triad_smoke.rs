@@ -18,6 +18,9 @@
 //! 5. Removing `decisions.toml` and `open_questions.toml` leaves
 //!    `validate` clean (additivity regression).
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -142,7 +145,7 @@ text = "Closed-resolved requirement"
 nature = "module"
 source = ["triad-doc"]
 "#;
-    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    ledger::write(target, "requirements.toml", reqs);
 
     let decisions = r#"[[decision]]
 id = "DEC-001"
@@ -178,7 +181,7 @@ title = "Plain accepted decision"
 status = "accepted"
 text = "Serves as the closed_by target for OQ-003 (one-way pairing)."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), decisions).unwrap();
+    ledger::write(target, "decisions.toml", decisions);
 
     let open_questions = r#"[[open_question]]
 id = "OQ-001"
@@ -204,7 +207,7 @@ text = "Was a question; resolved by DEC-005 (DEC-001 also lists OQ-003 in closes
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    ledger::write(target, "open_questions.toml", open_questions);
 
     let module_ok = r#"name = "module_ok"
 visibility = "crate"
@@ -319,7 +322,9 @@ fn triad_smoke_validate_baseline() {
     let errors: Vec<_> = report
         .findings()
         .iter()
-        .filter(|f| matches!(f.severity, specdev_analyzer::Severity::Error))
+        // ZFM-003 is an orphan by design (the coverage tests use it); the
+        // 2.0 templates make that an error.
+        .filter(|f| matches!(f.severity, specdev_analyzer::Severity::Error) && f.rule != "requirements_have_satisfiers")
         .collect();
     assert!(
         errors.is_empty(),
@@ -335,8 +340,8 @@ fn triad_smoke_additivity_when_files_removed() {
     // additive (the new files + refs are optional); this regression-pins
     // the property.
     let (target, _layout) = build_triad_smoke("additivity");
-    std::fs::remove_file(target.join("specs/decisions.toml")).unwrap();
-    std::fs::remove_file(target.join("specs/open_questions.toml")).unwrap();
+    ledger::clear(&target, "decisions.toml");
+    ledger::clear(&target, "open_questions.toml");
 
     // Strip references to decisions / OQs from the surviving spec
     // files so missing-id checks don't fire (those checks should fire in
@@ -359,7 +364,7 @@ text = "Module-ok shall do the thing"
 nature = "module"
 source = ["triad-doc"]
 "#;
-    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    ledger::write(&target, "requirements.toml", reqs);
 
     let module_ok = r#"name = "module_ok"
 visibility = "crate"
@@ -447,7 +452,7 @@ text = "Closed-resolved requirement"
 nature = "module"
 source = ["triad-doc"]
 "#;
-    std::fs::write(target.join("specs/requirements.toml"), bad).unwrap();
+    ledger::write(&target, "requirements.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-999");
 }
@@ -511,7 +516,7 @@ title = "Plain accepted decision"
 status = "accepted"
 text = "Serves as the closed_by target for OQ-003."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    ledger::write(&target, "decisions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-996");
 }
@@ -543,7 +548,7 @@ title = "Plain accepted decision"
 status = "accepted"
 text = "Serves as the closed_by target for OQ-003."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    ledger::write(&target, "decisions.toml", bad);
     // Strip references to removed decisions from arch + reqs.
     std::fs::write(
         target.join("specs/architecture.toml"),
@@ -573,7 +578,7 @@ text = "Closed-resolved requirement"
 nature = "module"
 source = ["triad-doc"]
 "#;
-    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    ledger::write(&target, "requirements.toml", reqs);
     let module_ok = r#"name = "module_ok"
 visibility = "crate"
 description = "Trimmed."
@@ -596,7 +601,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    ledger::write(&target, "open_questions.toml", open_questions);
 
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "decision_supersedes_acyclic", "cycle detected");
@@ -633,7 +638,7 @@ title = "Plain accepted decision"
 status = "accepted"
 text = "closed_by target."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    ledger::write(&target, "decisions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "decision_supersedes_chain_consistency", "DEC-002");
 }
@@ -661,7 +666,7 @@ title = "Plain accepted"
 status = "accepted"
 text = "Plain."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    ledger::write(&target, "decisions.toml", bad);
     // Drop the OQ-003 entry since DEC-001 no longer closes it.
     let open_questions = r#"[[open_question]]
 id = "OQ-001"
@@ -679,7 +684,7 @@ status = "open"
 text = "Genuinely unknown."
 affects = ["ZFM-002"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    ledger::write(&target, "open_questions.toml", open_questions);
     // Drop ZFM-003 since OQ-003 is gone.
     let reqs = r#"[[source]]
 id = "triad-doc"
@@ -699,7 +704,7 @@ text = "Module-blocked shall do the gated thing"
 nature = "module"
 source = ["triad-doc"]
 "#;
-    std::fs::write(target.join("specs/requirements.toml"), reqs).unwrap();
+    ledger::write(&target, "requirements.toml", reqs);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "OQ-995");
 }
@@ -727,7 +732,7 @@ title = "Plain accepted"
 status = "accepted"
 text = "Plain."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), bad).unwrap();
+    ledger::write(&target, "decisions.toml", bad);
     // Re-author OQ-001 to drop default_via (DEC-003 no longer defaults for it).
     let open_questions = r#"[[open_question]]
 id = "OQ-001"
@@ -751,7 +756,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    ledger::write(&target, "open_questions.toml", open_questions);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "OQ-994");
 }
@@ -783,7 +788,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    ledger::write(&target, "open_questions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "ZFM-993");
 }
@@ -815,7 +820,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    ledger::write(&target, "open_questions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "REDUCE_UNRESOLVED", "DEC-992");
 }
@@ -847,7 +852,7 @@ text = "Resolved."
 closed_by = "DEC-VAPOR"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), bad).unwrap();
+    ledger::write(&target, "open_questions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
     assert_rule_fires(&report, "open_question_closed_by_resolves", "DEC-VAPOR");
 }
@@ -909,8 +914,8 @@ fn gate_module_blocked_refusal_message() {
         "exit 3 missing:\n{m}"
     );
     assert!(
-        m.contains("`specs/open_questions.toml`"),
-        "no pointer to open_questions.toml:\n{m}"
+        m.contains("`specs/open_questions/OQ-002.toml`"),
+        "no pointer to the open question's file:\n{m}"
     );
 }
 
@@ -948,7 +953,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), unblocked).unwrap();
+    ledger::write(&target, "open_questions.toml", unblocked);
     let r2 = prompt::check_codegen_gate(&layout, "module_blocked").expect("g2");
     assert!(
         r2.is_none(),
@@ -981,7 +986,7 @@ text = "Resolved."
 closed_by = "DEC-005"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), blocked_again).unwrap();
+    ledger::write(&target, "open_questions.toml", blocked_again);
     let r3 = prompt::check_codegen_gate(&layout, "module_blocked").expect("g3");
     assert!(r3.is_some(), "after re-flip to open, should be blocked");
 }
@@ -998,20 +1003,20 @@ fn triad_red_open_question_gate_runs_in_check() {
     }
     let layout = specdev_analyzer::layout::LayoutContext::discover(&target, None).unwrap();
     let report = specdev_analyzer::check::run(&layout, &Default::default()).expect("check");
-    assert_rule_fires(&report, "codegen_unblocked", "module_blocked");
+    assert_rule_fires(&report, "implementation_unblocked", "module_blocked");
     // module_ok's only OQs in scope are OQ-001 (`default_committed`) and
     // OQ-003 (`closed`).
     assert!(
         !report
             .findings()
             .iter()
-            .any(|f| f.rule == "codegen_unblocked" && f.entity.as_deref() == Some("module_ok")),
+            .any(|f| f.rule == "implementation_unblocked" && f.entity.as_deref() == Some("module_ok")),
         "codegen_unblocked should not flag module_ok; got:\n{}",
         report.render_plain()
     );
     // `validate` alone no longer runs the gate.
     let spec_only = validate::run_project(&target, None).expect("validate");
-    assert!(!spec_only.findings().iter().any(|f| f.rule == "codegen_unblocked"));
+    assert!(!spec_only.findings().iter().any(|f| f.rule == "implementation_unblocked"));
 }
 
 // Regression for the joint-filter — when a project authors dual
@@ -1063,7 +1068,7 @@ title = "Plain accepted decision"
 status = "accepted"
 text = "Co-target for OQ-003 (kept for parity with the smoke fixture)."
 "#;
-    std::fs::write(target.join("specs/decisions.toml"), decisions).unwrap();
+    ledger::write(&target, "decisions.toml", decisions);
 
     let open_questions = r#"[[open_question]]
 id = "OQ-001"
@@ -1089,7 +1094,7 @@ text = "Symmetric back-reference: DEC-001 closes OQ-003 AND OQ-003.closed_by = D
 closed_by = "DEC-001"
 affects = ["ZFM-003"]
 "#;
-    std::fs::write(target.join("specs/open_questions.toml"), open_questions).unwrap();
+    ledger::write(&target, "open_questions.toml", open_questions);
 
     let report = validate::run_project(&target, None).expect("validate");
     let cycle_findings: Vec<_> = report

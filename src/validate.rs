@@ -46,6 +46,19 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Re
 #[instrument(level = "info", skip(layout), fields(project = %layout.project_root.display()))]
 pub fn run(layout: &LayoutContext) -> Result<Report> {
     let mut report = Report::default();
+    let major = layout.spec.format_major();
+    if major < crate::config::NEWEST_FORMAT_MAJOR {
+        report.push(Finding::new(
+            "FORMAT-001",
+            Severity::Info,
+            format!(
+                "spec_version {} is an older project format; this analyzer writes {}.0. \
+                 Run `specdev-analyzer migrate --dry-run` to see the steps, then `specdev-analyzer migrate`",
+                layout.spec.spec_version,
+                crate::config::NEWEST_FORMAT_MAJOR
+            ),
+        ));
+    }
     validate_layout(layout, &mut report)?;
     validate_modules(layout, &mut report)?;
     validate_architecture(layout, &mut report)?;

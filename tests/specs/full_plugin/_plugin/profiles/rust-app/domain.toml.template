@@ -11,7 +11,7 @@
 # REDUCE_UNRESOLVED naming the source entity + the unknown target.
 # graph_check is reserved for non-ref-resolution invariants: uniqueness,
 # acyclicity, attr-shaped reference resolution (e.g. closed_by, which
-# isn't a relation), status-cross-reference consistency, codegen gating.
+# isn't a relation), status-cross-reference consistency, open-question gating.
 
 [domain]
 name = "{{project_name}}"
@@ -24,14 +24,13 @@ layer_dependency                             = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 decision_ids_unique                          = "error"
-requirements_have_satisfiers                 = "warning"
-test_requirements_have_verifiers             = "warning"
+requirements_have_satisfiers                 = "error"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
 open_question_closed_by_resolves             = "error"
 open_question_status_consistency             = "error"
-codegen_unblocked                            = "warning"
+implementation_unblocked                     = "error"
 
 # Module names must be unique across the crate.
 [[project.graph_checks]]
@@ -85,31 +84,15 @@ scope = "Decision"
 field = "entities[].name"
 
 # Every Requirement with `nature = "module"` (the default) must be
-# satisfied by at least one module — orphan requirements warn.
+# satisfied by at least one module — an orphan requirement is an error.
 # Set `nature = "architecture" | "build"` to exempt; `nature = "test"`
-# requirements are exempt HERE but covered by the test-verifier check
-# below instead.
+# requirements are exempt HERE; `check`'s requirements_have_tests
+# covers them.
 [[project.graph_checks]]
 kind = "requirements_have_satisfiers"
 rule = "requirements_have_satisfiers"
 entity_scope = "Requirement"
 relation_scope = "module_satisfies"
-
-# Every Requirement with `nature = "test"` must be verified by at least
-# one test item (a `[[items]]` entry with `test = true` whose `verifies`
-# names it) — the test-surface analogue of requirements_have_satisfiers.
-# Uses the generic `entity_has_inbound_relation` primitive with an
-# attr filter scoping the check to `nature = "test"`; the `test_verifies`
-# edges come from `items[].verifies[]` reduction. Reference resolution
-# (a `verifies` id naming a real requirement) is handled at reduce time
-# by REDUCE_UNRESOLVED, not here.
-[[project.graph_checks]]
-kind = "entity_has_inbound_relation"
-rule = "test_requirements_have_verifiers"
-entity_scope = "Requirement"
-entity_attr = "nature"
-entity_attr_value = "test"
-relation_scope = "test_verifies"
 
 # ---------------------------------------------------------------------------
 # Triad consistency.
@@ -121,8 +104,7 @@ relation_scope = "test_verifies"
 # supersession-chain shape (acyclic + orphan-free + unique-successor),
 # attr-shaped closed_by resolution (closed_by isn't a relation), OQ
 # status invariants against target Decision status, and the
-# `codegen_unblocked` informational warning (the gen-side gate is a
-# hard refusal in `specdev-analyzer gen`).
+# open-question gate (`implementation_unblocked`, run by `check`).
 # ---------------------------------------------------------------------------
 
 # Supersession chain must be acyclic.
@@ -180,9 +162,9 @@ target_entity_kind = "Decision"
 target_attr = "status"
 target_attr_value = "accepted"
 
-# Codegen-gate informational warning: any Module reachable through an
-# `open` OpenQuestion (via Module.satisfies → Requirement →
-# OpenQuestion.affects^-1) is gated. validate informs; `gen` hard-refuses.
+# Open-question gate: any Module reachable through an `open`
+# OpenQuestion (via Module.satisfies → Requirement →
+# OpenQuestion.affects^-1) is blocked. `check` reports it.
 [[project.graph_checks]]
 kind = "module_reachable_through_open_question"
-rule = "codegen_unblocked"
+rule = "implementation_unblocked"
