@@ -1,0 +1,701 @@
+//! `migrate`'s format step: a `spec_version = "1.x"` project to `"2.0"`.
+//!
+//! Every change is planned in memory first; a refusal stops the step before
+//! any byte is written, and `--dry-run` stops after the plan. `spec_version`
+//! is written last, so an interrupted run leaves a `1.x` tree that the same
+//! command finishes. On a `2.x` tree the step does nothing.
+//!
+//! The steps, in order:
+//!
+//! 1. Split the combined decision, requirement and open-question files into
+//!    one file per entry, each keeping its bytes; a tombstone replaces each
+//!    combined file ([`crate::entries::plan_split`]).
+//! 2. Module specs lose their test items (each item's `verifies` moves to
+//!    the requirement as `verified_by`) and the `external_deps` table, which
+//!    restates the manifest.
+//! 3. Modules whose source does not resolve are reported, and marked
+//!    `planned = true` only under `--plan-unresolved`. Modules whose source
+//!    holds only tests are reported.
+//! 4. A requirement that is not planned (set, or derived: at least one
+//!    satisfier and every satisfier planned) and has no `verified_by` gets
+//!    `test_pending = true` — after step 3, so its flags count.
+//! 5. Profile files: a file still equal to what bootstrap recorded takes the
+//!    plugin's bytes and a new record. `spec.toml`, `domain.toml` and the
+//!    reductions otherwise get precise in-place edits and keep their record.
+//!    A schema with no record takes the plugin's bytes; a schema edited
+//!    since its record refuses the step.
+//! 6. `gen-lineage.toml` and the profile's inlined `codegen/` go.
+//! 7. `lineage.toml`: `[meta].plugin_version` becomes `bootstrapped_with`;
+//!    records of moved and removed files go.
+//! 8. `spec.toml`: `spec_version = "2.0"` and `max_parallel_agents = 1`.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, bail, Context, Result};
+use toml_edit::{value, Array, DocumentMut, Item, Value};
+
+use crate::bootstrap::{self, BootstrapInputs};
+use crate::entries::{self, EntryKind, EntryLayout, EntryStore};
+use crate::items::source_map::{resolve_source_path, source_file_override};
+use crate::layout::LayoutContext;
+use crate::lineage::Lineage;
+
+/// The format the step writes.
+pub const TARGET_VERSION: &str = "2.0";
+
+/// The rules the format renames: `(old, new)`.
+const RENAMED_RULES: &[(&str, &str)] = &[("codegen_unblocked", "implementation_unblocked")];
+
+/// The rules whose severity becomes `error`.
+const ERROR_RULES: &[&str] = &["requirements_have_satisfiers", "implementation_unblocked"];
+
+/// Graph checks the format drops: their relation came from spec test
+/// items, which the format does not have.
+const DROPPED_RULES: &[&str] = &["test_requirements_have_verifiers"];
+
+/// Options for the format step.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FormatOptions {
+    pub dry_run: bool,
+    pub plan_unresolved: bool,
+}
+
+/// What the step did, or would do.
+#[derive(Debug, Default)]
+pub struct FormatReport {
+    /// The tree is already in the target format; nothing was planned.
+    pub already_current: bool,
+    /// One line per change, in order.
+    pub lines: Vec<String>,
+    /// Modules with no resolvable source and no `planned = true`.
+    pub unresolved: Vec<String>,
+    /// Modules marked `planned = true` by `--plan-unresolved`.
+    pub planned: Vec<String>,
+    /// Modules whose source file holds only tests.
+    pub tests_only: Vec<String>,
+}
+
+/// Pending file changes, keyed by project-relative path.
+struct Overlay {
+    root: PathBuf,
+    writes: BTreeMap<PathBuf, Vec<u8>>,
+    deletes: BTreeSet<PathBuf>,
+    delete_dirs: BTreeSet<PathBuf>,
+}
+
+impl Overlay {
+    fn new(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            writes: BTreeMap::new(),
+            deletes: BTreeSet::new(),
+            delete_dirs: BTreeSet::new(),
+        }
+    }
+
+    fn read(&self, rel: &Path) -> Option<Vec<u8>> {
+        if let Some(b) = self.writes.get(rel) {
+            return Some(b.clone());
+        }
+        if self.deletes.contains(rel) || self.delete_dirs.iter().any(|d| rel.starts_with(d)) {
+            return None;
+        }
+        std::fs::read(self.root.join(rel)).ok()
+    }
+
+    fn write(&mut self, rel: &Path, bytes: Vec<u8>) {
+        self.deletes.remove(rel);
+        self.writes.insert(rel.to_path_buf(), bytes);
+    }
+
+    /// The `*.toml` files in project-relative `dir`, on disk or pending.
+    fn toml_files(&self, dir: &Path) -> Vec<PathBuf> {
+        let mut out: BTreeSet<PathBuf> = BTreeSet::new();
+        if let Ok(rd) = std::fs::read_dir(self.root.join(dir)) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("toml")) {
+                    out.insert(dir.join(e.file_name()));
+                }
+            }
+        }
+        for p in self.writes.keys() {
+            if p.parent() == Some(dir) && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("toml")) {
+                out.insert(p.clone());
+            }
+        }
+        out.into_iter().filter(|p| self.read(p).is_some()).collect()
+    }
+
+    /// Apply every change; `last` is written after everything else.
+    fn apply(&self, lineage: Option<(&Lineage, &Path)>, last: &Path) -> Result<()> {
+        for (rel, bytes) in &self.writes {
+            if rel != last {
+                write(&self.root.join(rel), bytes)?;
+            }
+        }
+        for rel in &self.deletes {
+            let p = self.root.join(rel);
+            if p.is_file() {
+                std::fs::remove_file(&p).with_context(|| format!("removing {}", p.display()))?;
+            }
+        }
+        for rel in &self.delete_dirs {
+            let p = self.root.join(rel);
+            if p.is_dir() {
+                std::fs::remove_dir_all(&p).with_context(|| format!("removing {}", p.display()))?;
+            }
+        }
+        if let Some((l, specdev_root)) = lineage {
+            l.save(specdev_root)?;
+        }
+        if let Some(bytes) = self.writes.get(last) {
+            write(&self.root.join(last), bytes)?;
+        }
+        Ok(())
+    }
+}
+
+fn write(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+}
+
+fn rel_to(root: &Path, p: &Path) -> PathBuf {
+    p.strip_prefix(root).unwrap_or(p).to_path_buf()
+}
+
+fn slash(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+fn utf8(bytes: Vec<u8>, rel: &Path) -> Result<String> {
+    String::from_utf8(bytes).map_err(|_| anyhow!("{} is not valid UTF-8", rel.display()))
+}
+
+fn string_list(item: Option<&Item>) -> Vec<String> {
+    item.and_then(Item::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// One module spec as the step reads it.
+struct ModuleSpec {
+    rel: PathBuf,
+    name: String,
+    doc: DocumentMut,
+    changed: bool,
+    satisfies: Vec<String>,
+    planned: bool,
+}
+
+/// Run the format step on `layout`'s project, against the plugin at
+/// `plugin_root` (the source of the 2.0 profile files).
+pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<FormatReport> {
+    let mut report = FormatReport::default();
+    if layout.spec.format_major() >= 2 {
+        report.already_current = true;
+        return Ok(report);
+    }
+    if layout.spec.workspace.is_some() || crate::layout::find_workspace_root_spec(&layout.project_root)?.is_some() {
+        bail!(
+            "[MIGRATE-013] {} is part of a workspace. Workspaces move to {TARGET_VERSION} as one, root and \
+             members in one run, and this analyzer cannot do that yet; nothing was changed.",
+            layout.project_root.display()
+        );
+    }
+    let mut lineage = Lineage::load(&layout.specdev_root)?;
+    let profile = lineage
+        .meta
+        .as_ref()
+        .map(|m| m.profile.clone())
+        .ok_or_else(|| anyhow!("[MIGRATE-001] no [meta] in lineage.toml; the project is pre-bootstrap"))?;
+    let root = &layout.project_root;
+    let specs_rel = rel_to(root, &layout.specs_dir);
+    let specdev_rel = rel_to(root, &layout.specdev_root);
+    let mut ov = Overlay::new(root);
+    let verb = if opts.dry_run { "would " } else { "" };
+
+    // 1. One file per entry.
+    let split = entries::plan_split(&layout.specs_dir)?;
+    for (rel, bytes) in split.writes {
+        ov.write(&specs_rel.join(rel), bytes);
+    }
+    for (rel, bytes) in split.tombstones {
+        ov.write(&specs_rel.join(rel), bytes);
+    }
+    for (file, n) in &split.moved {
+        report.lines.push(format!(
+            "{verb}split {} into one file per entry ({n} moved), leaving a tombstone",
+            slash(&specs_rel.join(file))
+        ));
+    }
+
+    // 2. Module specs: test items and manifest-restating tables.
+    let modules_rel = rel_to(root, &layout.modules_dir);
+    let mut modules: Vec<ModuleSpec> = Vec::new();
+    let mut verified: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for rel in ov.toml_files(&modules_rel) {
+        let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
+        let mut doc: DocumentMut = text.parse().with_context(|| format!("parsing {}", rel.display()))?;
+        let name = doc
+            .get("name")
+            .and_then(Item::as_str)
+            .map(str::to_string)
+            .or_else(|| rel.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+            .unwrap_or_default();
+        let mut changed = false;
+        let moved = take_test_items(&mut doc);
+        if !moved.is_empty() {
+            changed = true;
+            for (item, verifies) in &moved {
+                for id in verifies {
+                    let names = verified.entry(id.clone()).or_default();
+                    if !names.contains(item) {
+                        names.push(item.clone());
+                    }
+                }
+            }
+            report.lines.push(format!(
+                "{verb}remove {} test item(s) from {}; their `verifies` move to `verified_by`",
+                moved.len(),
+                slash(&rel)
+            ));
+        }
+        if doc.remove("external_deps").is_some() {
+            changed = true;
+            report.lines.push(format!("{verb}remove `external_deps` from {} (the manifest holds it)", slash(&rel)));
+        }
+        let satisfies = string_list(doc.get("satisfies"));
+        let planned = doc.get("planned").and_then(Item::as_bool) == Some(true);
+        modules.push(ModuleSpec { rel, name, doc, changed, satisfies, planned });
+    }
+
+    // 3. Sources.
+    let adapter = crate::lang::adapter_for(&layout.spec.project.language);
+    for m in &mut modules {
+        if m.planned {
+            continue;
+        }
+        let as_value: toml::Value = toml::from_str(&m.doc.to_string()).unwrap_or(toml::Value::Boolean(false));
+        let source = adapter.as_deref().and_then(|a| {
+            resolve_source_path(&m.name, source_file_override(&as_value), a, root, &layout.spec.paths.source)
+        });
+        match source {
+            None => {
+                if opts.plan_unresolved {
+                    m.doc["planned"] = value(true);
+                    m.planned = true;
+                    m.changed = true;
+                    report.planned.push(m.name.clone());
+                } else {
+                    report.unresolved.push(m.name.clone());
+                }
+            }
+            Some(src) => {
+                let rel = rel_to(root, &src);
+                if let Some(a) = adapter.as_deref() {
+                    if crate::test_discovery::holds_only_tests(a, root, &rel)? {
+                        report.tests_only.push(m.name.clone());
+                    }
+                }
+            }
+        }
+    }
+    for m in &modules {
+        if m.changed {
+            ov.write(&m.rel, m.doc.to_string().into_bytes());
+        }
+    }
+
+    // 4. Requirements: `verified_by`, then `test_pending`.
+    let req_dir = rel_to(root, &EntryStore::at(&layout.specs_dir, EntryLayout::PerEntry).expected_file(EntryKind::Requirement));
+    let mut flagged = 0;
+    for rel in ov.toml_files(&req_dir) {
+        let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
+        let mut doc: DocumentMut = text.parse().with_context(|| format!("parsing {}", rel.display()))?;
+        let Some(req) = doc
+            .get_mut(EntryKind::Requirement.table())
+            .and_then(Item::as_array_of_tables_mut)
+            .and_then(|a| a.get_mut(0))
+        else {
+            continue;
+        };
+        let Some(id) = req.get("id").and_then(Item::as_str).map(str::to_string) else { continue };
+        let mut changed = false;
+        let mut names = string_list(req.get("verified_by"));
+        for n in verified.get(&id).into_iter().flatten() {
+            if !names.contains(n) {
+                names.push(n.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            let mut arr = Array::new();
+            for n in &names {
+                arr.push(n.as_str());
+            }
+            req["verified_by"] = value(arr);
+        }
+        let nature = req.get("nature").and_then(Item::as_str).unwrap_or("module");
+        let satisfiers: Vec<&ModuleSpec> = modules.iter().filter(|m| m.satisfies.contains(&id)).collect();
+        let planned = req.get("planned").and_then(Item::as_bool) == Some(true)
+            || (!satisfiers.is_empty() && satisfiers.iter().all(|m| m.planned));
+        if matches!(nature, "module" | "test") && !planned && names.is_empty() && req.get("test_pending").is_none() {
+            req["test_pending"] = value(true);
+            changed = true;
+            flagged += 1;
+        }
+        if changed {
+            ov.write(&rel, doc.to_string().into_bytes());
+        }
+    }
+    if !verified.is_empty() {
+        report.lines.push(format!("{verb}set `verified_by` on {} requirement(s)", verified.len()));
+    }
+    if flagged > 0 {
+        report.lines.push(format!(
+            "{verb}set `test_pending = true` on {flagged} requirement(s): built (or not marked planned), no test named"
+        ));
+    }
+
+    // 5. Profile files.
+    let profile_dir = plugin_root.join("profiles").join(&profile);
+    if !profile_dir.is_dir() {
+        bail!("[MIGRATE-002] profile `{profile}` not found in the plugin tree at {}", profile_dir.display());
+    }
+    let inputs = BootstrapInputs {
+        profile: profile.clone(),
+        language: layout.spec.project.language.clone(),
+        project_name: layout.spec.project.name.clone(),
+        target_dir: root.clone(),
+    };
+    let expected = bootstrap::profile_expected_bytes(&profile_dir, &inputs)?;
+    let recorded = lineage.profile_files.clone();
+    let mut records: BTreeMap<String, String> = BTreeMap::new();
+    let mut refused: Vec<String> = Vec::new();
+    let spec_rel = PathBuf::from("spec.toml");
+    let domain_rel = specdev_rel.join("domain.toml");
+    let reductions_rel = specdev_rel.join("reductions");
+    let schemas_rel = specdev_rel.join("schemas");
+    let mut handled: BTreeSet<PathBuf> = BTreeSet::new();
+    for (key, theirs) in &expected {
+        let rel = PathBuf::from(key);
+        handled.insert(rel.clone());
+        let mechanical = rel == spec_rel || rel == domain_rel || rel.starts_with(&reductions_rel);
+        let Some(ours) = ov.read(&rel) else {
+            ov.write(&rel, theirs.clone());
+            records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
+            report.lines.push(format!("{verb}write {key} (new in the plugin)"));
+            continue;
+        };
+        let ours_hash = bootstrap::profile_file_hash(key, &ours)?;
+        let theirs_hash = bootstrap::profile_file_hash(key, theirs)?;
+        let clean = recorded.get(key) == Some(&ours_hash);
+        if clean {
+            if rel == domain_rel {
+                // Whole-file refresh; still say what changes for the rules.
+                let (_, changes) = domain_2_0(&utf8(ours.clone(), &rel)?)?;
+                for c in changes {
+                    report.lines.push(format!("{verb}{c} in {key}"));
+                }
+            }
+            if ours_hash != theirs_hash || (!bootstrap::CO_OWNED_AGGREGATORS.contains(&key.as_str()) && &ours != theirs) {
+                let new = take_plugin_bytes(key, &ours, theirs)?;
+                ov.write(&rel, new);
+                records.insert(key.clone(), theirs_hash);
+                report.lines.push(format!("{verb}refresh {key} to the plugin's {TARGET_VERSION} copy (unchanged since bootstrap)"));
+            }
+            continue;
+        }
+        if mechanical {
+            let text = utf8(ours.clone(), &rel)?;
+            let new = if rel == spec_rel {
+                spec_2_0(&text)?
+            } else if rel == domain_rel {
+                let (new, changes) = domain_2_0(&text)?;
+                for c in changes {
+                    report.lines.push(format!("{verb}{c} in {key}"));
+                }
+                new
+            } else {
+                entries::rewrite_reduction_paths(&text)
+            };
+            if new.as_bytes() != ours.as_slice() {
+                if rel != spec_rel && rel != domain_rel {
+                    report.lines.push(format!("{verb}point {key} at the per-entry files"));
+                }
+                if bootstrap::profile_file_hash(key, new.as_bytes())? == theirs_hash {
+                    records.insert(key.clone(), theirs_hash);
+                }
+                ov.write(&rel, new.into_bytes());
+            }
+            continue;
+        }
+        if rel.starts_with(&schemas_rel) && ours_hash != theirs_hash {
+            if recorded.contains_key(key) {
+                refused.push(key.clone());
+            } else {
+                ov.write(&rel, take_plugin_bytes(key, &ours, theirs)?);
+                records.insert(key.clone(), theirs_hash);
+                report.lines.push(format!(
+                    "{verb}replace {key} with the plugin's {TARGET_VERSION} copy (no bootstrap record; review the diff)"
+                ));
+            }
+        }
+    }
+    // Reductions the profile does not own (inlined units) still name files.
+    for rel in walk_files(&root.join(&reductions_rel)).into_iter().map(|p| rel_to(root, &p)) {
+        if handled.contains(&rel) {
+            continue;
+        }
+        let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
+        let new = entries::rewrite_reduction_paths(&text);
+        if new != text {
+            report.lines.push(format!("{verb}point {} at the per-entry files", slash(&rel)));
+            ov.write(&rel, new.into_bytes());
+        }
+    }
+    // A domain.toml written above from the plugin needs no edits; one the
+    // project changed got them. A missing one has nothing to rename.
+    if !refused.is_empty() {
+        bail!(
+            "[MIGRATE-014] these schemas changed since bootstrap and the plugin's {TARGET_VERSION} copy differs; \
+             nothing was changed. Merge each with the plugin's copy (profiles/{profile}/schemas/), or restore \
+             the bootstrap copy, then run migrate again:\n  {}",
+            refused.join("\n  ")
+        );
+    }
+
+    // 6. Generation state.
+    let gen_lineage = specdev_rel.join("gen-lineage.toml");
+    if ov.read(&gen_lineage).is_some() {
+        ov.deletes.insert(gen_lineage.clone());
+        report.lines.push(format!("{verb}remove {}", slash(&gen_lineage)));
+    }
+    let codegen = specdev_rel.join("codegen");
+    if root.join(&codegen).is_dir() {
+        ov.delete_dirs.insert(codegen.clone());
+        report.lines.push(format!("{verb}remove {}/", slash(&codegen)));
+    }
+
+    // 7. Lineage.
+    let moved_combined: Vec<String> = entries::combined_files_rel(&specs_rel).iter().map(|p| slash(p)).collect();
+    let before = lineage.profile_files.len();
+    lineage.profile_files.retain(|k, _| {
+        let p = PathBuf::from(k);
+        let gone = moved_combined.contains(k) || p.starts_with(&codegen);
+        !(gone && !expected.contains_key(k))
+    });
+    let dropped = before - lineage.profile_files.len();
+    if dropped > 0 {
+        report.lines.push(format!("{verb}drop {dropped} record(s) of moved or removed files from [profile_files]"));
+    }
+    lineage.profile_files.extend(records);
+    if let Some(meta) = lineage.meta.as_mut() {
+        if let Some(v) = meta.plugin_version.take() {
+            meta.bootstrapped_with.get_or_insert(v);
+            report.lines.push(format!("{verb}rename lineage.toml [meta].plugin_version to bootstrapped_with"));
+        }
+    }
+
+    // 8. spec.toml, last.
+    if !ov.writes.contains_key(&spec_rel) {
+        let text = utf8(ov.read(&spec_rel).unwrap_or_default(), &spec_rel)?;
+        ov.write(&spec_rel, spec_2_0(&text)?.into_bytes());
+    }
+    report.lines.push(format!(
+        "{verb}set spec_version {} -> {TARGET_VERSION} and [project].max_parallel_agents (written last)",
+        layout.spec.spec_version
+    ));
+
+    if !opts.dry_run {
+        ov.apply(Some((&lineage, &layout.specdev_root)), &spec_rel)?;
+    }
+    Ok(report)
+}
+
+/// The plugin's bytes for `key`; a co-owned aggregator keeps the unit
+/// `$ref` entries the project's copy holds beyond the plugin's own.
+fn take_plugin_bytes(key: &str, ours: &[u8], theirs: &[u8]) -> Result<Vec<u8>> {
+    if !bootstrap::CO_OWNED_AGGREGATORS.contains(&key) {
+        return Ok(theirs.to_vec());
+    }
+    let refs = |bytes: &[u8]| -> Result<Vec<serde_yaml::Value>> {
+        let v: serde_yaml::Value = serde_yaml::from_slice(bytes).with_context(|| format!("parsing {key}"))?;
+        Ok(v.get("allOf").and_then(|a| a.as_sequence()).cloned().unwrap_or_default())
+    };
+    let ours_refs = refs(ours)?;
+    let theirs_refs = refs(theirs)?;
+    let extra: Vec<serde_yaml::Value> = ours_refs.into_iter().filter(|r| !theirs_refs.contains(r)).collect();
+    if extra.is_empty() {
+        return Ok(theirs.to_vec());
+    }
+    let mut v: serde_yaml::Value = serde_yaml::from_slice(theirs).with_context(|| format!("parsing {key}"))?;
+    let map = v.as_mapping_mut().ok_or_else(|| anyhow!("{key}: root is not a mapping"))?;
+    let seq = map
+        .entry(serde_yaml::Value::from("allOf"))
+        .or_insert(serde_yaml::Value::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .ok_or_else(|| anyhow!("{key}: `allOf` is not a sequence"))?;
+    seq.extend(extra);
+    Ok(serde_yaml::to_string(&v)?.into_bytes())
+}
+
+/// Remove every `test = true` item; return `(name, verifies)` for each.
+fn take_test_items(doc: &mut DocumentMut) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let mut now_empty = false;
+    if let Some(items) = doc.get_mut("items").and_then(Item::as_array_of_tables_mut) {
+        let mut keep = toml_edit::ArrayOfTables::new();
+        for t in items.iter() {
+            if t.get("test").and_then(Item::as_bool) == Some(true) {
+                let name = t.get("name").and_then(Item::as_str).unwrap_or("").to_string();
+                out.push((name, string_list(t.get("verifies"))));
+            } else {
+                keep.push(t.clone());
+            }
+        }
+        if !out.is_empty() {
+            now_empty = keep.is_empty();
+            *items = keep;
+        }
+    } else if let Some(arr) = doc.get_mut("items").and_then(Item::as_array_mut) {
+        let before = arr.len();
+        let mut i = 0;
+        while i < arr.len() {
+            let is_test = arr
+                .get(i)
+                .and_then(Value::as_inline_table)
+                .and_then(|t| t.get("test"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            if is_test {
+                let t = arr.get(i).and_then(Value::as_inline_table).cloned().unwrap_or_default();
+                let name = t.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                let verifies = t
+                    .get("verifies")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                out.push((name, verifies));
+                arr.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        now_empty = before > 0 && arr.is_empty();
+    }
+    if now_empty {
+        doc.remove("items");
+    }
+    out
+}
+
+/// `spec.toml` in the target format: the version, and the parallel-agent
+/// limit when absent. Every other byte stays.
+fn spec_2_0(text: &str) -> Result<String> {
+    let mut doc: DocumentMut = text.parse().context("parsing spec.toml")?;
+    doc["spec_version"] = value(TARGET_VERSION);
+    if let Some(project) = doc.get_mut("project").and_then(Item::as_table_mut) {
+        if !project.contains_key("max_parallel_agents") {
+            project.insert("max_parallel_agents", value(1));
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// `domain.toml` in the target format, and one line per change.
+fn domain_2_0(text: &str) -> Result<(String, Vec<String>)> {
+    let mut changes = Vec::new();
+    let mut doc: DocumentMut = text.parse().context("parsing domain.toml")?;
+    // Rename: the rules-table key keeps its place, and each graph check's
+    // `rule` value.
+    for (old, new) in RENAMED_RULES {
+        let mut renamed = false;
+        if let Some(rules) = doc
+            .get_mut("validation")
+            .and_then(|v| v.get_mut("rules"))
+            .and_then(Item::as_table_like_mut)
+        {
+            if let Some(v) = rules.remove(old) {
+                rules.insert(new, v);
+                renamed = true;
+            }
+        }
+        if let Some(checks) = graph_checks(&mut doc) {
+            for t in checks.iter_mut() {
+                if t.get("rule").and_then(Item::as_str) == Some(old) {
+                    let decor = t.get("rule").and_then(Item::as_value).map(|v| v.decor().clone());
+                    let mut v = Value::from(*new);
+                    if let Some(d) = decor {
+                        *v.decor_mut() = d;
+                    }
+                    t["rule"] = Item::Value(v);
+                    renamed = true;
+                }
+            }
+        }
+        if renamed {
+            changes.push(format!("rename rule `{old}` to `{new}`"));
+        }
+    }
+    // Severities.
+    if let Some(rules) = doc
+        .get_mut("validation")
+        .and_then(|v| v.get_mut("rules"))
+        .and_then(Item::as_table_like_mut)
+    {
+        for rule in ERROR_RULES {
+            let Some(item) = rules.get_mut(rule) else { continue };
+            let old = item.as_str().unwrap_or("").to_string();
+            if old != "error" {
+                let decor = item.as_value().map(|v| v.decor().clone());
+                let mut v = Value::from("error");
+                if let Some(d) = decor {
+                    *v.decor_mut() = d;
+                }
+                *item = Item::Value(v);
+                changes.push(format!("set `{rule}` from \"{old}\" to \"error\""));
+            }
+        }
+        for rule in DROPPED_RULES {
+            if rules.remove(rule).is_some() {
+                changes.push(format!("remove the `{rule}` severity"));
+            }
+        }
+    }
+    if let Some(checks) = graph_checks(&mut doc) {
+        let before = checks.len();
+        checks.retain(|t| !DROPPED_RULES.contains(&t.get("rule").and_then(Item::as_str).unwrap_or("")));
+        if checks.len() != before {
+            changes.push(format!("remove {} graph check(s) its test items fed", before - checks.len()));
+        }
+    }
+    Ok((doc.to_string(), changes))
+}
+
+fn graph_checks(doc: &mut DocumentMut) -> Option<&mut toml_edit::ArrayOfTables> {
+    doc.get_mut("project")
+        .and_then(|p| p.get_mut("graph_checks"))
+        .and_then(Item::as_array_of_tables_mut)
+}
+
+fn walk_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk_files(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}

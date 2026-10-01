@@ -5,6 +5,9 @@
 //! load-bearing assertion is agreement: for every module, the decision and
 //! open-question ids in the report are exactly those the prompt carries.
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,7 +36,12 @@ fn project(tag: &str) -> PathBuf {
         },
     )
     .unwrap();
+    // Ledgers go through the per-entry helper; module specs are written as is.
     let w = |rel: &str, body: &str| {
+        if let Some(combined) = rel.strip_prefix("specs/").filter(|r| !r.contains('/')) {
+            ledger::write(&t, combined, body);
+            return;
+        }
         let p = t.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, body).unwrap();

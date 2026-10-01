@@ -26,11 +26,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use specdev_analyzer::{
-    bootstrap::{self, BootstrapInputs},
-    layout::LayoutContext,
-    prompt, reduction,
-};
+use specdev_analyzer::{layout::LayoutContext, prompt, reduction};
 
 fn plugin_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -114,20 +110,14 @@ affects = ["LAY-002"]
 "#;
 
 /// A `1.0` library-api project: two modules, one of them blocked by the
-/// open question OQ-002, and one recorded generated file for the other.
+/// open question OQ-002. The base is the frozen `1.x` tree in
+/// `tests/fixtures/v1_trees/library-api` — a bootstrap writes `2.0` now.
 fn build_v1_project(tag: &str) -> PathBuf {
     let target = tmp_workspace(tag).join("proj");
-    std::fs::create_dir_all(&target).unwrap();
-    bootstrap::run_bootstrap(
-        &plugin_root(),
-        &BootstrapInputs {
-            profile: "library-api".into(),
-            language: "rust".into(),
-            project_name: "layout_fixture".into(),
-            target_dir: target.clone(),
-        },
-    )
-    .unwrap();
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees/library-api"),
+        &target,
+    );
 
     let specs = target.join("specs");
     std::fs::write(
@@ -159,6 +149,19 @@ fn build_v1_project(tag: &str) -> PathBuf {
     std::fs::create_dir_all(target.join("src")).unwrap();
     std::fs::write(target.join("src/parser.rs"), "pub(crate) fn parse() {}\n").unwrap();
     target
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
 }
 
 fn analyzer(project: &Path, args: &[&str]) -> Output {
@@ -292,15 +295,18 @@ fn fixture_is_sound_in_the_1x_layout() {
     ] {
         assert!(yaml.contains(id), "{id} did not reach the graph");
     }
-    // Proves the drift parser used by the re-baseline test on today's output.
+    // Proves the drift parser used by the re-baseline test on today's
+    // output. The frozen tree is read against the 2.0 plugin: its untouched
+    // `spec.toml` reads `PluginMoved`, and the edited combined ledger, which
+    // the plugin no longer ships, `Both`.
     let categories = profile_file_categories(&project);
     assert_eq!(
         categories.get("spec.toml").map(String::as_str),
-        Some("Clean")
+        Some("PluginMoved")
     );
     assert_eq!(
         categories.get("specs/decisions.toml").map(String::as_str),
-        Some("LocallyEdited")
+        Some("Both")
     );
 }
 
@@ -424,7 +430,9 @@ fn profile_file_categories(project: &Path) -> BTreeMap<String, String> {
 
 /// Files migrate rewrites (spec.toml, inlined reductions) are re-baselined,
 /// so they do not read as hand-edited and block a later `--refresh`; files
-/// it moves leave the profile-file list.
+/// it moves leave the profile-file list. Against a plugin that moved to
+/// 2.0, a clean file `migrate` rewrites to the plugin's bytes becomes
+/// `Clean`; no file becomes newly `LocallyEdited` or `Both`.
 #[test]
 fn migrate_rebaselines_the_profile_files_it_rewrites() {
     let project = build_v1_project("rebaseline");
@@ -443,10 +451,10 @@ fn migrate_rebaselines_the_profile_files_it_rewrites() {
         );
     }
     for (path, category) in &after {
-        let expected = before.get(path).map(String::as_str).unwrap_or("Clean");
-        assert_eq!(
-            category, expected,
-            "{path}: {expected} before migrate, {category} after"
+        let earlier = before.get(path).map(String::as_str).unwrap_or("Clean");
+        assert!(
+            category == earlier || category == "Clean",
+            "{path}: {earlier} before migrate, {category} after"
         );
     }
 }

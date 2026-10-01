@@ -4,6 +4,7 @@ assertion_line: 96
 expression: render_findings(&report)
 ---
 Info DOMAIN-001
+Info FORMAT-001
 Info LAYOUT-002
 Info REDUCTION-001
 Warning LAYOUT-003

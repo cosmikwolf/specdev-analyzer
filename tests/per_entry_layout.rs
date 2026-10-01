@@ -73,41 +73,35 @@ fn set_spec_version(project: &Path, version: &str) {
     std::fs::write(&path, format!("spec_version = \"{version}\"\n{rest}")).unwrap();
 }
 
-/// Point the inlined project reduction at the per-entry directories, as
-/// `migrate` does: every `from:` and `from_spec:` that names a combined
-/// file. The one `from:` that reads `source[]` goes to `specs/sources/`;
-/// every other read of the requirements file reads `requirement[]`.
-fn rewrite_reduction_globs(project: &Path) {
+/// Set the inlined project reduction to a layout. A bootstrap writes the
+/// `2.0` globs, so `"2.x"` only checks them; `"1.x"` points every glob back
+/// at its combined file (the Source glob at the requirements file, which
+/// holds `source[]` in `1.x`).
+fn set_reduction_layout(project: &Path, version: &str) {
     let path = project.join("specs/specdev/reductions/project.yaml");
     let text = std::fs::read_to_string(&path).unwrap();
-    let source_block = "from: \"specs/requirements.toml\"\n    for_each: \"source[]\"";
-    assert_eq!(
-        text.matches(source_block).count(),
-        1,
-        "the Source block moved"
-    );
-    let text = text
-        .replace(
-            source_block,
-            "from: \"specs/sources/*.toml\"\n    for_each: \"source[]\"",
-        )
-        .replace(
-            "\"specs/requirements.toml\"",
-            "\"specs/requirements/*.toml\"",
-        )
-        .replace("\"specs/decisions.toml\"", "\"specs/decisions/*.toml\"")
-        .replace(
-            "\"specs/open_questions.toml\"",
-            "\"specs/open_questions/*.toml\"",
+    if version.starts_with('2') {
+        assert!(
+            ["requirements", "decisions", "open_questions"].iter().any(|d| text.contains(&format!("\"specs/{d}/*.toml\""))),
+            "not a 2.0 reduction"
         );
-    for old in [
-        "requirements.toml\"",
-        "decisions.toml\"",
-        "open_questions.toml\"",
-    ] {
-        assert!(!text.contains(old), "{old} is still named in the reduction");
+        return;
+    }
+    let text = text
+        .replace("\"specs/sources/*.toml\"", "\"specs/requirements.toml\"")
+        .replace("\"specs/requirements/*.toml\"", "\"specs/requirements.toml\"")
+        .replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"")
+        .replace("\"specs/open_questions/*.toml\"", "\"specs/open_questions.toml\"");
+    for dir in ["sources", "requirements", "decisions", "open_questions"] {
+        assert!(!text.contains(&format!("\"specs/{dir}/*.toml\"")), "{dir} glob still named");
     }
     std::fs::write(&path, text).unwrap();
+}
+
+/// A `1.x` tree from a bootstrap: the version and the combined reduction.
+fn to_1x(project: &Path) {
+    set_spec_version(project, "1.0");
+    set_reduction_layout(project, "1.0");
 }
 
 /// A `2.0` library-api project: `parser` (guided by DEC-001) and `writer`
@@ -152,8 +146,7 @@ fn build_per_entry_project(tag: &str) -> PathBuf {
         &specs.join("modules/writer.toml"),
         "name = \"writer\"\nvisibility = \"crate\"\ndescription = \"Writes.\"\nsatisfies = [\"LAY-002\"]\n",
     );
-    rewrite_reduction_globs(&project);
-    set_spec_version(&project, "2.0");
+    set_reduction_layout(&project, "2.0");
     project
 }
 
@@ -326,6 +319,7 @@ fn a_schema_error_in_one_entry_file_names_that_file() {
 fn the_combined_layout_checks_decisions_and_open_questions_against_their_schemas() {
     let project = tmp_workspace("combined-schema").join("proj");
     bootstrap_at(&project, "library-api", "combined_fixture");
+    to_1x(&project);
     write(
         &project.join("specs/decisions.toml"),
         "[[decision]]\nid = \"DEC-001\"\ntitle = \"t\"\nstatus = \"bogus_status\"\ntext = \"x\"\n",
@@ -396,9 +390,10 @@ fn build_workspace(tag: &str, version: &str) -> (PathBuf, PathBuf) {
     let member = root.join("crates/m");
     bootstrap_at(&member, "library-api", "m");
     set_spec_version(&member, version);
+    set_reduction_layout(&member, version);
+    set_reduction_layout(&root, version);
     let reqs = "[[source]]\nid = \"m-doc\"\nkind = \"derived\"\ntitle = \"Member source\"\n\n[[requirement]]\nid = \"M-001\"\ntext = \"The member shall work.\"\nnature = \"module\"\nsource = [\"m-doc\"]\n";
     if version.starts_with('2') {
-        rewrite_reduction_globs(&member);
         write(
             &member.join("specs/sources/m-doc.toml"),
             "[[source]]\nid = \"m-doc\"\nkind = \"derived\"\ntitle = \"Member source\"\n",
@@ -460,7 +455,7 @@ fn a_roots_open_questions_load_without_any_root_decision() {
     );
     // The workspace bootstrap writes a comments-only decisions file; the
     // case under test is a root with none.
-    std::fs::remove_file(root.join("specs/decisions.toml")).unwrap();
+    let _ = std::fs::remove_file(root.join("specs/decisions.toml"));
     let layout = LayoutContext::discover(&member, None).unwrap();
     let ctx = prompt::decision_context(&layout, &member_module(&member)).unwrap();
     assert!(

@@ -318,6 +318,209 @@ impl EntryStore {
     }
 }
 
+/// The first analyzer release that reads the per-entry layout; a
+/// tombstone tells an older one to upgrade to it.
+pub const FIRST_PER_ENTRY_ANALYZER: &str = "0.3.0";
+
+/// What moving one project's combined files to the per-entry layout
+/// writes. Paths are relative to the project's `specs/` directory.
+#[derive(Debug, Default)]
+pub struct SplitPlan {
+    /// New per-entry files, and each directory's `README.md` holding the
+    /// combined file's header comment.
+    pub writes: Vec<(PathBuf, Vec<u8>)>,
+    /// The tombstone that replaces each combined file.
+    pub tombstones: Vec<(PathBuf, Vec<u8>)>,
+    /// `(combined file, entries moved)`, for the report.
+    pub moved: Vec<(PathBuf, usize)>,
+}
+
+/// Plan the move of every combined file under `specs_dir` into one file
+/// per entry. Each entry keeps its bytes: the text from its `[[kind]]`
+/// header to the next one, with a comment block directly above the next
+/// header given to that entry. The plan is checked before it is returned —
+/// every piece must parse to exactly the entry it was cut from — so text
+/// that only looks like a header (inside a multi-line string) refuses
+/// instead of splitting wrongly. A target file that exists with other
+/// bytes refuses too: nothing is overwritten. A tombstone or an absent
+/// file moves nothing.
+pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
+    let mut plan = SplitPlan::default();
+    let mut conflicts: Vec<String> = Vec::new();
+    let mut seen: Vec<&'static str> = Vec::new();
+    for kind in EntryKind::ALL {
+        let combined = kind.combined_file();
+        if seen.contains(&combined) {
+            continue;
+        }
+        seen.push(combined);
+        let path = specs_dir.join(combined);
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        if is_tombstone(&text) {
+            continue;
+        }
+        let kinds: Vec<EntryKind> =
+            EntryKind::ALL.into_iter().filter(|k| k.combined_file() == combined).collect();
+        let parsed: toml::Table =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        if let Some(other) = parsed.keys().find(|k| !kinds.iter().any(|kind| kind.table() == k.as_str())) {
+            bail!(
+                "[MIGRATE-011] {} holds `{other}`, which is not an entry table; move it by hand first",
+                path.display()
+            );
+        }
+        let (header, pieces) = cut_entries(&text, &kinds);
+        let mut count = 0;
+        for (kind, piece) in &pieces {
+            let one: toml::Table = toml::from_str(piece).with_context(|| {
+                format!("[MIGRATE-012] {}: an entry does not parse on its own:\n{piece}", path.display())
+            })?;
+            let arr = one.get(kind.table()).and_then(toml::Value::as_array);
+            let Some([entry]) = arr.map(Vec::as_slice) else {
+                bail!("[MIGRATE-012] {}: a piece does not hold exactly one entry:\n{piece}", path.display());
+            };
+            let Some(id) = entry.get("id").and_then(toml::Value::as_str) else {
+                bail!("[MIGRATE-012] {}: an entry has no `id`:\n{piece}", path.display());
+            };
+            let rel = PathBuf::from(kind.entry_dir()).join(format!("{id}.toml"));
+            let abs = specs_dir.join(&rel);
+            if let Ok(existing) = std::fs::read(&abs) {
+                if existing != piece.as_bytes() {
+                    conflicts.push(format!("{} (from {combined})", abs.display()));
+                }
+                continue;
+            }
+            if plan.writes.iter().any(|(r, _)| r == &rel) {
+                conflicts.push(format!("{} (two entries with id `{id}` in {combined})", abs.display()));
+                continue;
+            }
+            plan.writes.push((rel, piece.clone().into_bytes()));
+            count += 1;
+        }
+        // Every entry was cut out, and nothing else.
+        let total: usize =
+            kinds.iter().map(|k| parsed.get(k.table()).and_then(toml::Value::as_array).map_or(0, Vec::len)).sum();
+        if total != pieces.len() {
+            bail!(
+                "[MIGRATE-012] {}: {total} entries parse, but {} were cut out; split it by hand",
+                path.display(),
+                pieces.len()
+            );
+        }
+        if !header.trim().is_empty() {
+            let dir = kinds[0].entry_dir();
+            let readme = PathBuf::from(dir).join("README.md");
+            if !specs_dir.join(&readme).exists() {
+                let body = format!(
+                    "# specs/{dir}/\n\nOne file per entry, `<id>.toml`. `specdev-analyzer migrate` moved the \
+                     entries of `specs/{combined}` here; the header comment of that file follows.\n\n```toml\n{}\n```\n",
+                    header.trim_end()
+                );
+                plan.writes.push((readme, body.into_bytes()));
+            }
+        }
+        let dirs: Vec<String> = kinds.iter().map(|k| format!("specs/{}/", k.entry_dir())).collect();
+        let tomb = format!(
+            "{TOMBSTONE_PREFIX}{} by specdev-analyzer migrate — upgrade specdev-analyzer to {FIRST_PER_ENTRY_ANALYZER} or later\n\
+             This file is not TOML on purpose: an analyzer that reads the old layout stops here.\n",
+            dirs.join(" and ")
+        );
+        plan.tombstones.push((PathBuf::from(combined), tomb.into_bytes()));
+        plan.moved.push((PathBuf::from(combined), count));
+    }
+    if !conflicts.is_empty() {
+        bail!(
+            "[MIGRATE-010] these entry files exist with other bytes; nothing is overwritten. \
+             Compare each with its entry in the combined file and keep one:\n  {}",
+            conflicts.join("\n  ")
+        );
+    }
+    Ok(plan)
+}
+
+/// The header (text before the first entry) and each entry's text.
+fn cut_entries(text: &str, kinds: &[EntryKind]) -> (String, Vec<(EntryKind, String)>) {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let header_kind = |l: &str| {
+        let t = l.trim();
+        kinds.iter().copied().find(|k| t == format!("[[{}]]", k.table()))
+    };
+    let starts: Vec<(usize, EntryKind)> =
+        lines.iter().enumerate().filter_map(|(i, l)| header_kind(l).map(|k| (i, k))).collect();
+    // A comment block directly above a header (no blank line between)
+    // belongs to that entry.
+    let lead = |i: usize| {
+        let mut s = i;
+        while s > 0 && lines[s - 1].trim_start().starts_with('#') {
+            s -= 1;
+        }
+        s
+    };
+    let first = starts.first().map(|(i, _)| lead(*i)).unwrap_or(lines.len());
+    let header: String = lines[..first].concat();
+    let mut pieces = Vec::new();
+    for (n, (i, kind)) in starts.iter().enumerate() {
+        let begin = lead(*i);
+        let end = starts.get(n + 1).map(|(j, _)| lead(*j)).unwrap_or(lines.len());
+        let mut piece = lines[begin..end].concat();
+        let trimmed = piece.trim_end().len();
+        piece.truncate(trimmed);
+        piece.push('\n');
+        pieces.push((*kind, piece));
+    }
+    (header, pieces)
+}
+
+/// A reduction file's text with every `from:` / `from_spec:` that names a
+/// combined file pointed at the per-entry glob. The one entry block whose
+/// `for_each` reads `source[]` goes to the sources directory.
+pub fn rewrite_reduction_paths(text: &str) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in lines.iter().enumerate() {
+        let mut l = line.to_string();
+        for kind in EntryKind::ALL {
+            let old = format!("\"specs/{}\"", kind.combined_file());
+            if !l.contains(&old) || kind == EntryKind::Source {
+                continue;
+            }
+            let reads_sources = kind == EntryKind::Requirement && block_reads(&lines, i, EntryKind::Source);
+            let target = if reads_sources { EntryKind::Source } else { kind };
+            l = l.replace(&old, &format!("\"specs/{}/*.toml\"", target.entry_dir()));
+        }
+        out.push_str(&l);
+    }
+    out
+}
+
+/// Whether the YAML list item holding line `i` has `for_each: "<kind>[]"`.
+fn block_reads(lines: &[&str], i: usize, kind: EntryKind) -> bool {
+    let is_item = |l: &str| l.trim_start().starts_with("- ");
+    let mut s = i;
+    while s > 0 && !is_item(lines[s]) {
+        s -= 1;
+    }
+    let mut e = i + 1;
+    while e < lines.len() && !is_item(lines[e]) {
+        e += 1;
+    }
+    let want = format!("for_each: \"{}[]\"", kind.table());
+    lines[s..e].iter().any(|l| l.trim() == want)
+}
+
+/// The project-relative paths of the combined files, for the profile-file
+/// record a move drops.
+pub fn combined_files_rel(specs_rel: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for kind in EntryKind::ALL {
+        let p = specs_rel.join(kind.combined_file());
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
 fn push_entries(out: &mut Vec<Entry>, file: &Path, parsed: &toml::Value, kind: EntryKind) {
     if let Some(arr) = parsed.get(kind.table()).and_then(toml::Value::as_array) {
         out.extend(arr.iter().map(|value| Entry {

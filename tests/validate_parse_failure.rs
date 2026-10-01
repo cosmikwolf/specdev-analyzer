@@ -94,11 +94,12 @@ fn unparsable_module_is_counted_and_the_rest_of_the_report_survives() {
 fn unparsable_decisions_file_is_counted_too() {
     // Not only modules: every file the reduction reads stops it the same way.
     let target = project("decisions");
-    std::fs::write(target.join("specs/decisions.toml"), "[[decision]\n").unwrap();
+    std::fs::create_dir_all(target.join("specs/decisions")).unwrap();
+    std::fs::write(target.join("specs/decisions/DEC-001.toml"), "[[decision]\n").unwrap();
 
     let (code, text) = validate(&target);
     assert_eq!(code, 1, "{text}");
     assert!(text.contains("[REDUCE-001]"), "{text}");
-    assert!(text.contains("decisions.toml"), "{text}");
+    assert!(text.contains("DEC-001.toml"), "{text}");
     count_line(&text);
 }

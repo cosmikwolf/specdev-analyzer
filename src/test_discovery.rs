@@ -255,6 +255,50 @@ fn discover(
     Ok(disc)
 }
 
+/// Whether the project-relative source file `rel` holds only tests: at
+/// least one test, and every top-level node either inert (a comment, an
+/// attribute, an import — [`LanguageAdapter::is_inert_top_level`]) or inside
+/// a test or test group. `false` when the language ships no `tests.scm`.
+pub fn holds_only_tests(adapter: &dyn LanguageAdapter, project_root: &Path, rel: &Path) -> Result<bool> {
+    let Some(query_src) = adapter.tests_query() else {
+        return Ok(false);
+    };
+    let path = project_root.join(rel);
+    let source = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let lang = adapter.tree_sitter_language_for(ext);
+    let mut parser = Parser::new();
+    parser.set_language(&lang).context("setting the tree-sitter language")?;
+    let Some(tree) = parser.parse(&source, None) else { return Ok(false) };
+    let query = Query::new(&lang, query_src)
+        .with_context(|| format!("compiling the {} tests.scm query", adapter.name()))?;
+    let (c_test, c_group) = (query.capture_index_for_name("test"), query.capture_index_for_name("group"));
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut tests = 0;
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    while let Some(m) = matches.next() {
+        for c in m.captures {
+            if Some(c.index) == c_test {
+                tests += 1;
+            }
+            if Some(c.index) == c_test || Some(c.index) == c_group {
+                spans.push((c.node.start_byte(), c.node.end_byte()));
+            }
+        }
+    }
+    if tests == 0 {
+        return Ok(false);
+    }
+    let root = tree.root_node();
+    let mut walker = root.walk();
+    let only = root.named_children(&mut walker).all(|n| {
+        adapter.is_inert_top_level(n.kind())
+            || spans.iter().any(|(s, e)| *s <= n.start_byte() && n.end_byte() <= *e)
+    });
+    Ok(only)
+}
+
 fn strip_quotes(s: &str) -> &str {
     let t = s.trim();
     for q in ['\'', '"', '`'] {

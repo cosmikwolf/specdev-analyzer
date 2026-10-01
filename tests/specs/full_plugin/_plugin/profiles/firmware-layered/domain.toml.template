@@ -21,13 +21,13 @@ connection_endpoints_resolve                 = "error"
 feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 decision_ids_unique                          = "error"
-requirements_have_satisfiers                 = "warning"
+requirements_have_satisfiers                 = "error"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
 open_question_closed_by_resolves             = "error"
 open_question_status_consistency             = "error"
-codegen_unblocked                            = "warning"
+implementation_unblocked                     = "error"
 
 # Convention: typed-relation ref resolution (decided_by, guided_by,
 # project_decisions, supersedes, closes_questions, defaults_for,
@@ -38,7 +38,7 @@ codegen_unblocked                            = "warning"
 # target. graph_check is reserved for non-ref-resolution invariants:
 # uniqueness, acyclicity, attr-shaped reference resolution (e.g.
 # closed_by, connection.from/to), status-cross-reference consistency,
-# codegen gating.
+# open-question gating.
 
 # Module names must be unique across the project.
 [[project.graph_checks]]
@@ -124,7 +124,7 @@ scope = "Decision"
 field = "entities[].name"
 
 # Every Requirement with `nature = "module"` (the default) must be
-# satisfied by at least one module — orphan requirements warn (F-006).
+# satisfied by at least one module — an orphan requirement is an error (F-006).
 # Set `nature = "architecture" | "build" | "test"` on a requirement to
 # exempt it from this check.
 [[project.graph_checks]]
@@ -140,9 +140,8 @@ relation_scope = "module_satisfies"
 # by REDUCE_UNRESOLVED at reduce time. The graph_checks below cover
 # what reduction can't: supersession-chain shape (acyclic + orphan-free
 # + unique-successor), attr-shaped closed_by resolution, OQ status
-# invariants against target Decision status, and the codegen gating
-# warning (the gen-side gate is a hard refusal in `specdev-analyzer
-# gen`).
+# invariants against target Decision status, and the open-question
+# gate (`implementation_unblocked`, run by `check`).
 # ---------------------------------------------------------------------------
 
 # Supersession chain must be acyclic.
@@ -200,9 +199,9 @@ target_entity_kind = "Decision"
 target_attr = "status"
 target_attr_value = "accepted"
 
-# Codegen-gate informational warning: any Module reachable through an
-# `open` OpenQuestion (via Module.satisfies → Requirement →
-# OpenQuestion.affects^-1) is gated. validate informs; `gen` hard-refuses.
+# Open-question gate: any Module reachable through an `open`
+# OpenQuestion (via Module.satisfies → Requirement →
+# OpenQuestion.affects^-1) is blocked. `check` reports it.
 [[project.graph_checks]]
 kind = "module_reachable_through_open_question"
-rule = "codegen_unblocked"
+rule = "implementation_unblocked"

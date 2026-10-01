@@ -11,6 +11,10 @@ const TESTS_QUERY: &str = include_str!("../embedded/languages/cpp/tests.scm");
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/cpp/imports.scm");
 
 impl LanguageAdapter for CppAdapter {
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment") || ["preproc_include", "using_declaration"].contains(&kind)
+    }
+
     fn tests_query(&self) -> Option<&'static str> {
         Some(TESTS_QUERY)
     }

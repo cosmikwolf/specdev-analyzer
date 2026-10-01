@@ -47,7 +47,7 @@ entities:
   # `decided_by` / `guided_by`.
   - kind: Decision
     extends: structural
-    from: "specs/decisions.toml"
+    from: "specs/decisions/*.toml"
     for_each: "decision[]"
     name: "${.id}"
     attrs:
@@ -62,7 +62,7 @@ entities:
   # if a real cross-cutting unknown emerges.
   - kind: OpenQuestion
     extends: structural
-    from: "specs/open_questions.toml"
+    from: "specs/open_questions/*.toml"
     for_each: "open_question[]"
     name: "${.id}"
     attrs:
@@ -106,7 +106,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: Decision
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].supersedes[]"
     endpoints:
       from: "${parent.id}"
@@ -118,7 +118,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].closes_questions[]"
     endpoints:
       from: "${parent.id}"
@@ -130,7 +130,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].defaults_for[]"
     endpoints:
       from: "${parent.id}"
@@ -144,7 +144,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].default_via"
     endpoints:
       from: "${parent.id}"

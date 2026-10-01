@@ -13,6 +13,10 @@ const IMPORTS_QUERY: &str = include_str!("../embedded/languages/dart/imports.scm
 const TESTS_QUERY: &str = include_str!("../embedded/languages/dart/tests.scm");
 
 impl LanguageAdapter for DartAdapter {
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment") || ["import_or_export", "library_name", "part_directive", "part_of_directive"].contains(&kind)
+    }
+
     fn tests_query(&self) -> Option<&'static str> {
         Some(TESTS_QUERY)
     }

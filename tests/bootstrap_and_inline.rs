@@ -303,7 +303,8 @@ fn snapshot_lineage_after_bootstrap_and_inline() {
     if let Some(m) = &lineage.meta {
         lines.push(format!(
             "meta: profile={}, version={}",
-            m.profile, m.plugin_version
+            m.profile,
+            m.bootstrapped_with()
         ));
     } else {
         lines.push("meta: missing".into());

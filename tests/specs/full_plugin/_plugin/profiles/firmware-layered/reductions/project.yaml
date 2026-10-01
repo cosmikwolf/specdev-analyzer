@@ -49,10 +49,10 @@ entities:
     attrs:
       default: ".default"
 
-  # Source documents from `specs/requirements.toml`.
+  # Source documents, one file each in `specs/sources/`.
   - kind: Source
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/sources/*.toml"
     for_each: "source[]"
     name: "${.id}"
     attrs:
@@ -62,7 +62,7 @@ entities:
   # Individual requirements.
   - kind: Requirement
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/requirements/*.toml"
     for_each: "requirement[]"
     name: "${.id}"
     attrs:
@@ -82,7 +82,7 @@ entities:
   # `accepted` entries; `superseded` entries persist as reasoning trail.
   - kind: Decision
     extends: structural
-    from: "specs/decisions.toml"
+    from: "specs/decisions/*.toml"
     for_each: "decision[]"
     name: "${.id}"
     attrs:
@@ -94,7 +94,7 @@ entities:
   # (open / default_committed / closed) shape the codegen-gate behavior.
   - kind: OpenQuestion
     extends: structural
-    from: "specs/open_questions.toml"
+    from: "specs/open_questions/*.toml"
     for_each: "open_question[]"
     name: "${.id}"
     attrs:
@@ -134,7 +134,7 @@ relations:
     extends: depends_on
     from_kind: Requirement
     to_kind: Requirement
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].satisfies[]"
     endpoints:
       from: "${parent.id}"
@@ -159,7 +159,7 @@ relations:
     extends: depends_on
     from_kind: Requirement
     to_kind: Decision
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].decided_by[]"
     endpoints:
       from: "${parent.id}"
@@ -195,7 +195,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: Decision
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].supersedes[]"
     endpoints:
       from: "${parent.id}"
@@ -207,7 +207,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].closes_questions[]"
     endpoints:
       from: "${parent.id}"
@@ -219,7 +219,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].defaults_for[]"
     endpoints:
       from: "${parent.id}"
@@ -231,7 +231,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Requirement
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].affects[]"
     endpoints:
       from: "${parent.id}"
@@ -245,7 +245,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].default_via"
     endpoints:
       from: "${parent.id}"

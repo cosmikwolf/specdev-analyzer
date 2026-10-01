@@ -586,14 +586,15 @@ pub fn run_bootstrap_with(
     // `[profile_files]` records the substrate that stamp used to leave
     // unaccounted for (#109).
     //
-    // `[meta].plugin_version` is an AUDIT STAMP WITH NO READER. It is not
+    // `[meta].bootstrapped_with` is an AUDIT STAMP WITH NO READER. It is not
     // a handshake and must not be mistaken for one: nothing compares it,
     // and it does not move when the manifest contract does. The contract
     // handshake is `profile.yaml`'s `contract_version` against
     // `manifest::profile::PROFILE_CONTRACT_VERSION` (#117).
     let lineage = Lineage {
         meta: Some(MetaSection {
-            plugin_version: plugin_version(plugin_root)?,
+            bootstrapped_with: Some(plugin_version(plugin_root)?),
+            plugin_version: None,
             bootstrapped_at: now_iso8601(),
             profile: inputs.profile.clone(),
         }),
