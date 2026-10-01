@@ -30,13 +30,9 @@ pub mod profile;
 
 pub use bridge_contract::{BindingLocality, BridgeContract};
 pub use profile::{
-    BinGate, BinSection, BootstrapSection, BootstrapStep, CargoTomlSection, ContextExtra,
-    ContextSection, DerivedRule, FeaturesSection, Gate, GateScope, ItemsSection, NpmEngines,
-    NpmModuleType, PackageJsonSection, PackageJsonShapeKind, PairedFile, PairedStub, Profile,
-    PubEnvironment, PubShapeKind, PubspecYamlSection, ReverseSection, ReverseVocabulary, ShapeKind,
-    SurfaceSection,
+    BootstrapSection, BootstrapStep, ContextExtra, ContextSection, Gate, ItemsSection, PairedFile,
+    Profile, ReverseSection, ReverseVocabulary, SurfaceSection,
 };
-pub use profile::{CrateType as ProfileCrateType, LibSection};
 
 use anyhow::{anyhow, Context, Result};
 use jsonschema::Validator;

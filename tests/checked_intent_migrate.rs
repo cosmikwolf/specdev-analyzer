@@ -399,3 +399,26 @@ fn migrate_refuses_a_conflicting_entry_file() {
     assert!(out.contains("MIGRATE-010") && out.contains("REQ-M-001.toml"), "{out}");
     assert_eq!(before, snapshot(&t), "a refused migrate wrote to disk");
 }
+
+/// An inlined `profile.yaml` the project edited is not replaced: `migrate`
+/// removes the emitter sections and the gates' `scope`, sets
+/// `contract_version: 2`, and keeps the edit.
+#[test]
+fn migrate_edits_an_edited_profile_manifest_in_place() {
+    let t = v1_project("mig-profile-yaml");
+    let rel = "specs/specdev/profile.yaml";
+    let edited = format!("{}\n# local note: keep me\n", t.read(rel));
+    assert!(edited.contains("cargo_toml:") && edited.contains("scope:"), "fixture: {edited}");
+    t.write(rel, &edited);
+    migrate(&t, &[]);
+    let after = t.read(rel);
+    assert!(after.contains("# local note: keep me"), "{after}");
+    let v: serde_yaml::Value = serde_yaml::from_str(&after).unwrap();
+    assert_eq!(v.get("contract_version").and_then(|c| c.as_u64()), Some(2), "{after}");
+    for k in ["cargo_toml", "pubspec_yaml", "package_json", "derived_files"] {
+        assert!(v.get(k).is_none(), "`{k}` left:\n{after}");
+    }
+    assert!(!after.contains("scope:"), "{after}");
+    let val = t.analyzer(&["validate", "-q"]);
+    assert!(text(&val).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&val));
+}

@@ -379,13 +379,15 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
     let mut refused: Vec<String> = Vec::new();
     let spec_rel = PathBuf::from("spec.toml");
     let domain_rel = specdev_rel.join("domain.toml");
+    let profile_rel = specdev_rel.join("profile.yaml");
     let reductions_rel = specdev_rel.join("reductions");
     let schemas_rel = specdev_rel.join("schemas");
     let mut handled: BTreeSet<PathBuf> = BTreeSet::new();
     for (key, theirs) in &expected {
         let rel = PathBuf::from(key);
         handled.insert(rel.clone());
-        let mechanical = rel == spec_rel || rel == domain_rel || rel.starts_with(&reductions_rel);
+        let mechanical =
+            rel == spec_rel || rel == domain_rel || rel == profile_rel || rel.starts_with(&reductions_rel);
         let Some(ours) = ov.read(&rel) else {
             ov.write(&rel, theirs.clone());
             records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
@@ -421,11 +423,17 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
                     report.lines.push(format!("{verb}{c} in {key}"));
                 }
                 new
+            } else if rel == profile_rel {
+                profile_contract_2(&text)
             } else {
                 entries::rewrite_reduction_paths(&text)
             };
             if new.as_bytes() != ours.as_slice() {
-                if rel != spec_rel && rel != domain_rel {
+                if rel == profile_rel {
+                    report.lines.push(format!(
+                        "{verb}remove the manifest-emitter sections and gate `scope` from {key}; contract_version 2"
+                    ));
+                } else if rel != spec_rel && rel != domain_rel {
                     report.lines.push(format!("{verb}point {key} at the per-entry files"));
                 }
                 if bootstrap::profile_file_hash(key, new.as_bytes())? == theirs_hash {
@@ -591,6 +599,60 @@ fn take_test_items(doc: &mut DocumentMut) -> Vec<(String, Vec<String>)> {
     }
     if now_empty {
         doc.remove("items");
+    }
+    out
+}
+
+/// An inlined `profile.yaml` at contract 2, edited line by line so every
+/// comment and every other byte stays: the retired top-level sections go
+/// (a section ends at the next line in column 0), and so do each gate's
+/// `scope` line and the prompt-only `context.module_fields_for_prompt`.
+fn profile_contract_2(text: &str) -> String {
+    let retired = crate::manifest::profile::RETIRED_SECTIONS;
+    let top_key = |l: &str| -> Option<String> {
+        if l.starts_with(' ') || l.starts_with('#') || l.trim().is_empty() {
+            return None;
+        }
+        l.split(':').next().map(|k| k.trim().to_string())
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut section = String::new();
+    let mut skipping = false;
+    let mut skip_indent: Option<usize> = None;
+    let mut has_version = false;
+    for line in text.split_inclusive('\n') {
+        if let Some(k) = top_key(line) {
+            section = k.clone();
+            skipping = retired.contains(&k.as_str());
+            skip_indent = None;
+            if k == "contract_version" {
+                has_version = true;
+                out.push_str("contract_version: 2\n");
+                continue;
+            }
+        }
+        if skipping {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if let Some(n) = skip_indent {
+            if indent > n && !line.trim().is_empty() {
+                continue;
+            }
+            skip_indent = None;
+        }
+        let trimmed = line.trim();
+        if section == "gates" && (trimmed == "scope: module" || trimmed == "scope: batch") {
+            continue;
+        }
+        if section == "context" && trimmed.starts_with("module_fields_for_prompt:") {
+            skip_indent = Some(indent);
+            continue;
+        }
+        out.push_str(line);
+    }
+    if !has_version {
+        out = format!("contract_version: 2\n{out}");
     }
     out
 }

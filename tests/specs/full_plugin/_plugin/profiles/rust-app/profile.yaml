@@ -4,26 +4,10 @@
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
-contract_version: 1
+contract_version: 2
 
 name: rust-app
 language: rust
-
-cargo_toml:
-  shape: library
-  default_edition: "2021"
-  lib: {}                         # default `[lib]` (rlib) — the testable core
-  bin:                            # …plus the executable entry point
-    name_template: "{project_name}"
-    path_template: "src/main.rs"
-    paired_stub:
-      template_file: templates/main-stub.rs.template
-  features:
-    synthesize_default: true
-    drain_from: ["features"]      # architecture.toml's [[features]]
-  architecture_deps:
-    typed_slots: []
-    open_arrays: ["external_deps"]
 
 reverse:
   # #102: a pure-Rust crate inlines no block; its reverse vocabulary is
@@ -31,12 +15,11 @@ reverse:
   # pre-flight reads this and reports REVERSE-002 as info, not an error.
   vocabulary: profile
 
-# Compile gate, as data: the codegen skill runs each `steps` argv in order
-# in the project root and records one row per module under `label`.
+# Compile gate, as data: the gate script (and CI) runs each `steps` argv
+# in order in the project root; the first non-zero exit fails the gate.
 # Warnings do not fail the gate; `cargo check` errors do.
 gates:
   - label: cargo-check
-    scope: module
     steps:
       - [cargo, check, --quiet]
 
@@ -44,8 +27,6 @@ bootstrap:
   steps: []                       # standalone crate; no workspace machinery
 
 context:
-  module_fields_for_prompt:
-    [items, satisfies, depends_on, context_files, external_deps]
   context_subcommand_extras:
     - field: layer
       from_attr: layer

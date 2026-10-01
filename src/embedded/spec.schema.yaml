@@ -86,39 +86,6 @@ properties:
           value via `[workspace_package].repository` and members emit
           `repository.workspace = true`.
         minLength: 1
-      crate_shape:
-        type: string
-        enum: [binary, library]
-        description: |
-          Per-package Cargo crate-target override (F12-22). Optional;
-          absent = the profile's own `cargo_toml.shape`. A `binary`-shaped
-          profile (firmware-layered) renders `[[bin]]`/`src/main.rs` by
-          default; set `crate_shape = "library"` on a workspace member that
-          is a driver/HAL-shim *library* so its Cargo.toml renders
-          `[lib]`/`src/lib.rs` instead — keeping the same block, bridge, and
-          architecture dependencies. Generic Cargo concept, not a profile or
-          block name.
-      crate_type:
-        type: array
-        items:
-          type: string
-          enum: [lib, rlib, cdylib, staticlib, dylib, proc-macro]
-        minItems: 1
-        uniqueItems: true
-        description: |
-          Per-package `[lib] crate-type` override. Optional; absent = the
-          profile's own `cargo_toml.lib.crate_type` (itself usually absent,
-          which renders a default rlib).
-
-          The linkage a crate needs is a property of *that crate*, not of the
-          shape it shares with its siblings: a library consumed only by Rust
-          wants the default, while one linked by a foreign toolchain — an FFI
-          companion crate, a shared object loaded by a host — needs
-          `["cdylib", "staticlib"]`. Setting it on the profile would impose
-          the exception on every project using that profile.
-
-          Order is preserved verbatim into Cargo.toml; cargo treats the list
-          as ordered. Generic Cargo concept, not a profile or block name.
   paths:
     type: object
     additionalProperties: false
