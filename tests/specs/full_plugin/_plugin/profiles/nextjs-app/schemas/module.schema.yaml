@@ -132,6 +132,13 @@ properties:
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  planned:
+    description: >
+      Not built yet. Suppresses only findings about something missing (no
+      resolvable source, a unit entry not in the code); code that exists is
+      always checked. `/spec-design` writes it on a new module; remove it
+      when the code lands.
+    type: boolean
   source_file:
     description: >
       Explicit source-file override for items[] extraction and sync

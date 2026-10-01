@@ -1072,9 +1072,11 @@ fn execute_graph_checks(
             // and fires when any reachable OQ has status = open. The
             // gen-side hard refusal lives in `gen.rs`; this primitive
             // mirrors the reachability informational at validate time.
-            "module_reachable_through_open_question" => {
-                graph_checks::module_reachable_through_open_question(&graph_json, rule, severity)
-            }
+            // The open-question gate keys on a module's source existing and
+            // reads workspace-tier questions, so `check` runs it, not the
+            // spec-only pass.
+            "module_reachable_through_open_question" => Vec::new(),
+            "ids_in_document" => ids_in_document(&graph_json, check, kindset, layout, rule, severity),
             other => vec![Finding::new(
                 "DOMAIN-003",
                 Severity::Warning,
@@ -1085,13 +1087,85 @@ fn execute_graph_checks(
                      layer_dependency, requirements_have_satisfiers, \
                      entity_has_inbound_relation, verified_by_resolves, \
                      entity_attr_inbound_count, entity_attr_target_attr_equals, \
-                     module_reachable_through_open_question"
+                     module_reachable_through_open_question, ids_in_document"
                 ),
             )],
         };
 
         report.extend(findings);
     }
+}
+
+/// IDS_IN_DOCUMENT: every entity in `entity_scope` (optionally only those
+/// whose `entity_attr` equals `entity_attr_value`) has its id appear in
+/// `document`, a file relative to the project root, as a whole token.
+fn ids_in_document(
+    graph_json: &JsonValue,
+    check: &GraphCheck,
+    kindset: &EffectiveKindSet,
+    layout: &LayoutContext,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let (Some(scope), Some(document)) = (check.entity_scope.as_deref(), check.document.as_deref()) else {
+        return vec![Finding::new(
+            "DOMAIN-003",
+            Severity::Warning,
+            format!("graph_check `{rule}` (ids_in_document) needs `entity_scope` and `document`"),
+        )];
+    };
+    let Ok(parsed) = kinds::parse(scope) else {
+        return Vec::new();
+    };
+    let key = parsed.to_string();
+    let path = layout.project_root.join(document);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return vec![Finding::new(
+            rule,
+            severity,
+            format!("`{rule}`: the document {} cannot be read", path.display()),
+        )];
+    };
+    let mut out = Vec::new();
+    for ent in graph_json.get("entities").and_then(|v| v.as_array()).into_iter().flatten() {
+        let (Some(kind), Some(name)) = (
+            ent.get("kind").and_then(|v| v.as_str()),
+            ent.get("name").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        if !entity_extends_to(kindset, kind, &key) {
+            continue;
+        }
+        if let (Some(attr), Some(want)) = (check.entity_attr.as_deref(), check.entity_attr_value.as_deref()) {
+            let have = ent.get("attrs").and_then(|a| a.get(attr)).and_then(|v| v.as_str());
+            if have != Some(want) {
+                continue;
+            }
+        }
+        if !contains_token(&text, name) {
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!("`{name}` does not appear in {document}"),
+                )
+                .with_entity(name),
+            );
+        }
+    }
+    out
+}
+
+/// `needle` occurs in `hay` with no identifier character (`[A-Za-z0-9_-]`)
+/// directly before or after it, so `DEC-1` does not match inside `DEC-10`.
+fn contains_token(hay: &str, needle: &str) -> bool {
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    hay.match_indices(needle).any(|(i, _)| {
+        let before = hay[..i].chars().next_back();
+        let after = hay[i + needle.len()..].chars().next();
+        !before.is_some_and(is_id) && !after.is_some_and(is_id)
+    })
 }
 
 /// Returns whichever JSON value the layer_dependency dispatch should

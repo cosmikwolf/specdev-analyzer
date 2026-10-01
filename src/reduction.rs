@@ -221,6 +221,13 @@ fn materialize_entity(
                 }
             }
 
+            // `planned` passes down: an entry is planned when it, an
+            // enclosing table, or its file root (the module) says so. Added
+            // only when true, so an unplanned graph is unchanged.
+            if planned_along(&root_value, &iter.pointer) {
+                attrs.insert("planned".to_string(), Value::Bool(true));
+            }
+
             graph.entities.push(Entity {
                 kind: qualified_path.to_string(),
                 extends: canonical_root.clone(),
@@ -771,6 +778,30 @@ fn parent_value<'a>(root: &'a Value, pointer: &str) -> Option<&'a Value> {
         }
     }
     last_object
+}
+
+/// Whether `planned = true` is set on the object at `pointer` or on any
+/// object that encloses it, the file root included.
+fn planned_along(root: &Value, pointer: &str) -> bool {
+    let is_planned = |v: &Value| v.get("planned").and_then(Value::as_bool) == Some(true);
+    if is_planned(root) {
+        return true;
+    }
+    let mut cur = root;
+    for raw in pointer.split('/').skip(1) {
+        let seg = raw.replace("~1", "/").replace("~0", "~");
+        let next = match cur {
+            Value::Object(map) => map.get(&seg),
+            Value::Array(arr) => seg.parse::<usize>().ok().and_then(|i| arr.get(i)),
+            _ => None,
+        };
+        let Some(next) = next else { return false };
+        if is_planned(next) {
+            return true;
+        }
+        cur = next;
+    }
+    false
 }
 
 /// Walk a JSON Pointer (per RFC 6901) against `root` and return the matching

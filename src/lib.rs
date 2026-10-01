@@ -89,6 +89,7 @@ pub mod aggregator;
 pub mod analyzer_version;
 pub mod bootstrap;
 pub mod canonical;
+pub mod check;
 pub mod cli;
 pub mod config;
 pub mod context;

@@ -428,6 +428,31 @@ impl Retrieve for MapRetriever {
 /// Build the MapRetriever's document table. Public for integration tests
 /// that want to verify language/block/bridge $ref keys without spinning up
 /// the full validator.
+/// Let every object a unit fragment describes carry `planned = true` —
+/// the unit table, each entry in its arrays, and anything nested — without
+/// editing the unit's own schema files (they are closed objects). The flag
+/// is the same everywhere: "not built yet"; the reducer passes it down.
+pub fn admit_planned(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            if let Some(Value::Object(props)) = map.get_mut("properties") {
+                props
+                    .entry("planned".to_string())
+                    .or_insert_with(|| serde_json::json!({ "type": "boolean" }));
+            }
+            for v in map.values_mut() {
+                admit_planned(v);
+            }
+        }
+        Value::Array(items) => {
+            for v in items {
+                admit_planned(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Value>> {
     let mut docs: HashMap<String, Value> = HashMap::new();
 
@@ -504,8 +529,9 @@ pub fn build_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Va
                 .to_string();
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            let value: Value = serde_yaml::from_str(&text)
+            let mut value: Value = serde_yaml::from_str(&text)
                 .map_err(|e| anyhow::Error::new(LocatedError::from_yaml_error(&path, &e)))?;
+            admit_planned(&mut value);
             // Register under: $id, plain filename, and the relative path the
             // aggregator's $refs typically use.
             if let Some(id) = value.get("$id").and_then(Value::as_str) {

@@ -160,6 +160,10 @@ pub struct GraphCheck {
     pub target_attr: Option<String>,
     #[serde(default)]
     pub target_attr_value: Option<String>,
+    /// `ids_in_document`: the file (relative to the project root) every
+    /// in-scope entity's id must appear in.
+    #[serde(default)]
+    pub document: Option<String>,
 }
 
 impl DomainConfig {

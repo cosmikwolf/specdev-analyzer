@@ -890,7 +890,7 @@ fn gate_module_blocked_refusal_message() {
     assert_eq!(refusal.oq_id, "OQ-002");
     let m = &refusal.message;
     assert!(
-        m.contains("Refusing to generate code for module `module_blocked`"),
+        m.contains("Module `module_blocked` is blocked"),
         "missing refusal header:\n{m}"
     );
     assert!(
@@ -987,23 +987,31 @@ affects = ["ZFM-003"]
 }
 
 #[test]
-fn triad_red_codegen_unblocked_warning() {
+fn triad_red_open_question_gate_runs_in_check() {
     // The green smoke fixture already has OQ-002 status=open affecting
-    // ZFM-002 satisfied by module_blocked — the warning fires by default.
+    // ZFM-002 satisfied by module_blocked. The gate keys on code existing,
+    // so it runs in `check` once the module has source.
     let (target, _) = build_triad_smoke("red-codegen-unblocked");
-    let report = validate::run_project(&target, None).expect("validate");
+    for m in ["module_blocked", "module_ok"] {
+        std::fs::create_dir_all(target.join("src")).unwrap();
+        std::fs::write(target.join(format!("src/{m}.rs")), "pub fn f() {}\n").unwrap();
+    }
+    let layout = specdev_analyzer::layout::LayoutContext::discover(&target, None).unwrap();
+    let report = specdev_analyzer::check::run(&layout, &Default::default()).expect("check");
     assert_rule_fires(&report, "codegen_unblocked", "module_blocked");
-    // Ensure module_ok is NOT flagged (its only OQ in scope is OQ-001
-    // which is `default_committed`, and OQ-003 which is `closed`).
-    let any_ok_flagged = report
-        .findings()
-        .iter()
-        .any(|f| f.rule == "codegen_unblocked" && f.message.contains("module_ok"));
+    // module_ok's only OQs in scope are OQ-001 (`default_committed`) and
+    // OQ-003 (`closed`).
     assert!(
-        !any_ok_flagged,
+        !report
+            .findings()
+            .iter()
+            .any(|f| f.rule == "codegen_unblocked" && f.entity.as_deref() == Some("module_ok")),
         "codegen_unblocked should not flag module_ok; got:\n{}",
         report.render_plain()
     );
+    // `validate` alone no longer runs the gate.
+    let spec_only = validate::run_project(&target, None).expect("validate");
+    assert!(!spec_only.findings().iter().any(|f| f.rule == "codegen_unblocked"));
 }
 
 // Regression for the joint-filter — when a project authors dual
