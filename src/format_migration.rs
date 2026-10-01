@@ -663,6 +663,9 @@ fn spec_2_0(text: &str) -> Result<String> {
     let mut doc: DocumentMut = text.parse().context("parsing spec.toml")?;
     doc["spec_version"] = value(TARGET_VERSION);
     if let Some(project) = doc.get_mut("project").and_then(Item::as_table_mut) {
+        for k in crate::config::RETIRED_PROJECT_KEYS {
+            project.remove(k);
+        }
         if !project.contains_key("max_parallel_agents") {
             project.insert("max_parallel_agents", value(1));
         }

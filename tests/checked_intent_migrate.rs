@@ -422,3 +422,24 @@ fn migrate_edits_an_edited_profile_manifest_in_place() {
     let val = t.analyzer(&["validate", "-q"]);
     assert!(text(&val).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&val));
 }
+
+/// `[project].crate_shape` / `crate_type` fed only the manifest emitter. A
+/// `1.x` tree that carries them still loads (read-both), and `migrate`
+/// removes them.
+#[test]
+fn a_1x_tree_with_crate_fields_loads_and_migrate_removes_them() {
+    let t = v1_project("mig-crate-fields");
+    let spec = t.read("spec.toml").replacen(
+        "language = \"rust\"\n",
+        "language = \"rust\"\ncrate_shape = \"library\"\ncrate_type = [\"rlib\"]\n",
+        1,
+    );
+    t.write("spec.toml", &spec);
+    let v = t.analyzer(&["validate", "-q"]);
+    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "1.x must still load:\n{}", text(&v));
+    migrate(&t, &[]);
+    let after = t.read("spec.toml");
+    assert!(!after.contains("crate_shape") && !after.contains("crate_type"), "{after}");
+    let v = t.analyzer(&["validate", "-q"]);
+    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&v));
+}

@@ -37,6 +37,10 @@ pub struct SpecConfig {
     pub workspace: Option<WorkspaceSection>,
 }
 
+/// `[project]` keys a `1.x` `spec.toml` may carry that `2.0` removed: their
+/// only reader was the manifest emitter.
+pub const RETIRED_PROJECT_KEYS: [&str; 2] = ["crate_shape", "crate_type"];
+
 /// The newest project-format major this analyzer writes. `validate` names
 /// `migrate` once for an older project.
 pub const NEWEST_FORMAT_MAJOR: u32 = 2;
@@ -145,13 +149,27 @@ impl SpecConfig {
         // Pass 1: TOML parse → JSON value (for schema validation) and a typed
         // value (returned to caller). Use `toml::de` directly so we can recover
         // byte spans on error.
-        let raw_json: serde_json::Value = match toml::from_str(text) {
+        let mut raw_json: serde_json::Value = match toml::from_str(text) {
             Ok(v) => v,
             Err(e) => {
                 return Err(anyhow!(LocatedError::from_toml_error(path, text, &e))
                     .context(format!("parsing {}", path.display())));
             }
         };
+
+        // A `1.x` file may still carry keys only the manifest emitters read;
+        // they are dropped, not refused (read-both). `migrate` removes them.
+        let is_1x = raw_json
+            .get("spec_version")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.starts_with("1."));
+        if is_1x {
+            if let Some(project) = raw_json.get_mut("project").and_then(|p| p.as_object_mut()) {
+                for k in RETIRED_PROJECT_KEYS {
+                    project.remove(k);
+                }
+            }
+        }
 
         // Pass 2: validate against the embedded JSON Schema.
         let validator = spec_schema_validator();
