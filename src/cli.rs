@@ -336,6 +336,24 @@ pub enum ReportAction {
         #[arg(long)]
         decision: Option<String>,
     },
+    /// The imports of each file and the project file each one resolves to
+    /// (`resolved: null` = not a project file). Defaults to the project's
+    /// language and `[paths].source`. `check` uses the same resolution for
+    /// `internal_edges_declared`. Exit 0 on success, 2 on hard error.
+    Imports {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Language whose `imports.scm` to use (default: the project's).
+        #[arg(long)]
+        language: Option<String>,
+        /// Root to walk, relative to the project. Repeatable.
+        #[arg(long)]
+        root: Vec<PathBuf>,
+        /// Output format: `yaml` (default).
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
     /// The tests the discovery pass finds: each test's identity (the name a
     /// `verified_by` entry uses), file, pending state and enclosing groups,
     /// plus the container names that hold tests. Defaults to the project's
@@ -557,6 +575,12 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 module.as_deref(),
                 decision.as_deref(),
             ),
+            ReportAction::Imports {
+                project,
+                language,
+                root,
+                format,
+            } => run_report_imports(project, spec_path.as_deref(), language, root, &format),
             ReportAction::Tests {
                 project,
                 language,
@@ -1592,6 +1616,49 @@ fn run_report_decisions(
         }
     };
     match specdev_analyzer::decision_report::render_yaml(&report) {
+        Ok(y) => {
+            print!("{y}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_imports(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    language: Option<String>,
+    roots: Vec<PathBuf>,
+    format: &str,
+) -> ExitCode {
+    if format != "yaml" {
+        eprintln!("error: --format `{format}`: expected `yaml`");
+        return ExitCode::from(2);
+    }
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let lang = language.unwrap_or_else(|| layout.spec.project.language.clone());
+    let Some(adapter) = specdev_analyzer::lang::adapter_for(&lang) else {
+        eprintln!("error: no language adapter for `{lang}`");
+        return ExitCode::from(2);
+    };
+    let ctx = specdev_analyzer::import_edges::context(&layout, adapter.as_ref());
+    let roots: Vec<PathBuf> = if roots.is_empty() {
+        vec![PathBuf::from(&layout.spec.paths.source)]
+    } else {
+        roots
+    };
+    let result = specdev_analyzer::import_edges::report_roots(adapter.as_ref(), &ctx, &roots)
+        .and_then(|files| specdev_analyzer::import_edges::to_yaml(&files));
+    match result {
         Ok(y) => {
             print!("{y}");
             ExitCode::SUCCESS

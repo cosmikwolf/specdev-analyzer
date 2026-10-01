@@ -60,11 +60,22 @@ impl LanguageAdapter for DartAdapter {
 
     /// `'package:name/x.dart'` → `name`, unless `name` is the project's
     /// own package. `dart:` URIs and relative URIs name no package.
-    fn import_package(&self, specifier: &str, self_package: &str) -> Option<String> {
-        let s = specifier.trim().trim_matches(|c| c == '\'' || c == '"');
-        let rest = s.strip_prefix("package:")?;
-        let name = rest.split('/').next().filter(|n| !n.is_empty())?;
-        (name != self_package).then(|| name.to_string())
+    /// `package:<own package>/x.dart` → `lib/x.dart`; a relative URI from the
+    /// importing file's directory; `dart:` and other packages are external.
+    fn resolve_import(&self, spec: &str, from: &Path, ctx: &super::ImportContext) -> Vec<std::path::PathBuf> {
+        let s = spec.trim().trim_matches(|c| c == '\'' || c == '"');
+        if let Some(rest) = s.strip_prefix("package:") {
+            let (pkg, path) = rest.split_once('/').unwrap_or((rest, ""));
+            if pkg == ctx.package_name && !path.is_empty() {
+                return vec![Path::new("lib").join(path)];
+            }
+            return Vec::new();
+        }
+        if s.contains(':') {
+            return Vec::new();
+        }
+        let dir = from.parent().unwrap_or(Path::new(""));
+        vec![super::normalize_rel(&dir.join(s))]
     }
 
     fn lockfile_candidates(&self) -> &'static [&'static str] {

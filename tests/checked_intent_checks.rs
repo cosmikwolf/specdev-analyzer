@@ -291,6 +291,8 @@ fn ts_service(name: &str, file: &str, extra: &str) -> String {
 #[test]
 fn internal_edges_resolve_typescript_aliases_and_barrels() {
     let t = tree_lang("edges-ts", "nextjs-app", "typescript");
+    t.write("specs/modules/App.toml", "name = \"App\"\nrole = \"app\"\ndescription = \"Root.\"\n")
+        .write("app/layout.tsx", "export default function RootLayout() { return null; }\n");
     t.write("tsconfig.json", "{ \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"src/*\"] } } }\n")
         .write("src/lib/b.ts", "export const b = 1;\n")
         .write("src/lib/index.ts", "export * from './b';\n")
@@ -305,6 +307,83 @@ fn internal_edges_resolve_typescript_aliases_and_barrels() {
         .fires("internal_edges_declared", "ViaAlias", "error")
         .fires("internal_edges_declared", "ViaBarrel", "error")
         .silent("internal_edges_declared", "Declared");
+}
+
+#[test]
+fn internal_edges_follow_rust_super_paths() {
+    let t = tree("edges-super", "firmware-layered", &[]);
+    t.write("specs/modules/Front.toml", &fw_module("Front", ""))
+        .write("src/front.rs", "use super::back::run;\npub fn go() { run() }\n")
+        .write("specs/modules/Back.toml", &fw_module("Back", ""))
+        .write("src/back.rs", "pub fn run() {}\n")
+        .write("specs/modules/Front2.toml", &fw_module("Front2", "depends_on = [\"Back\"]\n"))
+        .write("src/front2.rs", "use super::back::run;\npub fn go() { run() }\n");
+    t.check(&[])
+        .fires("internal_edges_declared", "Front", "error")
+        .silent("internal_edges_declared", "Front2")
+        .silent("internal_edges_declared", "Back");
+}
+
+struct Import {
+    file: String,
+    spec: String,
+    resolved: Option<String>,
+}
+
+fn imports_report(t: &Tree, language: &str, root: &str) -> Vec<Import> {
+    let out = t.analyzer(&["report", "imports", "--language", language, "--root", root, "--format", "yaml"]);
+    let v: serde_json::Value = serde_yaml::from_slice(&out.stdout)
+        .unwrap_or_else(|_| panic!("`report imports` did not run and report:\n{}", ci::text(&out)));
+    let mut found = Vec::new();
+    for f in v["files"].as_array().unwrap_or_else(|| panic!("no `files` array:\n{}", ci::text(&out))) {
+        for i in f["imports"].as_array().into_iter().flatten() {
+            found.push(Import {
+                file: f["file"].as_str().unwrap_or_default().to_string(),
+                spec: i["spec"].as_str().unwrap_or_default().to_string(),
+                resolved: i["resolved"].as_str().map(str::to_string),
+            });
+        }
+    }
+    found
+}
+
+#[track_caller]
+fn resolves_to(found: &[Import], file: &str, spec: &str, target: Option<&str>) {
+    let hit = found.iter().find(|i| i.file == file && i.spec == spec);
+    let hit = hit.unwrap_or_else(|| panic!("no import `{spec}` in {file}"));
+    assert_eq!(hit.resolved.as_deref(), target, "`{spec}` in {file}");
+}
+
+#[test]
+fn c_and_cpp_quoted_includes_resolve_to_project_files() {
+    let t = tree("includes", "library-api", &[]);
+    t.write("native/src/ring.c", "#include \"ring.h\"\n#include \"../inc/shared.h\"\n#include <stdio.h>\n")
+        .write("native/src/ring.h", "void ring(void);\n")
+        .write("native/inc/shared.h", "int shared;\n")
+        .write("native/cpp/math.cpp", "#include \"math.hpp\"\n#include <vector>\n")
+        .write("native/cpp/math.hpp", "int add(int, int);\n");
+    let c = imports_report(&t, "c", "native/src");
+    resolves_to(&c, "native/src/ring.c", "ring.h", Some("native/src/ring.h"));
+    resolves_to(&c, "native/src/ring.c", "../inc/shared.h", Some("native/inc/shared.h"));
+    assert!(!c.iter().any(|i| i.spec.contains("stdio")), "a system include is external");
+    let cpp = imports_report(&t, "cpp", "native/cpp");
+    resolves_to(&cpp, "native/cpp/math.cpp", "math.hpp", Some("native/cpp/math.hpp"));
+}
+
+#[test]
+fn dart_package_imports_of_the_own_package_resolve_under_lib() {
+    let t = tree("dart-imports", "library-api", &[]);
+    t.write(
+        "lib/app.dart",
+        "import 'package:checked_intent_fixture/store.dart';\nimport 'widgets/card.dart';\nimport 'dart:core';\nimport 'package:other/thing.dart';\n",
+    )
+    .write("lib/store.dart", "class Store {}\n")
+    .write("lib/widgets/card.dart", "class Card {}\n");
+    let d = imports_report(&t, "dart", "lib");
+    resolves_to(&d, "lib/app.dart", "package:checked_intent_fixture/store.dart", Some("lib/store.dart"));
+    resolves_to(&d, "lib/app.dart", "widgets/card.dart", Some("lib/widgets/card.dart"));
+    resolves_to(&d, "lib/app.dart", "package:other/thing.dart", None);
+    resolves_to(&d, "lib/app.dart", "dart:core", None);
 }
 
 // ---- Open-question gate, workspace tier.

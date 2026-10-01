@@ -104,6 +104,7 @@ pub mod gates;
 pub mod graph;
 pub mod graph_report;
 pub mod hash;
+pub mod import_edges;
 pub mod inline;
 pub mod items;
 pub mod kinds;

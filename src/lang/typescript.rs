@@ -29,53 +29,6 @@ const ITEMS_QUERY: &str = include_str!("../embedded/languages/typescript/items.s
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/typescript/imports.scm");
 const TESTS_QUERY: &str = include_str!("../embedded/languages/typescript/tests.scm");
 
-/// Node's built-in modules, importable without a declared dependency
-/// (with or without the `node:` prefix, which is dropped earlier).
-const NODE_BUILTINS: &[&str] = &[
-    "assert",
-    "async_hooks",
-    "buffer",
-    "child_process",
-    "cluster",
-    "console",
-    "constants",
-    "crypto",
-    "dgram",
-    "diagnostics_channel",
-    "dns",
-    "domain",
-    "events",
-    "fs",
-    "http",
-    "http2",
-    "https",
-    "inspector",
-    "module",
-    "net",
-    "os",
-    "path",
-    "perf_hooks",
-    "process",
-    "punycode",
-    "querystring",
-    "readline",
-    "repl",
-    "stream",
-    "string_decoder",
-    "sys",
-    "timers",
-    "tls",
-    "trace_events",
-    "tty",
-    "url",
-    "util",
-    "v8",
-    "vm",
-    "wasi",
-    "worker_threads",
-    "zlib",
-];
-
 impl LanguageAdapter for TypeScriptAdapter {
     fn tests_query(&self) -> Option<&'static str> {
         Some(TESTS_QUERY)
@@ -139,26 +92,73 @@ impl LanguageAdapter for TypeScriptAdapter {
     /// (`./`, `../`, `/`), path-alias (`@/`, `~/`), subpath-import (`#`)
     /// and scheme (`node:`, `data:`, …) specifiers name no package, and
     /// neither does a Node built-in.
-    fn import_package(&self, specifier: &str, _self_package: &str) -> Option<String> {
-        let s = specifier.trim();
-        if s.is_empty()
-            || s.starts_with('.')
-            || s.starts_with('/')
-            || s.starts_with("@/")
-            || s.starts_with("~/")
-            || s.starts_with('#')
-            || s.contains(':')
-        {
-            return None;
-        }
-        let mut parts = s.split('/');
-        let first = parts.next()?;
-        let name = if first.starts_with('@') {
-            format!("{first}/{}", parts.next().filter(|p| !p.is_empty())?)
+    /// A relative specifier from the importing file's directory, or a
+    /// `tsconfig` `paths` alias; each tried as written, with `.ts` / `.tsx`,
+    /// and as a directory `index`. A package specifier is external.
+    fn resolve_import(&self, spec: &str, from: &Path, ctx: &super::ImportContext) -> Vec<std::path::PathBuf> {
+        let s = spec.trim();
+        let mut bases: Vec<std::path::PathBuf> = Vec::new();
+        if s.starts_with("./") || s.starts_with("../") {
+            let dir = from.parent().unwrap_or(Path::new(""));
+            bases.push(super::normalize_rel(&dir.join(s)));
         } else {
-            first.to_string()
+            for (pattern, targets) in &ctx.aliases {
+                let rest = match pattern.strip_suffix('*') {
+                    Some(prefix) => s.strip_prefix(prefix),
+                    None => (s == pattern).then_some(""),
+                };
+                let Some(rest) = rest else { continue };
+                for target in targets {
+                    bases.push(super::normalize_rel(Path::new(&target.replacen('*', rest, 1))));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for b in bases {
+            out.push(b.clone());
+            for ext in ["ts", "tsx"] {
+                out.push(b.with_extension(ext));
+            }
+            for index in ["index.ts", "index.tsx"] {
+                out.push(b.join(index));
+            }
+        }
+        out
+    }
+
+    /// `compilerOptions.paths` from `tsconfig.json`, made project-relative
+    /// through `compilerOptions.baseUrl` (default the project root).
+    fn import_aliases(&self, project_root: &Path) -> Vec<(String, Vec<String>)> {
+        let Ok(text) = std::fs::read_to_string(project_root.join("tsconfig.json")) else {
+            return Vec::new();
         };
-        (!NODE_BUILTINS.contains(&name.as_str())).then_some(name)
+        // tsconfig allows `//` comments; drop whole-line ones before parsing.
+        let text: String = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return Vec::new();
+        };
+        let opts = &v["compilerOptions"];
+        let base = opts["baseUrl"].as_str().unwrap_or(".");
+        let Some(paths) = opts["paths"].as_object() else {
+            return Vec::new();
+        };
+        paths
+            .iter()
+            .map(|(pattern, targets)| {
+                let targets = targets
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| t.as_str())
+                    .map(|t| super::normalize_rel(&Path::new(base).join(t)).to_string_lossy().into_owned())
+                    .collect();
+                (pattern.clone(), targets)
+            })
+            .collect()
     }
 
     fn default_visibility_floor(&self) -> Option<&'static str> {
