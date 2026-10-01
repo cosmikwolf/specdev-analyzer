@@ -64,6 +64,9 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
     validate_architecture(layout, &mut report)?;
     validate_entries(layout, &mut report)?;
     validate_profiles_root_only(layout, &mut report)?;
+    for f in crate::gates::script_findings(layout) {
+        report.push(f);
+    }
     Ok(report)
 }
 

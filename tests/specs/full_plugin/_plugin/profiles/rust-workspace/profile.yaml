@@ -14,13 +14,8 @@ contract_version: 2
 name: rust-workspace
 language: rust
 
-# Compile gate, as data: the gate script (and CI) runs each `steps` argv
-# in order in the project root; the first non-zero exit fails the gate.
-# Warnings do not fail the gate; `cargo check` errors do.
-gates:
-  - label: cargo-check
-    steps:
-      - [cargo, check, --quiet]
+# No gates: a workspace root has no modules of its own. Its gate script
+# runs each member's script in declared order (each member checks itself).
 
 bootstrap:
   steps: [emit_workspace_root, emit_member_stubs, walk_members]
