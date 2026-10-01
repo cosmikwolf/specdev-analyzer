@@ -607,6 +607,8 @@ pub fn run_bootstrap_with(
     // …), written only where nothing exists yet.
     let layout = crate::layout::LayoutContext::discover(&inputs.target_dir, None)?;
     crate::paired_files::write_absent(&layout)?;
+    // The script CI runs, and the line that keeps it LF.
+    crate::gates::emit_script(&layout)?;
     Ok(())
 }
 

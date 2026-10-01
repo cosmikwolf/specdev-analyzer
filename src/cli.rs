@@ -295,8 +295,19 @@ pub enum Command {
         project: PathBuf,
         /// The gate's `label` from the registry, verbatim. An undeclared
         /// label is refused.
-        #[arg(long)]
-        label: String,
+        #[arg(long, required_unless_present_any = ["all", "emit"])]
+        label: Option<String>,
+        /// Run every declared gate, in order; stop at the first failure.
+        #[arg(long, conflicts_with = "label")]
+        all: bool,
+        /// Write `scripts/specdev-gates.sh` from the registry (and
+        /// `.gitattributes` when absent) instead of running anything.
+        #[arg(long, conflicts_with_all = ["label", "all"])]
+        emit: bool,
+        /// Accepted and ignored: gates have no module scope. Removed in a
+        /// later release.
+        #[arg(long, hide = true)]
+        module: Vec<String>,
     },
 }
 
@@ -556,7 +567,13 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             plan_unresolved,
         } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh, plan_unresolved),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
-        Command::Gate { project, label } => run_gate(project, spec_path.as_deref(), &label),
+        Command::Gate {
+            project,
+            label,
+            all,
+            emit,
+            module: _,
+        } => run_gate(project, spec_path.as_deref(), label.as_deref(), all, emit),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
@@ -1431,6 +1448,19 @@ fn run_migrate(
             }
         }
     };
+    if !format.already_current {
+        if dry_run {
+            println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
+        } else {
+            match specdev_analyzer::gates::emit_script(&layout) {
+                Ok(r) => print_emit_report(&r),
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
+        }
+    }
     let report = match migrate::run_migrate(&layout, &plugin, dry_run, refresh) {
         Ok(r) => r,
         Err(e) => {
@@ -1604,7 +1634,9 @@ fn run_drift(
 fn run_gate(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
-    label: &str,
+    label: Option<&str>,
+    all: bool,
+    emit: bool,
 ) -> ExitCode {
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
@@ -1613,7 +1645,57 @@ fn run_gate(
             return ExitCode::from(2);
         }
     };
-    match specdev_analyzer::gates::run_gate(&layout, label) {
+    if emit {
+        return match specdev_analyzer::gates::emit_script(&layout) {
+            Ok(r) => {
+                print_emit_report(&r);
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        };
+    }
+    let labels: Vec<String> = if all {
+        match specdev_analyzer::manifest::Profile::load_inlined(&layout.specdev_root) {
+            Ok(Some(p)) => p.gates.iter().map(|g| g.label.clone()).collect(),
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        label.map(|l| vec![l.to_string()]).unwrap_or_default()
+    };
+    for l in &labels {
+        let code = run_one_gate(&layout, l);
+        if code != ExitCode::SUCCESS {
+            return code;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Print what `gate --emit` (or `bootstrap` / `migrate`) did to the script.
+pub(crate) fn print_emit_report(r: &specdev_analyzer::gates::EmitReport) {
+    use specdev_analyzer::gates::{GITATTRIBUTES_LINE, SCRIPT_REL};
+    if r.written {
+        println!("wrote {SCRIPT_REL}");
+    } else {
+        println!("{SCRIPT_REL} is current");
+    }
+    if r.gitattributes_written {
+        println!("wrote .gitattributes ({GITATTRIBUTES_LINE})");
+    }
+    if r.gitattributes_line_missing {
+        println!("add this line to .gitattributes, so the script stays LF on every checkout:\n  {GITATTRIBUTES_LINE}");
+    }
+}
+
+fn run_one_gate(layout: &LayoutContext, label: &str) -> ExitCode {
+    match specdev_analyzer::gates::run_gate(layout, label) {
         Ok(run) => {
             println!("gate {} {}", run.label, if run.pass { "pass" } else { "fail" });
             if run.pass {
