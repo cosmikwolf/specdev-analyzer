@@ -7,8 +7,13 @@ use super::{LanguageAdapter, ParsedParameter};
 pub struct CAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/c/audit.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/c/tests.scm");
 
 impl LanguageAdapter for CAdapter {
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
     fn name(&self) -> &'static str {
         "c"
     }

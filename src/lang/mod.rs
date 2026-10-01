@@ -110,6 +110,33 @@ pub trait LanguageAdapter: Send + Sync {
         None
     }
 
+    /// The built-in `tests.scm` query source for test discovery, if the
+    /// language tier ships one. Its captures are `@test`, `@test.name`,
+    /// `@test.suite`, `@test.unnamed`, `@test.pending`, `@group` and
+    /// `@group.name` (see [`crate::test_discovery`]); framework names stay in
+    /// the query, never in the analyzer.
+    fn tests_query(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// How a test whose bare name is not unique is named.
+    fn test_identity_style(&self) -> TestIdentityStyle {
+        TestIdentityStyle::ModuleOrFile
+    }
+
+    /// Project-relative directories this language keeps tests in by
+    /// convention, walked in addition to `[paths].source` and
+    /// `[paths].tests`.
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Whether a file (project-relative, one of this language's extensions)
+    /// holds tests by this language's convention.
+    fn is_test_file(&self, _rel: &Path) -> bool {
+        true
+    }
+
     /// The built-in `imports.scm` query source, if the language tier ships
     /// one. Its single `@import.source` capture is the module specifier of
     /// each import; [`LanguageAdapter::import_package`] maps it to a
@@ -269,6 +296,17 @@ pub trait LanguageAdapter: Send + Sync {
 
 /// Resolve a language name to a boxed adapter. Returns `None` for unknown
 /// languages; callers surface this with their own error context.
+/// How a test whose bare name is not unique is named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIdentityStyle {
+    /// `<Module>::<name>` when the test sits in one spec module's source
+    /// file, else `<file path>::<name>`.
+    ModuleOrFile,
+    /// The enclosing group titles and the test title, joined by the
+    /// separator (`cart > empty > adds`).
+    GroupPath(&'static str),
+}
+
 pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
     match language {
         "rust" => Some(Box::new(rust::RustAdapter)),

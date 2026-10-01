@@ -1,5 +1,6 @@
 //! Dart adapter — tree-sitter-dart + embedded `audit.scm`.
 
+use std::path::Path;
 use tree_sitter::{Language, Node};
 
 use super::{LanguageAdapter, ParsedParameter};
@@ -9,8 +10,26 @@ pub struct DartAdapter;
 const QUERY: &str = include_str!("../embedded/languages/dart/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/dart/items.scm");
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/dart/imports.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/dart/tests.scm");
 
 impl LanguageAdapter for DartAdapter {
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
+    fn test_identity_style(&self) -> super::TestIdentityStyle {
+        super::TestIdentityStyle::GroupPath(" > ")
+    }
+
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &["test", "integration_test"]
+    }
+
+    /// `*_test.dart`, the package:test convention.
+    fn is_test_file(&self, rel: &Path) -> bool {
+        rel.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with("_test.dart"))
+    }
+
     fn name(&self) -> &'static str {
         "dart"
     }

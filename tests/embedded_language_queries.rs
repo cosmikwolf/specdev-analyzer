@@ -28,15 +28,20 @@ use std::path::{Path, PathBuf};
 /// Every embedded query, as (language, file stem).
 const QUERIES: &[(&str, &str)] = &[
     ("c", "audit"),
+    ("c", "tests"),
     ("cpp", "audit"),
+    ("cpp", "tests"),
     ("dart", "audit"),
     ("dart", "imports"),
     ("dart", "items"),
+    ("dart", "tests"),
     ("rust", "audit"),
     ("rust", "items"),
+    ("rust", "tests"),
     ("typescript", "audit"),
     ("typescript", "imports"),
     ("typescript", "items"),
+    ("typescript", "tests"),
 ];
 
 fn embedded_dir() -> PathBuf {
