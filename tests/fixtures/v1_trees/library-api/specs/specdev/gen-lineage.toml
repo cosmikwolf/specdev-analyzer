@@ -1,0 +1,4 @@
+[files."src/built.rs"]
+module = "built"
+generated_at = "2026-09-30T22:08:43Z"
+content_hash = "sha256:dfd797879acb273ef7298c5f37db5e39db31880786b221fc71a075ed800845ff"

@@ -1,14 +1,21 @@
 //! Shared fixture helpers for the checked-intent tests.
 //!
 //! A fixture is a `spec_version = "2.0"` project: bootstrapped from the
-//! test plugin, the combined ledgers replaced by one file per entry, then
-//! populated by the test. `check --format json` runs against it and the
-//! test asserts on `(rule, entity, severity)` triples, never on message
-//! text.
+//! test plugin and brought to the 2.0 shape (one file per entry, glob
+//! reductions over the entry directories, the checked-intent rule names and
+//! severities), then populated by the test. [`to_v2`] accepts either a
+//! `1.x` or a `2.0` bootstrap, so the fixtures keep working after the
+//! bootstrap itself moves to 2.0. `check --format yaml` runs against it
+//! and the test asserts on `(rule, entity, severity)` triples, never on
+//! message text.
 //!
 //! A "silent" assertion first requires that `check` actually ran and
-//! printed its JSON report. Without that guard, a missing subcommand would
+//! printed its report. Without that guard, a missing subcommand would
 //! satisfy every "this finding must not appear" assertion.
+//!
+//! `migrate` inputs are not bootstrapped: [`tree_v1`] copies a frozen
+//! `1.x` tree from `tests/fixtures/v1_trees/`, because a newer bootstrap
+//! writes the new format.
 
 #![allow(dead_code)]
 
@@ -83,39 +90,95 @@ pub fn tree_from(tag: &str, plugin: &Path, profile: &str, language: &str, blocks
     t
 }
 
-/// A `1.x` project as bootstrap leaves it (combined ledgers), for `migrate`.
-pub fn tree_v1(tag: &str, profile: &str, blocks: &[&str]) -> Tree {
+/// A copy of a frozen `1.x` tree (`library-api` or `firmware-layered`), as
+/// the released tools left it: combined ledgers, inlined `codegen/`,
+/// `gen-lineage.toml` (library-api), `codegen_unblocked` in `domain.toml`.
+pub fn tree_v1(tag: &str, profile: &str) -> Tree {
+    let frozen = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees").join(profile);
+    assert!(frozen.is_dir(), "no frozen 1.x tree for {profile}");
     let root = tmp_dir(tag).join("proj");
-    std::fs::create_dir_all(&root).unwrap();
-    bootstrap::run_bootstrap(
-        &plugin_root(),
-        &BootstrapInputs {
-            profile: profile.into(),
-            language: "rust".into(),
-            project_name: "checked_intent_fixture".into(),
-            target_dir: root.clone(),
-        },
-    )
-    .unwrap();
-    let layout = LayoutContext::discover(&root, None).unwrap();
-    for b in blocks {
-        run_inline_block(&layout, &plugin_root(), b).unwrap();
-    }
+    copy_dir(&frozen, &root);
     Tree { root, plugin: plugin_root() }
 }
 
+const LEDGERS: [&str; 4] = ["requirements", "decisions", "open_questions", "sources"];
+
+/// Bring a fresh bootstrap to the 2.0 shape the tests assume. Idempotent,
+/// and correct for a `1.x` or a `2.0` bootstrap.
 fn to_v2(t: &Tree) {
     let root = &t.root;
     let spec = root.join("spec.toml");
     let text = std::fs::read_to_string(&spec).unwrap();
-    assert!(text.starts_with("spec_version = \"1.0\""), "template changed: {text}");
-    std::fs::write(&spec, text.replacen("spec_version = \"1.0\"", "spec_version = \"2.0\"", 1)).unwrap();
+    let text = text.replacen("spec_version = \"1.0\"", "spec_version = \"2.0\"", 1);
+    assert!(text.starts_with("spec_version = \"2.0\""), "unexpected spec.toml head: {text}");
+    std::fs::write(&spec, text).unwrap();
+    // One file per entry, starting empty: no combined ledger, no seeded entry.
     for ledger in ["requirements.toml", "decisions.toml", "open_questions.toml"] {
         let _ = std::fs::remove_file(root.join("specs").join(ledger));
     }
-    for dir in ["requirements", "decisions", "open_questions", "sources", "modules"] {
-        std::fs::create_dir_all(root.join("specs").join(dir)).unwrap();
+    for dir in LEDGERS.iter().chain(["modules"].iter()) {
+        let d = root.join("specs").join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        if LEDGERS.contains(dir) {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let p = e.unwrap().path();
+                if p.extension().is_some_and(|x| x == "toml") {
+                    std::fs::remove_file(p).unwrap();
+                }
+            }
+        }
     }
+    // The 2.0 reductions read the entry directories (measured 2026-09-30: a
+    // glob `from:` needs no engine change).
+    let reductions = root.join("specs/specdev/reductions");
+    for f in walk(&reductions) {
+        let body = std::fs::read_to_string(&f).unwrap();
+        let mut out = body.clone();
+        for l in ["requirements", "decisions", "open_questions"] {
+            out = out.replace(&format!("\"specs/{l}.toml\""), &format!("\"specs/{l}/*.toml\""));
+        }
+        if out != body {
+            std::fs::write(&f, out).unwrap();
+        }
+    }
+    // The gate rule is renamed; it and the coverage check are errors (the
+    // 1.x templates ship both as "warning").
+    let domain = root.join("specs/specdev/domain.toml");
+    let d = std::fs::read_to_string(&domain).unwrap().replace("codegen_unblocked", "implementation_unblocked");
+    std::fs::write(&domain, set_severity(&set_severity(&d, "requirements_have_satisfiers", "error"), "implementation_unblocked", "error")).unwrap();
+}
+
+/// `domain` with `[validation.rules]` entry `rule` set to `severity`,
+/// whatever its old value and column alignment.
+pub fn set_severity(domain: &str, rule: &str, severity: &str) -> String {
+    domain
+        .lines()
+        .map(|l| {
+            let key = l.split('=').next().unwrap_or("").trim();
+            if key == rule && l.contains('=') && !l.trim_start().starts_with('#') && !l.contains("rule =") {
+                format!("{rule} = \"{severity}\"")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -166,9 +229,9 @@ impl Tree {
             .expect("run specdev-analyzer")
     }
 
-    /// `check --format json` plus `extra` arguments.
+    /// `check --format yaml` plus `extra` arguments.
     pub fn check(&self, extra: &[&str]) -> Check {
-        let mut args = vec!["check", "--format", "json"];
+        let mut args = vec!["check", "--format", "yaml"];
         args.extend_from_slice(extra);
         Check::from(self.analyzer(&args))
     }
@@ -212,7 +275,7 @@ pub struct Finding {
     pub entity: String,
 }
 
-/// One `check` run: its exit code, and its findings when the JSON parsed.
+/// One `check` run: its exit code, and its findings when the report parsed.
 pub struct Check {
     pub exit: Option<i32>,
     pub report: Option<Vec<Finding>>,
@@ -222,7 +285,7 @@ pub struct Check {
 impl From<Output> for Check {
     fn from(out: Output) -> Self {
         let raw = text(&out);
-        let report = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        let report = serde_yaml::from_slice::<serde_json::Value>(&out.stdout)
             .ok()
             .and_then(|v| v.get("findings").and_then(|f| f.as_array()).cloned())
             .map(|arr| {
@@ -239,7 +302,7 @@ impl From<Output> for Check {
 }
 
 impl Check {
-    /// Panics unless `check` ran and printed a JSON report (exit 0 or 1).
+    /// Panics unless `check` ran and printed its report (exit 0 or 1).
     pub fn ran(&self) -> &Vec<Finding> {
         match (&self.report, self.exit) {
             (Some(f), Some(0 | 1)) => f,

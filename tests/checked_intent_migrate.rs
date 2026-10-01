@@ -18,7 +18,9 @@
 //!    marks planned does not get the flag.
 //! 5. `migrate` reports modules with no resolvable source and modules whose
 //!    source holds only tests; it marks nothing planned unless asked.
-//! 6. The rule `codegen_unblocked` is renamed `implementation_unblocked`.
+//! 6. The rule `codegen_unblocked` is renamed `implementation_unblocked`, and it and
+//!    `requirements_have_satisfiers` become errors (the 1.x templates ship both as
+//!    warnings).
 //! 7. An inlined profile schema that predates `source_file` is refreshed,
 //!    and its profile files get a baseline, so `source_file` and `planned`
 //!    validate and `drift` no longer reports the profile `not_recorded`.
@@ -72,9 +74,11 @@ text = "Compress later."
 nature = "module"
 "#;
 
-/// A `1.x` library-api tree with everything `migrate` must handle.
+/// A `1.x` library-api tree with everything `migrate` must handle. The
+/// frozen tree already carries `gen-lineage.toml` (one recorded file,
+/// `src/built.rs`), the inlined `codegen/` directory and `codegen_unblocked`.
 fn v1_project(tag: &str) -> Tree {
-    let t = tree_v1(tag, "library-api", &[]);
+    let t = tree_v1(tag, "library-api");
     t.write("specs/requirements.toml", REQS_V1)
         // A test item that verifies a requirement, plus a manifest-restating table.
         .write(
@@ -104,8 +108,6 @@ source = "crates-io"
         .write("specs/modules/unbuilt.toml", "name = \"unbuilt\"\nvisibility = \"crate\"\ndescription = \"Compresses.\"\nsatisfies = [\"REQ-M-003\"]\n")
         .write("specs/modules/testsonly.toml", "name = \"testsonly\"\nvisibility = \"crate\"\ndescription = \"Stand-in.\"\n")
         .write("src/testsonly.rs", "#[cfg(test)]\nmod t {\n    #[test]\n    fn bench_like() {}\n}\n");
-    let rec = t.analyzer(&["gen-record", "--module", "built", "src/built.rs"]);
-    assert!(rec.status.success(), "fixture gen-record failed:\n{}", text(&rec));
     assert!(t.root.join("specs/specdev/gen-lineage.toml").is_file());
     assert!(t.root.join("specs/specdev/codegen").is_dir());
     assert!(t.read("specs/specdev/domain.toml").contains("codegen_unblocked"));
@@ -200,17 +202,60 @@ fn migrate_renames_the_gate_rule() {
     assert!(!domain.contains("codegen_unblocked"), "{domain}");
 }
 
+/// The 1.x templates ship the coverage check and the gate as "warning".
+/// The checked-intent format makes both errors; a rename alone would keep
+/// the gate a warning in every migrated tree. `migrate` sets the value and
+/// says so.
+#[test]
+fn migrate_sets_the_error_severities() {
+    let t = v1_project("mig-severity");
+    let before = t.read("specs/specdev/domain.toml");
+    assert!(severity(&before, "requirements_have_satisfiers") == Some("warning".into()), "fixture: {before}");
+    assert!(severity(&before, "codegen_unblocked") == Some("warning".into()), "fixture: {before}");
+    let out = migrate(&t, &[]);
+    let after = t.read("specs/specdev/domain.toml");
+    assert_eq!(severity(&after, "requirements_have_satisfiers").as_deref(), Some("error"), "{after}");
+    assert_eq!(severity(&after, "implementation_unblocked").as_deref(), Some("error"), "{after}");
+    assert!(out.contains("requirements_have_satisfiers") && out.contains("implementation_unblocked"), "report each change:\n{out}");
+}
+
+fn severity(domain: &str, rule: &str) -> Option<String> {
+    let doc: toml::Table = domain.parse().ok()?;
+    doc.get("validation")?.get("rules")?.get(rule)?.as_str().map(str::to_string)
+}
+
+/// `schema` without the top-level property `name` (two-space indent) and
+/// every line of its body, up to the next property at the same indent.
+fn without_property(schema: &str, name: &str) -> String {
+    let header = format!("  {name}:");
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in schema.split_inclusive('\n') {
+        let at_property = line.starts_with("  ") && !line.starts_with("   ") && !line.trim().is_empty();
+        let at_top = !line.starts_with(' ') && !line.trim().is_empty();
+        if line.trim_end() == header {
+            skipping = true;
+            continue;
+        }
+        if skipping && (at_property || at_top) {
+            skipping = false;
+        }
+        if !skipping {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 #[test]
 fn migrate_refreshes_an_old_inlined_profile_schema() {
-    let t = tree_v1("mig-old-schema", "firmware-layered", &[]);
+    let t = tree_v1("mig-old-schema", "firmware-layered");
     // Make it look like a tree bootstrapped before `source_file` existed:
     // no `source_file` property, no profile-file baseline.
     let schema_rel = "specs/specdev/schemas/module.schema.yaml";
     let schema = t.read(schema_rel);
-    let start = schema.find("\n  source_file:").expect("fixture schema has source_file");
-    let rest = &schema[start + 1..];
-    let end = rest[2..].find("\n  ").map(|i| i + 2).unwrap_or(rest.len());
-    t.write(schema_rel, &format!("{}{}", &schema[..start + 1], &rest[end + 1..]));
+    t.write(schema_rel, &without_property(&schema, "source_file"));
+    assert!(!t.read(schema_rel).contains("source_file"), "the property and its body must go");
     let lineage = t.read("specs/specdev/lineage.toml");
     let cut = lineage.find("[profile_files]").expect("baseline present");
     t.write("specs/specdev/lineage.toml", &lineage[..cut]);
