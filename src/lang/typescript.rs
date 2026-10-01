@@ -27,6 +27,7 @@ pub struct TypeScriptAdapter;
 const QUERY: &str = include_str!("../embedded/languages/typescript/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/typescript/items.scm");
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/typescript/imports.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/typescript/tests.scm");
 
 /// Node's built-in modules, importable without a declared dependency
 /// (with or without the `node:` prefix, which is dropped earlier).
@@ -76,6 +77,24 @@ const NODE_BUILTINS: &[&str] = &[
 ];
 
 impl LanguageAdapter for TypeScriptAdapter {
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
+    fn test_identity_style(&self) -> super::TestIdentityStyle {
+        super::TestIdentityStyle::GroupPath(" > ")
+    }
+
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &["."]
+    }
+
+    /// `*.test.ts(x)` and `*.spec.ts(x)` (vitest, jest, Playwright).
+    fn is_test_file(&self, rel: &Path) -> bool {
+        let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"].iter().any(|s| name.ends_with(s))
+    }
+
     fn name(&self) -> &'static str {
         "typescript"
     }

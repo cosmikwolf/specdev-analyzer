@@ -8,8 +8,17 @@ pub struct RustAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/rust/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/rust/items.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/rust/tests.scm");
 
 impl LanguageAdapter for RustAdapter {
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &["tests"]
+    }
+
     fn name(&self) -> &'static str {
         "rust"
     }

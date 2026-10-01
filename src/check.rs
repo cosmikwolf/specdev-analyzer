@@ -55,9 +55,11 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     let domain = load_domain(layout);
     let modules = module_states(layout)?;
 
+    let graph = project_graph(layout)?;
     source_rule(&modules, &domain, &mut report);
-    stale_planned_requirements(layout, &modules, &domain, &mut report)?;
+    stale_planned_requirements(&graph, &modules, &domain, &mut report);
     open_question_gate(layout, &modules, &domain, &mut report)?;
+    test_checks(layout, &graph, &modules, &domain, &mut report)?;
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -157,25 +159,19 @@ fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &
     }
 }
 
-/// A `planned` requirement whose satisfying modules are all built.
-fn stale_planned_requirements(
-    layout: &LayoutContext,
-    modules: &[ModuleState],
-    domain: &Option<DomainConfig>,
-    report: &mut Report,
-) -> Result<()> {
-    let built: BTreeSet<&str> = modules
-        .iter()
-        .filter(|m| !m.planned && m.source.is_some())
-        .map(|m| m.name.as_str())
-        .collect();
-    let module_names: BTreeSet<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+/// The reduced project graph as JSON.
+fn project_graph(layout: &LayoutContext) -> Result<Value> {
     let inv = crate::reductions::load_all(layout)?;
     let (kindset, _) = crate::reductions::resolve(&inv);
     let mut scratch = Report::default();
     let graph = crate::reduction::execute_kindset(&kindset, layout, &mut scratch)?;
-    let graph = serde_json::to_value(&graph)?;
-    let mut satisfiers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    Ok(serde_json::to_value(&graph)?)
+}
+
+/// Requirement id → the spec modules that satisfy it.
+fn satisfiers_of(graph: &Value, modules: &[ModuleState]) -> BTreeMap<String, Vec<String>> {
+    let module_names: BTreeSet<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for r in graph.get("relations").and_then(Value::as_array).into_iter().flatten() {
         let (Some(from), Some(to)) = (
             r.get("from").and_then(Value::as_str),
@@ -184,13 +180,33 @@ fn stale_planned_requirements(
             continue;
         };
         if module_names.contains(from) {
-            satisfiers.entry(to.to_string()).or_default().push(from.to_string());
+            out.entry(to.to_string()).or_default().push(from.to_string());
         }
     }
+    out
+}
+
+fn is_requirement_kind(kind: &str) -> bool {
+    kind == "Requirement" || kind.ends_with(".Requirement")
+}
+
+/// A `planned` requirement whose satisfying modules are all built.
+fn stale_planned_requirements(
+    graph: &Value,
+    modules: &[ModuleState],
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) {
+    let built: BTreeSet<&str> = modules
+        .iter()
+        .filter(|m| !m.planned && m.source.is_some())
+        .map(|m| m.name.as_str())
+        .collect();
+    let satisfiers = satisfiers_of(graph, modules);
     let sev = severity(domain, "stale_planned", Severity::Warning);
     for e in graph.get("entities").and_then(Value::as_array).into_iter().flatten() {
         let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
-        if !(kind == "Requirement" || kind.ends_with(".Requirement")) {
+        if !is_requirement_kind(kind) {
             continue;
         }
         let Some(id) = e.get("name").and_then(Value::as_str) else { continue };
@@ -212,6 +228,145 @@ fn stale_planned_requirements(
                 )
                 .with_entity(id),
             );
+        }
+    }
+}
+
+/// The rule name a `domain.toml` graph check of `kind` declares, else `default`.
+fn declared_rule(domain: &Option<DomainConfig>, kind: &str, default: &str) -> String {
+    domain
+        .as_ref()
+        .and_then(|d| d.project.graph_checks.iter().find(|c| c.kind == kind).and_then(|c| c.rule.clone()))
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn string_list(v: Option<&toml::Value>) -> Vec<String> {
+    v.and_then(toml::Value::as_array)
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// Requirement ↔ test, on the test-discovery pass:
+///
+/// * `requirements_have_tests` — a `nature = "module"` or `"test"`
+///   requirement that is not planned (set, or derived: ≥1 satisfier, all
+///   planned) and not `test_pending` has ≥1 `verified_by` entry;
+/// * `verified_by_resolves` — every `verified_by` name, on every entity kind
+///   that carries one, names a discovered test or a container of tests
+///   (a missing name is suppressed under `planned` / `test_pending`);
+/// * `verified_only_by_ignored_tests` — every test a requirement names is
+///   switched off: reported pending, not passed;
+/// * `stale_test_pending` — `test_pending` while every name resolves.
+fn test_checks(
+    layout: &LayoutContext,
+    graph: &Value,
+    modules: &[ModuleState],
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) -> Result<()> {
+    let disc = crate::test_discovery::discover_project(layout)?;
+    if !disc.checked {
+        return Ok(()); // the language ships no tests.scm: nothing to check against
+    }
+    let has_test = declared_rule(domain, "requirements_have_tests", "requirements_have_tests");
+    let resolves = declared_rule(domain, "verified_by_resolves", "verified_by_resolves");
+    let sev_has = severity(domain, &has_test, Severity::Error);
+    let sev_res = severity(domain, &resolves, Severity::Error);
+    let sev_ignored = severity(domain, "verified_only_by_ignored_tests", Severity::Info);
+    let sev_stale = severity(domain, "stale_test_pending", Severity::Warning);
+    let planned_module: BTreeMap<&str, bool> = modules.iter().map(|m| (m.name.as_str(), m.planned)).collect();
+    let satisfiers = satisfiers_of(graph, modules);
+
+    let store = crate::entries::EntryStore::for_layout(layout);
+    let requirements = store.load(crate::entries::EntryKind::Requirement).unwrap_or_default();
+    for entry in requirements {
+        let v = &entry.value;
+        let Some(id) = v.get("id").and_then(toml::Value::as_str) else { continue };
+        let nature = v.get("nature").and_then(toml::Value::as_str).unwrap_or("module");
+        let planned_set = v.get("planned").and_then(toml::Value::as_bool) == Some(true);
+        let derived = satisfiers.get(id).is_some_and(|s| {
+            !s.is_empty() && s.iter().all(|m| planned_module.get(m.as_str()).copied().unwrap_or(false))
+        });
+        let planned = planned_set || derived;
+        let pending_flag = v.get("test_pending").and_then(toml::Value::as_bool) == Some(true);
+        let names = string_list(v.get("verified_by"));
+        let file = entry.file.display().to_string();
+
+        if matches!(nature, "module" | "test") && !planned && !pending_flag && names.is_empty() {
+            report.push(
+                Finding::new(
+                    &has_test,
+                    sev_has,
+                    format!(
+                        "requirement `{id}` has no `verified_by` test; name one, or set \
+                         `test_pending = true` while it has none"
+                    ),
+                )
+                .with_file(&file)
+                .with_entity(id),
+            );
+        }
+        let resolved: Vec<(String, Vec<&crate::test_discovery::DiscoveredTest>)> =
+            names.iter().map(|n| (n.clone(), disc.resolve(n))).collect();
+        if !planned && !pending_flag {
+            for (n, hits) in &resolved {
+                if hits.is_empty() {
+                    report.push(
+                        Finding::new(&resolves, sev_res, format!("`{id}`: `verified_by` names `{n}`, which is no discovered test"))
+                            .with_file(&file)
+                            .with_entity(id),
+                    );
+                }
+            }
+        }
+        let all_resolve = !resolved.is_empty() && resolved.iter().all(|(_, h)| !h.is_empty());
+        if all_resolve && !planned && !pending_flag && resolved.iter().all(|(_, h)| h.iter().all(|t| t.pending)) {
+            report.push(
+                Finding::new(
+                    "verified_only_by_ignored_tests",
+                    sev_ignored,
+                    format!("requirement `{id}` is verified only by switched-off tests: pending"),
+                )
+                .with_file(&file)
+                .with_entity(id),
+            );
+        }
+        if pending_flag && all_resolve {
+            report.push(
+                Finding::new(
+                    "stale_test_pending",
+                    sev_stale,
+                    format!("requirement `{id}` is `test_pending`, but every test it names exists; remove the flag"),
+                )
+                .with_file(&file)
+                .with_entity(id),
+            );
+        }
+    }
+
+    // Every other entity kind that carries `verified_by`.
+    for e in graph.get("entities").and_then(Value::as_array).into_iter().flatten() {
+        let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
+        if is_requirement_kind(kind) {
+            continue;
+        }
+        let Some(name) = e.get("name").and_then(Value::as_str) else { continue };
+        let attrs = e.get("attrs");
+        if attrs.and_then(|a| a.get("planned")).and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let names: Vec<&str> = attrs
+            .and_then(|a| a.get("verified_by"))
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        for n in names {
+            if disc.resolve(n).is_empty() {
+                report.push(
+                    Finding::new(&resolves, sev_res, format!("`{name}`: `verified_by` names `{n}`, which is no discovered test"))
+                        .with_entity(name),
+                );
+            }
         }
     }
     Ok(())

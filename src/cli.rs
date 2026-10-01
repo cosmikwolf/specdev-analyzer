@@ -336,6 +336,25 @@ pub enum ReportAction {
         #[arg(long)]
         decision: Option<String>,
     },
+    /// The tests the discovery pass finds: each test's identity (the name a
+    /// `verified_by` entry uses), file, pending state and enclosing groups,
+    /// plus the container names that hold tests. Defaults to the project's
+    /// language and test roots. Exit 0 on success, 2 on hard error.
+    Tests {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Language whose `tests.scm` to use (default: the project's).
+        #[arg(long)]
+        language: Option<String>,
+        /// Root to walk instead of the project's test roots, relative to the
+        /// project. Repeatable.
+        #[arg(long)]
+        root: Vec<PathBuf>,
+        /// Output format: `yaml` (default).
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
     /// Render the module dependency graph as Mermaid (default) or DOT.
     /// When `domain.toml` declares a `layer_dependency` graph check, nodes
     /// are grouped by its layer field in its declared order and every edge
@@ -538,6 +557,12 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 module.as_deref(),
                 decision.as_deref(),
             ),
+            ReportAction::Tests {
+                project,
+                language,
+                root,
+                format,
+            } => run_report_tests(project, spec_path.as_deref(), language, root, &format),
             ReportAction::Graph {
                 project,
                 format,
@@ -1567,6 +1592,51 @@ fn run_report_decisions(
         }
     };
     match specdev_analyzer::decision_report::render_yaml(&report) {
+        Ok(y) => {
+            print!("{y}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn run_report_tests(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    language: Option<String>,
+    roots: Vec<PathBuf>,
+    format: &str,
+) -> ExitCode {
+    if format != "yaml" {
+        eprintln!("error: --format `{format}`: expected `yaml`");
+        return ExitCode::from(2);
+    }
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let result = if language.is_none() && roots.is_empty() {
+        specdev_analyzer::test_discovery::discover_project(&layout)
+    } else {
+        let lang = language.unwrap_or_else(|| layout.spec.project.language.clone());
+        let Some(adapter) = specdev_analyzer::lang::adapter_for(&lang) else {
+            eprintln!("error: no language adapter for `{lang}`");
+            return ExitCode::from(2);
+        };
+        let roots: Vec<PathBuf> = if roots.is_empty() {
+            vec![layout.project_root.clone()]
+        } else {
+            roots.iter().map(|r| layout.project_root.join(r)).collect()
+        };
+        specdev_analyzer::test_discovery::discover_roots(adapter.as_ref(), &layout.project_root, &roots)
+    };
+    match result.and_then(|d| specdev_analyzer::test_discovery::to_yaml(&d)) {
         Ok(y) => {
             print!("{y}");
             ExitCode::SUCCESS
