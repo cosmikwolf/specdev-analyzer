@@ -12,12 +12,10 @@
 //!   blocks/<name>/
 //!     schema.yaml
 //!     reduction.yaml
-//!     codegen/<lang>/README.md       # zero or more, one per supported language
 //!     README.md                       # author-facing, NOT inlined
 //!   bridges/<a>+<b>/
 //!     bindings.schema.yaml
 //!     reduction.yaml
-//!     codegen/<lang>/README.md
 //!     README.md
 //! ```
 //!
@@ -25,10 +23,8 @@
 //!
 //! - block schema      → `specs/specdev/schemas/inlined/blocks/<name>.schema.yaml`
 //! - block reduction   → `specs/specdev/reductions/blocks/<name>.yaml`
-//! - block codegen     → `specs/specdev/codegen/<lang>/blocks/<name>/README.md` (per language)
 //! - bridge schema     → `specs/specdev/schemas/inlined/bridges/<a>+<b>.schema.yaml`
 //! - bridge reduction  → `specs/specdev/reductions/bridges/<a>+<b>.yaml`
-//! - bridge codegen    → `specs/specdev/codegen/<lang>/bridges/<a>+<b>/README.md`
 //!
 //! After per-unit copies, the unit's schema fragment gets a `$ref` entry
 //! appended to `module.schema.yaml`'s `allOf` array (the aggregator slot).
@@ -111,22 +107,6 @@ fn plugin_version(plugin_root: &Path) -> Result<String> {
     Ok(v.to_string())
 }
 
-/// Enumerate the supported languages a block or bridge ships codegen for, by
-/// walking `<unit_dir>/codegen/`. Returns sorted directory names.
-fn supported_languages(unit_dir: &Path) -> Result<Vec<String>> {
-    let codegen_dir = unit_dir.join("codegen");
-    if !codegen_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut langs: Vec<String> = std::fs::read_dir(&codegen_dir)
-        .with_context(|| format!("reading {}", codegen_dir.display()))?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    langs.sort();
-    Ok(langs)
-}
 
 /// Collect the file set for a block from the plugin tree.
 pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<UnitFile>> {
@@ -165,31 +145,6 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
         rel_src_in_unit: PathBuf::from("reduction.yaml"),
         bytes: read_file(&reduction_src)?,
     });
-
-    for lang in supported_languages(&unit_dir)? {
-        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
-        if !codegen_src.is_file() {
-            continue; // empty `codegen/<lang>/` is allowed; CI will lint
-        }
-        files.push(UnitFile {
-            rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/README.md")),
-            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
-            bytes: read_file(&codegen_src)?,
-        });
-
-        // Per-language `deps.yaml` manifest joins the block's per-unit file
-        // set when present. Bytes participate in `content_hash` automatically
-        // via the rolled-up hash; blocks without deps.yaml keep their
-        // existing hash.
-        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
-        if deps_src.is_file() {
-            files.push(UnitFile {
-                rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/deps.yaml")),
-                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
-                bytes: read_file(&deps_src)?,
-            });
-        }
-    }
 
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
@@ -232,35 +187,6 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
         rel_src_in_unit: PathBuf::from("reduction.yaml"),
         bytes: read_file(&reduction_src)?,
     });
-
-    for lang in supported_languages(&unit_dir)? {
-        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
-        if !codegen_src.is_file() {
-            continue;
-        }
-        files.push(UnitFile {
-            rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/README.md")),
-            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
-            bytes: read_file(&codegen_src)?,
-        });
-
-        // Per-language `deps.yaml` manifest joins the bridge's
-        // per-unit file set when present, mirroring the block shape.
-        // Bridges own join-product crates (a dep that exists only
-        // because two blocks are paired — e.g. an async-HAL crate);
-        // neither block may declare those without reaching across the
-        // pairing. Bytes participate in `content_hash` automatically
-        // via the rolled-up hash; bridges without deps.yaml keep their
-        // existing hash.
-        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
-        if deps_src.is_file() {
-            files.push(UnitFile {
-                rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/deps.yaml")),
-                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
-                bytes: read_file(&deps_src)?,
-            });
-        }
-    }
 
     // Language-neutral `contract.yaml` manifest joins the bridge's per-unit
     // file set when present. It lives at the bridge dir top level (not under
@@ -544,7 +470,6 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
 /// Checks per block:
 /// - 001: `schema.yaml` exists.
 /// - 002: `reduction.yaml` exists.
-/// - 003: at least one `codegen/<lang>/README.md` exists under any language.
 /// - 004: top-level `README.md` exists.
 /// - 005: `schema.yaml` parses + compiles as a standalone JSON Schema.
 /// - 006: `schema.yaml` `$id` matches `https://specdev.dev/blocks/<name>.v1`
@@ -594,27 +519,6 @@ pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
             offenders.push(format!(
                 "{block_name}: [BLOCK-LINT-002] missing reduction.yaml at {}",
                 reduction_path.display()
-            ));
-        }
-
-        // Check 003: at least one codegen/<lang>/README.md.
-        let codegen_dir = block_path.join("codegen");
-        let mut has_any_codegen = false;
-        if codegen_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&codegen_dir) {
-                for sub in entries.flatten() {
-                    let lang_dir = sub.path();
-                    if lang_dir.is_dir() && lang_dir.join("README.md").is_file() {
-                        has_any_codegen = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !has_any_codegen {
-            offenders.push(format!(
-                "{block_name}: [BLOCK-LINT-003] no codegen/<lang>/README.md found under {}",
-                codegen_dir.display()
             ));
         }
 

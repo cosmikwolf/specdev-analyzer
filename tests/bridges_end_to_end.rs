@@ -112,9 +112,8 @@ fn inline_bridge_after_both_blocks_succeeds() {
     assert!(target
         .join("specs/specdev/reductions/bridges/embassy+stm32h5-rs.yaml")
         .is_file());
-    assert!(target
-        .join("specs/specdev/codegen/rust/bridges/embassy+stm32h5-rs/README.md")
-        .is_file());
+    // Codegen prose is no longer inlined.
+    assert!(!target.join("specs/specdev/codegen/rust/bridges/embassy+stm32h5-rs/README.md").exists());
 
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
     let entry = lineage

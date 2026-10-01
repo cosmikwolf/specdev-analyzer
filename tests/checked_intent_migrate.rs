@@ -6,7 +6,7 @@
 //!
 //! 1. Every generation subcommand is gone: `gen`, `prompt`, `gen-record`,
 //!    `gen-record-gate`, `derive`, `manifest`, `cargo-toml`, `extract`,
-//!    `report gen-drift`, `report gen-plan`. `check` exists.
+//!    `report gen-drift`, `report gen-plan`; and `check` exists.
 //! 2. `migrate` removes generation state: `gen-lineage.toml`, the inlined
 //!    `codegen/` directory, and the module tables that restate the
 //!    manifest (`external_deps`). No per-module lineage directory appears.
@@ -54,8 +54,16 @@ fn generation_subcommands_are_gone() {
             text(&out)
         );
     }
+}
+
+#[test]
+fn check_is_a_subcommand() {
+    let t = tree("check-exists", "library-api", &[]);
     let help = t.analyzer(&["--help"]);
-    assert!(String::from_utf8_lossy(&help.stdout).contains("check"), "{}", text(&help));
+    let listed = String::from_utf8_lossy(&help.stdout)
+        .lines()
+        .any(|l| l.trim_start().starts_with("check "));
+    assert!(listed, "`check` must be listed:\n{}", text(&help));
 }
 
 const REQS_V1: &str = r#"[[requirement]]

@@ -125,34 +125,6 @@ fn bootstrap_skips_profile_yaml_when_absent() {
 // 3 — inline-block copies deps.yaml when present (full_plugin fixture)
 // ===========================================================================
 
-#[test]
-fn inline_block_copies_deps_yaml_when_present() {
-    let (target, layout) = fresh_project("inline-block-deps", &full_plugin(), "firmware-layered");
-    run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
-
-    let dst = target.join("specs/specdev/codegen/rust/blocks/embassy/deps.yaml");
-    assert!(
-        dst.is_file(),
-        "deps.yaml must be copied to inlined codegen tree"
-    );
-    let src_bytes =
-        std::fs::read(full_plugin().join("blocks/embassy/codegen/rust/deps.yaml")).unwrap();
-    let dst_bytes = std::fs::read(&dst).unwrap();
-    assert_eq!(
-        src_bytes, dst_bytes,
-        "deps.yaml must be copied byte-faithfully"
-    );
-
-    // Upstream snapshot also captures the manifest (upstream invariant).
-    let upstream_dst = upstream::upstream_dir(&layout.specdev_root, UnitKind::Block, "embassy")
-        .join("codegen/rust/deps.yaml");
-    assert!(
-        upstream_dst.is_file(),
-        "upstream/ snapshot must include deps.yaml at {}",
-        upstream_dst.display()
-    );
-}
-
 // ===========================================================================
 // 4 — inline-block does not write deps.yaml when absent (minimal_plugin fixture)
 // ===========================================================================
@@ -277,46 +249,6 @@ fn inline_block_hash_includes_deps_yaml_bytes() {
 // 8 — block hash is stable across a re-inline (manifests don't introduce
 //     non-determinism)
 // ===========================================================================
-
-#[test]
-fn inline_block_hash_stable_across_reinline_with_deps_yaml() {
-    let (_t, layout) = fresh_project("hash-stable-with-deps", &full_plugin(), "firmware-layered");
-    run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
-    let hash_first = Lineage::load(&layout.specdev_root).unwrap().blocks["embassy"]
-        .content_hash
-        .clone();
-
-    // Reset: remove inlined files (including the new deps.yaml), upstream
-    // snapshot, and lineage entry. Re-inline.
-    let dst_files = [
-        layout
-            .specdev_root
-            .join("schemas/inlined/blocks/embassy.schema.yaml"),
-        layout.specdev_root.join("reductions/blocks/embassy.yaml"),
-        layout
-            .specdev_root
-            .join("codegen/rust/blocks/embassy/README.md"),
-        layout
-            .specdev_root
-            .join("codegen/rust/blocks/embassy/deps.yaml"),
-    ];
-    for f in &dst_files {
-        std::fs::remove_file(f).unwrap();
-    }
-    upstream::remove_upstream_unit(&layout.specdev_root, UnitKind::Block, "embassy").unwrap();
-    let mut lineage = Lineage::load(&layout.specdev_root).unwrap();
-    lineage.blocks.remove("embassy");
-    lineage.save(&layout.specdev_root).unwrap();
-
-    run_inline_block(&layout, &full_plugin(), "embassy").unwrap();
-    let hash_second = Lineage::load(&layout.specdev_root).unwrap().blocks["embassy"]
-        .content_hash
-        .clone();
-    assert_eq!(
-        hash_first, hash_second,
-        "content_hash must be stable across re-inline when deps.yaml is part of the file set"
-    );
-}
 
 // ===========================================================================
 // 9 — bridge hash is stable across a re-inline (with contract.yaml)

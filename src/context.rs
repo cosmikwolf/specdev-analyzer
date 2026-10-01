@@ -48,7 +48,6 @@ pub struct ContextFiles {
     pub block_readmes: Vec<String>,
     pub bridge_readmes: Vec<String>,
     pub profile_readme: String,
-    pub module_conventions: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub architecture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -183,11 +182,7 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
     bridge_readmes.sort();
 
     let profile = &layout.spec.project.profile;
-    let language = &layout.spec.project.language;
     let profile_readme = format!("${{CLAUDE_PLUGIN_ROOT}}/profiles/{profile}/README.md");
-    let module_conventions = format!(
-        "${{CLAUDE_PLUGIN_ROOT}}/profiles/{profile}/codegen/{language}/module.conventions.md"
-    );
 
     let architecture = if layout.architecture_toml_path.is_file() {
         Some(rel(&layout.architecture_toml_path, &layout.project_root))
@@ -207,7 +202,6 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         block_readmes,
         bridge_readmes,
         profile_readme,
-        module_conventions,
         architecture,
         target_module,
     })

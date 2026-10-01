@@ -53,8 +53,6 @@ pub struct LayoutContext {
     pub reductions_bridges_dir: PathBuf,
     /// `<reductions_dir>/bridges/local/`
     pub reductions_bridges_local_dir: PathBuf,
-    /// `<specdev_root>/codegen/<project.language>/`
-    pub codegen_dir: PathBuf,
     /// `<specdev_root>/domain.toml`
     pub domain_toml_path: PathBuf,
     /// `<specs_dir>/modules/` — user-authored module TOMLs (per profile convention).
@@ -108,7 +106,6 @@ impl LayoutContext {
         let reductions_blocks_dir = reductions_dir.join("blocks");
         let reductions_bridges_dir = reductions_dir.join("bridges");
         let reductions_bridges_local_dir = reductions_bridges_dir.join("local");
-        let codegen_dir = specdev_root.join("codegen").join(&spec.project.language);
         let domain_toml_path = specdev_root.join("domain.toml");
         let modules_dir = specs_dir.join("modules");
         let architecture_toml_path = specs_dir.join("architecture.toml");
@@ -132,7 +129,6 @@ impl LayoutContext {
             reductions_blocks_dir,
             reductions_bridges_dir,
             reductions_bridges_local_dir,
-            codegen_dir,
             domain_toml_path,
             modules_dir,
             architecture_toml_path,
@@ -175,7 +171,6 @@ impl LayoutContext {
                 "specs/specdev/reductions/bridges/local/",
                 &self.reductions_bridges_local_dir,
             ),
-            ("specs/specdev/codegen/<lang>/", &self.codegen_dir),
             ("specs/modules/", &self.modules_dir),
         ];
 
@@ -370,7 +365,6 @@ mod tests {
         std::fs::create_dir_all(root.join("specs/specdev/schemas/inlined/languages")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/blocks")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/bridges/local")).unwrap();
-        std::fs::create_dir_all(root.join("specs/specdev/codegen/rust")).unwrap();
         std::fs::create_dir_all(root.join("specs/modules")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(

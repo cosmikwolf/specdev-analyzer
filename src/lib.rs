@@ -77,7 +77,6 @@
 //! these run at plugin-author CI time, before any project context):
 //! - `BLOCK-LINT-001` — block missing required `schema.yaml`.
 //! - `BLOCK-LINT-002` — block missing required `reduction.yaml`.
-//! - `BLOCK-LINT-003` — block has no `codegen/<lang>/README.md` under any language.
 //! - `BLOCK-LINT-004` — block missing required top-level `README.md`.
 //! - `BLOCK-LINT-005` — `schema.yaml` fails standalone JSON Schema compile.
 //! - `BLOCK-LINT-006` — `schema.yaml` `$id` doesn't match the convention
@@ -90,25 +89,20 @@ pub mod aggregator;
 pub mod analyzer_version;
 pub mod bootstrap;
 pub mod canonical;
-pub mod cargo_toml;
 pub mod cli;
 pub mod config;
 pub mod context;
 pub mod coverage;
 pub mod decision_report;
-pub mod derive;
 pub mod diagnostics;
 pub mod domain;
 pub mod drift;
 pub mod embedded_schemas;
 pub mod entries;
-pub mod extract;
 pub mod gates;
-pub mod gen_lineage;
 pub mod graph;
 pub mod graph_report;
 pub mod hash;
-pub mod imports;
 pub mod inline;
 pub mod items;
 pub mod kinds;
@@ -118,13 +112,11 @@ pub mod lineage;
 pub mod manifest;
 pub mod merge;
 pub mod migrate;
-pub mod package_json;
 pub mod paired_files;
 pub mod path;
 pub mod plugin_root;
 pub mod prompt;
 pub mod prose_lint;
-pub mod pubspec_yaml;
 pub mod reduction;
 pub mod reductions;
 pub mod reference_lint;
@@ -136,7 +128,6 @@ pub mod upstream;
 pub mod validate;
 
 pub use domain::{DomainConfig, Severity};
-pub use extract::ExtractionResult;
 pub use layout::{LayoutContext, LayoutEntry, LayoutInventory, LayoutKind};
 pub use reduction::{Entity, Graph, Relation, SerializedProvenance};
 pub use report::{Finding, Provenance, Report};

@@ -29,25 +29,6 @@ fn admitted_languages() -> Vec<String> {
         .collect()
 }
 
-/// Canonical build-manifest filename per admitted language; `None` when
-/// the analyzer emits no manifest for it. Deliberately exhaustive with a
-/// panicking fallback — see the module docstring.
-fn canonical_manifest(lang: &str) -> Option<&'static str> {
-    match lang {
-        "rust" => Some("Cargo.toml"),
-        "dart" => Some("pubspec.yaml"),
-        "typescript" => Some("package.json"),
-        "c" | "cpp" => None,
-        other => panic!(
-            "language `{other}` is admitted by the spec.schema.yaml enum but this \
-             test does not know whether `manifest` emits for it. Add it here, then \
-             sweep the user-facing doc comments on `Command::Manifest`, its \
-             `--write` flag, `Command::Bootstrap`'s `--language`, and \
-             `BootstrapInputs::language`."
-        ),
-    }
-}
-
 fn long_help_for(subcommand: &str) -> String {
     Cli::command()
         .find_subcommand_mut(subcommand)
@@ -104,47 +85,5 @@ fn bootstrap_inputs_language_docstring_names_every_admitted_language() {
             "`BootstrapInputs::language`'s docstring does not name `{lang}`.\n\
              --- doc block ---\n{block}"
         );
-    }
-}
-
-/// `manifest` dispatches on `[project].language`. Its help describes that
-/// dispatch, so it must name every language that has an emitter — and
-/// must not claim one for a language that has none.
-#[test]
-fn manifest_help_describes_the_dispatch_for_every_emitting_language() {
-    let help = long_help_for("manifest");
-    for lang in admitted_languages() {
-        match canonical_manifest(&lang) {
-            // Pair the filename to the language rather than asserting
-            // each separately: `help.contains("rust")` would pass on any
-            // unrelated sentence, and a description that names all three
-            // filenames but mismatches one is the likelier defect.
-            Some(filename) => assert!(
-                help.contains(&format!("{filename} for {lang}")),
-                "`manifest --help` does not say `{filename} for {lang}`.\n\
-                 --- rendered help ---\n{help}"
-            ),
-            None => assert!(
-                !help.contains(&format!("for {lang}")),
-                "`manifest --help` claims an emitter for `{lang}`, which has none.\
-                 \n--- rendered help ---\n{help}"
-            ),
-        }
-    }
-}
-
-/// `--write` picks the canonical filename for the project's language and
-/// its help enumerates them. Same list, same drift risk.
-#[test]
-fn write_flag_help_names_every_canonical_manifest_filename() {
-    let block = doc_block_containing("src/cli.rs", "Write to the language's canonical filename");
-    for lang in admitted_languages() {
-        if let Some(filename) = canonical_manifest(&lang) {
-            assert!(
-                block.contains(filename),
-                "`manifest --write`'s help does not name `{filename}`, the canonical \
-                 manifest for `{lang}`.\n--- doc block ---\n{block}"
-            );
-        }
     }
 }

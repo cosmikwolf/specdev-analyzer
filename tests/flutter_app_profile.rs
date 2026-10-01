@@ -21,8 +21,7 @@ use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    layout::LayoutContext,
-    pubspec_yaml,
+
     report::{Finding, Report},
     validate, Severity,
 };
@@ -119,13 +118,6 @@ fn bootstrap_scaffolds_flutter_app_layout() {
     let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
     assert!(spec.contains("language = \"dart\""), "spec.toml: {spec}");
     assert!(spec.contains("source = \"lib/src\""), "spec.toml: {spec}");
-
-    let profile = std::fs::read_to_string(target.join("specs/specdev/profile.yaml")).unwrap();
-    assert!(profile.contains("pubspec_yaml"), "profile.yaml: {profile}");
-
-    assert!(target
-        .join("specs/specdev/codegen/dart/module.conventions.md")
-        .is_file());
 
     // Bootstrap creates the source root spec.toml declares — the pub
     // layout, not Rust's `src/`.
@@ -307,35 +299,5 @@ platforms = ["windows"]
     assert!(
         !errs.is_empty(),
         "expected REDUCE_UNRESOLVED for platform outside the matrix; got {report:#?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 7 — pubspec render: version + flutter block from architecture.toml.
-// ---------------------------------------------------------------------------
-#[test]
-fn pubspec_emits_version_and_flutter_block() {
-    let target = fresh_app("pubspec");
-    write_arch(&target, ARCH_DEFAULT);
-
-    // Re-discover AFTER mutating architecture.toml (LayoutContext
-    // caches parsed spec state at discovery).
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = pubspec_yaml::render(&layout).unwrap();
-    let text = &rendered.text;
-
-    assert!(text.contains("name: demo_app\n"), "pubspec: {text}");
-    assert!(text.contains("version: \"0.1.0+1\"\n"), "pubspec: {text}");
-    assert!(text.contains("publish_to: none\n"), "pubspec: {text}");
-    assert!(
-        text.contains(
-            "flutter:\n  uses-material-design: true\n  assets:\n    - \"assets/images/\"\n"
-        ),
-        "pubspec: {text}"
-    );
-    // The flutter block is the last section by convention.
-    assert!(
-        text.trim_end().ends_with("- \"assets/images/\""),
-        "pubspec: {text}"
     );
 }

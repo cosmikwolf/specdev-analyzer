@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use specdev_analyzer::manifest::{
-    BindingLocality, BlockDeps, BootstrapStep, BridgeContract, CrateSource, Profile, ShapeKind,
+    BindingLocality, BootstrapStep, BridgeContract, Profile, ShapeKind,
 };
 
 fn tmp_path(tag: &str, ext: &str) -> PathBuf {
@@ -230,110 +230,6 @@ surface:
 // 2 — block deps.yaml round-trip × 4
 // ===========================================================================
 
-#[test]
-fn block_deps_nih_plug_roundtrips() {
-    let body = r#"
-crates:
-  - name: nih_plug
-    version: "0.0"
-    features: []
-    source:
-      git: "https://github.com/robbert-vdh/nih-plug"
-      rev: "abc123"
-recommended_external_deps:
-  - crate: nih_plug
-    purpose: "plugin trait + parameter system"
-"#;
-    let p = write("deps-nih-plug", body);
-    let m = BlockDeps::load(&p).expect("nih-plug deps load");
-    assert_eq!(m.crates.len(), 1);
-    let c = &m.crates[0];
-    assert_eq!(c.name, "nih_plug");
-    assert!(
-        matches!(&c.source, Some(CrateSource::Git { git, rev: Some(_), .. }) if git.contains("nih-plug"))
-    );
-    assert_eq!(m.recommended_external_deps.len(), 1);
-    assert_eq!(m.recommended_external_deps[0].crate_name, "nih_plug");
-}
-
-#[test]
-fn block_deps_egui_roundtrips() {
-    let body = r#"
-crates:
-  - name: nih_plug_egui
-    version: "0.0"
-    features: []
-    source:
-      git: "https://github.com/robbert-vdh/nih-plug"
-      rev: "abc123"
-  - name: egui
-    version: "0.27"
-    source: crates-io
-recommended_external_deps:
-  - crate: egui_extras
-    purpose: "Knob widget when widget_kind is knob"
-"#;
-    let p = write("deps-egui", body);
-    let m = BlockDeps::load(&p).expect("egui deps load");
-    assert_eq!(m.crates.len(), 2);
-    // Second crate is crates-io tagged variant.
-    use specdev_analyzer::manifest::CrateSourceTag;
-    assert!(matches!(
-        &m.crates[1].source,
-        Some(CrateSource::Tagged(CrateSourceTag::CratesIo))
-    ));
-}
-
-#[test]
-fn block_deps_embassy_roundtrips() {
-    let body = r#"
-crates:
-  - name: embassy-executor
-    version: "0.6"
-    features: ["arch-cortex-m", "executor-thread"]
-    source: crates-io
-  - name: embassy-time
-    version: "0.3"
-    source: crates-io
-recommended_external_deps: []
-"#;
-    let p = write("deps-embassy", body);
-    let m = BlockDeps::load(&p).expect("embassy deps load");
-    assert_eq!(m.crates.len(), 2);
-    assert_eq!(
-        m.crates[0].features,
-        vec!["arch-cortex-m", "executor-thread"]
-    );
-    assert!(m.recommended_external_deps.is_empty());
-}
-
-#[test]
-fn block_deps_stm32h5_rs_roundtrips() {
-    let body = r#"
-crates:
-  - name: embassy-stm32
-    version: "0.1"
-    features: ["unstable-pac"]
-    source: crates-io
-recommended_external_deps:
-  - crate: cortex-m
-    purpose: "ARM Cortex-M startup"
-  - crate: cortex-m-rt
-    purpose: "linker + reset handler"
-"#;
-    let p = write("deps-stm32h5", body);
-    let m = BlockDeps::load(&p).expect("stm32h5-rs deps load");
-    assert_eq!(m.recommended_external_deps.len(), 2);
-}
-
-#[test]
-fn block_deps_load_returns_default_when_file_absent() {
-    let p = tmp_path("deps-absent", "yaml");
-    let m = BlockDeps::load(&p).expect("absent deps return default");
-    assert!(m.crates.is_empty());
-    assert!(m.recommended_external_deps.is_empty());
-}
-
 // ===========================================================================
 // 3 — bridge contract.yaml round-trip × 2
 // ===========================================================================
@@ -394,19 +290,6 @@ unknown_field: 42
 "#;
     let p = write("profile-bad-top", body);
     let err = Profile::load(&p).expect_err("unknown top-level field should fail");
-    assert!(format!("{err:#}").contains("MANIFEST-001"));
-}
-
-#[test]
-fn block_deps_rejects_empty_purpose() {
-    let body = r#"
-crates: []
-recommended_external_deps:
-  - crate: foo
-    purpose: ""
-"#;
-    let p = write("deps-empty-purpose", body);
-    let err = BlockDeps::load(&p).expect_err("empty purpose should fail");
     assert!(format!("{err:#}").contains("MANIFEST-001"));
 }
 

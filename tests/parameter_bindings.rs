@@ -282,21 +282,3 @@ value_transform = { kind = "clamp" }
         "clamp without min/max must fail schema validation; got no errors"
     );
 }
-
-#[test]
-fn prompt_assembly_is_byte_identical_across_runs() {
-    use specdev_analyzer::prompt;
-    let (target, layout) = fresh_audio("determinism");
-    write_module(&target, "MyPlugin", FULLY_BOUND);
-    let a = prompt::assemble_module_prompt(&layout, "MyPlugin").unwrap();
-    let b = prompt::assemble_module_prompt(&layout, "MyPlugin").unwrap();
-    assert_eq!(a, b, "prompt assembly must be deterministic");
-    // The binding table rides verbatim in the module TOML section, so
-    // every binding's target appears in the prompt — the basis for a
-    // deterministic apply_param_changes emission.
-    assert!(
-        a.contains("ChipEngine::set_master_volume"),
-        "binding target present in prompt"
-    );
-    assert!(a.contains("db_to_amp"), "value transform present in prompt");
-}

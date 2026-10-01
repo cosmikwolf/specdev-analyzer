@@ -7,20 +7,16 @@
 //! - one file per decision, requirement, source and open question
 //!   (`specs/decisions/<id>.toml`, `specs/requirements/<id>.toml`,
 //!   `specs/sources/<id>.toml`, `specs/open_questions/<id>.toml`);
-//! - each moved file replaced by a tombstone an old analyzer cannot read;
-//! - generation lineage split per module
-//!   (`specs/specdev/gen-lineage/<Module>.toml`, `_project.toml`).
+//! - each moved file replaced by a tombstone an old analyzer cannot read.
 //!
 //! What each test holds fixed:
 //!
-//! 1. `gen` still refuses on an open question after the move. Measured
-//!    before this layout existed: with the files split by hand, `gen`
-//!    generated code at exit 0 because the refusal read
-//!    `specs/open_questions.toml` directly.
+//! 1. The open-question gate still refuses after the move. Measured before
+//!    this layout existed: with the files split by hand, the gate passed
+//!    because it read `specs/open_questions.toml` directly.
 //! 2. The graph is the same before and after `migrate`, with provenance
 //!    stripped (provenance names the source file, which moves).
 //! 3. `validate` is clean after `migrate`.
-//! 4. `report gen-plan` and `report gen-drift` say the same before and after.
 //! 5. `migrate` keeps each entry's bytes and moves the header comment.
 //! 6. `migrate` is idempotent and `--dry-run` writes nothing.
 //! 7. The released `1.x` analyzer refuses a migrated tree loudly (ignored by
@@ -162,15 +158,6 @@ fn build_v1_project(tag: &str) -> PathBuf {
 
     std::fs::create_dir_all(target.join("src")).unwrap();
     std::fs::write(target.join("src/parser.rs"), "pub(crate) fn parse() {}\n").unwrap();
-    let rec = analyzer(
-        &target,
-        &["gen-record", "--module", "parser", "src/parser.rs"],
-    );
-    assert!(
-        rec.status.success(),
-        "fixture gen-record failed:\n{}",
-        text(&rec)
-    );
     target
 }
 
@@ -318,7 +305,7 @@ fn fixture_is_sound_in_the_1x_layout() {
 }
 
 #[test]
-fn gen_still_refuses_on_an_open_question_after_migrate() {
+fn the_open_question_gate_still_refuses_after_migrate() {
     let project = build_v1_project("oq-gate");
     migrate(&project);
 
@@ -337,13 +324,6 @@ fn gen_still_refuses_on_an_open_question_after_migrate() {
         "parser is reachable only through a default_committed question"
     );
 
-    let out = analyzer(&project, &["gen", "--module", "writer"]);
-    assert!(!out.status.success(), "gen must refuse:\n{}", text(&out));
-    assert!(
-        text(&out).contains("Refusing to generate code for module `writer`"),
-        "refusal text missing:\n{}",
-        text(&out)
-    );
     // The refusal points the user at the file to edit. After the move the
     // old path is a tombstone.
     assert!(
@@ -367,35 +347,6 @@ fn migrate_keeps_the_graph_and_validates_clean() {
         out.status.success() && text(&out).contains("0 error(s)"),
         "validate is not clean after migrate:\n{}",
         text(&out)
-    );
-}
-
-#[test]
-fn migrate_keeps_gen_plan_and_gen_drift() {
-    let project = build_v1_project("gen-reports");
-    let plan_before = analyzer(&project, &["report", "gen-plan"]);
-    let drift_before = analyzer(&project, &["report", "gen-drift"]);
-    migrate(&project);
-    let plan_after = analyzer(&project, &["report", "gen-plan"]);
-    let drift_after = analyzer(&project, &["report", "gen-drift"]);
-
-    assert_eq!(
-        text(&plan_before),
-        text(&plan_after),
-        "report gen-plan changed"
-    );
-    assert_eq!(
-        text(&drift_before),
-        text(&drift_after),
-        "report gen-drift changed"
-    );
-    assert!(project
-        .join("specs/specdev/gen-lineage/parser.toml")
-        .is_file());
-    assert_tombstone(
-        &project,
-        "specs/specdev/gen-lineage.toml",
-        "specs/specdev/gen-lineage/",
     );
 }
 

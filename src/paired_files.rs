@@ -2,47 +2,22 @@
 //!
 //! A profile may ship config files that a project needs exactly once —
 //! `tsconfig.json`, `next.config.ts`, `.gitignore`, an `app/.gitkeep`
-//! that makes a directory exist before the first gate. They are declared
-//! as a top-level `paired_files:` list in `profile.yaml`, read from the
-//! inlined `<specdev_root>/templates/` copy at manifest time, and written
-//! by the shared manifest runner **only when absent**. After that first
-//! write they are externally owned: never rewritten, never gen-recorded.
-//! (`next build` rewrites `tsconfig.json` on its first run, so this is
-//! the only ownership category that file can live in.)
+//! that makes a directory exist. They are declared as a top-level
+//! `paired_files:` list in `profile.yaml`, read from the inlined
+//! `<specdev_root>/templates/` copy, and written by `bootstrap` **only when
+//! absent**. After that first write they belong to the project: never
+//! rewritten. (`next build` rewrites `tsconfig.json` on its first run.)
 //!
-//! Language-neutral by construction: the runner merges these rows with
-//! the rust arm's `[[bin]]` paired stub (`cargo_toml.rs`) and applies one
-//! write loop to both. The only token substituted in a body is
-//! `{project_name}` — the same closed grammar as the paired stub, so a
-//! JSON or TypeScript brace in a template is never a token.
+//! The only token substituted in a body is `{project_name}`, so a JSON or
+//! TypeScript brace in a template is never a token.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
 use crate::layout::LayoutContext;
 use crate::manifest::Profile;
-
-/// The declared `paired_files` targets as project-root-relative paths, in
-/// declared order, with no template read at all.
-///
-/// The gate key hashes these targets (see
-/// [`crate::gen_lineage::profile_hash`]): what the gate ran against is the
-/// config file on disk, not the template it was first copied from, and a
-/// template file that has since gone missing must not fail the hash.
-/// Same target validation as [`paired_files_from_profile`], because a
-/// target that escapes the project root must never be read.
-pub fn paired_targets(layout: &LayoutContext) -> Result<Vec<PathBuf>> {
-    let Some(profile) = Profile::load_inlined(&layout.specdev_root)? else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::with_capacity(profile.paired_files.len());
-    for row in &profile.paired_files {
-        out.push(check_target(&row.target)?);
-    }
-    Ok(out)
-}
 
 /// A `paired_files` target must be a relative path inside the project
 /// root. Returns it as a `PathBuf`.
@@ -90,28 +65,64 @@ pub fn paired_files_from_profile(layout: &LayoutContext) -> Result<Vec<(PathBuf,
     Ok(out)
 }
 
-/// Two writers, one path: refuse before anything is written when a
-/// paired target is also the manifest file, a gen-owned sibling
-/// (`pnpm-workspace.yaml`), or another paired row (the rust `[[bin]]`
-/// stub included). The error names the path and both writers.
-pub fn refuse_collisions(
-    paired: &[(PathBuf, String)],
-    manifest_filename: &str,
-    siblings: &[(String, String)],
-) -> Result<()> {
-    let mut writers: BTreeMap<PathBuf, &str> = BTreeMap::new();
-    writers.insert(PathBuf::from(manifest_filename), "the manifest emitter");
-    for (rel, _) in siblings {
-        writers.insert(PathBuf::from(rel), "a gen-owned sibling file");
+/// Pre-flight for `bootstrap`: check the plugin profile's `paired_files`
+/// rows before anything is written — every target is a relative path inside
+/// the project, no target is named twice, and every template exists in the
+/// profile's own `templates/`. `Ok` when the profile declares none.
+pub fn check_profile_rows(profile_dir: &Path) -> Result<()> {
+    let manifest = profile_dir.join("profile.yaml");
+    if !manifest.is_file() {
+        return Ok(());
     }
-    for (rel, _) in paired {
-        if let Some(other) = writers.insert(rel.clone(), "a paired file") {
+    let profile = Profile::load(&manifest)?;
+    let mut seen = BTreeSet::new();
+    for row in &profile.paired_files {
+        let target = check_target(&row.target)?;
+        if !seen.insert(target.clone()) {
             bail!(
-                "profile.yaml paired_files target `{}` is also written by {other}; \
-                 two writers for one path is refused",
-                rel.display()
+                "profile.yaml paired_files names `{}` twice; two writers for one path is refused",
+                target.display()
+            );
+        }
+        let template = profile_dir.join(&row.template_file);
+        if !template.is_file() {
+            bail!(
+                "profile.yaml paired_files template `{}` does not exist at {}",
+                row.template_file,
+                template.display()
             );
         }
     }
     Ok(())
+}
+
+/// Write every declared paired file that does not exist yet, in declared
+/// order; an existing file is left as it is. Returns the paths written,
+/// project-root-relative. Refuses before writing anything when two rows
+/// name one target.
+pub fn write_absent(layout: &LayoutContext) -> Result<Vec<PathBuf>> {
+    let rows = paired_files_from_profile(layout)?;
+    let mut seen = BTreeSet::new();
+    for (rel, _) in &rows {
+        if !seen.insert(rel.clone()) {
+            bail!(
+                "profile.yaml paired_files names `{}` twice; two writers for one path is refused",
+                rel.display()
+            );
+        }
+    }
+    let mut written = Vec::new();
+    for (rel, body) in rows {
+        let dest = layout.project_root.join(&rel);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        std::fs::write(&dest, body).with_context(|| format!("writing {}", dest.display()))?;
+        written.push(rel);
+    }
+    Ok(written)
 }
