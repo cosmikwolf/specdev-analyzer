@@ -47,6 +47,7 @@ struct ModuleState {
     file: PathBuf,
     planned: bool,
     source: Option<PathBuf>,
+    depends_on: Vec<String>,
 }
 
 /// Run `validate` plus every check against the code.
@@ -60,6 +61,7 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     stale_planned_requirements(&graph, &modules, &domain, &mut report);
     open_question_gate(layout, &modules, &domain, &mut report)?;
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
+    internal_edges(layout, &modules, &domain, &mut report)?;
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -118,7 +120,8 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
                 &layout.spec.paths.source,
             )
         });
-        out.push(ModuleState { name, file, planned, source });
+        let depends_on = string_list(doc.get("depends_on"));
+        out.push(ModuleState { name, file, planned, source, depends_on });
     }
     Ok(out)
 }
@@ -368,6 +371,59 @@ fn test_checks(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// Internal edges: an import from one module's source to another module
+/// must be in the importing module's `depends_on`. Modules that share one
+/// source file are one node, and each is told its edges are not checked.
+fn internal_edges(
+    layout: &LayoutContext,
+    modules: &[ModuleState],
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) -> Result<()> {
+    let nodes: Vec<crate::import_edges::ModuleNode> = modules
+        .iter()
+        .map(|m| crate::import_edges::ModuleNode {
+            name: m.name.clone(),
+            source: m.source.as_ref().map(|s| rel(layout, s)),
+            depends_on: m.depends_on.clone(),
+        })
+        .collect();
+    let file_of: BTreeMap<&str, String> =
+        modules.iter().map(|m| (m.name.as_str(), m.file.display().to_string())).collect();
+    let edges = crate::import_edges::module_edges(layout, &nodes)?;
+    let sev = severity(domain, "internal_edges_declared", Severity::Error);
+    for e in edges.undeclared {
+        report.push(
+            Finding::new(
+                "internal_edges_declared",
+                sev,
+                format!(
+                    "module `{}` imports module `{}` (`{}` in {}), which is not in its `depends_on`",
+                    e.from, e.to, e.spec, e.file
+                ),
+            )
+            .with_file(file_of.get(e.from.as_str()).cloned().unwrap_or_default())
+            .with_entity(&e.from),
+        );
+    }
+    let sev = severity(domain, "internal_edges_skipped", Severity::Info);
+    for (module, file, others) in edges.shared {
+        report.push(
+            Finding::new(
+                "internal_edges_skipped",
+                sev,
+                format!(
+                    "module `{module}` shares {file} with {}: they are one node, so the edges between them are not checked",
+                    others.join(", ")
+                ),
+            )
+            .with_file(file_of.get(module.as_str()).cloned().unwrap_or_default())
+            .with_entity(&module),
+        );
     }
     Ok(())
 }

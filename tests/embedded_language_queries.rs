@@ -28,14 +28,17 @@ use std::path::{Path, PathBuf};
 /// Every embedded query, as (language, file stem).
 const QUERIES: &[(&str, &str)] = &[
     ("c", "audit"),
+    ("c", "imports"),
     ("c", "tests"),
     ("cpp", "audit"),
+    ("cpp", "imports"),
     ("cpp", "tests"),
     ("dart", "audit"),
     ("dart", "imports"),
     ("dart", "items"),
     ("dart", "tests"),
     ("rust", "audit"),
+    ("rust", "imports"),
     ("rust", "items"),
     ("rust", "tests"),
     ("typescript", "audit"),
