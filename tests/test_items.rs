@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml,
     layout::LayoutContext,
     report::{Finding, Report},
     validate, Severity,
@@ -261,125 +260,6 @@ verifies = ["REQ-TEST-001"]
     assert!(
         !errors(&report).is_empty(),
         "a non-test item carrying verifies must fail schema validation"
-    );
-}
-
-#[test]
-fn reserved_test_kind_warns_no_emission() {
-    // bench/fuzz reserve the enum slot (schema accepts them) but
-    // emit nothing in v1 — validate warns (TEST-KIND-001).
-    let module = r#"name = "Lib"
-visibility = "pub"
-satisfies = ["REQ-API-001"]
-
-[[items]]
-name = "throughput"
-kind = "fn"
-description = "Benchmarks frame throughput."
-test = true
-test_kind = "bench"
-verifies = ["REQ-TEST-001"]
-"#;
-    let (target, _) = fresh_library("reserved-kind");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
-    write(&target, "specs/modules/Lib.toml", module);
-    let report = validate::run_project(&target, None).unwrap();
-    // bench validates clean (enum slot reserved) — no error.
-    assert!(
-        errors(&report).is_empty(),
-        "bench is schema-valid; got:\n{:#?}",
-        errors(&report)
-    );
-    let warns = findings_for(&report, "TEST-KIND-001", Severity::Warning);
-    assert_eq!(
-        warns.len(),
-        1,
-        "one reserved-kind warning; got:\n{warns:#?}"
-    );
-    assert!(
-        warns[0].message.contains("bench"),
-        "names the reserved kind: {}",
-        warns[0].message
-    );
-}
-
-#[test]
-fn prompt_includes_test_item_verification_context() {
-    use specdev_analyzer::prompt;
-    let (target, layout) = fresh_library("prompt");
-    write(&target, "specs/requirements.toml", REQS_MODULE_AND_TEST);
-    write(&target, "specs/modules/Lib.toml", MODULE_WITH_TEST_ITEM);
-    let a = prompt::assemble_module_prompt(&layout, "Lib").unwrap();
-    let b = prompt::assemble_module_prompt(&layout, "Lib").unwrap();
-    assert_eq!(a, b, "prompt assembly must be deterministic");
-    assert!(
-        a.contains("Test items (verification context)"),
-        "test-items section present:\n{a}"
-    );
-    assert!(a.contains("roundtrip_serde"), "names the test item");
-    assert!(
-        a.contains("Round-trip serde tests run on every PR"),
-        "injects the verifying requirement's text:\n{a}"
-    );
-    assert!(
-        a.contains("REQ-TEST-001"),
-        "names the verified requirement id"
-    );
-}
-
-#[test]
-fn test_only_external_dep_routes_to_dev_dependencies() {
-    // A module external_dep flagged `test_only = true` lands in
-    // `[dev-dependencies]`, not `[dependencies]`.
-    let (target, _) = fresh_library("dev-deps");
-    write(
-        &target,
-        "specs/requirements.toml",
-        "[[requirement]]\nid = \"REQ-API-001\"\ntext = \"x\"\nnature = \"module\"\n",
-    );
-    write(
-        &target,
-        "specs/modules/Lib.toml",
-        r#"name = "Lib"
-visibility = "pub"
-satisfies = ["REQ-API-001"]
-
-[[external_deps]]
-crate = "serde"
-version = "1"
-
-[[external_deps]]
-crate = "proptest"
-version = "1"
-test_only = true
-"#,
-    );
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = cargo_toml::render(&layout).unwrap();
-    let text = &rendered.text;
-    assert!(
-        text.contains("[dev-dependencies]"),
-        "dev-dependencies section emitted:\n{text}"
-    );
-    let (deps_part, dev_part) = text
-        .split_once("[dev-dependencies]")
-        .expect("has a dev-dependencies section");
-    assert!(
-        dev_part.contains("proptest"),
-        "proptest must be a dev-dependency:\n{text}"
-    );
-    assert!(
-        !deps_part.contains("proptest"),
-        "proptest must NOT be a regular dependency:\n{text}"
-    );
-    assert!(
-        deps_part.contains("serde"),
-        "serde must be a regular dependency:\n{text}"
-    );
-    // `test_only` is a routing flag, never a rendered Cargo key.
-    assert!(
-        !text.contains("test_only"),
-        "test_only must not leak into Cargo.toml:\n{text}"
     );
 }
 

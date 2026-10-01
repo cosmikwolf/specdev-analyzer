@@ -878,9 +878,8 @@ pub fn module_reachable_through_open_question(
                         severity,
                         format!(
                             "module `{module}` is reachable through open question \
-                             `{oq}` (`{title}`) via requirement `{req}`; codegen will \
-                             refuse to emit until the question is resolved or a default \
-                             is committed"
+                             `{oq}` (`{title}`) via requirement `{req}`; resolve the \
+                             question or commit a default before implementing it"
                         ),
                     ));
                     emitted.insert(oq.clone());

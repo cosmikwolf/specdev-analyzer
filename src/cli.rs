@@ -4,15 +4,14 @@ use std::process::ExitCode;
 use crate::lineage::Lineage;
 use crate::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml as cargo_toml_mod, context as context_mod,
+    context as context_mod,
     diagnostics::report_error,
-    drift, extract, inline,
+    drift, inline,
     layout::LayoutContext,
     manifest::profile as profile_mod,
-    merge, migrate, package_json as package_json_mod,
+    merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    prompt, prose_lint, pubspec_yaml as pubspec_yaml_mod, reduction, reference_lint, resolve,
-    validate,
+    prose_lint, reduction, reference_lint, resolve, validate,
 };
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -72,21 +71,6 @@ pub enum Command {
         /// Errors, warnings, and the summary/counts tail still print.
         #[arg(long, short = 'q')]
         quiet: bool,
-        /// Scope checks to the consumer named here.
-        /// Accepts `schema`, `strict-gen`, or `cargo-toml`.
-        /// Schema-tagged checks always run regardless. Without the flag,
-        /// every check fires (legacy behavior).
-        #[arg(long = "for")]
-        scope_for: Option<String>,
-    },
-    /// Emit canonical YAML extraction for codegen.
-    Extract {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Output directory for canonical YAML files.
-        #[arg(short, long)]
-        output: PathBuf,
     },
     /// Extract structured items (top-level language constructs) from each module's
     /// source file. Output is the substrate the items[] sync diffs run
@@ -198,56 +182,6 @@ pub enum Command {
         #[arg(long)]
         plugin: PathBuf,
     },
-    /// Emit the project's build manifest, dispatching on
-    /// `[project].language`: Cargo.toml for rust, pubspec.yaml for dart,
-    /// package.json for typescript. Other admitted languages have no
-    /// emitter and are refused by name.
-    /// Every dep is captured in the spec; this subcommand renders the
-    /// OUTPUT half. Lex-sorted deps; stable across runs. Conflict
-    /// warnings on stderr.
-    Manifest {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Write the manifest here. Without it (or --write), prints to stdout.
-        #[arg(short, long, conflicts_with = "write")]
-        output: Option<PathBuf>,
-        /// Write to the language's canonical filename in the project root
-        /// (Cargo.toml / pubspec.yaml / package.json) — lets callers stay
-        /// language-neutral.
-        #[arg(long)]
-        write: bool,
-        /// Overwrite a manifest that `gen-lineage.toml` has no row for.
-        ///
-        /// Without it, `--write` refuses to replace a build manifest this
-        /// tool did not write, because that file is hand-authored and
-        /// carries fields the spec has no place for. Pass this only when
-        /// the file at the target is genuinely disposable.
-        #[arg(long)]
-        accept_edits: bool,
-    },
-    /// Thin alias of `manifest` for rust-language projects (Cargo.toml
-    /// emission). Errors on non-rust projects — use `manifest` there.
-    CargoToml {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Write Cargo.toml here. Without it, prints to stdout.
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-    /// Assemble the codegen prompt for one module. Reads the inlined
-    /// blocks/bridges' codegen prose plus architecture + module specs
-    /// and concatenates them deterministically. Plugin's `spec-gen`
-    /// skill pipes this to Claude. Output is byte-stable across runs.
-    Prompt {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Module name (matches `specs/modules/<Module>.toml`).
-        #[arg(long)]
-        module: String,
-    },
     /// Focused dependency cone for one module. Emits the
     /// schema files, plugin-tree READMEs, target module path, and the
     /// one-hop set of related sibling modules. Skill consumers
@@ -316,93 +250,6 @@ pub enum Command {
         #[command(subcommand)]
         action: ReportAction,
     },
-    /// Spec→codegen handoff. Orchestrated by the `/spec-gen` skill, which
-    /// reads the shared preamble once (`--preamble`) then each module's
-    /// tail (`--module <N> --tail`) and emits source; the analyzer
-    /// assembles the codegen prompt deterministically. `--module <N>`
-    /// alone still writes the whole single-module prompt (back-compat).
-    Gen {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Module(s) to assemble for. Repeatable. With `--preamble`, an
-        /// empty list unions over every module under `specs/modules/`;
-        /// otherwise the named set is unioned. With `--tail` (or default
-        /// whole-prompt mode), exactly one module is required. Default
-        /// whole-prompt mode writes the assembled codegen prompt for one
-        /// module to stdout (equivalent to `prompt --module <Name>`, plus
-        /// the codegen gate).
-        #[arg(long)]
-        module: Vec<String>,
-        /// F-006: emit only the shared, project-invariant preamble
-        /// (Tier 1 conventions + architecture; Tier 2 block/bridge prose
-        /// unioned across `--module` or all modules). Gate-free — pure
-        /// shared prose. `/spec-gen` emits this once per run, then loops
-        /// `--module <N> --tail` per module. Mutually exclusive with `--tail`.
-        #[arg(long, conflicts_with = "tail")]
-        preamble: bool,
-        /// F-006: emit only the per-module tail (Tier 3: decisions/OQ,
-        /// project context, test items, module spec) for the single
-        /// `--module`. Enforces the codegen gate. Mutually exclusive with
-        /// `--preamble`.
-        #[arg(long)]
-        tail: bool,
-    },
-    /// Record SHA-256 hashes of generated files in
-    /// `specs/specdev/gen-lineage.toml`. Invoked by the `/spec-gen`
-    /// skill after emission — the analyzer cannot know which files the
-    /// codegen prose prescribed, so the skill passes them explicitly.
-    /// Re-recording a path replaces its entry. `report gen-drift`
-    /// classifies recorded files later.
-    GenRecord {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Module the files were generated for. Omit for project-level
-        /// emissions (Cargo.toml).
-        #[arg(long)]
-        module: Option<String>,
-        /// Emitted file paths (absolute, or relative to cwd). Each must
-        /// resolve inside the project root.
-        #[arg(required = true)]
-        files: Vec<PathBuf>,
-        /// Record a file even when gen-drift reports it as `edited`.
-        ///
-        /// Without this, re-recording an edited file is refused: recording is
-        /// what makes a file `clean`, so it would make the hand-edit the new
-        /// baseline and gen-drift could never report it again. Pass this only
-        /// when the current bytes ARE the intended baseline — a kept edit, or
-        /// a formatter pass that belongs to emission.
-        #[arg(long)]
-        accept_edits: bool,
-    },
-    /// Derive per-module files from the profile's `derived_files` rules
-    /// (route shims that re-export a module body) and record them in
-    /// `specs/specdev/gen-lineage.toml` as `derived` rows. Run by the
-    /// `/spec-gen` skill after the manifest and before lineage recording,
-    /// for every module on every gen. Without `--write` every line is a
-    /// preview. One line per path: `wrote` / `kept` / `edited` /
-    /// `conflict` / `deleted` / `skipped`. A hand-edited target
-    /// (`edited`) or an unrecorded file at a target (`conflict`) is never
-    /// overwritten without `--accept-edits`. Exit 0 when nothing is held
-    /// back; 3 when any `edited` / `conflict` line remains (every other
-    /// target was still written, with or without `--write` the same); 1 an
-    /// error stopped the run (the refusals — two modules on one target,
-    /// unreachable rules, a stale inlined profile — come before any write);
-    /// 2 the command could not start.
-    Derive {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Write the derived files, delete stale ones and record the rows.
-        #[arg(long)]
-        write: bool,
-        /// Overwrite `edited` and `conflict` targets and delete stale
-        /// files that carry a hand edit. Run by hand after such a line;
-        /// the codegen skill never passes it.
-        #[arg(long)]
-        accept_edits: bool,
-    },
     /// Run one declared compile gate and record its result.
     ///
     /// Looks `--label` up in the `gates:` registry of the inlined
@@ -432,33 +279,6 @@ pub enum Command {
         #[arg(long)]
         module: Vec<String>,
     },
-    /// Record a compile-gate result in `specs/specdev/gen-lineage.toml`.
-    /// Invoked by the `/spec-gen` skill AFTER the compile gate (Step 8) —
-    /// never before it, because the gate itself writes the lockfile that
-    /// becomes part of the result's key. Writes one batch row (the
-    /// whole-tree result) plus one row per `--module`; rows replace by
-    /// `(module, label)`. `report gen-plan` reads them to decide which
-    /// `unchanged` modules still need a re-gate.
-    GenRecordGate {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Module(s) generated in this run. Repeatable. Omit to record a
-        /// batch row only.
-        #[arg(long)]
-        module: Vec<String>,
-        /// Opaque gate label (e.g. `cargo-check`, `flutter-analyze`,
-        /// `next-build`). The analyzer never interprets it.
-        #[arg(long)]
-        label: String,
-        /// The gate passed.
-        #[arg(long, conflicts_with = "fail", required_unless_present = "fail")]
-        pass: bool,
-        /// The gate failed. Every named module and the batch get a fail
-        /// row, so none of them can be skipped as verified next run.
-        #[arg(long, conflicts_with = "pass", required_unless_present = "pass")]
-        fail: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -481,27 +301,6 @@ pub enum ReportAction {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Classify every file recorded in `gen-lineage.toml` as clean
-    /// (bytes match the recorded hash), edited (generated then
-    /// hand-edited), or missing (recorded but gone). Pure reporter;
-    /// hash-level only — it detects THAT a file changed, not what.
-    /// Exit 0 when clean, 1 on drift, 2 on hard error.
-    GenDrift {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-    },
-    /// Classify every module under `specs/modules/` for incremental
-    /// `/spec-gen --all`: `new` (no lineage), `unchanged` (clean output +
-    /// matching input hash → skip), `stale` (clean output, inputs moved →
-    /// regenerate), `edited` (output hand-edited → skip + warn), or
-    /// `missing` (output gone → regenerate). Deterministic; no judgment.
-    /// YAML to stdout. Exit 0 on success, 2 on hard error.
-    GenPlan {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-    },
     /// Which decision text reaches which module's codegen prompt. Two
     /// YAML views over the function the prompt is rendered from: `modules`
     /// (per module: its decisions and open questions, why each is there,
@@ -518,22 +317,6 @@ pub enum ReportAction {
         /// Limit the `decisions` view to this decision id.
         #[arg(long)]
         decision: Option<String>,
-    },
-    /// Packages a module's source file imports that the module may not
-    /// rely on: not in its own `external_deps`, the architecture-level
-    /// `external_deps`, or the deps of the blocks and bridges it uses.
-    /// Such an import resolves only because a sibling module declares the
-    /// package, and breaks when the sibling drops it. Runtime entries only;
-    /// test files are not read. YAML on stdout. Exit 0 when every import is
-    /// declared (or the language ships no import query — `checked: false`),
-    /// 1 when any is not, 2 on hard error.
-    Imports {
-        /// Project root (directory the analyzer searches from). Defaults to cwd.
-        #[arg(long, default_value = ".")]
-        project: PathBuf,
-        /// Check this module only.
-        #[arg(long)]
-        module: Option<String>,
     },
     /// Render the module dependency graph as Mermaid (default) or DOT.
     /// When `domain.toml` declares a `layer_dependency` graph check, nodes
@@ -666,7 +449,6 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             strict,
             quiet,
-            scope_for,
         } => run_validate(
             project,
             spec_path.as_deref(),
@@ -674,9 +456,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             strict,
             no_color,
             quiet,
-            scope_for,
         ),
-        Command::Extract { project, output } => run_extract(project, spec_path.as_deref(), output),
         Command::ExtractItems { project, module } => {
             run_extract_items(project, spec_path.as_deref(), module.as_deref())
         }
@@ -703,23 +483,6 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             merge,
         } => run_inline_bridge(project, spec_path.as_deref(), plugin_flag, bridge, merge),
         Command::PluginLint { plugin } => run_plugin_lint(plugin),
-        Command::Prompt { project, module } => run_prompt(project, spec_path.as_deref(), module),
-        Command::Manifest {
-            project,
-            output,
-            write,
-            accept_edits,
-        } => run_manifest(
-            project,
-            spec_path.as_deref(),
-            output,
-            write,
-            false,
-            accept_edits,
-        ),
-        Command::CargoToml { project, output } => {
-            run_manifest(project, spec_path.as_deref(), output, false, true, false)
-        }
         Command::Context {
             project,
             module,
@@ -731,58 +494,17 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             refresh,
         } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
-        Command::Gen {
-            project,
-            module,
-            preamble,
-            tail,
-        } => run_gen(
-            project,
-            spec_path.as_deref(),
-            plugin_flag,
-            module,
-            preamble,
-            tail,
-        ),
-        Command::GenRecord {
-            project,
-            module,
-            files,
-            accept_edits,
-        } => run_gen_record(project, spec_path.as_deref(), module, files, accept_edits),
-        Command::Derive {
-            project,
-            write,
-            accept_edits,
-        } => run_derive(
-            project,
-            spec_path.as_deref(),
-            plugin_flag,
-            write,
-            accept_edits,
-        ),
         Command::Gate {
             project,
             label,
             module,
-        } => run_gate(project, spec_path.as_deref(), plugin_flag, &label, module),
-        Command::GenRecordGate {
-            project,
-            module,
-            label,
-            pass,
-            fail: _,
-        } => run_gen_record_gate(project, spec_path.as_deref(), module, &label, pass),
+        } => run_gate(project, spec_path.as_deref(), &label, module),
         Command::Report { action } => match action {
             ReportAction::Coverage {
                 project,
                 format,
                 output,
             } => run_report_coverage(project, spec_path.as_deref(), &format, output),
-            ReportAction::GenDrift { project } => {
-                run_report_gen_drift(project, spec_path.as_deref())
-            }
-            ReportAction::GenPlan { project } => run_report_gen_plan(project, spec_path.as_deref()),
             ReportAction::Decisions {
                 project,
                 module,
@@ -793,9 +515,6 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 module.as_deref(),
                 decision.as_deref(),
             ),
-            ReportAction::Imports { project, module } => {
-                run_report_imports(project, spec_path.as_deref(), module.as_deref())
-            }
             ReportAction::Graph {
                 project,
                 format,
@@ -828,285 +547,6 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
     }
 }
 
-/// Shared `manifest` / `cargo-toml` runner. Dispatches on
-/// `[project].language` — language dispatch is in-code by design
-/// (languages are universal infrastructure; everything profile-shaped
-/// flows through the runtime manifests instead).
-/// `require_rust` is the `cargo-toml` alias's guard:
-/// the legacy name only ever emitted Cargo.toml, so a non-rust project
-/// gets a pointer to `manifest` instead of a surprising pubspec.
-fn run_manifest(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    output: Option<PathBuf>,
-    write: bool,
-    require_rust: bool,
-    accept_edits: bool,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    let language = layout.spec.project.language.clone();
-    if require_rust && language != "rust" {
-        eprintln!(
-            "error: this project's language is `{language}`; `cargo-toml` emits \
-             Cargo.toml for rust projects only — use `specdev-analyzer manifest`"
-        );
-        return ExitCode::from(2);
-    }
-
-    // (rendered manifest text, warnings, paired extra files written only
-    // when absent, gen-owned sibling files overwritten on every write,
-    // canonical filename)
-    let (text, warnings, extra_files, sibling_files, default_filename) = match language.as_str() {
-        "rust" => match cargo_toml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, r.extra_files, Vec::new(), "Cargo.toml"),
-            Err(e) => {
-                report_error(&e);
-                return ExitCode::from(1);
-            }
-        },
-        "dart" => match pubspec_yaml_mod::render(&layout) {
-            Ok(r) => (r.text, r.warnings, Vec::new(), Vec::new(), "pubspec.yaml"),
-            Err(e) => {
-                report_error(&e);
-                return ExitCode::from(1);
-            }
-        },
-        "typescript" => match package_json_mod::render(&layout) {
-            Ok(r) => (
-                r.text,
-                r.warnings,
-                Vec::new(),
-                r.sibling_files,
-                "package.json",
-            ),
-            Err(e) => {
-                report_error(&e);
-                return ExitCode::from(1);
-            }
-        },
-        other => {
-            eprintln!(
-                "error: manifest emission for language `{other}` is not \
-                 implemented; supported: rust, dart, typescript"
-            );
-            return ExitCode::from(1);
-        }
-    };
-
-    for w in &warnings {
-        eprintln!("warning: {w}");
-    }
-
-    // Profile-declared `paired_files` — language-neutral, written
-    // once when absent through the same loop as the rust `[[bin]]` stub.
-    let mut extra_files = extra_files;
-    match specdev_analyzer::paired_files::paired_files_from_profile(&layout) {
-        Ok(mut rows) => extra_files.append(&mut rows),
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(1);
-        }
-    }
-    if let Err(e) = specdev_analyzer::paired_files::refuse_collisions(
-        &extra_files,
-        default_filename,
-        &sibling_files,
-    ) {
-        report_error(&e);
-        return ExitCode::from(1);
-    }
-
-    // Refuse to replace a build manifest this tool did not write.
-    //
-    // The manifest is pure output, rewritten on every `--write`. That is
-    // correct for a project specdev generated, and wrong for a project that
-    // adopted specdev over a tree it already had: there the file on disk is
-    // hand-authored, carries fields the spec has no place for (`version`,
-    // `authors`, a `postinstall` script, a `resolutions` block), and this
-    // write discards them with no warning and exit 0.
-    //
-    // The matrix is `derive`'s, and the order matters — identical bytes are
-    // tested BEFORE the lineage row, so a repeat `--write` with nothing to
-    // record (the analyzer driven directly, or a `/spec-gen` run interrupted
-    // between Step 6 and Step 6.5) is not a conflict. Only bytes that both
-    // differ from our render AND have no lineage row belong to the user:
-    //
-    //   absent                         -> write
-    //   identical to the render        -> write (nothing to lose)
-    //   recorded                       -> write (ours; the regenerate loop)
-    //   different AND unrecorded       -> REFUSE
-    //
-    // Covers the primary manifest AND every gen-owned sibling
-    // (`pnpm-workspace.yaml`) under `--write`. The siblings were previously
-    // left out on the grounds that they render wholly from
-    // `[workspace].members[]` and are documented as overwritten every write.
-    // That reasoning holds only for a tree this tool created: in a brownfield
-    // monorepo the sibling is hand-authored, carries members and settings the
-    // spec never saw, and the first `--write` discarded it — the same
-    // data-loss shape the primary manifest was guarded against, on the same
-    // command, in the same run.
-    //
-    // Every file the write would touch is checked BEFORE any of them is
-    // written. A refusal after a partial write leaves a tree that neither the
-    // spec nor the user authored.
-    //
-    // `--output <path>` names a destination explicitly and is the caller's
-    // business, the same class as a shell redirection.
-    if write && !accept_edits {
-        let mut guarded: Vec<(PathBuf, &[u8])> =
-            vec![(PathBuf::from(default_filename), text.as_bytes())];
-        for (sib_rel, sib_body) in &sibling_files {
-            guarded.push((PathBuf::from(sib_rel), sib_body.as_bytes()));
-        }
-        for (rel, rendered) in guarded {
-            let display_name = rel.display().to_string();
-            let abs = layout.project_root.join(&rel);
-            let on_disk = match std::fs::read(&abs) {
-                Ok(b) => Some(b),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => {
-                    eprintln!("error: reading {}: {e}", abs.display());
-                    return ExitCode::from(2);
-                }
-            };
-            if let Some(bytes) = on_disk {
-                if bytes != rendered {
-                    match specdev_analyzer::gen_lineage::is_recorded(&layout.specdev_root, &rel) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            eprintln!(
-                                "error: [MANIFEST-003] refusing to overwrite {display_name}: \
-                                 unrecorded file at target\n\n\
-                                 It has no row in specs/specdev/gen-lineage.toml, so this tool \
-                                 did not write it, and its bytes differ from what the spec \
-                                 renders. Overwriting would discard whatever it declares that \
-                                 the spec does not yet carry.\n\n\
-                                 If the file is yours to keep: fold what it declares into the \
-                                 spec ([[external_deps]] in architecture.toml for project-wide \
-                                 dependencies, external_deps[] in a module for module-scoped \
-                                 ones; [workspace].members[] for workspace membership), then \
-                                 delete it and re-run.\n\
-                                 If it is genuinely disposable: re-run with --accept-edits."
-                            );
-                            return ExitCode::from(1);
-                        }
-                        Err(e) => {
-                            report_error(&e);
-                            return ExitCode::from(2);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let target = output.or_else(|| write.then(|| layout.project_root.join(default_filename)));
-    match target {
-        Some(path) => match std::fs::write(&path, &text) {
-            Ok(()) => {
-                eprintln!("wrote {default_filename} to {}", path.display());
-                let project_root = layout.project_root.as_path();
-                // Gen-owned sibling files (e.g. the pnpm workspace
-                // root's `pnpm-workspace.yaml`) are output like the
-                // manifest itself: written beside it and overwritten on
-                // every `--write`. They are skipped under `--output`,
-                // which redirects the manifest text alone.
-                if write {
-                    for (rel, body) in &sibling_files {
-                        let dst = project_root.join(rel);
-                        if let Err(e) = std::fs::write(&dst, body) {
-                            eprintln!("failed to write {}: {e}", dst.display());
-                            return ExitCode::from(2);
-                        }
-                        eprintln!("wrote {rel} to {}", dst.display());
-                    }
-                } else if !sibling_files.is_empty() {
-                    let names: Vec<&str> = sibling_files.iter().map(|(r, _)| r.as_str()).collect();
-                    eprintln!(
-                        "note: sibling file(s) {} not written under --output; use --write",
-                        names.join(", ")
-                    );
-                }
-                // Paired files — the rust `[[bin]]` stub (F-016) and the
-                // profile's `paired_files` rows. Written only
-                // when absent: an existing file is the user's and is
-                // never overwritten. Gated on `--write` like the
-                // siblings — `--output <file>` redirects the manifest
-                // text alone and must not touch the project root.
-                if write {
-                    let mut kept: Vec<String> = Vec::new();
-                    for (rel, body) in &extra_files {
-                        let dst = project_root.join(rel);
-                        if dst.exists() {
-                            kept.push(rel.display().to_string());
-                            continue;
-                        }
-                        if let Some(parent) = dst.parent() {
-                            if let Err(e) = std::fs::create_dir_all(parent) {
-                                eprintln!("failed to create {}: {e}", parent.display());
-                                return ExitCode::from(2);
-                            }
-                        }
-                        if let Err(e) = std::fs::write(&dst, body) {
-                            eprintln!("failed to write {}: {e}", dst.display());
-                            return ExitCode::from(2);
-                        }
-                        eprintln!("wrote paired file {}", dst.display());
-                    }
-                    if !kept.is_empty() {
-                        eprintln!(
-                            "kept {} existing paired file(s): {}",
-                            kept.len(),
-                            kept.join(", ")
-                        );
-                    }
-                } else if !extra_files.is_empty() {
-                    eprintln!(
-                        "note: {} paired file(s) not written under --output; use --write",
-                        extra_files.len()
-                    );
-                }
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("failed to write {}: {e}", path.display());
-                ExitCode::from(2)
-            }
-        },
-        None => {
-            print!("{text}");
-            ExitCode::SUCCESS
-        }
-    }
-}
-
-fn run_prompt(project: PathBuf, spec_path: Option<&std::path::Path>, module: String) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    match prompt::assemble_module_prompt(&layout, &module) {
-        Ok(s) => {
-            print!("{s}");
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            // Could not assemble: 2, the same class as `gen`'s (#165).
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
-}
-
 fn run_validate(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
@@ -1114,7 +554,6 @@ fn run_validate(
     strict: bool,
     no_color: bool,
     quiet: bool,
-    scope_for: Option<String>,
 ) -> ExitCode {
     // Discover layout once so we can both run the pipeline and produce
     // the positive-confirmation summary against the same project state.
@@ -1125,17 +564,7 @@ fn run_validate(
             return ExitCode::from(2);
         }
     };
-    let filter = match scope_for {
-        None => None,
-        Some(s) => match s.parse::<validate::Capability>() {
-            Ok(cap) => Some(cap),
-            Err(e) => {
-                eprintln!("error: --for: {e}");
-                return ExitCode::from(2);
-            }
-        },
-    };
-    let mut report = match validate::run_for(&layout, filter) {
+    let mut report = match validate::run(&layout) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
@@ -1199,26 +628,6 @@ fn plugin_ahead_notice(
         specdev_analyzer::domain::Severity::Info,
         msg,
     ))
-}
-
-fn run_extract(project: PathBuf, spec_path: Option<&std::path::Path>, output: PathBuf) -> ExitCode {
-    let result = match extract::run_project(&project, spec_path) {
-        Ok(r) => r,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    match extract::write(&result, &output) {
-        Ok(written) => {
-            eprintln!("wrote {} file(s) to {}", written.len(), output.display());
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
 }
 
 fn run_extract_items(
@@ -2030,256 +1439,9 @@ fn run_drift(
     }
 }
 
-/// `/spec-gen` orchestration entry point. The analyzer assembles the
-/// codegen prompt deterministically; Claude consumes it and emits
-/// source. With `--module <Name>`, writes the assembled prompt to
-/// stdout (equivalent to `prompt --module <Name>`); without it, prints
-/// a routing hint pointing at the right invocation.
-///
-/// Exit codes follow the rest of this file: 0 prompt printed; 1 the spec
-/// was evaluated and codegen is refused (an open question, no module-scope
-/// gate declared); 2 the command could not run (usage, an unreadable or
-/// unparsable file, no plugin root).
-fn run_gen(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    plugin_flag: Option<PathBuf>,
-    module: Vec<String>,
-    preamble: bool,
-    tail: bool,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    // The gate-registry check for the two gated paths below. The plugin
-    // root is read only when the inlined profile declares no registry
-    // (to print the block to paste); resolve it lazily.
-    let layout_ref = &layout;
-    let resolve_plugin = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
-    let registry_refusal = |layout: &LayoutContext| -> Option<ExitCode> {
-        match specdev_analyzer::gates::refuse_without_module_gate(layout, &resolve_plugin, "gen") {
-            Ok(None) => None,
-            Ok(Some(message)) => {
-                eprintln!("{message}");
-                Some(ExitCode::from(1))
-            }
-            Err(e) => {
-                report_error(&e);
-                Some(ExitCode::from(2))
-            }
-        }
-    };
-
-    // F-006 `--preamble`: shared Tier 1 + Tier 2 prose, gate-free. An empty
-    // `--module` set unions over every module under specs/modules/; a named
-    // set scopes the union (the single-module and fan-out-subset cases).
-    if preamble {
-        let modules = if module.is_empty() {
-            match specdev_analyzer::prompt::list_module_names(&layout) {
-                Ok(m) => m,
-                Err(e) => {
-                    report_error(&e);
-                    return ExitCode::from(2);
-                }
-            }
-        } else {
-            module
-        };
-        return match specdev_analyzer::prompt::assemble_preamble(&layout, &modules) {
-            Ok(s) => {
-                print!("{s}");
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                report_error(&e);
-                ExitCode::from(2)
-            }
-        };
-    }
-
-    // F-006 `--tail`: per-module Tier 3, gate enforced. Exactly one module.
-    if tail {
-        let name = match module.as_slice() {
-            [one] => one.clone(),
-            _ => {
-                eprintln!(
-                    "`gen --tail` requires exactly one `--module <Name>`; got {}.",
-                    module.len()
-                );
-                return ExitCode::from(2);
-            }
-        };
-        // Project-wide precondition first (one fix serves every module),
-        // then the per-module open-question gate.
-        if let Some(code) = registry_refusal(&layout) {
-            return code;
-        }
-        match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
-            Ok(Some(refusal)) => {
-                eprint!("{}", refusal.message);
-                return ExitCode::from(1);
-            }
-            Ok(None) => {}
-            Err(e) => {
-                report_error(&e);
-                return ExitCode::from(2);
-            }
-        }
-        return match specdev_analyzer::prompt::assemble_tail(&layout, &name) {
-            Ok(s) => {
-                print!("{s}");
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                report_error(&e);
-                ExitCode::from(2)
-            }
-        };
-    }
-
-    // Default whole-prompt mode (back-compat single-module). Requires
-    // exactly one module. The codegen gate refuses if the module is
-    // reachable through any open OpenQuestion (validate also surfaces this
-    // as a `codegen_unblocked` warning, but gen is the hard refusal).
-    match module.as_slice() {
-        [name] => {
-            let name = name.clone();
-            if let Some(code) = registry_refusal(&layout) {
-                return code;
-            }
-            match specdev_analyzer::prompt::check_codegen_gate(&layout, &name) {
-                Ok(Some(refusal)) => {
-                    eprint!("{}", refusal.message);
-                    return ExitCode::from(1);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    report_error(&e);
-                    return ExitCode::from(2);
-                }
-            }
-            match specdev_analyzer::prompt::assemble_module_prompt(&layout, &name) {
-                Ok(s) => {
-                    print!("{s}");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    report_error(&e);
-                    ExitCode::from(2)
-                }
-            }
-        }
-        [] => {
-            eprintln!(
-                "codegen is orchestrated by the `/spec-gen` skill — the analyzer assembles\n\
-                 the codegen prompt deterministically; Claude emits source. Pass `--module\n\
-                 <Name>` for one module's whole prompt, `--preamble` for the shared preamble\n\
-                 once, or `--module <Name> --tail` for one module's tail. Or run\n\
-                 `specdev-analyzer prompt --module <Name>` directly and pipe to /spec-gen.",
-            );
-            ExitCode::from(2)
-        }
-        _ => {
-            eprintln!(
-                "`gen --module` (whole-prompt mode) takes exactly one module; got {}. \
-                 Use `--preamble` to union multiple modules into the shared preamble.",
-                module.len()
-            );
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_gen_record(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    module: Option<String>,
-    files: Vec<PathBuf>,
-    accept_edits: bool,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let record = if accept_edits {
-        specdev_analyzer::gen_lineage::record_files_accepting_edits
-    } else {
-        specdev_analyzer::gen_lineage::record_files
-    };
-    match record(&layout, module.as_deref(), &files, &generated_at) {
-        Ok(recorded) => {
-            for path in &recorded {
-                println!("recorded {path}");
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_derive(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    plugin_flag: Option<PathBuf>,
-    write: bool,
-    accept_edits: bool,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    // The plugin root is read only when the inlined profile declares no
-    // rules (to catch a stale inlined profile); resolve it lazily.
-    let layout_ref = &layout;
-    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
-    let opts = specdev_analyzer::derive::DeriveOptions {
-        write,
-        accept_edits,
-    };
-    match specdev_analyzer::derive::run_derive(&layout, &resolve, opts) {
-        Ok(report) => {
-            for line in &report.lines {
-                println!("{}", line.render());
-            }
-            // 3, not 1: the run completed and every other target was
-            // written, but some were held back. 1 means an error stopped
-            // the run; a caller must not read the two the same way.
-            match report.held() {
-                0 => ExitCode::SUCCESS,
-                n => {
-                    eprintln!(
-                        "derive: {n} target(s) held back (`edited` / `conflict` above); \
-                         resolve by hand or run `derive --write --accept-edits`"
-                    );
-                    ExitCode::from(3)
-                }
-            }
-        }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(1)
-        }
-    }
-}
-
 fn run_gate(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
-    plugin_flag: Option<PathBuf>,
     label: &str,
     modules: Vec<String>,
 ) -> ExitCode {
@@ -2290,128 +1452,18 @@ fn run_gate(
             return ExitCode::from(2);
         }
     };
-    // The plugin root is read only when the inlined registry declares no
-    // module-scope gate, to print the block to paste; resolve it lazily.
-    let layout_ref = &layout;
-    let resolve = move || resolve_plugin_for_project(layout_ref, plugin_flag.clone());
-    match specdev_analyzer::gates::run_gate(&layout, &resolve, label, &modules) {
+    match specdev_analyzer::gates::run_gate(&layout, label, &modules) {
         Ok(run) => {
-            for row in &run.record.pruned {
-                match &row.module {
-                    Some(m) => println!("pruned {} module {m} (label undeclared)", row.label),
-                    None => println!("pruned {} batch (label undeclared)", row.label),
-                }
-            }
-            for row in &run.record.written {
-                let verdict = if row.pass { "pass" } else { "fail" };
-                match &row.module {
-                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
-                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
-                }
-            }
+            println!("gate {} {}", run.label, if run.pass { "pass" } else { "fail" });
             if run.pass {
                 ExitCode::SUCCESS
             } else {
-                // The gate's own exit code, per the decision. A tool that
-                // exits 2 is then indistinguishable from this command's
-                // own exit-2 classes by code alone — the rows on stdout
-                // are what separate "ran and failed" from "did not run".
+                // The gate's own exit code. A tool that exits 2 is then
+                // indistinguishable from this command's own exit-2 class by
+                // code alone; the `gate <label> fail` line separates them.
                 ExitCode::from(u8::try_from(run.code).unwrap_or(1))
             }
         }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_gen_record_gate(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    modules: Vec<String>,
-    label: &str,
-    pass: bool,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    match specdev_analyzer::gen_lineage::record_gate(&layout, &modules, label, pass) {
-        Ok(rows) => {
-            for row in &rows {
-                let verdict = if row.pass { "pass" } else { "fail" };
-                match &row.module {
-                    Some(m) => println!("gate {} {verdict} module {m} key {}", row.label, row.key),
-                    None => println!("gate {} {verdict} batch key {}", row.label, row.key),
-                }
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_report_gen_drift(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    match specdev_analyzer::gen_lineage::run_gen_drift(&layout) {
-        Ok(report) => match report.to_yaml() {
-            Ok(yaml) => {
-                print!("{yaml}");
-                if report.is_clean() {
-                    ExitCode::SUCCESS
-                } else {
-                    // Drift present → exit 1 so the skill can branch
-                    // without parsing the YAML.
-                    ExitCode::from(1)
-                }
-            }
-            Err(e) => {
-                report_error(&e);
-                ExitCode::from(2)
-            }
-        },
-        Err(e) => {
-            report_error(&e);
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_report_gen_plan(project: PathBuf, spec_path: Option<&std::path::Path>) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    // gen-plan is multi-valued (one verdict per module); the skill parses
-    // the YAML to drive skip/regen. Exit reflects success/failure only, not
-    // the plan's contents (cf. gen-drift's 0/1 clean/drift split).
-    match specdev_analyzer::gen_lineage::run_gen_plan(&layout) {
-        Ok(report) => match report.to_yaml() {
-            Ok(yaml) => {
-                print!("{yaml}");
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                report_error(&e);
-                ExitCode::from(2)
-            }
-        },
         Err(e) => {
             report_error(&e);
             ExitCode::from(2)
@@ -2448,49 +1500,6 @@ fn run_report_decisions(
             report_error(&e);
             ExitCode::from(2)
         }
-    }
-}
-
-fn run_report_imports(
-    project: PathBuf,
-    spec_path: Option<&std::path::Path>,
-    module: Option<&str>,
-) -> ExitCode {
-    let layout = match LayoutContext::discover(&project, spec_path) {
-        Ok(l) => l,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    let report = match specdev_analyzer::imports::run(&layout, module) {
-        Ok(r) => r,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
-    match report.to_yaml() {
-        Ok(y) => print!("{y}"),
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    }
-    if !report.checked {
-        eprintln!(
-            "imports: language `{}` ships no import query; nothing was checked",
-            report.language
-        );
-    }
-    if report.undeclared.is_empty() {
-        ExitCode::SUCCESS
-    } else {
-        eprintln!(
-            "{} undeclared import(s): add each package to the module's `external_deps`",
-            report.undeclared.len()
-        );
-        ExitCode::from(1)
     }
 }
 

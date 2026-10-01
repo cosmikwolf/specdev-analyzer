@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml::render,
     layout::LayoutContext,
     report::{Finding, Report},
     validate, Severity,
@@ -82,20 +81,6 @@ default_channel_layout = "stereo"
 panic_handler = "abort"
 "#;
 
-const ARCH_WITH_STANDALONE: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap", "standalone"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
-
 fn write_arch(target: &Path, body: &str) {
     std::fs::write(target.join("specs/architecture.toml"), body).unwrap();
 }
@@ -144,10 +129,8 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
         assert!(p.is_file(), "expected {} after bootstrap", p.display());
     }
 
-    // Codegen prose at codegen/rust/module.conventions.md.
-    assert!(target
-        .join("specs/specdev/codegen/rust/module.conventions.md")
-        .is_file());
+    // Profile codegen conventions are no longer copied.
+    assert!(!target.join("specs/specdev/codegen/rust/module.conventions.md").exists());
 
     // Project-level reduction.
     assert!(target
@@ -307,98 +290,6 @@ panic_handler = "abort"
         !errs.is_empty(),
         "expected SCHEMA-ARCH error for non-strict-SemVer version; got {report:#?}"
     );
-}
-
-// ---------------------------------------------------------------------------
-// 7 — Cargo.toml render: cdylib only when standalone is NOT in formats.
-// ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_cdylib_only_when_no_standalone() {
-    let (target, _) = fresh_plugin("cdylib-only");
-    write_arch(&target, ARCH_DEFAULT);
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(
-        t.contains("[lib]\ncrate-type = [\"cdylib\"]\n"),
-        "expected [lib] cdylib block:\n{t}"
-    );
-    assert!(
-        !t.contains("[[bin]]"),
-        "expected no [[bin]] target when formats lacks standalone:\n{t}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 8 — Cargo.toml render: formats includes "standalone" → emit
-//     [[bin]] standalone target with name = "<project>-standalone",
-//     path = src/bin/standalone.rs. cdylib still emits.
-// ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_bin_when_standalone_in_formats() {
-    let (target, _) = fresh_plugin("with-standalone");
-    write_arch(&target, ARCH_WITH_STANDALONE);
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(
-        t.contains("[lib]\ncrate-type = [\"cdylib\"]\n"),
-        "cdylib still required:\n{t}"
-    );
-    assert!(
-        t.contains(
-            "[[bin]]\nname = \"demo_plugin-standalone\"\npath = \"src/bin/standalone.rs\"\n"
-        ),
-        "expected [[bin]] standalone target:\n{t}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 9 — Cargo.toml render: [features] parity with library-api. Architecture-
-//     declared features emit a [features] section with synthetic
-//     `default = [...]` line.
-// ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_features_section_with_default_synthesis() {
-    let (target, _) = fresh_plugin("features");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "fx"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-
-[[features]]
-name = "midi"
-description = "Optional MIDI handling"
-
-[[features]]
-name = "simd"
-description = "SIMD DSP path"
-default = true
-"#,
-    );
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(t.contains("[features]\n"), "{t}");
-    assert!(t.contains("default = [\"simd\"]\n"), "{t}");
-    assert!(t.contains("midi = []\n"), "{t}");
-    assert!(t.contains("simd = []\n"), "{t}");
 }
 
 // ---------------------------------------------------------------------------

@@ -36,57 +36,6 @@ use crate::resolved::{EffectiveKindSet, ResolvedExtends};
 /// recognizable while we land the rewrite.
 pub type Inputs = LayoutContext;
 
-/// Capability tag carried on each registered check.
-/// Used by `validate --for=<capability>` to scope the checks that fire to
-/// the slice the caller cares about; absent the flag every check runs.
-///
-/// The set is closed: each capability names a downstream consumer of the
-/// validated spec. Adding a new capability is a one-line edit here +
-/// adding the tag to whichever checks gate that consumer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Capability {
-    /// Schema / structural integrity — every check here gates "this spec
-    /// is well-formed". Default-on for every other capability since every
-    /// downstream consumer needs schema-clean inputs.
-    Schema,
-    /// `gen --strict` (Claude-orchestrated codegen) consumes this. Strict
-    /// mode is high-context: a module that omits `context_files` in
-    /// strict mode gets no out-of-band prose, which is usually a friction
-    /// (F-015 from the zfm dogfood).
-    StrictGen,
-    /// `cargo-toml` emission consumes this. Reserved; no checks are
-    /// currently tagged `CargoToml` (the cargo-toml emitter today reads
-    /// architecture.toml directly).
-    #[allow(dead_code)]
-    CargoToml,
-}
-
-impl std::str::FromStr for Capability {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "schema" => Ok(Capability::Schema),
-            "strict-gen" => Ok(Capability::StrictGen),
-            "cargo-toml" => Ok(Capability::CargoToml),
-            other => Err(format!(
-                "unknown capability `{other}`; supported: schema, strict-gen, cargo-toml"
-            )),
-        }
-    }
-}
-
-/// Returns true when `tags` should run under the active `filter`. Absent
-/// filter (None) → run all. Capability::Schema tags always run regardless
-/// of filter — well-formedness is a load-bearing precondition for every
-/// downstream consumer, so suppressing it would lie about the spec's state.
-fn capability_matches(tags: &[Capability], filter: Option<Capability>) -> bool {
-    let Some(want) = filter else { return true };
-    if tags.contains(&Capability::Schema) {
-        return true;
-    }
-    tags.contains(&want)
-}
-
 /// Library-friendly entry point. Discover `spec.toml` from `start` (or from
 /// `explicit_spec_path` if set) and run validation end-to-end.
 pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Report> {
@@ -94,34 +43,13 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Re
     run(&layout)
 }
 
-/// Capability-filtered variant: filters which checks fire by `Capability`.
-/// `None` runs every check (= legacy `run_project` behavior). `Some(cap)`
-/// runs only checks tagged with that capability or with `Schema`
-/// (well-formedness is universal).
-pub fn run_project_for(
-    start: &Path,
-    explicit_spec_path: Option<&Path>,
-    filter: Option<Capability>,
-) -> Result<Report> {
-    let layout = LayoutContext::discover(start, explicit_spec_path)?;
-    run_for(&layout, filter)
-}
-
 #[instrument(level = "info", skip(layout), fields(project = %layout.project_root.display()))]
 pub fn run(layout: &LayoutContext) -> Result<Report> {
-    run_for(layout, None)
-}
-
-/// Capability-filtered variant: see [`run_project_for`].
-pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Report> {
     let mut report = Report::default();
     validate_layout(layout, &mut report)?;
-    validate_modules_for(layout, filter, &mut report)?;
+    validate_modules(layout, &mut report)?;
     validate_architecture(layout, &mut report)?;
     validate_entries(layout, &mut report)?;
-    validate_items_present(layout, filter, &mut report);
-    validate_reserved_test_kinds(layout, filter, &mut report);
-    validate_context_files_when_strict(layout, filter, &mut report);
     validate_profile_layout_match(layout, &mut report);
     validate_profiles_root_only(layout, &mut report)?;
     Ok(report)
@@ -553,28 +481,6 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             ));
         }
     }
-    if layout.codegen_dir.is_dir() {
-        report.push(Finding::new(
-            "LAYOUT-004",
-            Severity::Info,
-            format!(
-                "codegen directory present for language `{}` at {}",
-                layout.spec.project.language,
-                layout.codegen_dir.display()
-            ),
-        ));
-    } else {
-        report.push(Finding::new(
-            "LAYOUT-004",
-            Severity::Warning,
-            format!(
-                "codegen directory absent for language `{}` (expected at {})",
-                layout.spec.project.language,
-                layout.codegen_dir.display()
-            ),
-        ));
-    }
-
     // Aggregator $ref resolver.
     let _agg = aggregator::resolve(layout, report)?;
 
@@ -653,15 +559,6 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
 ///    canonical (or qualified) kind.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<()> {
-    validate_modules_for(layout, None, report)
-}
-
-/// Filter-aware variant. See [`Capability`] and [`run_for`].
-pub fn validate_modules_for(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) -> Result<()> {
     let inv = layout.enumerate();
 
     // Stage 1: build effective kind set.
@@ -808,7 +705,6 @@ pub fn validate_modules_for(
                     &graph,
                     &dom,
                     layout,
-                    filter,
                     report,
                 );
                 // Module-scoped checks are reserved for per-module
@@ -849,7 +745,11 @@ fn validate_context_files(
     module_path: &Path,
     report: &mut Report,
 ) {
-    let context_files = crate::prompt::parse_context_files(parsed);
+    let context_files: Vec<String> = parsed
+        .get("context_files")
+        .and_then(toml::Value::as_array)
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
     for rel in &context_files {
         let abs = layout.project_root.join(rel);
         if !abs.is_file() {
@@ -908,7 +808,6 @@ fn execute_graph_checks(
     graph: &Graph,
     domain: &DomainConfig,
     layout: &LayoutContext,
-    filter: Option<Capability>,
     report: &mut Report,
 ) {
     let graph_json = match serde_json::to_value(graph) {
@@ -921,12 +820,6 @@ fn execute_graph_checks(
         let severity = domain.severity_of(rule);
         let primitive = check.kind.as_str();
 
-        // Skip primitives whose tags don't match the active --for filter.
-        // `Schema`-tagged checks always run (they
-        // gate every downstream consumer).
-        if !capability_matches(primitive_tags(primitive), filter) {
-            continue;
-        }
 
         let view = filter_graph_for_check(&graph_json, check, kindset);
 
@@ -1715,263 +1608,10 @@ fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
     (all.len(), open)
 }
 
-/// Capability tags carried by each registered graph-check primitive.
-/// Driven by `validate --for=<capability>`. Tags
-/// are intentionally redundant — every primitive tags `Schema` because
-/// well-formedness gates every downstream consumer; some additionally
-/// tag domain-specific consumers (`Skeleton`, `StrictGen`, etc.).
-///
-/// Adding a new primitive: append a match arm AND a stable test that
-/// verifies its tag set. Adding a new capability: extend the
-/// [`Capability`] enum and tag the primitives that gate it.
-fn primitive_tags(name: &str) -> &'static [Capability] {
-    use Capability::*;
-    match name {
-        "unique" | "reference_exists" | "reachability" | "acyclic" | "entity_count" => &[Schema],
-        "layer_dependency" => &[Schema],
-        // Orphan-requirements is a structural check on the spec graph;
-        // strict-gen consumes the spec, so an unsatisfied requirement
-        // means an orphan story regardless of how codegen runs.
-        "requirements_have_satisfiers" => &[Schema, StrictGen],
-        // Generic orphan check; structural on the spec graph,
-        // and strict-gen consumes the spec, so an orphan entity (e.g. a
-        // parameter with no engine binding) is a gap regardless of how
-        // codegen runs.
-        "entity_has_inbound_relation" => &[Schema, StrictGen],
-        // verified_by_resolves reads source files to validate that
-        // requirement.verified_by[] entries name extant items / tests.
-        // Strict-gen will surface a verification gap.
-        "verified_by_resolves" => &[Schema, StrictGen],
-        // Triad consistency primitives gate codegen via the
-        // companion gate, so tag them Schema (always-on) and StrictGen.
-        "entity_attr_inbound_count"
-        | "entity_attr_target_attr_equals"
-        | "module_reachable_through_open_question" => &[Schema, StrictGen],
-        // Unknown primitives still surface their DOMAIN-003 warning;
-        // tag them as Schema so the typo isn't silenced by --for.
-        _ => &[Schema],
-    }
-}
 
-/// F-013 (zfm dogfood): warns when a module has zero
-/// `items[]` entries. Strict mode has no items[] to anchor codegen to.
-/// Info-level: not every module needs items (a project mid-port may
-/// have empty modules), but every empty module deserves visibility.
-///
-/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
-/// active (cargo-toml emission doesn't consume items).
-pub fn validate_items_present(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let name = parsed
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| {
-                module_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("<unnamed>")
-            });
-        let items_count = parsed
-            .get("items")
-            .and_then(toml::Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0);
-        if items_count == 0 {
-            report.push(
-                Finding::new(
-                    "ITEMS-001",
-                    Severity::Info,
-                    format!(
-                        "module `{name}` has 0 items[] entries — `gen` has nothing to \
-                         anchor codegen to. Add items[] before running codegen. Every \
-                         ordinary item also needs `satisfies = [\"REQ-...\"]` (≥1 id); \
-                         only a test item (`test = true`, which carries `verifies`) or \
-                         a re-export is exempt."
-                    ),
-                )
-                .with_file(module_path.display().to_string()),
-            );
-        }
-    }
-}
 
-/// Warns when a test item declares a `test_kind` whose
-/// emission is reserved-but-not-shipped. The reserved list is language
-/// data, not analyzer code: the language tier's `items.schema.yaml`
-/// declares it as `properties.test_kind.x-specdev-reserved` next to the
-/// `test_kind` enum (the schema accepts the enum slot so later promotion
-/// needs no spec migration, but `gen` emits nothing for it — surfacing
-/// the gap at validate time keeps authors from being surprised at
-/// codegen). A language tier without the annotation reserves nothing;
-/// a project without an inlined items tier has no test items to check
-/// (the module-schema `$ref` would already have failed validation).
-///
-/// Tag: [`Capability::StrictGen`] — the gap only matters when codegen
-/// actually runs.
-pub fn validate_reserved_test_kinds(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let Some((reserved, emittable)) = load_test_kind_vocab(layout) else {
-        return;
-    };
-    if reserved.is_empty() {
-        return;
-    }
-    let advice = emittable
-        .iter()
-        .map(|k| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(" / ");
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let Some(items) = parsed.get("items").and_then(toml::Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            if item.get("test").and_then(toml::Value::as_bool) != Some(true) {
-                continue;
-            }
-            let Some(kind) = item.get("test_kind").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            if reserved.iter().any(|r| r == kind) {
-                let name = item
-                    .get("name")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or("<unnamed>");
-                report.push(
-                    Finding::new(
-                        "TEST-KIND-001",
-                        Severity::Warning,
-                        format!(
-                            "test item `{name}` has test_kind = \"{kind}\", which reserves \
-                             the enum slot but emits no body in v1 — `gen` will skip it. \
-                             Use {advice}, or hand-author the \
-                             {kind} harness until v1.x ships emission."
-                        ),
-                    )
-                    .with_file(module_path.display().to_string()),
-                );
-            }
-        }
-    }
-}
 
-/// Read the language tier's `test_kind` vocabulary from the project's
-/// inlined `languages/<lang>/items.schema.yaml`: the reserved list
-/// (`x-specdev-reserved`, defaulting to empty) and the emittable
-/// remainder of the enum (schema order), for the TEST-KIND-001 advice
-/// text. `None` when the tier file is absent or unparsable — there is
-/// then no test_kind vocabulary to lint against (and a project actually
-/// using items[] surfaces the missing tier through schema resolution).
-fn load_test_kind_vocab(layout: &LayoutContext) -> Option<(Vec<String>, Vec<String>)> {
-    let path = layout
-        .inlined_languages_dir
-        .join(&layout.spec.project.language)
-        .join("items.schema.yaml");
-    let text = std::fs::read_to_string(&path).ok()?;
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-    let test_kind = doc.get("properties")?.get("test_kind")?;
-    let as_strings = |v: Option<&serde_yaml::Value>| -> Vec<String> {
-        v.and_then(|v| v.as_sequence())
-            .map(|seq| {
-                seq.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let reserved = as_strings(test_kind.get("x-specdev-reserved"));
-    let emittable: Vec<String> = as_strings(test_kind.get("enum"))
-        .into_iter()
-        .filter(|k| !reserved.iter().any(|r| r == k))
-        .collect();
-    Some((reserved, emittable))
-}
 
-/// F-015 (zfm dogfood): warns when a module has no `context_files`
-/// entries. The dogfood reported `module.context_files` as
-/// undiscoverable from the `/spec-design` interview; surfacing the gap
-/// at validate time gives the user a structural prompt to add prose
-/// context (or to leave the module shallow enough to need none).
-///
-/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
-/// active. Warning-level — not every module needs context files
-/// (mechanical glue modules legitimately don't), but the absence is
-/// worth surfacing for shipped strict-gen runs.
-pub fn validate_context_files_when_strict(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let name = parsed
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| {
-                module_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("<unnamed>")
-            });
-        let has_context = parsed
-            .get("context_files")
-            .and_then(toml::Value::as_array)
-            .is_some_and(|a| !a.is_empty());
-        if !has_context {
-            report.push(
-                Finding::new(
-                    "CONTEXT-100",
-                    Severity::Warning,
-                    format!(
-                        "module `{name}` has no `context_files`. Strict codegen has no \
-                         out-of-band prose to anchor on; consider adding \
-                         `context_files = [\"docs/<...>.md\"]`."
-                    ),
-                )
-                .with_file(module_path.display().to_string()),
-            );
-        }
-    }
-}
 
 /// Count entities of kind `Module` in the unfiltered graph JSON.
 /// F-003: used to decide whether to collapse `requirements_have_satisfiers`

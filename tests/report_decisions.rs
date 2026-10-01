@@ -203,37 +203,6 @@ fn per_decision_view_shows_reach_including_none() {
 }
 
 #[test]
-fn the_report_agrees_with_the_prompt() {
-    let t = project("agree");
-    let r = report(&t, &[]);
-    for m in r["modules"].as_sequence().unwrap() {
-        let name = m["module"].as_str().unwrap();
-        let (code, prompt, err) = run(&t, &["prompt", "--module", name]);
-        assert_eq!(code, 0, "{err}");
-        let in_prompt = |prefix: &str| -> Vec<String> {
-            let mut v: Vec<String> = prompt
-                .lines()
-                .filter_map(|l| l.strip_prefix(prefix))
-                .map(|l| l.split([':', ' ']).next().unwrap().to_string())
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        };
-        assert_eq!(
-            ids(m, "decisions"),
-            in_prompt("Decision "),
-            "{name}\n{prompt}"
-        );
-        assert_eq!(
-            ids(m, "open_questions"),
-            in_prompt("Open question "),
-            "{name}\n{prompt}"
-        );
-    }
-}
-
-#[test]
 fn filters_narrow_the_views_and_reject_unknown_names() {
     let t = project("filters");
     let r = report(&t, &["--module", "Beta", "--decision", "DEC-002"]);

@@ -15,7 +15,6 @@ use std::process::Command;
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
     layout::LayoutContext,
-    prompt::assemble_module_prompt,
 };
 
 fn full_plugin() -> PathBuf {
@@ -76,69 +75,6 @@ fn run_validate(project: &Path) -> (bool, String, String) {
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
     )
-}
-
-#[test]
-fn module_without_context_files_omits_project_context_section() {
-    let (target, layout) = fresh_library_project("no-context");
-    std::fs::write(
-        target.join("specs/modules/Plain.toml"),
-        r#"name = "Plain"
-visibility = "pub"
-"#,
-    )
-    .unwrap();
-    let prompt = assemble_module_prompt(&layout, "Plain").unwrap();
-    assert!(
-        !prompt.contains("## Project context"),
-        "no context_files declared -> no Project context section; got:\n{prompt}"
-    );
-}
-
-#[test]
-fn context_files_inline_in_declared_order_between_architecture_and_module() {
-    let (target, layout) = fresh_library_project("declared-order");
-    // Two distinguishable context files, declared in non-alphabetical order
-    // so we can verify declared-order is honored over lex order.
-    std::fs::write(target.join("docs-zeta.md"), "ZETA-CONTENT first inlined\n").unwrap();
-    std::fs::write(
-        target.join("docs-alpha.md"),
-        "ALPHA-CONTENT second inlined\n",
-    )
-    .unwrap();
-    std::fs::write(
-        target.join("specs/modules/Envelope.toml"),
-        r#"name = "Envelope"
-visibility = "pub"
-context_files = [
-  "docs-zeta.md",
-  "docs-alpha.md",
-]
-"#,
-    )
-    .unwrap();
-    let prompt = assemble_module_prompt(&layout, "Envelope").unwrap();
-    assert!(
-        prompt.contains("## Project context"),
-        "section header expected"
-    );
-    assert!(
-        prompt.contains("```docs-zeta.md\n"),
-        "fence with path-as-tag"
-    );
-    assert!(prompt.contains("ZETA-CONTENT first inlined"));
-    assert!(prompt.contains("ALPHA-CONTENT second inlined"));
-
-    // Declared order: zeta before alpha; architecture before context;
-    // context before module spec.
-    let arch_idx = prompt.find("## Architecture").expect("arch section");
-    let ctx_idx = prompt.find("## Project context").expect("ctx section");
-    let module_idx = prompt.find("## Module spec").expect("module section");
-    let zeta_idx = prompt.find("ZETA-CONTENT").expect("zeta inlined");
-    let alpha_idx = prompt.find("ALPHA-CONTENT").expect("alpha inlined");
-    assert!(arch_idx < ctx_idx, "Architecture must come before context");
-    assert!(ctx_idx < module_idx, "Context must come before Module spec");
-    assert!(zeta_idx < alpha_idx, "Declared order: zeta before alpha");
 }
 
 #[test]

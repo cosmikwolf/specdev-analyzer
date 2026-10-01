@@ -31,8 +31,10 @@ fn leaf_paths(cmd: &clap::Command, prefix: &[String], out: &mut Vec<Vec<String>>
 fn every_subcommand_accepts_no_color() {
     let mut paths = Vec::new();
     leaf_paths(&Cli::command(), &[], &mut paths);
+    // A floor, so a broken walk cannot pass vacuously (19 leaves after the
+    // generation subcommands were removed).
     assert!(
-        paths.len() > 20,
+        paths.len() > 15,
         "the walk found only {} subcommands",
         paths.len()
     );

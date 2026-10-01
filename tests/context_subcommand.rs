@@ -87,16 +87,12 @@ fn module_not_found_returns_cold_start_response() {
     assert!(r.related_modules.downstream.is_empty());
     assert!(r.related_files.is_empty());
     assert!(r.files.target_module.is_none());
-    // Schema + module conventions still listed (they don't depend on M).
+    // Schema still listed (it does not depend on M).
     assert!(r
         .files
         .schema
         .iter()
         .any(|p| p.ends_with("module.schema.yaml")));
-    assert!(r
-        .files
-        .module_conventions
-        .contains("firmware-layered/codegen/rust"));
 }
 
 // ---------------------------------------------------------------------------

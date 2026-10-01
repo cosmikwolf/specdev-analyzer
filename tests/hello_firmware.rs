@@ -15,11 +15,8 @@ use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml,
-    gen_lineage::{record_files, run_gen_drift, GenFileCategory},
     inline::{run_inline_block, run_inline_bridge},
     layout::LayoutContext,
-    prompt::{assemble_module_prompt, check_codegen_gate},
     validate, Severity,
 };
 
@@ -170,99 +167,4 @@ fn assert_no_errors(target: &Path) {
 fn full_project_validates_clean() {
     let (target, _layout) = hello_firmware_project("validate");
     assert_no_errors(&target);
-}
-
-#[test]
-fn codegen_gate_passes_and_prompts_assemble_for_both_modules() {
-    let (_target, layout) = hello_firmware_project("prompt");
-    for module in ["Blinky", "UartEcho"] {
-        let refusal = check_codegen_gate(&layout, module).unwrap();
-        assert!(refusal.is_none(), "unexpected gate refusal for {module}");
-        let prompt = assemble_module_prompt(&layout, module).unwrap();
-        // Profile prose, both blocks' prose, and the module spec itself
-        // must all be present — a profile.yaml / deps discovery gap
-        // would drop one of these silently.
-        assert!(prompt.contains("embassy"), "{module}: no embassy prose");
-        assert!(prompt.contains("stm32h5"), "{module}: no stm32h5 prose");
-        assert!(
-            prompt.contains(&format!("name = \"{module}\"")),
-            "{module}: module TOML not inlined in prompt"
-        );
-    }
-    // The bridge prose rides only on the module that carries bindings.
-    let echo_prompt = assemble_module_prompt(&layout, "UartEcho").unwrap();
-    assert!(
-        echo_prompt.contains("embassy+stm32h5-rs"),
-        "UartEcho: bridge prose missing"
-    );
-}
-
-#[test]
-fn cargo_toml_render_carries_block_and_platform_deps() {
-    let (_target, layout) = hello_firmware_project("cargo");
-    let rendered = cargo_toml::render(&layout).unwrap();
-    // Block deps.yaml (embassy), bridge deps.yaml (embassy-stm32, the
-    // bridge join product), and profile-template platform picks must all
-    // survive the manifest-driven dispatch.
-    for dep in [
-        "embassy-executor",
-        "embassy-time",
-        "embassy-stm32",
-        "cortex-m-rt",
-        "defmt",
-    ] {
-        assert!(
-            rendered.text.contains(dep),
-            "missing dep {dep}:\n{}",
-            rendered.text
-        );
-    }
-    assert!(
-        rendered.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        rendered.warnings
-    );
-}
-
-#[test]
-fn gen_lineage_tripwire_works_on_the_firmware_stack() {
-    let (target, layout) = hello_firmware_project("lineage");
-
-    // Emulate the /spec-gen emission: write source files + Cargo.toml,
-    // record them per module the way the skill's record step does.
-    let blinky_rs = target.join("src/blinky.rs");
-    let echo_rs = target.join("src/uart_echo.rs");
-    std::fs::write(&blinky_rs, "// @spec specs/modules/Blinky.toml\n").unwrap();
-    std::fs::write(&echo_rs, "// @spec specs/modules/UartEcho.toml\n").unwrap();
-    let rendered = cargo_toml::render(&layout).unwrap();
-    let cargo = target.join("Cargo.toml");
-    std::fs::write(&cargo, &rendered.text).unwrap();
-
-    let ts = "2026-06-12T12:00:00Z";
-    record_files(&layout, Some("Blinky"), &[blinky_rs], ts).unwrap();
-    record_files(
-        &layout,
-        Some("UartEcho"),
-        std::slice::from_ref(&echo_rs),
-        ts,
-    )
-    .unwrap();
-    record_files(&layout, None, &[cargo], ts).unwrap();
-
-    let report = run_gen_drift(&layout).unwrap();
-    assert!(report.is_clean(), "fresh record should be clean");
-    assert_eq!(report.files.len(), 3);
-
-    // Hand-edit one generated file; only it should flag.
-    std::fs::write(&echo_rs, "// hand edit\n").unwrap();
-    let report = run_gen_drift(&layout).unwrap();
-    assert!(!report.is_clean());
-    for f in &report.files {
-        let expected = if f.path == "src/uart_echo.rs" {
-            GenFileCategory::Edited
-        } else {
-            GenFileCategory::Clean
-        };
-        assert_eq!(f.category, expected, "{}", f.path);
-    }
 }

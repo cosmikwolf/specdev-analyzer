@@ -238,10 +238,10 @@ fn a_per_entry_project_reads_every_entry() {
     );
 }
 
-/// Measured before this layout was read: with the files split by hand,
-/// `gen` generated code at exit 0 — the gate read the combined file only.
+/// Measured before this layout was read: with the files split by hand, the
+/// open-question gate passed — it read the combined file only.
 #[test]
-fn gen_refuses_on_an_open_question_in_the_per_entry_layout() {
+fn the_open_question_gate_refuses_in_the_per_entry_layout() {
     let project = build_per_entry_project("gate");
     let layout = LayoutContext::discover(&project, None).unwrap();
     let refusal = prompt::check_codegen_gate(&layout, "writer")
@@ -259,9 +259,6 @@ fn gen_refuses_on_an_open_question_in_the_per_entry_layout() {
     assert!(prompt::check_codegen_gate(&layout, "parser")
         .unwrap()
         .is_none());
-
-    let out = analyzer(&project, &["gen", "--module", "writer"]);
-    assert!(!out.status.success(), "gen must refuse:\n{}", text(&out));
 }
 
 /// `spec_version = "2.0"` written by hand, entries still in the `1.x`
@@ -286,12 +283,6 @@ fn a_2x_project_with_entries_in_1x_files_refuses_instead_of_losing_them() {
     );
     set_spec_version(&project, "2.0");
 
-    let out = analyzer(&project, &["gen", "--module", "writer"]);
-    assert!(
-        !out.status.success() && text(&out).contains("ENTRY-LEGACY-001"),
-        "gen must refuse, naming the legacy file:\n{}",
-        text(&out)
-    );
     let errors = error_rules(&project);
     for file in ["requirements.toml", "open_questions.toml"] {
         assert!(

@@ -1,7 +1,7 @@
 ---
 source: tests/bootstrap_and_inline.rs
-assertion_line: 321
+assertion_line: 329
 expression: "lines.join(\"\\n\")"
 ---
 meta: profile=firmware-layered, version=0.0.1-fixture
-blocks/embassy: origin=plugin, version=0.0.1-fixture, hash_prefix=sha256:d7082ff1e
+blocks/embassy: origin=plugin, version=0.0.1-fixture, hash_prefix=sha256:2560c138c
