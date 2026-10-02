@@ -206,6 +206,42 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
     Ok(files)
 }
 
+/// Where a unit file inlines, from its path in the unit — the mapping
+/// `collect_block_files` / `collect_bridge_files` use. `None` for a path the
+/// analyzer no longer inlines (e.g. `codegen/…`).
+pub(crate) fn unit_rel_dst(kind: crate::upstream::UnitKind, name: &str, rel_src: &Path) -> Option<PathBuf> {
+    use crate::upstream::UnitKind;
+    let s = rel_src.to_string_lossy().replace('\\', "/");
+    match (kind, s.as_str()) {
+        (UnitKind::Block, "schema.yaml") => Some(PathBuf::from(format!("schemas/inlined/blocks/{name}.schema.yaml"))),
+        (UnitKind::Block, "reduction.yaml") => Some(PathBuf::from(format!("reductions/blocks/{name}.yaml"))),
+        (UnitKind::Bridge, "bindings.schema.yaml") => {
+            Some(PathBuf::from(format!("schemas/inlined/bridges/{name}.schema.yaml")))
+        }
+        (UnitKind::Bridge, "reduction.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.yaml"))),
+        (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.contract.yaml"))),
+        _ => None,
+    }
+}
+
+/// The rolled-up hash of a unit's upstream snapshot, over the files the
+/// analyzer inlines (see [`unit_rel_dst`]) — what the unit's record must
+/// hold for the snapshot it witnesses.
+pub(crate) fn snapshot_rollup(
+    kind: crate::upstream::UnitKind,
+    name: &str,
+    snapshot: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+) -> String {
+    let mut files: Vec<UnitFile> = snapshot
+        .iter()
+        .filter_map(|(rel, bytes)| {
+            unit_rel_dst(kind, name, rel).map(|dst| UnitFile { rel_dst: dst, rel_src_in_unit: rel.clone(), bytes: bytes.clone() })
+        })
+        .collect();
+    files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+    rollup_hash(&files)
+}
+
 /// Compute the rolled-up content hash for a unit. Format: per-file lines
 /// `<sha256-hex>  <rel-path>\n` in lex-sorted order, then SHA-256 of the
 /// concatenation. Mirrors the `sha256sum` output convention so per-file
@@ -717,6 +753,24 @@ mod tests {
         let ab = mk(&[("a/x", b"hello"), ("b/y", b"world")]);
         let ba = mk(&[("b/y", b"world"), ("a/x", b"hello")]);
         assert_eq!(rollup_hash(&ab), rollup_hash(&ba));
+    }
+
+    #[test]
+    fn unit_rel_dst_matches_the_collectors() {
+        let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/specs/full_plugin/_plugin");
+        for (kind, dir) in [(crate::upstream::UnitKind::Block, "blocks"), (crate::upstream::UnitKind::Bridge, "bridges")] {
+            for e in std::fs::read_dir(plugin.join(dir)).unwrap().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let files = match kind {
+                    crate::upstream::UnitKind::Block => collect_block_files(&plugin, &name),
+                    crate::upstream::UnitKind::Bridge => collect_bridge_files(&plugin, &name),
+                };
+                let Ok(files) = files else { continue };
+                for f in files {
+                    assert_eq!(unit_rel_dst(kind, &name, &f.rel_src_in_unit), Some(f.rel_dst.clone()), "{name}");
+                }
+            }
+        }
     }
 
     #[test]

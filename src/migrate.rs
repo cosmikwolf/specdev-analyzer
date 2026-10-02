@@ -177,8 +177,9 @@ pub fn run_migrate(
                     files_written: written,
                 });
                 if !dry_run {
+                    let snap = upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Block, name)?;
                     if let Some(e) = lineage.blocks.get_mut(name) {
-                        e.content_hash = new_hash;
+                        e.content_hash = crate::inline::snapshot_rollup(UnitKind::Block, name, &snap);
                     }
                 }
             }
@@ -228,8 +229,9 @@ pub fn run_migrate(
                     files_written: written,
                 });
                 if !dry_run {
+                    let snap = upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Bridge, name)?;
                     if let Some(e) = lineage.bridges.get_mut(name) {
-                        e.content_hash = new_hash;
+                        e.content_hash = crate::inline::snapshot_rollup(UnitKind::Bridge, name, &snap);
                     }
                 }
             }
@@ -450,11 +452,11 @@ fn apply_unit_migration(
         write_unit_files(specdev_root, &to_write)?;
     }
 
-    // Rewrite the upstream snapshot with the FULL plugin-HEAD file set so
-    // the recorded merge-base matches the new content_hash. The previous
-    // upstream snapshot reflected the pre-manifest (no-manifest) bytes; after
-    // migrate it must reflect what the lineage hash now witnesses.
-    let upstream_files: Vec<(PathBuf, Vec<u8>)> = files
+    // Add only the files just written to the upstream snapshot. The other
+    // snapshot files keep their bytes: they are the merge base of files the
+    // project already has, and replacing them with the plugin's current copy
+    // would hide a plugin move from `drift` and corrupt `--merge`.
+    let upstream_files: Vec<(PathBuf, Vec<u8>)> = to_write
         .iter()
         .map(|f| (f.rel_src_in_unit.clone(), f.bytes.clone()))
         .collect();
