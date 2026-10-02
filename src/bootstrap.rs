@@ -153,8 +153,18 @@ pub fn profile_file_hash(rel: &str, bytes: &[u8]) -> Result<String> {
     if CO_OWNED_AGGREGATORS.contains(&rel) {
         crate::inline::aggregator_profile_hash(bytes, rel)
     } else {
-        Ok(crate::hash::content_hash(bytes))
+        Ok(crate::hash::recorded_hash(bytes))
     }
+}
+
+/// Whether `recorded` (a `[profile_files]` value) witnesses `bytes`. A
+/// co-owned aggregator compares its profile-owned part; a plain file
+/// accepts the line-ending forms of [`crate::hash::record_matches`].
+pub fn profile_file_matches(rel: &str, bytes: &[u8], recorded: &str) -> Result<bool> {
+    if CO_OWNED_AGGREGATORS.contains(&rel) {
+        return Ok(crate::inline::aggregator_profile_hash(bytes, rel)? == recorded);
+    }
+    Ok(crate::hash::record_matches(recorded, bytes))
 }
 
 /// The exact bytes `bootstrap` writes for each profile-scaffolded file,

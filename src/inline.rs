@@ -214,7 +214,7 @@ pub(crate) fn rollup_hash(files: &[UnitFile]) -> String {
     let mut summary = String::new();
     for f in files {
         let mut h = Sha256::new();
-        h.update(&f.bytes);
+        h.update(&*crate::hash::to_lf(&f.bytes));
         let digest = h.finalize();
         for byte in digest {
             use std::fmt::Write;
@@ -717,6 +717,17 @@ mod tests {
         let ab = mk(&[("a/x", b"hello"), ("b/y", b"world")]);
         let ba = mk(&[("b/y", b"world"), ("a/x", b"hello")]);
         assert_eq!(rollup_hash(&ab), rollup_hash(&ba));
+    }
+
+    #[test]
+    fn rollup_hash_is_the_same_for_a_crlf_checkout() {
+        let file = |b: &[u8]| UnitFile {
+            rel_dst: PathBuf::from("schema.yaml"),
+            rel_src_in_unit: PathBuf::from("schema.yaml"),
+            bytes: b.to_vec(),
+        };
+        assert_eq!(rollup_hash(&[file(b"a: 1\nb: 2\n")]), rollup_hash(&[file(b"a: 1\r\nb: 2\r\n")]));
+        assert_ne!(rollup_hash(&[file(b"a: 1\n")]), rollup_hash(&[file(b"a: 2\n")]));
     }
 
     proptest::proptest! {

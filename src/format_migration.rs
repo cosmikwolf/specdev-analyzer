@@ -76,6 +76,8 @@ pub struct FormatReport {
     pub tests_only: Vec<String>,
     /// Workspace members moved with the root (their project roots).
     pub members: Vec<PathBuf>,
+    /// A 2.0 tree had legacy entries folded in; nothing else moved.
+    pub folded: bool,
 }
 
 /// Pending file changes, keyed by project-relative path.
@@ -210,7 +212,7 @@ struct Plan {
 /// refuses and names the root.
 pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<FormatReport> {
     if layout.spec.format_major() >= 2 {
-        return Ok(FormatReport { already_current: true, ..Default::default() });
+        return fold_legacy(layout, opts);
     }
     if let Some(root_spec) = crate::layout::find_workspace_root_spec(&layout.project_root)? {
         let root = root_spec.parent().unwrap_or(&root_spec);
@@ -251,6 +253,32 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
         report.tests_only.extend(plan.report.tests_only.into_iter().map(|l| format!("{tag}{l}")));
         if let Some(m) = member {
             report.members.push(layout.project_root.join(m));
+        }
+    }
+    Ok(report)
+}
+
+/// A 2.0 tree whose combined files hold entries again (a merge from an old
+/// branch, an old skill) has them folded into the per-entry files: an id
+/// the layout lacks is added, the same bytes are skipped, other bytes
+/// refuse with both versions shown. Nothing is overwritten; each combined
+/// file becomes a tombstone again. A tree with none is already current.
+fn fold_legacy(layout: &LayoutContext, opts: FormatOptions) -> Result<FormatReport> {
+    if EntryStore::for_layout(layout).legacy_content().is_empty() {
+        return Ok(FormatReport { already_current: true, ..Default::default() });
+    }
+    let verb = if opts.dry_run { "would " } else { "" };
+    let split = entries::plan_split(&layout.specs_dir)?;
+    let mut report = FormatReport { folded: true, ..Default::default() };
+    for (file, n) in &split.moved {
+        report.lines.push(format!(
+            "{verb}fold {} into the per-entry files ({n} added), leaving a tombstone",
+            slash(&rel_to(&layout.project_root, &layout.specs_dir.join(file)))
+        ));
+    }
+    if !opts.dry_run {
+        for (rel, bytes) in split.writes.iter().chain(split.tombstones.iter()) {
+            write(&layout.specs_dir.join(rel), bytes)?;
         }
     }
     Ok(report)
@@ -448,7 +476,15 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         };
         let ours_hash = bootstrap::profile_file_hash(key, &ours)?;
         let theirs_hash = bootstrap::profile_file_hash(key, theirs)?;
-        let clean = recorded.get(key) == Some(&ours_hash);
+        let clean = match recorded.get(key) {
+            Some(r) => bootstrap::profile_file_matches(key, &ours, r)?,
+            None => false,
+        };
+        if clean && recorded.get(key) != Some(&ours_hash) {
+            // Proven unedited in another line-ending form: re-record it in
+            // the LF form (#219).
+            records.insert(key.clone(), ours_hash.clone());
+        }
         if clean {
             if rel == domain_rel {
                 // Whole-file refresh; still say what changes for the rules.

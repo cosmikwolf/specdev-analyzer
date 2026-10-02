@@ -1420,7 +1420,14 @@ fn run_migrate(
         }
     };
     if !format.already_current {
-        println!("format: {}", if dry_run { "plan (nothing written)" } else { "moved" });
+        println!(
+            "format: {}",
+            match (dry_run, format.folded) {
+                (true, _) => "plan (nothing written)",
+                (false, true) => "legacy entries folded",
+                (false, false) => "moved",
+            }
+        );
         for l in &format.lines {
             println!("  {l}");
         }
