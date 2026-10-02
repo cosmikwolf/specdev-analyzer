@@ -387,7 +387,7 @@ fn build_workspace(tag: &str, version: &str) -> (PathBuf, PathBuf) {
     std::fs::write(
         root.join("spec.toml"),
         format!(
-            "spec_version = \"{version}\"\n\n[project]\nname = \"demo-ws\"\nprofile = \"rust-workspace\"\nlanguage = \"rust\"\n\n[paths]\nspecs = \"specs\"\nsource = \".\"\n\n[workspace]\nresolver = \"2\"\n\n[[workspace.members]]\nname = \"m\"\npath = \"crates/m\"\n"
+            "spec_version = \"{version}\"\n\n[project]\nname = \"demo-ws\"\nprofile = \"rust-workspace\"\nlanguage = \"rust\"\n\n[paths]\nspecs = \"specs\"\nsource = \".\"\n\n[workspace]\n\n[[workspace.members]]\nname = \"m\"\npath = \"crates/m\"\n"
         ),
     )
     .unwrap();

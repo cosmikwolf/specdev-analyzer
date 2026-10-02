@@ -14,49 +14,6 @@ description: >
 type: object
 additionalProperties: false
 properties:
-  workspace_package:
-    description: |
-      Workspace-level [package] fields inherited by members. Each field
-      set here causes the member-mode cargo-toml emitter to render
-      `<field>.workspace = true` instead of a literal copy. Per G-005,
-      the inheritable fields are: version, edition, rust-version,
-      license, repository. `name` and `description` are NOT inheritable
-      (always per-crate).
-    type: object
-    additionalProperties: false
-    properties:
-      version:
-        type: string
-        minLength: 1
-      edition:
-        type: string
-        enum: ["2018", "2021", "2024"]
-      rust-version:
-        type: string
-        minLength: 1
-      license:
-        type: string
-        minLength: 1
-      repository:
-        type: string
-        minLength: 1
-  workspace_dependencies:
-    description: |
-      Hoisted dependency candidates. Members reference these by setting
-      `source = "workspace"` on a CrateReference; the member's
-      Cargo.toml then emits `<dep> = { workspace = true, ... }`.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-  profiles:
-    description: |
-      Cargo build profiles (`[profile.<name>]`) for the whole workspace —
-      a closed subset: the nine knobs projects set, plus per-package
-      overrides of what Cargo allows in an override. This is the ONLY
-      home for profiles in a workspace: Cargo ignores profiles in a
-      member manifest, so a member that declares them fails validate.
-      Emitted after `[workspace.dependencies]`.
-    $ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"
   project_decisions:
     description: >
       Decision ids that shape the workspace as a whole (member layout,

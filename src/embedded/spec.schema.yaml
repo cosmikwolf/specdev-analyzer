@@ -28,15 +28,6 @@ properties:
         description: Project name. Lowercase letters, digits, underscores, hyphens; must start with a letter.
         pattern: "^[a-z][a-z0-9_-]*$"
         maxLength: 64
-      version:
-        type: string
-        description: |
-          The crate's `[package] version` (a semver string). Optional.
-          Emitted literally when set; a workspace member that leaves it
-          unset inherits the workspace's `[workspace.package] version`
-          when the root declares one (`version.workspace = true`), and a
-          member that sets it overrides the inherited value.
-        minLength: 1
       profile:
         type: string
         description: Profile owning the project shape (e.g. firmware-layered, library-api).
@@ -55,37 +46,6 @@ properties:
           How many agents may edit this project at once, each in its own
           git worktree. `bootstrap` and `migrate` write `1`; a person
           raises it. Skills read it before they launch parallel work.
-      edition:
-        type: string
-        description: |
-          Rust edition. Optional; defaults to "2021" if absent. `gen`
-          emits this as Cargo.toml's `[package].edition` for Rust
-          projects. Ignored for non-Rust languages.
-        enum: ["2018", "2021", "2024"]
-        default: "2021"
-      license:
-        type: string
-        description: |
-          SPDX license identifier (or "OR"-joined identifiers). Optional;
-          libraries should set this. `gen` emits it as Cargo.toml's
-          `[package].license`.
-        minLength: 1
-      description:
-        type: string
-        description: |
-          Short project description. Optional; libraries should set this
-          (it appears on crates.io). `gen` emits it as Cargo.toml's
-          `[package].description`.
-        maxLength: 200
-      repository:
-        type: string
-        description: |
-          Repository URL. Optional; libraries that publish
-          to crates.io should set this. For workspace members this
-          field is normally omitted — the workspace owns the canonical
-          value via `[workspace_package].repository` and members emit
-          `repository.workspace = true`.
-        minLength: 1
   paths:
     type: object
     additionalProperties: false
@@ -129,12 +89,6 @@ properties:
     additionalProperties: false
     required: [members]
     properties:
-      resolver:
-        description: |
-          Cargo resolver version. Emitted as `[workspace] resolver =
-          "..."`. Defaults to "2" if absent (Cargo's recommended).
-        type: string
-        enum: ["1", "2", "3"]
       members:
         type: array
         minItems: 1
@@ -152,33 +106,3 @@ properties:
               description: Path to the member crate, relative to this spec.toml.
               type: string
               minLength: 1
-      default_members:
-        description: |
-          The members `cargo` builds when invoked at the workspace root
-          with no `-p` / `--workspace` flag. Member NAMES (the `name` of a
-          `[[workspace.members]]` entry), not paths — the emitter resolves
-          each to the member's declared `path` and writes
-          `default-members = [...]` in declaration order. A name that
-          matches no member is a validate error (the profile's
-          `workspace_default_member` relation) and an emit error. Omit to
-          let Cargo default to every member. Use it when a member cannot
-          build for the host (a board crate) and must be opted into by
-          hand.
-        type: array
-        items:
-          type: string
-          pattern: "^[a-z][a-z0-9_-]*$"
-          maxLength: 64
-        uniqueItems: true
-      exclude:
-        description: |
-          Paths, relative to this spec.toml, that Cargo must not treat as
-          workspace members even though they sit under the root — a
-          host-only tool crate, a vendored crate. Emitted verbatim as
-          `exclude = [...]` in declaration order. Omit when nothing is
-          excluded.
-        type: array
-        items:
-          type: string
-          minLength: 1
-        uniqueItems: true

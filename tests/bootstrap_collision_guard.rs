@@ -88,7 +88,7 @@ fn existing_spec_files_are_refused_and_left_byte_identical() {
 
     assert!(err.contains("[BOOTSTRAP-003]"), "{err}");
     assert!(
-        err.contains("spec.toml") && err.contains("specs/architecture.toml"),
+        err.contains("spec.toml"),
         "every collision is named in one message, the way INLINE-002 does it: {err}"
     );
     assert!(err.contains("--force"), "the way out is named: {err}");

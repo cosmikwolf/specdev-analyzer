@@ -52,6 +52,10 @@ pub struct ContextFiles {
     pub architecture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_module: Option<String>,
+    /// The module's own `context_files`: reference material to read before
+    /// editing it (hardware notes, UI reference data). Project-relative.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub module_context: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -197,6 +201,13 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         None
     };
 
+    let module_context = std::fs::read_to_string(&target_module_path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|doc| doc.get("context_files").and_then(|v| v.as_array()).cloned())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+
     Ok(ContextFiles {
         schema,
         block_readmes,
@@ -204,6 +215,7 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         profile_readme,
         architecture,
         target_module,
+        module_context,
     })
 }
 
@@ -515,7 +527,7 @@ fn compute_profile_specific(
 /// Manifest-driven dispatch for one `ContextExtra`. Closed-set today: a
 /// `from_attr` lookup is the implicit default (no `kind` field); the only
 /// explicit `kind` v1 supports is `collect_local_entities_by_kind`. An
-/// unknown `kind` errors `CONTEXT-002` so a future authoring mistake
+/// unknown `kind` errors `CONTEXT-003` so a future authoring mistake
 /// surfaces as a load-time-class diagnostic instead of silent emission.
 fn apply_context_extra(
     extra: &crate::manifest::ContextExtra,
@@ -542,7 +554,7 @@ fn apply_context_extra(
         }
         Some(other) => {
             return Err(anyhow::anyhow!(
-                "[CONTEXT-002] unknown context_subcommand_extras kind `{other}` \
+                "[CONTEXT-003] unknown context_subcommand_extras kind `{other}` \
                  in profile.yaml; supported v1 kinds: \
                  collect_local_entities_by_kind, or omit `kind` for a \
                  from_attr lookup"

@@ -130,27 +130,6 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Test-item → Requirement: each `[[items]]` entry with `test = true`
-  # carries `verifies[]` (the inverse of `satisfies`). Reduce those into
-  # Module → Requirement edges so the `test_requirements_have_verifiers`
-  # orphan check can confirm every `nature = "test"` requirement is
-  # verified by some test item. The nested `items[].verifies[]`
-  # for_each walks each item's verifies array; `${root.name}` is the
-  # declaring module (the source endpoint — NOT `${parent.name}`, which
-  # would be the item, not a Module entity). REDUCE_UNRESOLVED catches a
-  # `verifies` id that names no requirement. Items[] are not materialized
-  # as entities (prose-first) — only these reference edges are lifted,
-  # exactly as module-level `satisfies[]` lifts into `module_satisfies`.
-  - kind: test_verifies
-    extends: depends_on
-    from_kind: Module
-    to_kind: Requirement
-    from_spec: "specs/modules/*.toml"
-    for_each: "items[].verifies[]"
-    endpoints:
-      from: "${root.name}"
-      to: "${.}"
-
   # Requirement → Decision: pin a requirement's *how*. Drives
   # `requirement_decided_by_resolves`.
   - kind: requirement_decided_by_decision

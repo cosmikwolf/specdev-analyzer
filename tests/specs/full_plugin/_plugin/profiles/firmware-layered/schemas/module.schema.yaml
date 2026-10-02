@@ -30,18 +30,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
     uniqueItems: true
-  external_deps:
-    description: |
-      External crate dependencies this module needs (CrateReference
-      shape). Each entry becomes a Cargo.toml
-      `[dependencies]` line at gen time; the union with
-      architecture-level `[[external_deps]]` determines the project's
-      full dep set. Use this for module-scoped crates that aren't
-      project-wide infrastructure (e.g., a UART driver pulling in
-      `nb` for non-blocking traits).
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
   satisfies:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
@@ -145,10 +133,9 @@ $defs:
   ActionParam:
     type: object
     additionalProperties: false
-    required: [name, type, direction]
+    required: [name, direction]
     properties:
       name:      { $ref: "enums.schema.yaml#/$defs/Identifier" }
-      type:      { type: string, minLength: 1 }
       direction: { $ref: "enums.schema.yaml#/$defs/ParamDirection" }
 
   Action:
@@ -161,7 +148,6 @@ $defs:
       params:
         type: array
         items: { $ref: "#/$defs/ActionParam" }
-      returns:     { type: string }
       blocking:    { type: boolean }
       isr_safe:    { type: boolean }
 
@@ -196,9 +182,8 @@ $defs:
   ErrorVariant:
     type: object
     additionalProperties: false
-    required: [variant]
+    required: [description]
     properties:
-      variant:     { $ref: "enums.schema.yaml#/$defs/Identifier" }
       description: { type: string }
 
   Hardware:

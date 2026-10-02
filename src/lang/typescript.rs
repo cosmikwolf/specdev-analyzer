@@ -30,6 +30,10 @@ const IMPORTS_QUERY: &str = include_str!("../embedded/languages/typescript/impor
 const TESTS_QUERY: &str = include_str!("../embedded/languages/typescript/tests.scm");
 
 impl LanguageAdapter for TypeScriptAdapter {
+    fn manifest_facts(&self, project_root: &std::path::Path) -> Option<crate::manifest_facts::ManifestFacts> {
+        crate::manifest_facts::npm(project_root)
+    }
+
     fn is_inert_top_level(&self, kind: &str) -> bool {
         kind.contains("comment") || ["import_statement"].contains(&kind)
     }

@@ -50,7 +50,6 @@ fn tmp_workspace(tag: &str) -> PathBuf {
 const ARCH_DEFAULT: &str = r#"[plugin]
 name = "Demo Plugin"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3", "clap"]
 

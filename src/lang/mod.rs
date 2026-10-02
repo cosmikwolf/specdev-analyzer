@@ -164,6 +164,13 @@ pub trait LanguageAdapter: Send + Sync {
     /// Specifier prefix aliases a project declares (TypeScript `tsconfig`
     /// `paths`): `(pattern, targets)`, both project-relative, `*` the
     /// wildcard. Read once per run.
+    /// The project's own manifest (`Cargo.toml`, `package.json`, …), read
+    /// for its dependencies and package fields. `None` when the language has
+    /// none or the project has not created it.
+    fn manifest_facts(&self, _project_root: &Path) -> Option<crate::manifest_facts::ManifestFacts> {
+        None
+    }
+
     fn import_aliases(&self, _project_root: &Path) -> Vec<(String, Vec<String>)> {
         Vec::new()
     }

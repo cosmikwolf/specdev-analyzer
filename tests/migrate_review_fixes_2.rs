@@ -175,10 +175,11 @@ fn a_replaced_unrecorded_schema_shows_what_it_loses() {
 
 #[test]
 fn other_shipped_files_that_differ_get_a_left_as_is_line() {
-    let t = tree_v1("left-as-is", "library-api");
+    let t = tree_v1("left-as-is", "firmware-layered");
     let l = t.read("specs/specdev/lineage.toml");
     t.write("specs/specdev/lineage.toml", &l[..l.find("[profile_files]").unwrap()]);
-    t.write("specs/architecture.toml", &format!("{}\n# a local note\n", t.read("specs/architecture.toml")));
+    // Nothing in it that 2.0 removes, and not the plugin's copy.
+    t.write("specs/architecture.toml", "# a local note\n[platform]\ntarget_triple = \"thumbv7em-none-eabihf\"\n");
     let out = text(&migrate(&t, &["--dry-run"]));
     assert!(out.contains("left specs/architecture.toml as is"), "{out}");
 }
@@ -221,12 +222,14 @@ fn an_unrecorded_tree_gets_a_full_baseline() {
 /// `migrate --refresh` would then overwrite it.
 #[test]
 fn the_first_baseline_never_hides_a_local_edit_from_refresh() {
-    let t = tree_v1("baseline-refresh", "library-api");
+    let t = tree_v1("baseline-refresh", "firmware-layered");
     let l = t.read("specs/specdev/lineage.toml");
     t.write("specs/specdev/lineage.toml", &l[..l.find("[profile_files]").unwrap()]);
     let edited = format!("{}\n# our architecture note\n", t.read("specs/architecture.toml"));
     t.write("specs/architecture.toml", &edited);
     assert!(migrate(&t, &[]).status.success());
+    // `migrate` edits the file precisely (removed keys); that is the base.
+    let edited = t.read("specs/architecture.toml");
     let d = drift(&t);
     let arch = d.split("path: specs/architecture.toml").nth(1).unwrap_or("");
     assert!(arch.trim_start().starts_with("category: LocallyEdited"), "{d}");

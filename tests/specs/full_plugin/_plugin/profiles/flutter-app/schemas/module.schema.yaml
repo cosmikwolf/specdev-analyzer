@@ -71,20 +71,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-  external_deps:
-    description: >
-      Pub package dependencies this module needs. Each entry becomes a
-      pubspec.yaml `dependencies:` line (`dev_dependencies:` when
-      `test_only = true`); the union across modules, architecture-level
-      `[[external_deps]]`, and block/bridge contributions determines the
-      full dep set `manifest` emits. User-declared versions win on
-      conflict. The PubReference shape is embedded in the analyzer (the
-      $ref below resolves internally, not to a file on disk); the
-      architecture template's dep comment block documents the accepted
-      shapes readably.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml#/$defs/PubReference"
   bindings:
     description: >
       Aggregator slot for bridge contributions. Open in v1.

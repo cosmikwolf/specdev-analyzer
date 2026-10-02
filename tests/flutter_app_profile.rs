@@ -65,17 +65,8 @@ fn fresh_app(tag: &str) -> PathBuf {
     target
 }
 
-/// Minimal architecture satisfying the required platform matrix, plus
-/// the version + flutter-block fields the pubspec test asserts on.
+/// Minimal architecture satisfying the required platform matrix.
 const ARCH_DEFAULT: &str = r#"platforms = ["android", "ios", "web"]
-version = "0.1.0+1"
-
-[environment]
-sdk = "^3.9.0"
-
-[flutter]
-uses_material_design = true
-assets = ["assets/images/"]
 "#;
 
 fn write_arch(target: &Path, body: &str) {

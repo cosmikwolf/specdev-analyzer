@@ -1,19 +1,19 @@
-//! `report decisions` — which decision text reaches which module's prompt.
+//! `report decisions` — which decisions reach which module, and why.
 //!
-//! A projection over [`prompt::decision_context`], the function the codegen
-//! prompt itself is rendered from, so the report and the prompt cannot
-//! disagree. Before it, the only way to answer "does this module's prompt
-//! carry decision X, and which of its fields?" was to assemble every prompt
-//! and search the text — which is how a stale accepted decision reaching one
-//! module but not its sibling was found in the field (116 prompts, by hand).
+//! A projection over [`prompt::decision_context`]: a decision reaches a
+//! module through `guided_by`, a satisfied requirement's `decided_by`, the
+//! workspace tier, or an open question's `affects`. It answers "does this
+//! module get decision X, and which of its prose fields?" — the question
+//! that once found a stale accepted decision reaching one module but not its
+//! sibling (116 modules, by hand).
 //!
 //! Two views of the same data:
-//! - `modules`: per module, the decisions and open questions in its prompt,
+//! - `modules`: per module, the decisions and open questions that reach it,
 //!   why each is there (`guided_by`, a satisfied requirement's `decided_by`,
 //!   the workspace tier, an open question's `affects`), and which decision
 //!   prose fields go in (`codegen_include`).
 //! - `decisions`: per decision, the modules it reaches. A decision that
-//!   reaches none is listed too — its text is in no prompt. Judging whether
+//!   reaches none is listed too. Judging whether
 //!   two decisions contradict each other is semantic and stays with a person; the
 //!   report only puts the candidates side by side.
 

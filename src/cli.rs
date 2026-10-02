@@ -331,11 +331,11 @@ pub enum ReportAction {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Which decision text reaches which module's codegen prompt. Two
-    /// YAML views over the function the prompt is rendered from: `modules`
-    /// (per module: its decisions and open questions, why each is there,
-    /// and which decision prose fields go in) and `decisions` (per
-    /// decision: the modules it reaches; empty when no prompt carries it).
+    /// Which decisions reach which module, and why. Two YAML views:
+    /// `modules` (per module: its decisions and open questions, why each
+    /// is there, and which decision prose fields apply — a decision's
+    /// `codegen_include`) and `decisions` (per decision: the modules it
+    /// reaches; empty when it reaches none).
     /// Exit 0 on success, 2 on hard error.
     Decisions {
         /// Project root (directory the analyzer searches from). Defaults to cwd.

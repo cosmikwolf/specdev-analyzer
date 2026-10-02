@@ -238,6 +238,25 @@ fn graph_without_provenance(project: &Path) -> serde_json::Value {
     let (graph, _report) = reduction::run_project(project, None).expect("reduction::run_project");
     let yaml = reduction::to_yaml(&graph).unwrap();
     let mut value: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+    // What the format removes or moves on purpose: removed
+    // kinds and relations, the `Architecture` entity of a deleted
+    // `architecture.toml`, and the attributes `migrate` adds.
+    let removed = specdev_analyzer::field_cuts::REMOVED_KINDS;
+    for (list, field) in [("entities", "kind"), ("relations", "kind")] {
+        if let Some(items) = value.get_mut(list).and_then(|v| v.as_array_mut()) {
+            items.retain(|e| {
+                let k = e.get(field).and_then(|k| k.as_str()).unwrap_or("");
+                !removed.iter().any(|r| k.ends_with(r)) && !k.ends_with("Architecture")
+            });
+            for e in items.iter_mut() {
+                if let Some(a) = e.get_mut("attrs").and_then(|a| a.as_object_mut()) {
+                    for k in ["verified_by", "test_pending", "planned"] {
+                        a.remove(k);
+                    }
+                }
+            }
+        }
+    }
     normalize(&mut value);
     value
 }

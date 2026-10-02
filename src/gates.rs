@@ -141,8 +141,9 @@ pub fn gate_commands(layout: &LayoutContext, gate: &Gate) -> Result<Vec<Vec<Stri
             crate::reduction::load_toml_as_json(&layout.architecture_toml_path).with_context(
                 || {
                     format!(
-                        "gate `{}`: a step carries a `${{…}}` token, which resolves against {}",
+                        "gate `{}`: the step token `{}` resolves against {}",
                         gate.label,
+                        gate.steps.iter().flatten().find(|e| e.contains("${")).map(String::as_str).unwrap_or(""),
                         layout.architecture_toml_path.display()
                     )
                 },

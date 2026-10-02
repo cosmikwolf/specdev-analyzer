@@ -79,7 +79,7 @@ fn migrate_re_records_crlf_hashes_in_the_lf_form() {
     let t = tree_v1("crlf-migrate", "library-api");
     let lineage = t.read("specs/specdev/lineage.toml");
     let mut doc: toml_edit::DocumentMut = lineage.parse().unwrap();
-    let path = "specs/architecture.toml";
+    let path = "specs/specdev/schemas/enums.schema.yaml";
     let b = std::fs::read(t.root.join(path)).unwrap();
     doc["profile_files"][path] = toml_edit::value(sha(&crlf(&b)));
     t.write("specs/specdev/lineage.toml", &doc.to_string());

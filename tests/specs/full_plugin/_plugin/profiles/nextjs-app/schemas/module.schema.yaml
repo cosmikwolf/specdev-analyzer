@@ -94,20 +94,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-  external_deps:
-    description: >
-      npm package dependencies this module needs. Each entry becomes a
-      package.json `dependencies` line (`devDependencies` when
-      `test_only = true`); the union across modules, architecture-level
-      `[[external_deps]]`, and block/bridge contributions determines the
-      full dep set `manifest` emits. User-declared versions win on
-      conflict. The NpmReference shape is embedded in the analyzer (the
-      $ref below resolves internally, not to a file on disk); the
-      architecture template's dep comment block documents the accepted
-      shapes readably.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/npm_reference.schema.yaml#/$defs/NpmReference"
   bindings:
     description: >
       Aggregator slot for bridge contributions. Open in v1.

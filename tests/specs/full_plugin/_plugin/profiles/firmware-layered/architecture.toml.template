@@ -1,13 +1,11 @@
-# Architecture-level decisions for a firmware-layered project.
+# Architecture facts for a firmware-layered project.
 #
-# This file captures project-wide infrastructure picks
-# (platform, runtime, logger) AS WELL AS cross-module port
-# connections. Every Cargo dep is captured here or in modules; codegen
-# emits Cargo.toml from these fields. The spec is the source
-# of truth.
+# Dependencies, features and build profiles live in Cargo.toml, which is
+# the truth for them; this file holds what Cargo.toml does not.
 
 # ---------------------------------------------------------------------------
-# Platform — hardware target + ARM core support crates.
+# Platform — the build target. The gate script reads `target_triple`
+# (`cargo check --target ${root.platform.target_triple}`).
 # ---------------------------------------------------------------------------
 [platform]
 # Rust target triple. Examples:
@@ -17,142 +15,16 @@
 #   thumbv6m-none-eabi         (Cortex-M0 / M0+)
 target_triple = "thumbv8m.main-none-eabihf"
 
-# Specific MCU part. Drives the inlined MCU block's HAL feature flag at
-# codegen time. Set to your concrete part identifier (lowercase, no
-# punctuation), e.g. "stm32h563", "stm32f411", "stm32h743".
-# mcu_part = "stm32h563"
-
-[platform.mcu_core]
-crate = "cortex-m"
-version = "^0.7"
-# The default logger backend (defmt-rtt) needs a critical-section
-# impl, and so does any async runtime you inline (embassy, rtic).
-# Single-core Cortex-M uses cortex-m's own impl, which is NOT on by
-# default. Without this the link fails late with
-# `undefined symbol: _critical_section_1_0_acquire`.
-# Remove it only if another crate provides an impl — two impls are a
-# duplicate-symbol link error.
-features = ["critical-section-single-core"]
-
-[platform.mcu_runtime]
-crate = "cortex-m-rt"
-version = "^0.7"
-
 # ---------------------------------------------------------------------------
-# Runtime — panic handler, optional allocator + critical-section impl.
+# Cross-module port connections (optional). `connection_endpoints_resolve`
+# checks that each end names a `Module.port` that exists.
 # ---------------------------------------------------------------------------
-[runtime.panic_handler]
-crate = "panic-probe"
-version = "^1"
-features = ["print-defmt"]
-
-# Optional: enable an allocator only when modules need `alloc`.
-# [runtime.allocator]
-# crate = "embedded-alloc"
-# version = "^0.7"
-
-# Optional: most cortex-m projects rely on the impl bundled with
-# `cortex-m`; supply this only when overriding.
-# [runtime.critical_section_impl]
-# crate = "critical-section"
-# version = "^1.2"
-
-# ---------------------------------------------------------------------------
-# Logger — defmt is the de-facto standard for embedded Rust.
-# ---------------------------------------------------------------------------
-[logger.provider]
-crate = "defmt"
-version = "^1"
-
-[logger.backend]
-crate = "defmt-rtt"
-version = "^1"
-
-# default_level: trace | debug | info | warn | error | off
-# logger.default_level = "info"
-
-# ---------------------------------------------------------------------------
-# Open list for project-author crate additions beyond the typed slots
-# above. Every entry lands in Cargo.toml [dependencies].
-# ---------------------------------------------------------------------------
-# [[external_deps]]
-# crate = "heapless"
-# version = "^0.9"
-# features = ["serde"]
-
-# [[external_deps]]
-# crate = "static-cell"
-# version = "^2"
-
-# ---------------------------------------------------------------------------
-# Cargo features the binary exposes. Each [[features]] entry renders one
-# line of Cargo.toml [features]; `default = true` puts it in the
-# synthesized `default = [...]` line. `cargo_deps` carries Cargo's
-# feature-dep strings: `dep:<crate>` enables a dep whose CrateReference
-# carries `optional = true`. A feature with no deps is a plain cfg switch.
-# ---------------------------------------------------------------------------
-# EXAMPLE: an optional dep enabled by a default feature. Mark the dep
-# `optional = true` on its CrateReference (here [runtime.panic_handler]),
-# then declare the feature that enables it:
-# [[features]]
-# name = "panic-probe"
-# description = "Link panic-probe; drop it for a size-constrained build."
-# default = true
-# cargo_deps = ["dep:panic-probe"]
-
-# EXAMPLE: a cfg-only feature.
-# [[features]]
-# name = "debug-memory"
-# description = "Enable the heap/stack usage report on the debug menu."
-
-# ---------------------------------------------------------------------------
-# Cargo [[test]] targets that need a non-default setting. Cargo
-# auto-discovers tests/<name>.rs by itself; list a target here only when
-# it must run without the standard harness (embedded-test, defmt-test)
-# or lives at a non-default path. Each entry renders one [[test]] row.
-# ---------------------------------------------------------------------------
-# [[test_targets]]
-# name = "hw_integration"
-# harness = false
-
-# [[test_targets]]
-# name = "smoke"
-# path = "tests/on_target/smoke.rs"
-# harness = false
-
-# ---------------------------------------------------------------------------
-# Cross-module port connections.
-#
-# Each [[connections]] entry wires one module's port to another module's
-# port. Both endpoints use the form `Module.port`; the analyzer's
-# `connection_endpoints_resolve` graph check verifies that both names
-# exist in the project's module set.
-#
-# `flow_type` is optional and free-form; it documents what kind of data
-# flows across the connection (e.g. `audio_frame`, `midi_event`).
-# ---------------------------------------------------------------------------
-
-# EXAMPLE: an audio source feeds an audio sink.
 # [[connections]]
-# from = "AudioSource.out"
-# to = "AudioSink.in"
-# flow_type = "audio_frame"
-
-# EXAMPLE: a sensor exposes events to a controller.
-# [[connections]]
-# from = "RotaryEncoder.event_out"
-# to = "MainController.encoder_event_in"
-# flow_type = "encoder_event"
+# from = "Sensor.reading"
+# to = "Display.input"
+# flow_type = "Measurement"
 
 # ---------------------------------------------------------------------------
-# Cargo build profiles ([profile.*]) — for a STANDALONE crate only. In a
-# workspace, profiles live in the workspace root's architecture.toml;
-# Cargo ignores them in a member manifest and validate rejects them here.
-# Closed subset: opt-level, debug, lto, codegen-units, panic, strip,
-# overflow-checks, debug-assertions, incremental, plus package.<crate>
-# overrides (no panic / lto there).
+# Decisions that shape the whole project (optional).
 # ---------------------------------------------------------------------------
-# EXAMPLE: keep DWARF in release builds so the debug probe finds RTT.
-# [profiles.release]
-# debug = 2
-# opt-level = "s"
+# project_decisions = ["DEC-001"]

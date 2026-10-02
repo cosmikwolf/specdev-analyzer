@@ -114,10 +114,6 @@ pub fn build_triad_smoke(tag: &str) -> (PathBuf, LayoutContext) {
 
 fn write_specs(target: &Path) {
     let arch = r#"project_decisions = ["DEC-001"]
-
-[[features]]
-name = "default"
-default = true
 "#;
     std::fs::write(target.join("specs/architecture.toml"), arch).unwrap();
 
@@ -347,11 +343,6 @@ fn triad_smoke_additivity_when_files_removed() {
     // files so missing-id checks don't fire (those checks should fire in
     // the populated case but not here, where the files are simply absent
     // and so should every ref-side field be).
-    let arch = r#"[[features]]
-name = "default"
-default = true
-"#;
-    std::fs::write(target.join("specs/architecture.toml"), arch).unwrap();
 
     let reqs = r#"[[source]]
 id = "triad-doc"
@@ -373,6 +364,8 @@ satisfies = ["ZFM-001"]
 "#;
     std::fs::write(target.join("specs/modules/module_ok.toml"), module_ok).unwrap();
     std::fs::remove_file(target.join("specs/modules/module_blocked.toml")).unwrap();
+    // No architecture-level reference to a removed decision either.
+    std::fs::write(target.join("specs/architecture.toml"), "").unwrap();
 
     let report = validate::run_project(&target, None).expect("validate");
     let errors: Vec<_> = report

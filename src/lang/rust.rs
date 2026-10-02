@@ -12,6 +12,10 @@ const TESTS_QUERY: &str = include_str!("../embedded/languages/rust/tests.scm");
 const IMPORTS_QUERY: &str = include_str!("../embedded/languages/rust/imports.scm");
 
 impl LanguageAdapter for RustAdapter {
+    fn manifest_facts(&self, project_root: &std::path::Path) -> Option<crate::manifest_facts::ManifestFacts> {
+        crate::manifest_facts::cargo(project_root)
+    }
+
     fn is_inert_top_level(&self, kind: &str) -> bool {
         kind.contains("comment") || ["attribute_item", "inner_attribute_item", "use_declaration", "extern_crate_declaration"].contains(&kind)
     }

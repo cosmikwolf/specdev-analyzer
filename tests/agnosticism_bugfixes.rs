@@ -390,7 +390,6 @@ fn bridge_reduce_unresolved_includes_co_residency_hint() {
     let arch = r#"[plugin]
 name = "Demo"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3"]
 
@@ -460,7 +459,6 @@ fn audio_plugin_plugin_name_schema_rejects_literal_placeholder() {
         r#"[plugin]
 name = "{{project_name}}"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3"]
 

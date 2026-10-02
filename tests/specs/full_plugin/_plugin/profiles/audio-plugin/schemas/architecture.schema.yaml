@@ -28,7 +28,7 @@ properties:
       fields are surfaced to hosts in plugin metadata panels.
     type: object
     additionalProperties: false
-    required: [name, vendor, version, category, formats]
+    required: [name, vendor, category, formats]
     properties:
       name:
         description: |
@@ -58,12 +58,6 @@ properties:
           Optional vendor support email. nih-plug surfaces this in the
           generated VST3 / CLAP factory metadata.
         $ref: "enums.schema.yaml#/$defs/EmailAddress"
-      version:
-        description: |
-          Plugin display version (strict three-part numeric SemVer).
-          Drives the VST3 / CLAP version fields. Independent of the
-          crate's Cargo.toml `[package].version`.
-        $ref: "enums.schema.yaml#/$defs/PluginVersion"
       category:
         description: |
           Closed enum: instrument | fx | midi-fx | analyzer.
@@ -154,37 +148,6 @@ properties:
           because the host's stack must not see Rust unwinding through
           a C ABI boundary. Standalone-only builds may use `unwind`.
         $ref: "enums.schema.yaml#/$defs/PanicHandlerKind"
-      realtime_audit:
-        description: |
-          Informational flag. When `true`, the project is opting in to
-          realtime-audit conventions (no alloc / no lock / no log on
-          the audio path). v1 carries this as a marker only; a future
-          `realtime_path_no_alloc` graph-check primitive (bounded
-          follow-up) consumes it. v1 codegen prose enforces the
-          discipline; tooling enforcement is gated on 15-G dogfood
-          evidence.
-        type: boolean
-        default: false
-
-  features:
-    description: |
-      Cargo features the plugin crate exposes. Each entry declares one
-      feature; modules reference these via `feature_gates[]`. Same
-      shape as library-api's `[[features]]`. Plugins typically use
-      this for optional MIDI handling, SIMD vs scalar DSP, or
-      debug-only RTT logging.
-    type: array
-    items: { $ref: "#/$defs/Feature" }
-
-  external_deps:
-    description: |
-      Open list for project-author crate additions beyond the typed
-      slots above. Every entry lands in Cargo.toml `[dependencies]`.
-      Use this for crates that don't fit a typed role (e.g.,
-      `crossbeam-channel`, `parking_lot`).
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
 
   project_decisions:
     description: >
