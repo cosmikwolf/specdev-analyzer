@@ -101,11 +101,33 @@ impl EntryLayout {
 /// as empty.
 pub const TOMBSTONE_PREFIX: &str = "MOVED to ";
 
-/// Whether `text` is a tombstone `migrate` wrote: its first line starts with
-/// [`TOMBSTONE_PREFIX`] and names `specdev-analyzer migrate`.
+/// The second (last) line of every tombstone.
+pub const TOMBSTONE_SECOND_LINE: &str =
+    "This file is not TOML on purpose: an analyzer that reads the old layout stops here.";
+
+fn is_tombstone_first_line(line: &str) -> bool {
+    line.starts_with(TOMBSTONE_PREFIX) && line.contains("by specdev-analyzer migrate")
+}
+
+/// Whether `text` is exactly a tombstone `migrate` wrote (line endings
+/// ignored): its two lines and nothing else. A tombstone with anything
+/// appended — entries from a merge — is legacy content, not a tombstone.
 pub fn is_tombstone(text: &str) -> bool {
-    let first = text.lines().next().unwrap_or("");
-    first.starts_with(TOMBSTONE_PREFIX) && first.contains("by specdev-analyzer migrate")
+    let lf = text.replace("\r\n", "\n");
+    let mut lines = lf.trim_end_matches('\n').split('\n');
+    match (lines.next(), lines.next(), lines.next()) {
+        (Some(a), Some(b), None) => is_tombstone_first_line(a) && b == TOMBSTONE_SECOND_LINE,
+        _ => false,
+    }
+}
+
+/// `text` without a leading tombstone, when it starts with one: what a merge
+/// appended under it. `None` when it does not start with a tombstone.
+fn after_tombstone(text: &str) -> Option<String> {
+    let lf = text.replace("\r\n", "\n");
+    let mut it = lf.splitn(3, '\n');
+    let (a, b) = (it.next()?, it.next()?);
+    (is_tombstone_first_line(a) && b == TOMBSTONE_SECOND_LINE).then(|| it.next().unwrap_or("").to_string())
 }
 
 /// One entry: the table it was read from and the file that holds it.
@@ -359,6 +381,9 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         if is_tombstone(&text) {
             continue;
         }
+        // Entries appended under a tombstone (a merge from an old branch) are
+        // folded like any combined file; the tombstone is written again.
+        let text = after_tombstone(&text).unwrap_or(text);
         let kinds: Vec<EntryKind> =
             EntryKind::ALL.into_iter().filter(|k| k.combined_file() == combined).collect();
         let parsed: toml::Table =
@@ -427,7 +452,7 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         let dirs: Vec<String> = kinds.iter().map(|k| format!("specs/{}/", k.entry_dir())).collect();
         let tomb = format!(
             "{TOMBSTONE_PREFIX}{} by specdev-analyzer migrate — upgrade specdev-analyzer to {FIRST_PER_ENTRY_ANALYZER} or later\n\
-             This file is not TOML on purpose: an analyzer that reads the old layout stops here.\n",
+             {TOMBSTONE_SECOND_LINE}\n",
             dirs.join(" and ")
         );
         plan.tombstones.push((PathBuf::from(combined), tomb.into_bytes()));
@@ -633,7 +658,8 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("decisions.toml"),
-            "MOVED to specs/decisions/ by specdev-analyzer migrate — upgrade specdev-analyzer to 0.3.0\n",
+            "MOVED to specs/decisions/ by specdev-analyzer migrate — upgrade specdev-analyzer to 0.3.0 or later\n\
+             This file is not TOML on purpose: an analyzer that reads the old layout stops here.\n",
         )
         .unwrap();
         // Comments only, as the workspace bootstrap template writes: no entry

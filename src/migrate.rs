@@ -87,6 +87,9 @@ pub struct MigrateReport {
     pub profile_skipped: bool,
     pub migrated: Vec<MigratedUnit>,
     pub skipped: Vec<SkippedUnit>,
+    /// Units whose plugin copy moved while no file is missing: left as they
+    /// are, so `drift` keeps reporting the move.
+    pub plugin_moved: Vec<SkippedUnit>,
     pub missing_in_plugin: Vec<String>,
     pub dry_run: bool,
 }
@@ -159,6 +162,12 @@ pub fn run_migrate(
                     });
                     continue;
                 }
+                // Nothing missing: the plugin moved content the project already
+                // has. Re-recording would hide that from `drift`; leave it.
+                if !files.iter().any(|f| !layout.specdev_root.join(&f.rel_dst).exists()) {
+                    report.plugin_moved.push(SkippedUnit { kind: UnitKind::Block, name: name.clone(), hash: new_hash });
+                    continue;
+                }
                 let written = apply_unit_migration(layout, UnitKind::Block, name, &files, dry_run)?;
                 report.migrated.push(MigratedUnit {
                     kind: UnitKind::Block,
@@ -203,6 +212,10 @@ pub fn run_migrate(
                         name: name.clone(),
                         hash: new_hash,
                     });
+                    continue;
+                }
+                if !files.iter().any(|f| !layout.specdev_root.join(&f.rel_dst).exists()) {
+                    report.plugin_moved.push(SkippedUnit { kind: UnitKind::Bridge, name: name.clone(), hash: new_hash });
                     continue;
                 }
                 let written =
@@ -324,6 +337,10 @@ fn plan_profile_shell(
         let dst_abs = layout.project_root.join(&dst_rel);
 
         if !dst_abs.exists() {
+            // Recorded but missing: deleted on purpose; `drift` reports it.
+            if recorded.contains_key(rel) {
+                continue;
+            }
             write_file(&dst_abs, bytes, dry_run)?;
             new_hashes.insert(rel.clone(), bootstrap::profile_file_hash(rel, bytes)?);
             report.profile_files_written.push(dst_rel);

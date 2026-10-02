@@ -397,6 +397,8 @@ pub fn run_bootstrap_with(
         ));
     }
 
+    check_enclosing_workspace_format(&inputs.target_dir)?;
+
     let profile_dir = plugin_root.join("profiles").join(&inputs.profile);
     if !profile_dir.is_dir() {
         return Err(anyhow!(
@@ -619,6 +621,38 @@ pub fn run_bootstrap_with(
     crate::paired_files::write_absent(&layout)?;
     // The script CI runs, and the line that keeps it LF.
     crate::gates::emit_script(&layout)?;
+    Ok(())
+}
+
+/// A new project inside a workspace becomes one of its members, so it must be
+/// in the workspace's format. The nearest ancestor `spec.toml` with a
+/// `[workspace]` table decides — whether or not it lists the new member yet
+/// (`FORMAT-002`). Nothing is written on a refusal.
+fn check_enclosing_workspace_format(target: &Path) -> Result<()> {
+    let mut cursor = target.parent();
+    while let Some(dir) = cursor {
+        let candidate = dir.join("spec.toml");
+        if let Ok(text) = std::fs::read_to_string(&candidate) {
+            if let Ok(doc) = toml::from_str::<toml::Table>(&text) {
+                if doc.contains_key("workspace") {
+                    let version = doc.get("spec_version").and_then(|v| v.as_str()).unwrap_or("1.0").to_string();
+                    let major: u32 = version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(1);
+                    if major != crate::config::NEWEST_FORMAT_MAJOR {
+                        return Err(anyhow!(
+                            "[FORMAT-002] {} would be a {}.0 project inside the workspace at {}, which is at \
+                             spec_version {version}. Run `specdev-analyzer migrate` in {} first; nothing was written.",
+                            target.display(),
+                            crate::config::NEWEST_FORMAT_MAJOR,
+                            dir.display(),
+                            dir.display()
+                        ));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        cursor = dir.parent();
+    }
     Ok(())
 }
 
