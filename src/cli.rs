@@ -1452,10 +1452,17 @@ fn run_migrate(
             for f in &format.replaced_unrecorded {
                 println!("  {f}");
             }
-            println!(
-                "Before you run `migrate`, commit or stash your work; then `git diff <file>` shows any local edit to \
-                 re-apply. `migrate` never commits."
-            );
+            if dry_run {
+                println!(
+                    "Before you run `migrate`, commit or stash your work; then `git diff <file>` shows any local edit \
+                     to re-apply. `migrate` never commits."
+                );
+            } else {
+                println!(
+                    "If these files had local edits, `git diff <file>` shows them — only if your work was committed \
+                     before this run. `migrate` never commits."
+                );
+            }
         }
     }
     let layout = if format.already_current || dry_run {
@@ -1469,41 +1476,53 @@ fn run_migrate(
             }
         }
     };
-    if !format.already_current {
-        if dry_run {
-            for dir in &format.members {
-                println!("  member {}: would write {} and run its unit step", dir.display(), specdev_analyzer::gates::SCRIPT_REL);
+    // Members first, on every root run: each gets its gate script and its
+    // unit step, so a run that was interrupted is finished by the next one.
+    let mut missing = false;
+    let members: Vec<std::path::PathBuf> = layout
+        .spec
+        .workspace
+        .as_ref()
+        .map(|ws| ws.members.iter().map(|m| layout.project_root.join(&m.path)).collect())
+        .unwrap_or_default();
+    for dir in &members {
+        let member = match LayoutContext::discover_unchecked(dir) {
+            Ok(l) => l,
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
             }
-            println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
-        } else {
-            // Members first: each gets its gate script and its unit step.
-            for dir in &format.members {
-                let member = match LayoutContext::discover(dir, None) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        report_error(&e);
-                        return ExitCode::from(1);
-                    }
-                };
-                println!("member {}:", dir.display());
-                match specdev_analyzer::gates::emit_script(&member) {
-                    Ok(r) => print_emit_report(&r),
-                    Err(e) => {
-                        report_error(&e);
-                        return ExitCode::from(1);
-                    }
-                }
-                if let Err(e) = migrate::run_migrate(&member, &plugin, false, refresh) {
-                    report_error(&e);
-                    return ExitCode::from(1);
-                }
-            }
-            match specdev_analyzer::gates::emit_script(&layout) {
+        };
+        println!("member {}:", dir.display());
+        if member.spec.format_major() >= 2 && !dry_run {
+            match specdev_analyzer::gates::emit_script(&member) {
                 Ok(r) => print_emit_report(&r),
                 Err(e) => {
                     report_error(&e);
                     return ExitCode::from(1);
                 }
+            }
+        } else if dry_run && format.members.contains(dir) {
+            println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
+        }
+        match migrate::run_migrate(&member, &plugin, dry_run, refresh) {
+            Ok(r) => missing |= print_unit_report(&r, dry_run),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+    if dry_run {
+        if !format.already_current {
+            println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
+        }
+    } else if layout.spec.format_major() >= 2 {
+        match specdev_analyzer::gates::emit_script(&layout) {
+            Ok(r) => print_emit_report(&r),
+            Err(e) => {
+                report_error(&e);
+                return ExitCode::from(1);
             }
         }
     }
@@ -1515,6 +1534,17 @@ fn run_migrate(
         }
     };
 
+    missing |= print_unit_report(&report, dry_run);
+    if missing {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Print one project's unit / profile-shell step; `true` when a unit is
+/// missing from the plugin tree (the run must exit 1).
+fn print_unit_report(report: &migrate::MigrateReport, dry_run: bool) -> bool {
     let prefix = if dry_run { "would migrate" } else { "migrated" };
     let skip_phrase = "already migrated (no-op)";
 
@@ -1619,7 +1649,7 @@ fn run_migrate(
             skipped,
             report.missing_in_plugin.len(),
         );
-        return ExitCode::from(1);
+        return true;
     }
 
     if total == 0 && report.migrated.is_empty() {
@@ -1631,7 +1661,7 @@ fn run_migrate(
             if dry_run { "planned" } else { "written" }
         );
     }
-    ExitCode::SUCCESS
+    false
 }
 
 fn short_hash(h: &str) -> String {

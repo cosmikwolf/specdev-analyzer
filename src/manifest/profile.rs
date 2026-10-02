@@ -170,6 +170,21 @@ impl Profile {
             .and_then(|i| i.visibility_floor.as_deref())
     }
 
+    /// Validate `profile.yaml` text without a file: the checks [`Self::load`]
+    /// runs. `path` only names the file in messages.
+    pub fn check_text(text: &str, path: &Path) -> Result<()> {
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
+        let mut value: JsonValue = serde_json::to_value(yaml).with_context(|| format!("converting {}", path.display()))?;
+        check_contract_version(&value, path)?;
+        drop_retired_sections(&mut value);
+        super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
+        let parsed: Profile = serde_json::from_value(value)
+            .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
+        check_gate_labels_unique(&parsed.gates, path)?;
+        Ok(())
+    }
+
     /// Load and validate a `profile.yaml`. Path is the file itself
     /// (typically `specs/specdev/profile.yaml` in the inlined tree, or
     /// `profiles/<name>/profile.yaml` in the plugin tree).

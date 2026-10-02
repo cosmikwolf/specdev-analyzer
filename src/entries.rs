@@ -105,8 +105,22 @@ pub const TOMBSTONE_PREFIX: &str = "MOVED to ";
 pub const TOMBSTONE_SECOND_LINE: &str =
     "This file is not TOML on purpose: an analyzer that reads the old layout stops here.";
 
+/// The first line, by its whole shape: `MOVED to <dir>[ and <dir>]… by
+/// specdev-analyzer migrate — upgrade specdev-analyzer to <x.y.z> or later`,
+/// each `<dir>` a `specs/<name>/` path.
 fn is_tombstone_first_line(line: &str) -> bool {
-    line.starts_with(TOMBSTONE_PREFIX) && line.contains("by specdev-analyzer migrate")
+    let Some(rest) = line.strip_prefix(TOMBSTONE_PREFIX) else { return false };
+    let Some((dirs, tail)) = rest.split_once(" by specdev-analyzer migrate — upgrade specdev-analyzer to ") else {
+        return false;
+    };
+    let Some(version) = tail.strip_suffix(" or later") else { return false };
+    let version_ok = version.split('.').count() == 3 && version.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    let dirs_ok = dirs.split(" and ").all(|d| {
+        d.strip_prefix("specs/")
+            .and_then(|x| x.strip_suffix('/'))
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+    });
+    version_ok && dirs_ok
 }
 
 /// Whether `text` is exactly a tombstone `migrate` wrote (line endings
@@ -440,7 +454,18 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         if !header.trim().is_empty() {
             let dir = kinds[0].entry_dir();
             let readme = PathBuf::from(dir).join("README.md");
-            if !specs_dir.join(&readme).exists() {
+            if let Ok(existing) = std::fs::read_to_string(specs_dir.join(&readme)) {
+                // A fold (a merge brought a combined file back): keep its
+                // header comments by appending them, unless already there.
+                if !existing.contains(header.trim()) {
+                    let body = format!(
+                        "{}\n\nFolded later by `specdev-analyzer migrate` from `specs/{combined}`:\n\n```toml\n{}\n```\n",
+                        existing.trim_end(),
+                        header.trim_end()
+                    );
+                    plan.writes.push((readme, body.into_bytes()));
+                }
+            } else {
                 let body = format!(
                     "# specs/{dir}/\n\nOne file per entry, `<id>.toml`. `specdev-analyzer migrate` moved the \
                      entries of `specs/{combined}` here; the header comment of that file follows.\n\n```toml\n{}\n```\n",

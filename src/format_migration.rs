@@ -574,13 +574,29 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             if recorded.contains_key(key) {
                 refused.push(key.clone());
             } else {
-                ov.write(&rel, take_plugin_bytes(key, &ours, theirs)?);
-                records.insert(key.clone(), theirs_hash);
+                let new = take_plugin_bytes(key, &ours, theirs)?;
+                // What the replacement removes: the lines of the project's copy
+                // the plugin's copy does not have.
+                let new_text = String::from_utf8_lossy(&new).into_owned();
+                let keep: std::collections::HashSet<&str> = new_text.lines().map(str::trim_end).collect();
+                let ours_text = String::from_utf8_lossy(&ours).into_owned();
+                let lost: Vec<String> =
+                    ours_text.lines().map(str::trim_end).filter(|l| !l.is_empty() && !keep.contains(l)).map(|l| format!("      - {l}")).collect();
+                report.replaced_unrecorded.push(if lost.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{key} — lines the replacement removes:\n{}", lost.join("\n"))
+                });
+                ov.write(&rel, new);
+                records.insert(key.clone(), theirs_hash.clone());
                 report.lines.push(format!(
                     "{verb}replace {key} with the plugin's {TARGET_VERSION} copy (no bootstrap record; see the warning below)"
                 ));
-                report.replaced_unrecorded.push(key.clone());
             }
+        }
+        if !rel.starts_with(&schemas_rel) && ours_hash != theirs_hash {
+            // Neither a precise edit nor a schema: left as it is, and said so.
+            report.lines.push(format!("{verb}left {key} as is (it differs from the plugin's copy; `drift` shows it)"));
         }
     }
     // Reductions the profile does not own (inlined units) still name files.
@@ -606,6 +622,21 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         );
     }
 
+    // An unrecorded tree gets its first baseline: every profile file as this
+    // step leaves it. A local edit made before cannot be known; from now on
+    // `drift` sees the next one.
+    if recorded.is_empty() {
+        for key in expected.keys() {
+            if records.contains_key(key) {
+                continue;
+            }
+            if let Some(bytes) = ov.read(Path::new(key)) {
+                records.insert(key.clone(), bootstrap::profile_file_hash(key, &bytes)?);
+            }
+        }
+        report.lines.push(format!("{verb}record a first [profile_files] baseline (the tree had none)"));
+    }
+
     // 6. Generation state.
     let gen_lineage = specdev_rel.join("gen-lineage.toml");
     if ov.read(&gen_lineage).is_some() {
@@ -616,6 +647,39 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     if root.join(&codegen).is_dir() {
         ov.delete_dirs.insert(codegen.clone());
         report.lines.push(format!("{verb}remove {}/", slash(&codegen)));
+    }
+
+    // 6b. Unit snapshots lose their `codegen/` files with the inlined
+    // `codegen/`; each unit is re-recorded from the snapshot that remains.
+    for (kind, names) in [
+        (crate::upstream::UnitKind::Block, lineage.blocks.keys().cloned().collect::<Vec<_>>()),
+        (crate::upstream::UnitKind::Bridge, lineage.bridges.keys().cloned().collect::<Vec<_>>()),
+    ] {
+        for name in names {
+            let snap = crate::upstream::read_upstream_unit(&layout.specdev_root, kind, &name)?;
+            if !snap.keys().any(|p| p.starts_with("codegen")) {
+                continue;
+            }
+            let dir = rel_to(root, &crate::upstream::upstream_dir(&layout.specdev_root, kind, &name)).join("codegen");
+            ov.delete_dirs.insert(dir.clone());
+            let kept: BTreeMap<PathBuf, Vec<u8>> = snap.into_iter().filter(|(p, _)| !p.starts_with("codegen")).collect();
+            let hash = crate::inline::snapshot_rollup(kind, &name, &kept);
+            let entry = match kind {
+                crate::upstream::UnitKind::Block => lineage.blocks.get_mut(&name),
+                crate::upstream::UnitKind::Bridge => lineage.bridges.get_mut(&name),
+            };
+            if let Some(e) = entry {
+                e.content_hash = hash;
+            }
+            report.lines.push(format!(
+                "{verb}remove {}/ (the unit's codegen files) and re-record {} `{name}` from its remaining snapshot",
+                slash(&dir),
+                match kind {
+                    crate::upstream::UnitKind::Block => "block",
+                    crate::upstream::UnitKind::Bridge => "bridge",
+                }
+            ));
+        }
     }
 
     // 7. Lineage.
@@ -651,6 +715,18 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         "{verb}set spec_version {} -> {TARGET_VERSION} and [project].max_parallel_agents (written last)",
         layout.spec.spec_version
     ));
+
+    // Every planned `spec.toml` and `profile.yaml` must load before any byte
+    // is written: an edit that broke one would leave a tree that refuses
+    // every command.
+    if let Some(bytes) = ov.writes.get(&spec_rel) {
+        crate::config::SpecConfig::parse(&root.join(&spec_rel), &utf8(bytes.clone(), &spec_rel)?)
+            .map_err(|e| anyhow!("[MIGRATE-016] the planned spec.toml does not load ({e:#}); nothing was changed"))?;
+    }
+    if let Some(bytes) = ov.writes.get(&profile_rel) {
+        crate::manifest::profile::Profile::check_text(&utf8(bytes.clone(), &profile_rel)?, &root.join(&profile_rel))
+            .map_err(|e| anyhow!("[MIGRATE-016] the planned {} does not load ({e:#}); nothing was changed", slash(&profile_rel)))?;
+    }
 
     Ok(Plan { ov, lineage: Some(lineage), specdev_root: layout.specdev_root.clone(), report })
 }
@@ -750,10 +826,15 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
     let mut skip_indent: Option<usize> = None;
     let mut has_version = false;
     let mut removed: Vec<String> = Vec::new();
-    for line in text.split_inclusive('\n') {
-        // A column-0 comment ends a retired section: it belongs to what follows.
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    for (i, line) in lines.iter().copied().enumerate() {
+        // A column-0 comment ends a retired section only when the next content
+        // line is at column 0 too: then it belongs to what follows.
         if skipping && line.starts_with('#') {
-            skipping = false;
+            let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty() && !l.starts_with('#'));
+            if next.is_none_or(|l| !l.starts_with(' ')) {
+                skipping = false;
+            }
         }
         if let Some(k) = top_key(line) {
             section = k.clone();
@@ -787,7 +868,8 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
             skip_indent = None;
         }
         let trimmed = line.trim();
-        if section == "gates" && (trimmed == "scope: module" || trimmed == "scope: batch") {
+        let scope_value = trimmed.strip_prefix("scope:").map(|v| v.split('#').next().unwrap_or("").trim());
+        if section == "gates" && matches!(scope_value, Some("module") | Some("batch")) {
             removed.push(format!("    {line}"));
             continue;
         }
