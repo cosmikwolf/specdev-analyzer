@@ -622,17 +622,16 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         );
     }
 
-    // An unrecorded tree gets its first baseline: every profile file as this
-    // step leaves it. A local edit made before cannot be known; from now on
-    // `drift` sees the next one.
+    // An unrecorded tree gets its first baseline: the plugin's 2.0 hash for
+    // every profile file present. A file equal to the plugin's copy reads
+    // clean; one that differs reads as locally edited — which a pre-2.0 edit
+    // may be — so `--refresh` refuses it instead of overwriting it.
     if recorded.is_empty() {
-        for key in expected.keys() {
-            if records.contains_key(key) {
+        for (key, theirs) in &expected {
+            if records.contains_key(key) || ov.read(Path::new(key)).is_none() {
                 continue;
             }
-            if let Some(bytes) = ov.read(Path::new(key)) {
-                records.insert(key.clone(), bootstrap::profile_file_hash(key, &bytes)?);
-            }
+            records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
         }
         report.lines.push(format!("{verb}record a first [profile_files] baseline (the tree had none)"));
     }

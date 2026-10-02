@@ -216,3 +216,21 @@ fn an_unrecorded_tree_gets_a_full_baseline() {
     let d = drift(&t);
     assert!(d.contains("LocallyEdited"), "a later edit shows:\n{d}");
 }
+
+/// The first baseline must not call a local edit "unedited": a later
+/// `migrate --refresh` would then overwrite it.
+#[test]
+fn the_first_baseline_never_hides_a_local_edit_from_refresh() {
+    let t = tree_v1("baseline-refresh", "library-api");
+    let l = t.read("specs/specdev/lineage.toml");
+    t.write("specs/specdev/lineage.toml", &l[..l.find("[profile_files]").unwrap()]);
+    let edited = format!("{}\n# our architecture note\n", t.read("specs/architecture.toml"));
+    t.write("specs/architecture.toml", &edited);
+    assert!(migrate(&t, &[]).status.success());
+    let d = drift(&t);
+    let arch = d.split("path: specs/architecture.toml").nth(1).unwrap_or("");
+    assert!(arch.trim_start().starts_with("category: LocallyEdited"), "{d}");
+    let out = migrate(&t, &["--refresh"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(t.read("specs/architecture.toml"), edited, "refresh overwrote a local edit");
+}
