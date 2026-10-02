@@ -20,7 +20,6 @@ name = "{{project_name}}"
 [validation.rules]
 unique_qualified_names                       = "error"
 modules_acyclic                              = "error"
-feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 decision_ids_unique                          = "error"
 requirements_have_satisfiers                 = "error"
@@ -46,13 +45,6 @@ entity_scope = "Module"
 relation_scope = "depends_on"
 edges_from = "relations[].from"
 edges_to = "relations[].to"
-
-# Cargo feature names must be unique.
-[[project.graph_checks]]
-kind = "unique"
-rule = "feature_unique_names"
-scope = "Feature"
-field = "entities[].name"
 
 # Requirement ids must be unique.
 [[project.graph_checks]]

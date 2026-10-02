@@ -10,40 +10,6 @@ description: >
 type: object
 additionalProperties: false
 properties:
-  msrv:
-    description: |
-      Minimum Supported Rust Version. Cargo-style version requirement
-      (e.g., "1.75", "^1.75"). `gen` emits this as Cargo.toml's
-      `rust-version` field. Optional — omit to leave `rust-version`
-      unset.
-    type: string
-    minLength: 1
-  features:
-    type: array
-    items: { $ref: "#/$defs/Feature" }
-  external_deps:
-    description: |
-      Crates the application depends on as a whole, rather than through
-      any one module. Every entry lands in Cargo.toml `[dependencies]`.
-
-      Use this for application-wide picks (an async runtime, a logging
-      implementation, an error type) and for path dependencies on
-      sibling crates in a workspace; keep crates that only one module
-      needs in that module's own `external_deps[]` instead, so the
-      dependency stays traceable to what wanted it.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-  profiles:
-    description: |
-      Cargo build profiles (`[profile.<name>]`) — a closed subset: the
-      nine knobs projects set, plus per-package overrides of what Cargo
-      allows in an override. Declare them here only for a STANDALONE
-      crate. In a workspace they belong to the workspace root's
-      architecture.toml — Cargo ignores profiles in a member manifest,
-      so a member that declares them fails validate and the renderer
-      refuses them. Emitted after `[dependencies]`.
-    $ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"
   project_decisions:
     description: >
       Decision ids that shape the project as a whole (workspace shape,

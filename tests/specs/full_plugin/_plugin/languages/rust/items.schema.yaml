@@ -83,58 +83,16 @@ properties:
       cases where a downstream codegen or audit step needs structural
       detail.
     type: string
-  test:
-    description: >
-      When true, this fn is emitted under `#[test]` (or the language's
-      test attribute) and verifies requirement(s) via `verifies` rather
-      than satisfying them via `satisfies`. Only `kind = "fn"` items may
-      be tests. Mutually exclusive with `satisfies`.
-    type: boolean
-    default: false
-  test_kind:
-    description: >
-      Test categorization driving codegen emit location. `unit` →
-      `#[cfg(test)] mod tests` co-located with the declaring module;
-      `integration` → `tests/<name>.rs` at the crate root; `doc` → a
-      doc-comment example on the hosting item. `bench` / `fuzz` reserve
-      the enum slot but emit nothing in v1 (validate warns). Only
-      meaningful when `test = true`; defaults to `unit`.
-    type: string
-    enum: [unit, integration, doc, bench, fuzz]
-    default: unit
-    # Enum slots accepted by the schema but with no codegen emission yet.
-    # The analyzer reads this list at validate time to warn (TEST-KIND-001)
-    # when a test item declares one; the advice names the remaining
-    # (emittable) enum entries. Promote a kind by deleting it from this
-    # list once emission ships.
-    x-specdev-reserved: [bench, fuzz]
-  verifies:
-    description: >
-      Requirement ids this test verifies (the inverse of `satisfies`).
-      Required with ≥1 entry when `test = true`; forbidden otherwise.
-      Reduced into `test_verifies` edges; the
-      `test_requirements_have_verifiers` graph check walks them to
-      confirm every `nature = "test"` requirement has a verifier.
-    type: array
-    items:
-      type: string
-      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
-    minItems: 1
-    uniqueItems: true
 
 # Kind-discriminated extras via oneOf. Each branch enforces the kind tag
 # and adds kind-specific required/optional fields. The `re_export` branch
-# relaxes the satisfies requirement; all other non-test branches require
-# `satisfies` with minItems: 1. The `test-fn` branch is the only one that
-# permits `test = true` — and it requires `verifies` and forbids
-# `satisfies` (the mutual exclusion). The other branches pin
-# `test: false` (absent is fine) and forbid `verifies` / `test_kind`,
-# keeping the test surface confined to `kind = "fn"` items.
+# relaxes the satisfies requirement; all other branches require
+# `satisfies` with minItems: 1. Tests are not items: a requirement names
+# the tests that verify it in `verified_by`.
 oneOf:
   - title: re_export
     properties:
       kind: { const: re_export }
-      test: { const: false }
       target:
         description: >
           The path being re-exported. Form: `<sibling_module>::<Item>`
@@ -154,15 +112,10 @@ oneOf:
           Optional rename. Emitted as `pub use <target> as <alias>;`.
         type: string
     required: [target, visibility]
-    not:
-      anyOf:
-        - required: [verifies]
-        - required: [test_kind]
 
   - title: impl
     properties:
       kind: { const: impl }
-      test: { const: false }
       target_type:
         description: >
           The type the impl block is for (e.g. `Operator`,
@@ -175,46 +128,22 @@ oneOf:
           `serde::Serialize`). Omit for inherent impls.
         type: string
     required: [target_type, satisfies]
-    not:
-      anyOf:
-        - required: [verifies]
-        - required: [test_kind]
-
-  # Test functions: kind = "fn", test = true. Use `verifies` instead of
-  # `satisfies`; codegen dispatches on `test_kind`.
-  - title: test-fn
-    properties:
-      kind: { const: fn }
-      test: { const: true }
-    required: [test, verifies]
-    not:
-      anyOf:
-        - required: [satisfies]
-        - required: [target]
-        - required: [target_type]
-        - required: [trait_ref]
-        - required: [visibility]
-        - required: [alias]
 
   - title: function-like-or-data
     properties:
       kind:
         enum: [fn, struct, enum, union, trait, type, const, static, macro, extern_block]
-      test: { const: false }
     required: [satisfies]
     not:
       anyOf:
-        - required: [verifies]
-        - required: [test_kind]
         - required: [target]
         - required: [target_type]
         - required: [trait_ref]
         - required: [visibility]
         - required: [alias]
 
-# When satisfies is required (every branch except re_export and test-fn),
-# it must have at least one entry. Test items carry `verifies` (with its
-# own minItems: 1) instead, so the satisfies floor doesn't apply to them.
+# When satisfies is required (every branch except re_export), it must
+# have at least one entry.
 allOf:
   - if:
       properties:

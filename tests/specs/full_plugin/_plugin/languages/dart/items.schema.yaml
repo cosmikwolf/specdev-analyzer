@@ -25,8 +25,8 @@ description: >
   and the contract lives on the declaring base. Extraction skips them,
   so they never show as `in_source_only` drift.
 
-  Sparseness rule: every `Item` carries `satisfies` (≥1 entry) unless it
-  is a test (`test = true`, which carries `verifies` instead). Helper
+  Sparseness rule: every `Item` carries `satisfies` (≥1 entry). Tests are
+  not items: a requirement names its tests in `verified_by`. Helper
   declarations that don't satisfy a requirement do not appear in
   `items[]`.
 
@@ -95,52 +95,10 @@ properties:
       parameters, FFI-facing declarations. Default is to omit; the items
       model is prose-first.
     type: string
-  test:
-    description: >
-      When true, this function is emitted as a Dart test (in `test/` per
-      its `test_kind`) and verifies requirement(s) via `verifies` rather
-      than satisfying them via `satisfies`. Only `kind = "function"`
-      items may be tests. Mutually exclusive with `satisfies`.
-    type: boolean
-    default: false
-  test_kind:
-    description: >
-      Test categorization driving emit location and harness. `unit` → a
-      `test()` case in `test/<module>_test.dart`; `widget` → a
-      `testWidgets()` case (flutter_test); `integration` → an
-      `integration_test/` entry driven on a device or emulator; `golden`
-      → a widget test asserting against a golden file
-      (`matchesGoldenFile`). Only meaningful when `test = true`; defaults
-      to `unit`.
-    type: string
-    enum: [unit, widget, integration, golden]
-    default: unit
-  verifies:
-    description: >
-      Requirement ids this test verifies (the inverse of `satisfies`).
-      Required with ≥1 entry when `test = true`; forbidden otherwise.
-      Reduced into `test_verifies` edges; the
-      `test_requirements_have_verifiers` graph check walks them to
-      confirm every `nature = "test"` requirement has a verifier.
-    type: array
-    items:
-      type: string
-      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
-    minItems: 1
-    uniqueItems: true
 
-# Two branches: test functions (verifies instead of satisfies) and
-# everything else (satisfies required). Dart has no kind-discriminated
-# extras in v1 — no re_export/impl analogs.
+# One branch: every declaration requires satisfies. Dart has no
+# kind-discriminated extras in v1 — no re_export/impl analogs.
 oneOf:
-  - title: test-function
-    properties:
-      kind: { const: function }
-      test: { const: true }
-    required: [test, verifies]
-    not:
-      required: [satisfies]
-
   - title: declaration
     properties:
       kind:
@@ -155,12 +113,7 @@ oneOf:
           - setter
           - typedef
           - const
-      test: { const: false }
     required: [satisfies]
-    not:
-      anyOf:
-        - required: [verifies]
-        - required: [test_kind]
 
 allOf:
   - properties:

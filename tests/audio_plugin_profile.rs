@@ -73,7 +73,6 @@ fn fresh_plugin(tag: &str) -> (PathBuf, LayoutContext) {
 const ARCH_DEFAULT: &str = r#"[plugin]
 name = "Demo Plugin"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3", "clap"]
 
@@ -244,7 +243,6 @@ fn architecture_schema_rejects_unknown_category() {
         r#"[plugin]
 name = "Demo"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "unicorn"
 formats = ["vst3"]
 
@@ -268,33 +266,6 @@ panic_handler = "abort"
 // 6 — Architecture schema: `[plugin].version` enforces strict SemVer.
 //     `0.1.0` validates; `0.1.0-rc1` fails.
 // ---------------------------------------------------------------------------
-#[test]
-fn architecture_schema_rejects_non_strict_semver_version() {
-    let (target, _) = fresh_plugin("bad-version");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0-rc1"
-category = "instrument"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
-    );
-
-    let report = validate::run_project(&target, None).unwrap();
-    let errs = errors_for(&report, "SCHEMA-ARCH");
-    assert!(
-        !errs.is_empty(),
-        "expected SCHEMA-ARCH error for non-strict-SemVer version; got {report:#?}"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // 10 — F-006 parity: requirements_have_satisfiers fires on orphan
@@ -348,58 +319,6 @@ layer = "plugin_shell"
 //      features before the `module_feature_gates_resolve` graph check
 //      runs — same behavior as library-api).
 // ---------------------------------------------------------------------------
-#[test]
-fn feature_gates_resolve_against_architecture_features() {
-    let (target, _) = fresh_plugin("feature-gates");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-
-[[features]]
-name = "midi"
-description = "MIDI handling"
-"#,
-    );
-    write_module(
-        &target,
-        "MidiHandler",
-        r#"name = "MidiHandler"
-layer = "engine"
-feature_gates = ["midi"]
-"#,
-    );
-    write_module(
-        &target,
-        "BadGate",
-        r#"name = "BadGate"
-layer = "engine"
-feature_gates = ["nonexistent"]
-"#,
-    );
-
-    let report = validate::run_project(&target, None).unwrap();
-    let errs = errors_for(&report, "REDUCE_UNRESOLVED");
-    let feature_errs: Vec<_> = errs
-        .iter()
-        .filter(|f| f.message.contains("Feature") && f.message.contains("nonexistent"))
-        .collect();
-    assert_eq!(
-        feature_errs.len(),
-        1,
-        "expected one REDUCE_UNRESOLVED error naming Feature/nonexistent; got {errs:#?}"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // N — `parameters_have_bindings` must stay silent on non-Parameter entities

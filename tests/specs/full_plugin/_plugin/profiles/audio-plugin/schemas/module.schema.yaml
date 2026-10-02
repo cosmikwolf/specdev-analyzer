@@ -38,31 +38,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
     uniqueItems: true
-  external_deps:
-    description: |
-      External crate dependencies this module needs (CrateReference
-      shape). Each entry becomes a Cargo.toml
-      `[dependencies]` line at gen time; the union with
-      architecture-level `[[external_deps]]` determines the project's
-      full dep set. Use this for module-scoped crates that aren't
-      project-wide infrastructure (e.g., a DSP module pulling in
-      `biquad` for filter primitives).
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-  feature_gates:
-    description: >
-      Cargo features that conditionally include this module. The module
-      compiles only when at least one of the listed features is active
-      (treated as `#[cfg(any(feature = "f1", feature = "f2"))]`). An
-      empty list (or omitted field) means the module is unconditional.
-      `module_feature_gates_resolve` verifies every name is declared in
-      `architecture.toml`'s `[[features]]` table. Typical audio-plugin
-      use: optional MIDI handling, SIMD vs scalar DSP backends,
-      debug-only RTT logging.
-    type: array
-    items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-    uniqueItems: true
   satisfies:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }

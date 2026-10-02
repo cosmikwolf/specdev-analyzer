@@ -105,6 +105,8 @@ pub mod graph;
 pub mod graph_report;
 pub mod hash;
 pub mod format_migration;
+pub mod field_cuts;
+pub mod manifest_facts;
 pub mod import_edges;
 pub mod inline;
 pub mod items;

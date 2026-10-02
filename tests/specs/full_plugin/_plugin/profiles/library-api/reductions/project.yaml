@@ -13,16 +13,6 @@ entities:
     attrs:
       visibility: ".visibility"
 
-  # Cargo features from `specs/architecture.toml`. Names are unique
-  # within the project (feature_unique_names check).
-  - kind: Feature
-    extends: structural
-    from: "specs/architecture.toml"
-    for_each: "features[]"
-    name: "${.name}"
-    attrs:
-      default: ".default"
-
   # Source documents, one file each in `specs/sources/`.
   - kind: Source
     extends: structural
@@ -94,29 +84,6 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Module-to-feature edges via feature_gates (drives
-  # module_feature_gates_resolve).
-  - kind: module_feature_gate
-    extends: depends_on
-    from_kind: Module
-    to_kind: Feature
-    from_spec: "specs/modules/*.toml"
-    for_each: "feature_gates[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.}"
-
-  # Feature-to-feature dependency edges (drives feature_dependencies_resolve).
-  - kind: feature_depends_on
-    extends: depends_on
-    from_kind: Feature
-    to_kind: Feature
-    from_spec: "specs/architecture.toml"
-    for_each: "features[].depends_on[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.}"
-
   # Requirement-to-parent traceability.
   - kind: satisfies
     extends: depends_on
@@ -139,28 +106,6 @@ relations:
     for_each: "satisfies[]"
     endpoints:
       from: "${parent.name}"
-      to: "${.}"
-
-  # Test-item → Requirement: each `[[items]]` entry with `test = true`
-  # carries `verifies[]` (the inverse of `satisfies`). Reduce those into
-  # Module → Requirement edges so the `test_requirements_have_verifiers`
-  # orphan check can confirm every `nature = "test"` requirement is
-  # verified by some test item. The nested `items[].verifies[]`
-  # for_each walks each item's verifies array; `${root.name}` is the
-  # declaring module (the source endpoint — NOT `${parent.name}`, which
-  # would be the item, not a Module entity). REDUCE_UNRESOLVED catches a
-  # `verifies` id that names no requirement. Items[] are not materialized
-  # as entities (prose-first, deferred) — only these reference edges are
-  # lifted, exactly as module-level `satisfies[]` lifts into
-  # `module_satisfies`.
-  - kind: test_verifies
-    extends: depends_on
-    from_kind: Module
-    to_kind: Requirement
-    from_spec: "specs/modules/*.toml"
-    for_each: "items[].verifies[]"
-    endpoints:
-      from: "${root.name}"
       to: "${.}"
 
   # Requirement → Decision: pin a requirement's *how*. Drives

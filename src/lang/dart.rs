@@ -13,6 +13,10 @@ const IMPORTS_QUERY: &str = include_str!("../embedded/languages/dart/imports.scm
 const TESTS_QUERY: &str = include_str!("../embedded/languages/dart/tests.scm");
 
 impl LanguageAdapter for DartAdapter {
+    fn manifest_facts(&self, project_root: &std::path::Path) -> Option<crate::manifest_facts::ManifestFacts> {
+        crate::manifest_facts::pub_(project_root)
+    }
+
     fn is_inert_top_level(&self, kind: &str) -> bool {
         kind.contains("comment") || ["import_or_export", "library_name", "part_directive", "part_of_directive"].contains(&kind)
     }

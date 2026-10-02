@@ -70,7 +70,6 @@ fn fresh_audio_project(tag: &str) -> (PathBuf, LayoutContext) {
 const ARCH_DEFAULT: &str = r#"[plugin]
 name = "Demo Plugin"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3", "clap"]
 

@@ -147,19 +147,6 @@ license = "MIT OR Apache-2.0"
     )
     .unwrap();
 
-    // Engine architecture: minimal library-api shape; one optional
-    // feature (no_std-style toggle).
-    std::fs::write(
-        engine_dir.join("specs/architecture.toml"),
-        r#"# Engine architecture: minimal library-api shape.
-
-[[features]]
-name = "std"
-description = "Use std (otherwise no_std)."
-default = true
-"#,
-    )
-    .unwrap();
 
     // Engine module: one DSP node — SineOsc.
     std::fs::write(
@@ -192,7 +179,6 @@ description = "Sine-wave oscillator for the hello-plugin engine."
         r#"[plugin]
 name = "Hello Plugin"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3", "clap", "standalone"]
 

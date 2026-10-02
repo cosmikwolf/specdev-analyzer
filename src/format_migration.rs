@@ -52,7 +52,7 @@ const ERROR_RULES: &[&str] = &["requirements_have_satisfiers", "implementation_u
 
 /// Graph checks the format drops: their relation came from spec test
 /// items, which the format does not have.
-const DROPPED_RULES: &[&str] = &["test_requirements_have_verifiers"];
+const DROPPED_RULES: &[&str] = &["test_requirements_have_verifiers", "feature_unique_names", "workspace_dependencies_unique"];
 
 /// Options for the format step.
 #[derive(Debug, Clone, Copy, Default)]
@@ -339,7 +339,16 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         ));
     }
 
-    // 2. Module specs: test items and manifest-restating tables.
+    // The project's own manifest, for the removal report's marks.
+    let facts = crate::lang::adapter_for(&layout.spec.project.language).and_then(|a| a.manifest_facts(root));
+    let report_removed = |file: &Path, removed: Vec<crate::field_cuts::Removed>, lines: &mut Vec<String>| {
+        for r in removed {
+            let mark = crate::field_cuts::mark(&r, facts.as_ref());
+            lines.push(crate::field_cuts::ReportLine { file: slash(file), removed: r, mark }.render(verb));
+        }
+    };
+
+    // 2. Module specs: test items and the fields 2.0 removes.
     let modules_rel = rel_to(root, &layout.modules_dir);
     let mut modules: Vec<ModuleSpec> = Vec::new();
     let mut verified: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -370,9 +379,10 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 slash(&rel)
             ));
         }
-        if doc.remove("external_deps").is_some() {
+        let cut = crate::field_cuts::strip_module(&mut doc);
+        if !cut.is_empty() {
             changed = true;
-            report.lines.push(format!("{verb}remove `external_deps` from {} (the manifest holds it)", slash(&rel)));
+            report_removed(&rel, cut, &mut report.lines);
         }
         let satisfies = string_list(doc.get("satisfies"));
         let planned = doc.get("planned").and_then(Item::as_bool) == Some(true);
@@ -488,7 +498,49 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     let reductions_rel = specdev_rel.join("reductions");
     let schemas_rel = specdev_rel.join("schemas");
     let mut handled: BTreeSet<PathBuf> = BTreeSet::new();
+    // `architecture.toml`: the removed keys go (reported); a file with no key
+    // left is deleted when the profile's 2.0 template has no key either (the
+    // template is then gone, so it is not written back).
+    let arch_rel = rel_to(root, &layout.architecture_toml_path);
+    let arch_key = slash(&arch_rel);
+    let mut deleted: BTreeSet<String> = BTreeSet::new();
+    if let Some(ours) = ov.read(&arch_rel) {
+        handled.insert(arch_rel.clone());
+        let text = utf8(ours.clone(), &arch_rel)?;
+        let (stripped, cut, keys_left) = crate::field_cuts::strip_architecture(&text)?;
+        report_removed(&arch_rel, cut, &mut report.lines);
+        let clean = recorded.get(&arch_key).is_some_and(|r| bootstrap::profile_file_matches(&arch_key, &ours, r).unwrap_or(false));
+        match expected.get(&arch_key) {
+            Some(theirs) if clean => {
+                if &ours != theirs {
+                    ov.write(&arch_rel, theirs.clone());
+                    records.insert(arch_key.clone(), bootstrap::profile_file_hash(&arch_key, theirs)?);
+                    report.lines.push(format!("{verb}refresh {arch_key} to the plugin's {TARGET_VERSION} copy (unchanged since bootstrap)"));
+                }
+            }
+            None if !keys_left => {
+                ov.deletes.insert(arch_rel.clone());
+                deleted.insert(arch_key.clone());
+                let left: Vec<String> = stripped.lines().filter(|l| l.trim_start().starts_with('#')).map(str::to_string).collect();
+                let mut line = format!("{verb}delete {arch_key} (no key left; the profile ships no template)");
+                for c in left {
+                    line.push_str(&format!("\n      {c}  [prose]"));
+                }
+                report.lines.push(line);
+            }
+            theirs => {
+                if stripped != text {
+                    ov.write(&arch_rel, stripped.into_bytes());
+                } else if theirs.is_some_and(|b| b != &ours) {
+                    report.lines.push(format!("{verb}left {arch_key} as is (it differs from the plugin's copy; `drift` shows it)"));
+                }
+            }
+        }
+    }
     for (key, theirs) in &expected {
+        if key == &arch_key {
+            continue;
+        }
         let rel = PathBuf::from(key);
         handled.insert(rel.clone());
         let mechanical =
@@ -536,9 +588,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             let text = utf8(ours.clone(), &rel)?;
             let new = if rel == spec_rel {
                 let (new, removed) = spec_2_0(&text)?;
-                for r in removed {
-                    report.lines.push(format!("{verb}{r} from {key}"));
-                }
+                report_removed(&rel, removed, &mut report.lines);
                 new
             } else if rel == domain_rel {
                 let (new, changes) = domain_2_0(&text)?;
@@ -553,7 +603,11 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 }
                 new
             } else {
-                entries::rewrite_reduction_paths(&text)
+                let (new, kinds) = crate::field_cuts::drop_reduction_kinds(&entries::rewrite_reduction_paths(&text));
+                for k in kinds {
+                    report.lines.push(format!("{verb}remove the `{k}` entry from {key} (it read a removed field)"));
+                }
+                new
             };
             if new.as_bytes() != ours.as_slice() {
                 if rel == profile_rel {
@@ -599,6 +653,42 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             report.lines.push(format!("{verb}left {key} as is (it differs from the plugin's copy; `drift` shows it)"));
         }
     }
+    // The inlined language tier is a schema with no record (bootstrap never
+    // recorded it): case c — replaced, listed with what it loses.
+    let langs_rel = schemas_rel.join("inlined").join("languages");
+    if let Ok(rd) = std::fs::read_dir(root.join(&langs_rel)) {
+        for e in rd.flatten() {
+            let lang = e.file_name().to_string_lossy().into_owned();
+            let rel = langs_rel.join(&lang).join("items.schema.yaml");
+            let Some(ours) = ov.read(&rel) else { continue };
+            let Ok(theirs) = std::fs::read(plugin_root.join("languages").join(&lang).join("items.schema.yaml")) else {
+                continue;
+            };
+            if ours == theirs {
+                continue;
+            }
+            let theirs_text = String::from_utf8_lossy(&theirs).into_owned();
+            let keep: std::collections::HashSet<&str> = theirs_text.lines().map(str::trim_end).collect();
+            let ours_text = String::from_utf8_lossy(&ours).into_owned();
+            let lost: Vec<String> = ours_text
+                .lines()
+                .map(str::trim_end)
+                .filter(|l| !l.is_empty() && !keep.contains(l))
+                .map(|l| format!("      - {l}"))
+                .collect();
+            let key = slash(&rel);
+            report.lines.push(format!(
+                "{verb}replace {key} with the plugin's {TARGET_VERSION} copy (no bootstrap record; see the warning below)"
+            ));
+            report.replaced_unrecorded.push(if lost.is_empty() {
+                key.clone()
+            } else {
+                format!("{key} — lines not in the plugin's copy:\n{}", lost.join("\n"))
+            });
+            ov.write(&rel, theirs);
+        }
+    }
+
     // Reductions the profile does not own (inlined units) still name files.
     for rel in walk_files(&root.join(&reductions_rel)).into_iter().map(|p| rel_to(root, &p)) {
         if handled.contains(&rel) {
@@ -686,7 +776,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     let before = lineage.profile_files.len();
     lineage.profile_files.retain(|k, _| {
         let p = PathBuf::from(k);
-        let gone = moved_combined.contains(k) || p.starts_with(&codegen);
+        let gone = moved_combined.contains(k) || p.starts_with(&codegen) || deleted.contains(k);
         !(gone && !expected.contains_key(k))
     });
     let dropped = before - lineage.profile_files.len();
@@ -705,9 +795,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     if !ov.writes.contains_key(&spec_rel) {
         let text = utf8(ov.read(&spec_rel).unwrap_or_default(), &spec_rel)?;
         let (new, removed) = spec_2_0(&text)?;
-        for r in removed {
-            report.lines.push(format!("{verb}{r} from spec.toml"));
-        }
+        report_removed(&spec_rel, removed, &mut report.lines);
         ov.write(&spec_rel, new.into_bytes());
     }
     report.lines.push(format!(
@@ -888,21 +976,45 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
 
 /// `spec.toml` in the target format: the version, and the parallel-agent
 /// limit when absent. Every other byte stays.
-fn spec_2_0(text: &str) -> Result<(String, Vec<String>)> {
+fn spec_2_0(text: &str) -> Result<(String, Vec<crate::field_cuts::Removed>)> {
     let mut doc: DocumentMut = text.parse().context("parsing spec.toml")?;
     doc["spec_version"] = value(TARGET_VERSION);
     let mut removed = Vec::new();
     if let Some(project) = doc.get_mut("project").and_then(Item::as_table_mut) {
         for k in crate::config::RETIRED_PROJECT_KEYS {
             if let Some(v) = project.remove(k) {
-                removed.push(format!("remove `[project].{k} = {}`", v.to_string().trim()));
+                removed.push(spec_removed("project", k, &v));
             }
         }
         if !project.contains_key("max_parallel_agents") {
             project.insert("max_parallel_agents", value(1));
         }
     }
+    if let Some(ws) = doc.get_mut("workspace").and_then(Item::as_table_mut) {
+        for k in crate::config::RETIRED_WORKSPACE_KEYS {
+            if let Some(v) = ws.remove(k) {
+                removed.push(spec_removed("workspace", k, &v));
+            }
+        }
+    }
     Ok((doc.to_string(), removed))
+}
+
+fn spec_removed(table: &str, key: &str, item: &Item) -> crate::field_cuts::Removed {
+    let value = item.as_value().map(|v| v.to_string().trim().to_string()).unwrap_or_default();
+    let raw = toml::from_str::<toml::Table>(&format!("x = {value}")).ok().and_then(|t| t.get("x").cloned());
+    let comments = item
+        .as_value()
+        .map(|v| {
+            [v.decor().prefix(), v.decor().suffix()]
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r.as_str())
+                .flat_map(|s| s.lines().map(str::trim).filter(|l| l.starts_with('#')).map(str::to_string).collect::<Vec<_>>())
+                .collect()
+        })
+        .unwrap_or_default();
+    crate::field_cuts::Removed { key: format!("[{table}].{key}"), value, comments, raw }
 }
 
 /// `domain.toml` in the target format, and one line per change.
@@ -967,9 +1079,15 @@ fn domain_2_0(text: &str) -> Result<(String, Vec<String>)> {
     }
     if let Some(checks) = graph_checks(&mut doc) {
         let before = checks.len();
-        checks.retain(|t| !DROPPED_RULES.contains(&t.get("rule").and_then(Item::as_str).unwrap_or("")));
+        checks.retain(|t| {
+            let rule = t.get("rule").and_then(Item::as_str).unwrap_or("");
+            let over_removed_kind = ["scope", "entity_scope", "relation_scope"]
+                .iter()
+                .any(|k| t.get(k).and_then(Item::as_str).is_some_and(|s| crate::field_cuts::REMOVED_KINDS.contains(&s)));
+            !DROPPED_RULES.contains(&rule) && !over_removed_kind
+        });
         if checks.len() != before {
-            changes.push(format!("remove {} graph check(s) its test items fed", before - checks.len()));
+            changes.push(format!("remove {} graph check(s) over removed fields", before - checks.len()));
         }
     }
     Ok((doc.to_string(), changes))

@@ -18,7 +18,6 @@ unique_qualified_names                       = "error"
 modules_acyclic                              = "error"
 layer_dependency                             = "error"
 connection_endpoints_resolve                 = "error"
-feature_unique_names                         = "error"
 requirement_ids_unique                       = "error"
 decision_ids_unique                          = "error"
 requirements_have_satisfiers                 = "error"
@@ -100,13 +99,6 @@ kind = "reference_exists"
 rule = "connection_endpoints_resolve"
 source_field = "entities[].attrs.to"
 target_field = "entities[].name"
-
-# Cargo feature names must be unique.
-[[project.graph_checks]]
-kind = "unique"
-rule = "feature_unique_names"
-scope = "Feature"
-field = "entities[].name"
 
 # Requirement ids must be unique.
 [[project.graph_checks]]
