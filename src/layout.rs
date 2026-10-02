@@ -87,6 +87,7 @@ impl LayoutContext {
             .to_path_buf();
         let spec = SpecConfig::load(&spec_toml_path)
             .with_context(|| format!("loading {}", spec_toml_path.display()))?;
+        check_member_format(&project_root, &spec)?;
         Ok(Self::from_spec(project_root, spec_toml_path, spec))
     }
 
@@ -302,6 +303,34 @@ fn list_files_with_extension(dir: &Path, ext: &str) -> Vec<PathBuf> {
 /// rules that hold only at a workspace root, such as build profiles). A
 /// candidate that does not parse is skipped — flagging it is that
 /// project's own validate run's job, not the member's.
+/// A workspace member reads its root's files, so the two must be in one
+/// project format: a member whose `spec_version` major differs from its
+/// root's is refused (`FORMAT-002`). A directory the root does not list is
+/// a project of its own and is not checked.
+fn check_member_format(project_root: &Path, spec: &SpecConfig) -> Result<()> {
+    let Some(root_spec) = find_workspace_root_spec(project_root)? else {
+        return Ok(());
+    };
+    let text = std::fs::read_to_string(&root_spec).with_context(|| format!("reading {}", root_spec.display()))?;
+    let root_version = toml::from_str::<toml::Table>(&text)
+        .ok()
+        .and_then(|t| t.get("spec_version").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    let root_major: u32 = root_version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(1);
+    if root_major != spec.format_major() {
+        let root = root_spec.parent().unwrap_or(&root_spec);
+        anyhow::bail!(
+            "[FORMAT-002] {} is at spec_version {}, but its workspace root {} is at {root_version}. A \
+             workspace is in one format; run `specdev-analyzer migrate` in {}.",
+            project_root.display(),
+            spec.spec_version,
+            root.display(),
+            root.display()
+        );
+    }
+    Ok(())
+}
+
 pub fn find_workspace_root_spec(member_dir: &Path) -> Result<Option<PathBuf>> {
     // Start one directory above the member: a workspace's spec.toml is
     // by definition outside the member's tree.

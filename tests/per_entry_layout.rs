@@ -380,6 +380,10 @@ fn a_file_with_two_entries_or_another_kind_is_an_error() {
 fn build_workspace(tag: &str, version: &str) -> (PathBuf, PathBuf) {
     let root = tmp_workspace(tag).join("ws");
     bootstrap_at(&root, "rust-workspace", "demo-ws");
+    // The member is bootstrapped (2.0) before the root names it, so the
+    // bootstrap does not meet a root of another format.
+    let member = root.join("crates/m");
+    bootstrap_at(&member, "library-api", "m");
     std::fs::write(
         root.join("spec.toml"),
         format!(
@@ -387,8 +391,6 @@ fn build_workspace(tag: &str, version: &str) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    let member = root.join("crates/m");
-    bootstrap_at(&member, "library-api", "m");
     set_spec_version(&member, version);
     set_reduction_layout(&member, version);
     set_reduction_layout(&root, version);

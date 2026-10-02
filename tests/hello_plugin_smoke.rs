@@ -96,7 +96,7 @@ fn build_hello_plugin(tag: &str) -> PathBuf {
     // Overwrite workspace spec.toml with two members.
     std::fs::write(
         target.join("spec.toml"),
-        r#"spec_version = "1.0"
+        r#"spec_version = "2.0"
 
 [project]
 name = "hello-plugin"
