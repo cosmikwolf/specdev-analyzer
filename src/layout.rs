@@ -91,6 +91,15 @@ impl LayoutContext {
         Ok(Self::from_spec(project_root, spec_toml_path, spec))
     }
 
+    /// [`Self::discover`] without the workspace-format check: for `migrate`
+    /// at a workspace root, which must load members at another major.
+    pub fn discover_unchecked(project_root: &Path) -> Result<Self> {
+        let spec_toml_path = project_root.join("spec.toml");
+        let spec = SpecConfig::load(&spec_toml_path)
+            .with_context(|| format!("loading {}", spec_toml_path.display()))?;
+        Ok(Self::from_spec(project_root.to_path_buf(), spec_toml_path, spec))
+    }
+
     /// Build a context from a parsed manifest. Pure path arithmetic; useful
     /// for tests that want to skip discovery.
     pub fn from_spec(project_root: PathBuf, spec_toml_path: PathBuf, spec: SpecConfig) -> Self {

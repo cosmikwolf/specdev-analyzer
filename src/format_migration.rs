@@ -76,8 +76,10 @@ pub struct FormatReport {
     pub tests_only: Vec<String>,
     /// Workspace members moved with the root (their project roots).
     pub members: Vec<PathBuf>,
-    /// A 2.0 tree had legacy entries folded in; nothing else moved.
+    /// The root was already at 2.x: only folds (and members) moved.
     pub folded: bool,
+    /// Unrecorded files replaced with the plugin's bytes (no baseline).
+    pub replaced_unrecorded: Vec<String>,
 }
 
 /// Pending file changes, keyed by project-relative path.
@@ -199,7 +201,8 @@ struct ModuleSpec {
 /// One project's planned changes, not yet written.
 struct Plan {
     ov: Overlay,
-    lineage: Lineage,
+    /// `None` for a fold, which leaves `lineage.toml` alone.
+    lineage: Option<Lineage>,
     specdev_root: PathBuf,
     report: FormatReport,
 }
@@ -211,10 +214,11 @@ struct Plan {
 /// then the members are written, the root last. In a member the step
 /// refuses and names the root.
 pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<FormatReport> {
-    if layout.spec.format_major() >= 2 {
-        return fold_legacy(layout, opts);
-    }
     if let Some(root_spec) = crate::layout::find_workspace_root_spec(&layout.project_root)? {
+        if layout.spec.format_major() >= 2 {
+            // A member at the root's major may still fold its own legacy content.
+            return finish(vec![(None, fold_plan(layout, opts)?)], layout, opts, true);
+        }
         let root = root_spec.parent().unwrap_or(&root_spec);
         bail!(
             "[MIGRATE-015] {} is a member of the workspace at {}. A workspace moves to {TARGET_VERSION} as one: \
@@ -224,34 +228,55 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
             root.display()
         );
     }
-    let mut plans: Vec<(Option<String>, Plan)> = Vec::new();
+    let root_is_current = layout.spec.format_major() >= 2;
+    let mut plans: Vec<(Option<String>, Option<Plan>)> = Vec::new();
     if let Some(ws) = &layout.spec.workspace {
         for m in &ws.members {
             let dir = layout.project_root.join(&m.path);
-            let member = LayoutContext::discover(&dir, None)
+            // A member may be at another major than the root (an interrupted
+            // run, a 1.x crate added): load it without that check.
+            let member = LayoutContext::discover_unchecked(&dir)
                 .with_context(|| format!("loading workspace member {}", m.path))?;
-            if member.spec.format_major() >= 2 {
-                continue;
+            let plan = if member.spec.format_major() >= 2 {
+                fold_plan(&member, opts)
+            } else {
+                plan_one(&member, plugin_root, opts).map(Some)
             }
-            let plan = plan_one(&member, plugin_root, opts)
-                .with_context(|| format!("workspace member {} (nothing was changed)", m.path))?;
+            .with_context(|| format!("workspace member {} (nothing was changed)", m.path))?;
             plans.push((Some(m.path.clone()), plan));
         }
     }
-    plans.push((None, plan_one(layout, plugin_root, opts)?));
+    let root_plan = if root_is_current { fold_plan(layout, opts)? } else { Some(plan_one(layout, plugin_root, opts)?) };
+    plans.push((None, root_plan));
+    finish(plans, layout, opts, root_is_current)
+}
+
+/// Apply every plan (members first, the root last) and merge the reports.
+fn finish(
+    plans: Vec<(Option<String>, Option<Plan>)>,
+    layout: &LayoutContext,
+    opts: FormatOptions,
+    root_is_current: bool,
+) -> Result<FormatReport> {
+    let plans: Vec<(Option<String>, Plan)> = plans.into_iter().filter_map(|(m, p)| p.map(|p| (m, p))).collect();
+    if plans.is_empty() {
+        return Ok(FormatReport { already_current: true, ..Default::default() });
+    }
     if !opts.dry_run {
         for (_, plan) in &plans {
-            plan.ov.apply(Some((&plan.lineage, &plan.specdev_root)), Path::new("spec.toml"))?;
+            plan.ov.apply(plan.lineage.as_ref().map(|l| (l, plan.specdev_root.as_path())), Path::new("spec.toml"))?;
         }
     }
-    let mut report = FormatReport::default();
+    let mut report = FormatReport { folded: root_is_current, ..Default::default() };
     for (member, plan) in plans {
         let tag = member.as_ref().map(|m| format!("[{m}] ")).unwrap_or_default();
+        let moved = plan.lineage.is_some();
         report.lines.extend(plan.report.lines.into_iter().map(|l| format!("{tag}{l}")));
         report.unresolved.extend(plan.report.unresolved.into_iter().map(|l| format!("{tag}{l}")));
         report.planned.extend(plan.report.planned.into_iter().map(|l| format!("{tag}{l}")));
         report.tests_only.extend(plan.report.tests_only.into_iter().map(|l| format!("{tag}{l}")));
-        if let Some(m) = member {
+        report.replaced_unrecorded.extend(plan.report.replaced_unrecorded.into_iter().map(|l| format!("{tag}{l}")));
+        if let (Some(m), true) = (member, moved) {
             report.members.push(layout.project_root.join(m));
         }
     }
@@ -262,26 +287,26 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
 /// branch, an old skill) has them folded into the per-entry files: an id
 /// the layout lacks is added, the same bytes are skipped, other bytes
 /// refuse with both versions shown. Nothing is overwritten; each combined
-/// file becomes a tombstone again. A tree with none is already current.
-fn fold_legacy(layout: &LayoutContext, opts: FormatOptions) -> Result<FormatReport> {
+/// file becomes a tombstone again. `None` when there is nothing to fold.
+fn fold_plan(layout: &LayoutContext, opts: FormatOptions) -> Result<Option<Plan>> {
     if EntryStore::for_layout(layout).legacy_content().is_empty() {
-        return Ok(FormatReport { already_current: true, ..Default::default() });
+        return Ok(None);
     }
     let verb = if opts.dry_run { "would " } else { "" };
     let split = entries::plan_split(&layout.specs_dir)?;
-    let mut report = FormatReport { folded: true, ..Default::default() };
+    let mut report = FormatReport::default();
     for (file, n) in &split.moved {
         report.lines.push(format!(
             "{verb}fold {} into the per-entry files ({n} added), leaving a tombstone",
             slash(&rel_to(&layout.project_root, &layout.specs_dir.join(file)))
         ));
     }
-    if !opts.dry_run {
-        for (rel, bytes) in split.writes.iter().chain(split.tombstones.iter()) {
-            write(&layout.specs_dir.join(rel), bytes)?;
-        }
+    let mut ov = Overlay::new(&layout.project_root);
+    let specs_rel = rel_to(&layout.project_root, &layout.specs_dir);
+    for (rel, bytes) in split.writes.into_iter().chain(split.tombstones) {
+        ov.write(&specs_rel.join(rel), bytes);
     }
-    Ok(report)
+    Ok(Some(Plan { ov, lineage: None, specdev_root: layout.specdev_root.clone(), report }))
 }
 
 /// Plan the step for one project.
@@ -469,6 +494,12 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         let mechanical =
             rel == spec_rel || rel == domain_rel || rel == profile_rel || rel.starts_with(&reductions_rel);
         let Some(ours) = ov.read(&rel) else {
+            if recorded.contains_key(key) {
+                // Recorded but missing: the user (or a migration) deleted it.
+                // Writing it back would undo that; `drift` reports it.
+                report.lines.push(format!("{verb}leave {key} deleted (recorded, but not in the project)"));
+                continue;
+            }
             ov.write(&rel, theirs.clone());
             records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
             report.lines.push(format!("{verb}write {key} (new in the plugin)"));
@@ -504,7 +535,11 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         if mechanical {
             let text = utf8(ours.clone(), &rel)?;
             let new = if rel == spec_rel {
-                spec_2_0(&text)?
+                let (new, removed) = spec_2_0(&text)?;
+                for r in removed {
+                    report.lines.push(format!("{verb}{r} from {key}"));
+                }
+                new
             } else if rel == domain_rel {
                 let (new, changes) = domain_2_0(&text)?;
                 for c in changes {
@@ -512,7 +547,11 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 }
                 new
             } else if rel == profile_rel {
-                profile_contract_2(&text)
+                let (new, removed) = profile_contract_2(&text);
+                for r in removed {
+                    report.lines.push(format!("{verb}remove from {key}:\n{r}"));
+                }
+                new
             } else {
                 entries::rewrite_reduction_paths(&text)
             };
@@ -538,8 +577,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 ov.write(&rel, take_plugin_bytes(key, &ours, theirs)?);
                 records.insert(key.clone(), theirs_hash);
                 report.lines.push(format!(
-                    "{verb}replace {key} with the plugin's {TARGET_VERSION} copy (no bootstrap record; review the diff)"
+                    "{verb}replace {key} with the plugin's {TARGET_VERSION} copy (no bootstrap record; see the warning below)"
                 ));
+                report.replaced_unrecorded.push(key.clone());
             }
         }
     }
@@ -601,14 +641,18 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     // 8. spec.toml, last.
     if !ov.writes.contains_key(&spec_rel) {
         let text = utf8(ov.read(&spec_rel).unwrap_or_default(), &spec_rel)?;
-        ov.write(&spec_rel, spec_2_0(&text)?.into_bytes());
+        let (new, removed) = spec_2_0(&text)?;
+        for r in removed {
+            report.lines.push(format!("{verb}{r} from spec.toml"));
+        }
+        ov.write(&spec_rel, new.into_bytes());
     }
     report.lines.push(format!(
         "{verb}set spec_version {} -> {TARGET_VERSION} and [project].max_parallel_agents (written last)",
         layout.spec.spec_version
     ));
 
-    Ok(Plan { ov, lineage, specdev_root: layout.specdev_root.clone(), report })
+    Ok(Plan { ov, lineage: Some(lineage), specdev_root: layout.specdev_root.clone(), report })
 }
 
 /// The plugin's bytes for `key`; a co-owned aggregator keeps the unit
@@ -692,7 +736,7 @@ fn take_test_items(doc: &mut DocumentMut) -> Vec<(String, Vec<String>)> {
 /// comment and every other byte stays: the retired top-level sections go
 /// (a section ends at the next line in column 0), and so do each gate's
 /// `scope` line and the prompt-only `context.module_fields_for_prompt`.
-fn profile_contract_2(text: &str) -> String {
+fn profile_contract_2(text: &str) -> (String, Vec<String>) {
     let retired = crate::manifest::profile::RETIRED_SECTIONS;
     let top_key = |l: &str| -> Option<String> {
         if l.starts_with(' ') || l.starts_with('#') || l.trim().is_empty() {
@@ -705,11 +749,19 @@ fn profile_contract_2(text: &str) -> String {
     let mut skipping = false;
     let mut skip_indent: Option<usize> = None;
     let mut has_version = false;
+    let mut removed: Vec<String> = Vec::new();
     for line in text.split_inclusive('\n') {
+        // A column-0 comment ends a retired section: it belongs to what follows.
+        if skipping && line.starts_with('#') {
+            skipping = false;
+        }
         if let Some(k) = top_key(line) {
             section = k.clone();
             skipping = retired.contains(&k.as_str());
             skip_indent = None;
+            if skipping {
+                removed.push(String::new());
+            }
             if k == "contract_version" {
                 has_version = true;
                 out.push_str("contract_version: 2\n");
@@ -717,21 +769,31 @@ fn profile_contract_2(text: &str) -> String {
             }
         }
         if skipping {
+            if let Some(last) = removed.last_mut() {
+                last.push_str("    ");
+                last.push_str(line);
+            }
             continue;
         }
         let indent = line.len() - line.trim_start().len();
         if let Some(n) = skip_indent {
             if indent > n && !line.trim().is_empty() {
+                if let Some(last) = removed.last_mut() {
+                    last.push_str("    ");
+                    last.push_str(line);
+                }
                 continue;
             }
             skip_indent = None;
         }
         let trimmed = line.trim();
         if section == "gates" && (trimmed == "scope: module" || trimmed == "scope: batch") {
+            removed.push(format!("    {line}"));
             continue;
         }
         if section == "context" && trimmed.starts_with("module_fields_for_prompt:") {
             skip_indent = Some(indent);
+            removed.push(format!("    {line}"));
             continue;
         }
         out.push_str(line);
@@ -739,23 +801,27 @@ fn profile_contract_2(text: &str) -> String {
     if !has_version {
         out = format!("contract_version: 2\n{out}");
     }
-    out
+    let removed = removed.into_iter().map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty()).collect();
+    (out, removed)
 }
 
 /// `spec.toml` in the target format: the version, and the parallel-agent
 /// limit when absent. Every other byte stays.
-fn spec_2_0(text: &str) -> Result<String> {
+fn spec_2_0(text: &str) -> Result<(String, Vec<String>)> {
     let mut doc: DocumentMut = text.parse().context("parsing spec.toml")?;
     doc["spec_version"] = value(TARGET_VERSION);
+    let mut removed = Vec::new();
     if let Some(project) = doc.get_mut("project").and_then(Item::as_table_mut) {
         for k in crate::config::RETIRED_PROJECT_KEYS {
-            project.remove(k);
+            if let Some(v) = project.remove(k) {
+                removed.push(format!("remove `[project].{k} = {}`", v.to_string().trim()));
+            }
         }
         if !project.contains_key("max_parallel_agents") {
             project.insert("max_parallel_agents", value(1));
         }
     }
-    Ok(doc.to_string())
+    Ok((doc.to_string(), removed))
 }
 
 /// `domain.toml` in the target format, and one line per change.

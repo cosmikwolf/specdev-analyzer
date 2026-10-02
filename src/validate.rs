@@ -52,7 +52,7 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
             "FORMAT-001",
             Severity::Info,
             format!(
-                "spec_version {} is an older project format; this analyzer writes {}.0. \
+                "spec_version {} is an older project format; the newest this analyzer knows is {}.0. \
                  Run `specdev-analyzer migrate --dry-run` to see the steps, then `specdev-analyzer migrate`",
                 layout.spec.spec_version,
                 crate::config::NEWEST_FORMAT_MAJOR

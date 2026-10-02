@@ -1443,6 +1443,20 @@ fn run_migrate(
         for m in &format.tests_only {
             println!("  module `{m}`: its source file holds only tests; check that it is the right file");
         }
+        if !format.replaced_unrecorded.is_empty() {
+            println!(
+                "\nWARNING: these files had no bootstrap record, so a local edit cannot be detected; {} the \
+                 plugin's 2.0 copy:",
+                if dry_run { "migrate would replace them with" } else { "they were replaced with" }
+            );
+            for f in &format.replaced_unrecorded {
+                println!("  {f}");
+            }
+            println!(
+                "Before you run `migrate`, commit or stash your work; then `git diff <file>` shows any local edit to \
+                 re-apply. `migrate` never commits."
+            );
+        }
     }
     let layout = if format.already_current || dry_run {
         layout
@@ -1457,6 +1471,9 @@ fn run_migrate(
     };
     if !format.already_current {
         if dry_run {
+            for dir in &format.members {
+                println!("  member {}: would write {} and run its unit step", dir.display(), specdev_analyzer::gates::SCRIPT_REL);
+            }
             println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
         } else {
             // Members first: each gets its gate script and its unit step.
@@ -1578,6 +1595,16 @@ fn run_migrate(
         };
         eprintln!("{kind_label} {}: {skip_phrase}", s.name);
     }
+    for s in &report.plugin_moved {
+        let kind_label = match s.kind {
+            specdev_analyzer::upstream::UnitKind::Block => "block",
+            specdev_analyzer::upstream::UnitKind::Bridge => "bridge",
+        };
+        eprintln!(
+            "{kind_label} {}: the plugin's copy moved; not changed here — `specdev-analyzer drift` shows the files",
+            s.name
+        );
+    }
 
     let total = report.total_files_written();
     if !report.missing_in_plugin.is_empty() {
@@ -1675,6 +1702,15 @@ fn run_gate(
         }
     };
     if emit {
+        if layout.spec.format_major() < 2 {
+            eprintln!(
+                "error: the gate script is part of the 2.0 project format; {} is at spec_version {}. Run \
+                 `specdev-analyzer migrate` first (it writes the script).",
+                layout.project_root.display(),
+                layout.spec.spec_version
+            );
+            return ExitCode::from(2);
+        }
         return match specdev_analyzer::gates::emit_script(&layout) {
             Ok(r) => {
                 print_emit_report(&r);
