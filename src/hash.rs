@@ -21,6 +21,48 @@ pub fn content_hash(bytes: &[u8]) -> String {
     out
 }
 
+/// `bytes` with every CRLF turned into LF.
+pub fn to_lf(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !bytes.windows(2).any(|w| w == b"\r\n") {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// The hash a record holds from `spec_version` 2.0 on: over the LF form of
+/// `bytes`, so a CRLF checkout of an unedited file still matches (#219).
+pub fn recorded_hash(bytes: &[u8]) -> String {
+    content_hash(&to_lf(bytes))
+}
+
+/// Whether `recorded` witnesses `bytes`: the LF form (2.0 records), the
+/// bytes as they are, or their CRLF form (a 1.x record taken on a CRLF
+/// checkout, read back on an LF one).
+pub fn record_matches(recorded: &str, bytes: &[u8]) -> bool {
+    let lf = to_lf(bytes);
+    if recorded == content_hash(&lf) || recorded == content_hash(bytes) {
+        return true;
+    }
+    let mut crlf = Vec::with_capacity(lf.len() + lf.len() / 16);
+    for &b in lf.iter() {
+        if b == b'\n' {
+            crlf.push(b'\r');
+        }
+        crlf.push(b);
+    }
+    recorded == content_hash(&crlf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

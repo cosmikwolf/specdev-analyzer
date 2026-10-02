@@ -370,7 +370,7 @@ fn plan_profile_shell(
         // hard-coded `content_hash` here did produce the bug (a freshly
         // bootstrapped tree reporting `module.schema.yaml` as user-edited),
         // before the co-owned branch existed to mask it.
-        if &bootstrap::profile_file_hash(rel, &current)? != base {
+        if !bootstrap::profile_file_matches(rel, &current, base)? {
             report.profile_files_locally_edited.push(dst_rel);
             continue;
         }

@@ -282,13 +282,10 @@ fn drift_profile(
     let mut files: Vec<ProfileFileDrift> = Vec::new();
     for path in paths {
         let base = lineage.profile_files.get(path).map(|s| s.as_str());
-        let theirs_hash = match theirs.get(path) {
-            Some(b) => Some(bootstrap::profile_file_hash(path, b)?),
-            None => None,
-        };
+        let theirs_bytes = theirs.get(path);
         let abs = layout.project_root.join(path);
-        let ours_hash = match std::fs::read(&abs) {
-            Ok(b) => Some(bootstrap::profile_file_hash(path, &b)?),
+        let ours_bytes = match std::fs::read(&abs) {
+            Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
                 return Err(anyhow::Error::new(e).context(format!("reading {}", abs.display())))
@@ -297,7 +294,7 @@ fn drift_profile(
 
         // Recorded, but gone from the project: the same shape as an
         // inlined unit whose file was deleted, so it reuses that code.
-        if base.is_some() && ours_hash.is_none() {
+        if base.is_some() && ours_bytes.is_none() {
             invariants.push(violation(
                 "DRIFT-INVARIANT-002",
                 "profile",
@@ -322,10 +319,17 @@ fn drift_profile(
         }
 
         let base = base.expect("base checked above");
-        let ours_moved = ours_hash.as_deref() != Some(base);
+        // A record matches in any line-ending form of the same bytes (#219).
+        let ours_moved = match &ours_bytes {
+            Some(b) => !bootstrap::profile_file_matches(path, b, base)?,
+            None => true,
+        };
         // A path the plugin no longer produces counts as moved: the
         // plugin side genuinely differs from the base.
-        let theirs_moved = theirs_hash.as_deref() != Some(base);
+        let theirs_moved = match theirs_bytes {
+            Some(b) => !bootstrap::profile_file_matches(path, b, base)?,
+            None => true,
+        };
         let category = match (ours_moved, theirs_moved) {
             (false, false) => FileCategory::Clean,
             (false, true) => FileCategory::PluginMoved,

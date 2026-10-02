@@ -386,7 +386,12 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
             let abs = specs_dir.join(&rel);
             if let Ok(existing) = std::fs::read(&abs) {
                 if existing != piece.as_bytes() {
-                    conflicts.push(format!("{} (from {combined})", abs.display()));
+                    conflicts.push(format!(
+                        "{} (from {combined})\n    in the file:\n{}\n    in {combined}:\n{}",
+                        abs.display(),
+                        indent(&String::from_utf8_lossy(&existing)),
+                        indent(piece)
+                    ));
                 }
                 continue;
             }
@@ -436,6 +441,10 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         );
     }
     Ok(plan)
+}
+
+fn indent(text: &str) -> String {
+    text.lines().map(|l| format!("      {l}")).collect::<Vec<_>>().join("\n")
 }
 
 /// The header (text before the first entry) and each entry's text.
