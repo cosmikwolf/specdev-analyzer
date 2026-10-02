@@ -74,6 +74,8 @@ pub struct FormatReport {
     pub planned: Vec<String>,
     /// Modules whose source file holds only tests.
     pub tests_only: Vec<String>,
+    /// Workspace members moved with the root (their project roots).
+    pub members: Vec<PathBuf>,
 }
 
 /// Pending file changes, keyed by project-relative path.
@@ -192,21 +194,71 @@ struct ModuleSpec {
     planned: bool,
 }
 
+/// One project's planned changes, not yet written.
+struct Plan {
+    ov: Overlay,
+    lineage: Lineage,
+    specdev_root: PathBuf,
+    report: FormatReport,
+}
+
 /// Run the format step on `layout`'s project, against the plugin at
-/// `plugin_root` (the source of the 2.0 profile files).
+/// `plugin_root` (the source of the 2.0 profile files). A workspace root
+/// moves with every member it lists: each is planned first,
+/// a refusal in any of them stops the run before a byte is written, and
+/// then the members are written, the root last. In a member the step
+/// refuses and names the root.
 pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<FormatReport> {
-    let mut report = FormatReport::default();
     if layout.spec.format_major() >= 2 {
-        report.already_current = true;
-        return Ok(report);
+        return Ok(FormatReport { already_current: true, ..Default::default() });
     }
-    if layout.spec.workspace.is_some() || crate::layout::find_workspace_root_spec(&layout.project_root)?.is_some() {
+    if let Some(root_spec) = crate::layout::find_workspace_root_spec(&layout.project_root)? {
+        let root = root_spec.parent().unwrap_or(&root_spec);
         bail!(
-            "[MIGRATE-013] {} is part of a workspace. Workspaces move to {TARGET_VERSION} as one, root and \
-             members in one run, and this analyzer cannot do that yet; nothing was changed.",
-            layout.project_root.display()
+            "[MIGRATE-015] {} is a member of the workspace at {}. A workspace moves to {TARGET_VERSION} as one: \
+             run `specdev-analyzer migrate` in {}. Nothing was changed.",
+            layout.project_root.display(),
+            root.display(),
+            root.display()
         );
     }
+    let mut plans: Vec<(Option<String>, Plan)> = Vec::new();
+    if let Some(ws) = &layout.spec.workspace {
+        for m in &ws.members {
+            let dir = layout.project_root.join(&m.path);
+            let member = LayoutContext::discover(&dir, None)
+                .with_context(|| format!("loading workspace member {}", m.path))?;
+            if member.spec.format_major() >= 2 {
+                continue;
+            }
+            let plan = plan_one(&member, plugin_root, opts)
+                .with_context(|| format!("workspace member {} (nothing was changed)", m.path))?;
+            plans.push((Some(m.path.clone()), plan));
+        }
+    }
+    plans.push((None, plan_one(layout, plugin_root, opts)?));
+    if !opts.dry_run {
+        for (_, plan) in &plans {
+            plan.ov.apply(Some((&plan.lineage, &plan.specdev_root)), Path::new("spec.toml"))?;
+        }
+    }
+    let mut report = FormatReport::default();
+    for (member, plan) in plans {
+        let tag = member.as_ref().map(|m| format!("[{m}] ")).unwrap_or_default();
+        report.lines.extend(plan.report.lines.into_iter().map(|l| format!("{tag}{l}")));
+        report.unresolved.extend(plan.report.unresolved.into_iter().map(|l| format!("{tag}{l}")));
+        report.planned.extend(plan.report.planned.into_iter().map(|l| format!("{tag}{l}")));
+        report.tests_only.extend(plan.report.tests_only.into_iter().map(|l| format!("{tag}{l}")));
+        if let Some(m) = member {
+            report.members.push(layout.project_root.join(m));
+        }
+    }
+    Ok(report)
+}
+
+/// Plan the step for one project.
+fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<Plan> {
+    let mut report = FormatReport::default();
     let mut lineage = Lineage::load(&layout.specdev_root)?;
     let profile = lineage
         .meta
@@ -520,10 +572,7 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
         layout.spec.spec_version
     ));
 
-    if !opts.dry_run {
-        ov.apply(Some((&lineage, &layout.specdev_root)), &spec_rel)?;
-    }
-    Ok(report)
+    Ok(Plan { ov, lineage, specdev_root: layout.specdev_root.clone(), report })
 }
 
 /// The plugin's bytes for `key`; a co-owned aggregator keeps the unit

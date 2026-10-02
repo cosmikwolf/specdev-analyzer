@@ -1452,6 +1452,28 @@ fn run_migrate(
         if dry_run {
             println!("  would write {}", specdev_analyzer::gates::SCRIPT_REL);
         } else {
+            // Members first: each gets its gate script and its unit step.
+            for dir in &format.members {
+                let member = match LayoutContext::discover(dir, None) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        report_error(&e);
+                        return ExitCode::from(1);
+                    }
+                };
+                println!("member {}:", dir.display());
+                match specdev_analyzer::gates::emit_script(&member) {
+                    Ok(r) => print_emit_report(&r),
+                    Err(e) => {
+                        report_error(&e);
+                        return ExitCode::from(1);
+                    }
+                }
+                if let Err(e) = migrate::run_migrate(&member, &plugin, false, refresh) {
+                    report_error(&e);
+                    return ExitCode::from(1);
+                }
+            }
             match specdev_analyzer::gates::emit_script(&layout) {
                 Ok(r) => print_emit_report(&r),
                 Err(e) => {
