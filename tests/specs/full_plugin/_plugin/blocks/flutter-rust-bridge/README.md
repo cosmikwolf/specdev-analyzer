@@ -3,8 +3,8 @@
 Models the Dart↔Rust FFI seam of a Flutter app that consumes a companion
 Rust crate through [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
 (FRB) v2. Contributes a `[flutter_rust_bridge]` table to `Module` plus the
-codegen prose that emits the FRB config file and sequences the standalone
-generator CLI, Cargokit integration, and web/wasm builds.
+implementation guidance for the FRB config file, the standalone generator
+CLI, Cargokit integration, and web/wasm builds.
 
 ## Platform status — read before choosing this block
 
@@ -13,8 +13,7 @@ compiling for `wasm32-unknown-unknown`), and **Android**.
 
 Android needs **two mandatory steps** that `integrate` does not do for you.
 Skip either one and the build still reports success while the `.apk`
-contains no Rust — see "Android: two mandatory steps" in the codegen prose
-for the commands, and "Assert the artifact, not the exit code" below for
+contains no Rust — the guidance names both steps, and "Assert the artifact, not the exit code" below for
 why a green build is not evidence.
 
 1. **Replace the vendored Cargokit with the maintained fork.** FRB 2.12.0's
@@ -69,16 +68,15 @@ the app.
   `web` (wasm target on/off, required), optional `dart_output`. FRB
   config inputs only.
 - **Reduction:** deliberately empty (`entities: []`). The table is a
-  config singleton read by codegen prose; the cross-project path is
-  build-layer config, so there is nothing for the graph to check — the
-  drift tripwire is the FRB codegen run itself.
-- **Deps:** `flutter_rust_bridge` pinned **exactly** (CLI and runtime
-  versions must match; see `codegen/dart/deps.yaml` for the bump
-  procedure).
-- **Codegen prose:** config-file emission, generator/integrate/build-web
-  sequencing, worked examples for the four consumption shapes (init,
-  sync call, async call, stream), the generated-file ownership table,
-  and the wasm-purity rules for web-enabled apps.
+  config singleton the FRB config file must match; the cross-project path
+  is build-layer config, so there is nothing for the graph to check — the
+  drift tripwire is FRB's own generator run.
+- **Guidance:** the exact-version lock between the FRB CLI and the pub
+  package, the config file, generator/integrate/build-web sequencing, the
+  two Android steps, the four consumption shapes (init, sync call, async
+  call, stream), generated-file ownership, and the wasm-purity rules for
+  web-enabled apps. The project's `pubspec.yaml` pins `flutter_rust_bridge`
+  **exactly**.
 
 ## What this block does NOT contribute
 
@@ -90,18 +88,17 @@ the app.
 - **Cross-project validation.** `rust_root` is unchecked at spec time —
   a wrong path or a drifted API fails at
   `flutter_rust_bridge_codegen generate`, which is the intended tripwire.
-- **Rust-side codegen.** The companion crate is spec'd and generated in
-  its own project; FRB parses its plain source, so nothing leaks into it.
+- **The companion crate's spec.** The companion crate is spec'd in its
+  own project; FRB parses its plain source, so nothing leaks into it.
 
 ## Sharp-test rationale
 
 - **Concreteness:** names one specific binding generator
   (flutter_rust_bridge v2), not "FFI" in the abstract.
-- **Codegen-completeness:** conforming TOML yields a working seam — the
-  emitted config file drives a real generator run, and the prose's
-  consumption idioms compile against the generator's output (see
-  `reference/`).
-- **No cross-block reach:** the prose names no other block; the seam
+- **Rule-pack completeness:** each field is an FRB config input the
+  config file must match; the guidance carries the sequencing and
+  ownership rules no check can verify.
+- **No cross-block reach:** the guidance names no other block; the seam
   stands alone on any profile exposing `Module`.
 
 ## Reference pair (CI-only, never inlined)

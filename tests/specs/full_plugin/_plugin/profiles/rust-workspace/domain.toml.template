@@ -1,9 +1,8 @@
 # rust-workspace project graph checks.
 #
 # Workspace graph is intentionally minimal — the workspace's only job is
-# to enumerate members and host the [workspace.package] +
-# [[workspace_dependencies]] tables. Member-level checks (acyclic
-# modules, unique requirement ids, feature resolution) run inside each
+# to enumerate members. Member-level checks (acyclic modules, unique
+# requirement ids) run inside each
 # member's own validation pass — see the member's `domain.toml`.
 
 [domain]

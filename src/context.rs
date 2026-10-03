@@ -48,6 +48,11 @@ pub struct ContextFiles {
     pub block_readmes: Vec<String>,
     pub bridge_readmes: Vec<String>,
     pub profile_readme: String,
+    /// The inlined implementation guidance of the profile and of every
+    /// inlined block and bridge: rules to follow when editing the code.
+    /// Project-relative; only files that exist.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guidance: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub architecture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,6 +193,20 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
     let profile = &layout.spec.project.profile;
     let profile_readme = format!("${{CLAUDE_PLUGIN_ROOT}}/profiles/{profile}/README.md");
 
+    let guidance_dir = layout.specdev_root.join("guidance");
+    let mut guidance_paths = vec![guidance_dir.join("profile.md")];
+    let mut block_names: Vec<&String> = lineage.blocks.keys().collect();
+    block_names.sort();
+    guidance_paths.extend(block_names.iter().map(|n| guidance_dir.join("blocks").join(format!("{n}.md"))));
+    let mut bridge_names: Vec<&String> = lineage.bridges.keys().collect();
+    bridge_names.sort();
+    guidance_paths.extend(bridge_names.iter().map(|n| guidance_dir.join("bridges").join(format!("{n}.md"))));
+    let guidance: Vec<String> = guidance_paths
+        .iter()
+        .filter(|p| p.is_file())
+        .map(|p| rel(p, &layout.project_root))
+        .collect();
+
     let architecture = if layout.architecture_toml_path.is_file() {
         Some(rel(&layout.architecture_toml_path, &layout.project_root))
     } else {
@@ -213,6 +232,7 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         block_readmes,
         bridge_readmes,
         profile_readme,
+        guidance,
         architecture,
         target_module,
         module_context,

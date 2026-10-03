@@ -97,9 +97,10 @@ const PAIRED: &[&str] = &[
     ".gitignore",
     "app/.gitkeep",
     // pnpm 10 refuses a dependency's install scripts by default and still
-    // exits 0. The allowlist cannot live in package.json, which is gen
-    // output that `manifest --write` overwrites.
+    // exits 0; the allowlist lives in this file.
     "pnpm-workspace.yaml",
+    // The CI workflow every profile ships: it runs scripts/specdev-gates.sh.
+    ".github/workflows/specdev.yml",
 ];
 
 #[test]
@@ -131,7 +132,9 @@ fn nextjs_app_paired_files_match_the_declared_set_and_bootstrap_copies_every_tem
 
 #[test]
 fn profile_without_paired_files_still_loads() {
-    let p = full_plugin().join("profiles/flutter-app/profile.yaml");
+    let dir = tmp_workspace("no-paired");
+    let p = dir.join("profile.yaml");
+    fs::write(&p, "contract_version: 2\nname: bare\nlanguage: rust\n").unwrap();
     let profile = Profile::load(&p).unwrap();
     assert!(profile.paired_files.is_empty());
 }

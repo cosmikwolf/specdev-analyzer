@@ -49,7 +49,7 @@ $defs:
       client-side store); the body opens with `import "client-only"`, so
       a server import fails `next build`. `universal` — imported from
       both sides; the body contains no browser API and no Node API call.
-      `universal` emits no guard import and is documentation, not
+      `universal` has no guard import and is documentation, not
       enforcement: choose `server` or `client` unless both sides import
       the module today.
     type: string
@@ -65,8 +65,8 @@ $defs:
       segment (builds, unreachable), a segment over 200 characters (the
       shim filename must fit a 255-byte filesystem component), `.` and
       `..` segments, and a segment starting with `_` (builds, never
-      routes). No case rule: two modules whose targets differ only by
-      letter case are refused when the route files are derived. The URL is
+      routes). No case rule: two modules whose directories differ only by
+      letter case collide on a case-insensitive filesystem. The URL is
       derived for reports by dropping `(group)` and `@slot` segments; it
       is never stored.
     type: string
@@ -75,7 +75,7 @@ $defs:
   Identifier:
     description: >
       Module name: a PascalCase or snake_case identifier usable in
-      TypeScript source. Each module emits to `src/<snake_case(name)>.ts`
+      TypeScript source. Each module lives in `src/<snake_case(name)>.ts`
       or `.tsx`.
     type: string
     pattern: "^[A-Za-z_][A-Za-z0-9_]*$"

@@ -15,8 +15,7 @@ description: |
   into the spawned task at init time — typical) and `shared`
   (peripheral lives in a `Mutex<RawMutex, T>` static; the task borrows).
   Future variants (`interrupt_driven` via embassy-stm32) are deferred —
-  they require a different HAL crate and complicate the bridge's
-  Cargo.toml emission. Promote to v1.x when a real project needs it.
+  they require a different HAL crate. Promote to v1.x when a real project needs it.
 type: object
 properties:
   bindings:
@@ -30,7 +29,7 @@ properties:
             description: |
               Bindings between embassy tasks and stm32h5-rs peripherals
               owned by the same module. Each entry says "this task uses
-              this peripheral." Drives codegen of the spawn-time
+              this peripheral." Decides the spawn-time
               handoff. Empty (or omitted) means no embassy↔stm32h5
               wiring on this module — the blocks coexist independently.
             type: array

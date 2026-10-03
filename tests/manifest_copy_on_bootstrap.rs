@@ -3,9 +3,7 @@
 //!
 //! - bootstrap copies `profile.yaml` byte-faithfully to
 //!   `specs/specdev/profile.yaml` (no template substitution).
-//! - inline-block copies each present `codegen/<lang>/deps.yaml` to
-//!   `specs/specdev/codegen/<lang>/blocks/<name>/deps.yaml`. Bytes
-//!   participate in the block's per-unit `content_hash`.
+//! - inline-block never writes a `deps.yaml`: blocks contribute none.
 //! - inline-bridge copies present `contract.yaml` to
 //!   `specs/specdev/reductions/bridges/<name>.contract.yaml`. Bytes
 //!   participate in the bridge's per-unit `content_hash`.
@@ -278,10 +276,7 @@ fn inline_bridge_hash_stable_across_reinline_with_contract_yaml() {
             .join("reductions/bridges/embassy+stm32h5-rs.yaml"),
         layout
             .specdev_root
-            .join("codegen/rust/bridges/embassy+stm32h5-rs/README.md"),
-        layout
-            .specdev_root
-            .join("codegen/rust/bridges/embassy+stm32h5-rs/deps.yaml"),
+            .join("guidance/bridges/embassy+stm32h5-rs.md"),
         layout
             .specdev_root
             .join("reductions/bridges/embassy+stm32h5-rs.contract.yaml"),

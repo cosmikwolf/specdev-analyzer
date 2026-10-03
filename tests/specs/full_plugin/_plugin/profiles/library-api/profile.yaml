@@ -11,9 +11,15 @@ language: rust
 
 reverse:
   # #102: a pure-Rust crate inlines no block; its reverse vocabulary is
-  # the profile's own schema (items, visibility, feature gates). The
+  # the profile's own schema (items, visibility). The
   # pre-flight reads this and reports REVERSE-002 as info, not an error.
   vocabulary: profile
+
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
 
 # Compile gate, as data: the gate script (and CI) runs each `steps` argv
 # in order in the project root; the first non-zero exit fails the gate.

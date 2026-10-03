@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use specdev_analyzer::{inline, prose_lint, reference_lint};
+use specdev_analyzer::{guidance_lint, inline, reference_lint};
 
 fn live_plugin_tree() -> Option<PathBuf> {
     // Conventional layout: <workspace>/specdev next to <workspace>/specdev-analyzer.
@@ -42,7 +42,7 @@ fn live_plugin_lint_passes() {
     findings.extend(inline::lint_plugin_blocks(&plugin).expect("lint_plugin_blocks"));
     findings.extend(reference_lint::lint_reference_crates(&plugin).expect("lint_reference_crates"));
     findings.extend(
-        prose_lint::lint_codegen_prose_profiles(&plugin).expect("lint_codegen_prose_profiles"),
+        guidance_lint::lint_guidance(&plugin).expect("lint_guidance"),
     );
 
     assert!(

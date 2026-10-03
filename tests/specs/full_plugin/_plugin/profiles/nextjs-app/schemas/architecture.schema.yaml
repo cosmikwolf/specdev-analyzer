@@ -2,11 +2,10 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/nextjs-app/architecture.schema.yaml"
 title: "nextjs-app architecture spec (v1)"
 description: >
-  Shape of `specs/architecture.toml` for nextjs-app projects. Declares
-  the app version, the Node and package-manager pins, the package.json
-  scripts overrides, and project-wide npm dependencies. Every field is
-  optional; an empty file validates. `specdev-analyzer manifest --write`
-  reads this file to emit package.json.
+  Shape of `specs/architecture.toml` for nextjs-app projects. Holds the
+  project-wide decisions list only; dependencies, scripts and engine pins
+  live in `package.json`, their only source of truth. An empty file
+  validates.
 type: object
 additionalProperties: false
 properties:

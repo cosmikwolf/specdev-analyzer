@@ -1,0 +1,45 @@
+# specdev CI. Written once by `specdev-analyzer bootstrap` when absent, then
+# owned by the project. It installs the toolchain the gates need, builds
+# specdev-analyzer, and runs scripts/specdev-gates.sh: `specdev-analyzer
+# check`, then every gate in specs/specdev/profile.yaml. A tool this file does
+# not install stops the script with exit 2 and a line naming the command.
+#
+# Repository settings it reads (both specdev repositories are private):
+#   vars.SPECDEV_ANALYZER_REPO     "<org>/specdev-analyzer", the org your plugin came from
+#   secrets.SPECDEV_ANALYZER_TOKEN a token with read access to that repository
+# SPECDEV_ANALYZER_TAG is the analyzer release that matches the plugin
+# release that wrote this file.
+name: specdev
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+      SPECDEV_ANALYZER_TAG: v0.3.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add the build target from specs/architecture.toml
+        run: rustup target add "$(sed -n 's/^target_triple *= *"\(.*\)"/\1/p' specs/architecture.toml)"
+      - name: Cache specdev-analyzer
+        id: analyzer-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/specdev-analyzer
+          key: specdev-analyzer-${{ runner.os }}-${{ env.SPECDEV_ANALYZER_TAG }}
+      - name: Install specdev-analyzer
+        if: steps.analyzer-cache.outputs.cache-hit != 'true'
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          TOKEN: ${{ secrets.SPECDEV_ANALYZER_TOKEN }}
+          REPO: ${{ vars.SPECDEV_ANALYZER_REPO }}
+        run: |
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          cargo install --locked --git "https://github.com/${REPO}" --tag "$SPECDEV_ANALYZER_TAG" specdev-analyzer
+      - name: specdev gates
+        run: sh scripts/specdev-gates.sh

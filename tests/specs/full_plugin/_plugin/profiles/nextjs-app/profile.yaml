@@ -9,8 +9,8 @@ contract_version: 2
 name: nextjs-app
 language: typescript
 
-# Config files written once when absent by `specdev-analyzer manifest
-# --write`, then externally owned: never rewritten, never gen-recorded.
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten.
 # `next build` rewrites tsconfig.json on its first run when Next's keys
 # are missing; the template is authored in the post-build shape so the
 # file stays byte-identical. A deleted config comes back on the next
@@ -23,14 +23,13 @@ paired_files:
   - { template_file: templates/gitignore.template,            target: .gitignore }
   - { template_file: templates/gitkeep.template,              target: app/.gitkeep }
   # pnpm 10 blocks a dependency's install scripts by default and still
-  # exits 0, so a native binary silently never builds. The allowlist has
-  # to live here: package.json is gen output and `manifest --write`
-  # overwrites it.
+  # exits 0, so a native binary silently never builds. The allowlist lives
+  # here, apart from the package.json the project edits by hand.
   - { template_file: templates/pnpm-workspace.yaml.template,  target: pnpm-workspace.yaml }
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
 
 # Compile gates, as data: the gate script (and CI) runs each `steps` argv
-# in order in the project root. `fast` is the
-# quick gate: install without
+# in order in the project root. `fast` is the quick gate: install without
 # `--frozen-lockfile` on purpose (a new dependency must be able to move
 # the lockfile), then route types, then the type check, then the unit
 # tests (`--passWithNoTests`: an app with no test items yet is not a

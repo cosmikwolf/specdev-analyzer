@@ -60,7 +60,7 @@ $defs:
         description: >
           Optional priority hint for runtimes that support priority-based
           scheduling. Free-form because embassy's executor is FIFO by
-          default; codegen may translate this to interrupt priority on
+          default; the code may translate this to interrupt priority on
           targets that wire tasks to NVIC priorities.
         type: string
         enum: [low, normal, high]
@@ -75,7 +75,7 @@ $defs:
       payload_type:
         description: >
           Rust type expression for the channel's payload. Must implement
-          Send (codegen verifies). Examples: "u32", "Event", "[u8; 64]",
+          Send. Examples: "u32", "Event", "[u8; 64]",
           "MyMessage".
         type: string
         minLength: 1

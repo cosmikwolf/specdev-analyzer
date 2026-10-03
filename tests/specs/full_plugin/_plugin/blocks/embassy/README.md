@@ -21,7 +21,7 @@ Don't use embassy if:
 - You're targeting a different async runtime (RTIC, Tokio in std). A
   separate block (`rtic`, `tokio-runtime`) is the right home; the
   conceptual shapes overlap (`embassy.Task` and `rtic.Task`) but the
-  codegen mappings differ.
+  framework rules differ.
 - Your firmware is single-loop synchronous. The block adds runtime
   overhead and async syntax that buy nothing in that case.
 
@@ -49,25 +49,24 @@ Reduction kinds (after inline):
 - `embassy.Channel` (extends `Module`) — one per `[[embassy.channels]]`.
   Qualified name same shape.
 
-Codegen prose (`codegen/rust/README.md`) describes how each shape maps
-to Rust: tasks become `#[embassy_executor::task]` free fns, channels
-become `static CHANNEL: Channel<...>` declarations, init wires them
-together at spawn time.
+The guidance (`guidance.md`) carries the rules for the code: tasks are
+`#[embassy_executor::task]` free fns, channels are `static` declarations
+of the sync type their `kind` names, and `init` spawns them.
 
 ## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific Rust crate (`embassy-executor`
   + `embassy-sync`), not the abstract concept of "async runtime."
-- **Codegen-completeness:** ✓ — given a conforming TOML, the codegen
-  prose produces working Rust source: task fns with the right
-  attribute, statics with the right type, an init fn that spawns. No
-  step requires "depends on which X."
-- **No cross-block reach:** ✓ — codegen prose explicitly excludes
+- **Rule-pack completeness:** ✓ — each task and channel constrains the
+  code (pool size, payload type, depth, kind); the guidance carries the
+  rules no check can verify (free fns, `'static` channels, `Send` across
+  awaits).
+- **No cross-block reach:** ✓ — the guidance explicitly excludes
   `embassy-stm32` and other peripheral-HAL crates. Tasks and channels
   are named by their own qualified paths; peripheral wiring is the
   job of the `embassy+<peripheral-block>` bridge.
 
-## Deferred (revisit triggers per §12)
+## Deferred (each with a revisit trigger)
 
 - **Signals + Mutexes + PubSub** — covered partially via the `kind =
   "signal"` channel flavor; full first-class types come when a project

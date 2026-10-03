@@ -14,6 +14,12 @@ contract_version: 2
 name: rust-workspace
 language: rust
 
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
+
 # No gates: a workspace root has no modules of its own. Its gate script
 # runs each member's script in declared order (each member checks itself).
 

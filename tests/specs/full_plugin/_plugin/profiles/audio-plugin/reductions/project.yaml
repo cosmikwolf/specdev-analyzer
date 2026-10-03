@@ -44,7 +44,7 @@ entities:
     from: "specs/architecture.toml"
     name: "architecture"
 
-  # Decisions — the *how & why*. Codegen prompt walk follows only
+  # Decisions — the *how & why*. `report decisions` follows only
   # `accepted` entries; `superseded` entries persist as reasoning
   # trail.
   - kind: Decision
@@ -58,8 +58,8 @@ entities:
       text: ".text"
 
   # Open questions — the *known unknowns*. Three statuses
-  # (open / default_committed / closed) shape the codegen-gate
-  # behavior; the gate check (`codegen_unblocked`) consumes this
+  # (open / default_committed / closed) shape the open-question
+  # gate; the open-question gate (`implementation_unblocked`) consumes this
   # kind alongside the OpenQuestion → Requirement relation.
   - kind: OpenQuestion
     extends: structural
@@ -186,7 +186,7 @@ relations:
       to: "${.}"
 
   # OpenQuestion → Requirement: which requirements this question
-  # affects. The codegen gate walks Module.satisfies → Requirement →
+  # affects. The open-question gate walks Module.satisfies → Requirement →
   # OpenQuestion (via this relation reversed) to determine whether any
   # reachable OQ is `open`. Drives `open_question_affects_resolve`.
   - kind: open_question_affects_requirement
@@ -212,7 +212,7 @@ relations:
   # orphan check `parameters_have_bindings` walks the inbound edges
   # this relation contributes. Multi-target is fine — two rows
   # for one parameter materialize two edges to the same Parameter; the
-  # orphan check still passes and codegen emits both arms in order.
+  # orphan check still passes and the code applies both writes in order.
   - kind: parameter_binding
     extends: depends_on
     from_kind: Module

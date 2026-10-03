@@ -5,7 +5,7 @@ metaschema_version: "v1"
 
 entities:
   # Modules — one per `specs/modules/*.toml`. Carries layer (for the
-  # layer_dependency check) and visibility, for graph checks and codegen.
+  # layer_dependency check) and visibility, for graph checks and `context`.
   - kind: Module
     extends: structural
     from: "specs/modules/*.toml"
@@ -44,7 +44,7 @@ entities:
     name: "architecture"
 
   # Decisions — the *how & why*. One per `[[decision]]` entry in
-  # `specs/decisions/`. The codegen prompt walk traverses only
+  # `specs/decisions/`. `report decisions` traverses only
   # `accepted` decisions; `superseded` entries persist as reasoning
   # trail.
   - kind: Decision
@@ -59,7 +59,7 @@ entities:
 
   # Open questions — the *known unknowns*. One per `[[open_question]]`.
   # Three statuses (open / default_committed / closed) shape the gate
-  # behavior; the codegen-gate check (`codegen_unblocked`) consumes
+  # behavior; the open-question gate (`implementation_unblocked`) consumes
   # this kind alongside the OpenQuestion → Requirement relation.
   - kind: OpenQuestion
     extends: structural
@@ -187,7 +187,7 @@ relations:
       to: "${.}"
 
   # OpenQuestion → Requirement: which requirements this question
-  # affects. The codegen gate (`codegen_unblocked`) walks
+  # affects. The open-question gate (`implementation_unblocked`) walks
   # Module.satisfies → Requirement and back through this relation to
   # determine whether any reachable OQ is `open`. Drives
   # `open_question_affects_resolve`.

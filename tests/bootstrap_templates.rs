@@ -1,24 +1,14 @@
-//! `cargo_toml.bin.paired_stub.template_file` file read.
+//! Bootstrap copies a profile's `templates/*` into the project.
 //!
-//! The audio-plugin profile's
-//! `cargo_toml.bin.paired_stub.template_file` references a template
-//! file under the profile dir (`templates/standalone-stub.rs.template`).
-//! Bootstrap (a) copies `<profile>/templates/*` to
-//! `<target>/specs/specdev/templates/*`, and (b) reads the template at
-//! cargo-toml render time, substituting `{project_name}` with the
-//! project's crate name to produce the `extra_files` standalone.rs body.
-//!
-//! Backward-compat: manifest-less projects keep using the
-//! legacy `standalone_bin_stub()` literal — same `compile_error!`
-//! reminder, slightly different prose.
+//! The templates are the sources of the profile's `paired_files` (config files
+//! written once when absent). Bootstrap (a) copies `<profile>/templates/*`
+//! byte-faithfully to `<target>/specs/specdev/templates/*`, and (b) copies
+//! nothing when the profile ships no `templates/` dir.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use specdev_analyzer::{
-    bootstrap::{self, BootstrapInputs},
-    layout::LayoutContext,
-};
+use specdev_analyzer::bootstrap::{self, BootstrapInputs};
 
 fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -30,7 +20,7 @@ fn full_plugin() -> PathBuf {
 
 fn tmp_workspace(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
-        "specdev-cargo-toml-paired-stub-{tag}-{}-{}",
+        "specdev-bootstrap-templates-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -42,40 +32,47 @@ fn tmp_workspace(tag: &str) -> PathBuf {
     p
 }
 
-fn fresh_audio_plugin(tag: &str, project_name: &str) -> (PathBuf, LayoutContext) {
-    let workspace = tmp_workspace(tag);
+fn copy_dir(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for e in fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &dest);
+        } else {
+            fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+fn bootstrap(plugin: &Path, workspace: &Path, profile: &str) -> PathBuf {
     let target = workspace.join("proj");
     fs::create_dir_all(&target).unwrap();
     bootstrap::run_bootstrap(
-        &full_plugin(),
+        plugin,
         &BootstrapInputs {
-            profile: "audio-plugin".into(),
+            profile: profile.into(),
             language: "rust".into(),
-            project_name: project_name.into(),
+            project_name: "demo".into(),
             target_dir: target.clone(),
         },
     )
     .unwrap();
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    (target, layout)
+    target
 }
 
-// ===========================================================================
-// 1 — Bootstrap copies templates/* to specs/specdev/templates/*
-// ===========================================================================
-
 #[test]
-fn bootstrap_copies_paired_stub_template_to_inlined_tree() {
-    let (target, _layout) = fresh_audio_plugin("bootstrap-templates", "myfx");
-    let inlined = target.join("specs/specdev/templates/standalone-stub.rs.template");
+fn bootstrap_copies_profile_templates_to_inlined_tree() {
+    let workspace = tmp_workspace("copies");
+    let target = bootstrap(&full_plugin(), &workspace, "audio-plugin");
+    let name = "specdev-ci.yml.template";
+    let inlined = target.join("specs/specdev/templates").join(name);
     assert!(
         inlined.is_file(),
         "bootstrap must copy templates/* to specs/specdev/templates/* — missing {}",
         inlined.display()
     );
-    // Byte-faithful: the inlined copy equals the plugin-tree source.
-    let plugin_src =
-        full_plugin().join("profiles/audio-plugin/templates/standalone-stub.rs.template");
+    let plugin_src = full_plugin().join("profiles/audio-plugin/templates").join(name);
     assert_eq!(
         fs::read(&plugin_src).unwrap(),
         fs::read(&inlined).unwrap(),
@@ -83,51 +80,22 @@ fn bootstrap_copies_paired_stub_template_to_inlined_tree() {
     );
 }
 
-// ===========================================================================
-// 2 — Bootstrap silently skips when profile has no templates/ dir
-// ===========================================================================
-
 #[test]
 fn bootstrap_skips_templates_when_profile_has_none() {
-    // library-api ships no templates/ dir.
-    let workspace = tmp_workspace("bootstrap-no-templates");
-    let target = workspace.join("proj");
-    fs::create_dir_all(&target).unwrap();
-    bootstrap::run_bootstrap(
-        &full_plugin(),
-        &BootstrapInputs {
-            profile: "library-api".into(),
-            language: "rust".into(),
-            project_name: "liblib".into(),
-            target_dir: target.clone(),
-        },
-    )
-    .unwrap();
+    // A copy of the test plugin whose library-api profile ships no templates/
+    // dir and so declares no paired files.
+    let workspace = tmp_workspace("none");
+    let plugin = workspace.join("_plugin");
+    copy_dir(&full_plugin(), &plugin);
+    let profile_dir = plugin.join("profiles/library-api");
+    fs::remove_dir_all(profile_dir.join("templates")).unwrap();
+    let manifest = profile_dir.join("profile.yaml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let kept: Vec<&str> =
+        text.lines().filter(|l| !l.starts_with("paired_files:") && !l.contains("template_file:")).collect();
+    fs::write(&manifest, kept.join("\n") + "\n").unwrap();
+
+    let target = bootstrap(&plugin, &workspace, "library-api");
     let templates_dir = target.join("specs/specdev/templates");
-    assert!(
-        !templates_dir.exists(),
-        "no templates/ dir in profile → no templates/ in target"
-    );
+    assert!(!templates_dir.exists(), "no templates/ dir in profile → no templates/ in target");
 }
-
-// ===========================================================================
-// 3 — Manifest path reads template + substitutes {project_name}
-// ===========================================================================
-
-// ===========================================================================
-// 4 — Manifest path body matches the template-file body (post-substitution)
-// ===========================================================================
-
-// ===========================================================================
-// 5 — Fallback path (manifest absent) uses the legacy standalone_bin_stub
-//     literal — different prose, same compile_error! reminder
-// ===========================================================================
-
-// ===========================================================================
-// 6 — Cargo.toml output is byte-stable (parity preserved across paths,
-//     even though the standalone.rs body intentionally drifts)
-// ===========================================================================
-
-// ===========================================================================
-// 7 — Manifest path errors clearly when template_file is missing on disk
-// ===========================================================================

@@ -16,7 +16,7 @@ description: >
   Deliberately absent: an `async` field. Whether a handler is `async` is
   fully determined by the task's `kind` — RTIC software tasks are always
   `async fn`, hardware tasks always `fn`. A separate field could only
-  agree with `kind` or contradict it, so the codegen prose derives it.
+  agree with `kind` or contradict it, so the guidance derives it.
 
   Chip-specific facts — which interrupt vectors exist, which are free for
   the executor's dispatchers — belong to the chip binding, not here. This
@@ -51,15 +51,15 @@ properties:
           State the tasks share. Each becomes a field of the app's
           `Shared` or `Local` struct per its `sharing` value. Access
           discipline is the reason this block exists — see this block's
-          codegen prose.
+          guidance.
         type: array
         items: { $ref: "#/$defs/Resource" }
       channels:
         description: >
           Inter-task message channels: what flows and how many slots.
-          Which crate carries a channel is the project's choice, read
-          from its manifest at emission time; this block contributes no
-          channel crate and its codegen prose documents one form per
+          Which crate carries a channel is the project's choice, stated
+          in its manifest; this block contributes no
+          channel crate and its guidance documents one form per
           crate. Use these for streaming values between tasks; use a
           shared resource for state a task mutates in place.
         type: array
@@ -126,9 +126,8 @@ $defs:
       uses:
         description: >
           Resources this task accesses, by `name`. Each must be declared
-          in `resources` below. Whether the generated access needs
-          `.lock()` follows from the resource's ceiling, and the codegen
-          prose derives it — do not record it here.
+          in `resources` below. Whether an access needs `.lock()`
+          follows from the resource's sharing — do not record it here.
         type: array
         items: { $ref: "#/$defs/Identifier" }
 

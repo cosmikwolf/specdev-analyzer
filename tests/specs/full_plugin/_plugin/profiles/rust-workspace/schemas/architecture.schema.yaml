@@ -2,10 +2,9 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/rust-workspace/architecture.schema.yaml"
 title: "rust-workspace architecture spec (v1)"
 description: >
-  Shape of `specs/architecture.toml` for a Cargo workspace. Declares
-  the canonical [workspace.package] fields (members inherit via
-  `*.workspace = true`) and hoisted [[workspace_dependencies]]
-  candidates (members opt in via `source = "workspace"`).
+  Shape of `specs/architecture.toml` for a Cargo workspace. Holds the
+  project-wide decisions list only; shared package fields and shared
+  dependencies live in the root `Cargo.toml`.
 
   Bidirectional-minimality enforcement: this schema MUST NOT carry any
   per-member fields (modules, requirements, per-crate features).

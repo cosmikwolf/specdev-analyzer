@@ -4,12 +4,12 @@ metaschema_version: "v1"
 # MidiConfig — all extending Module since they're declarative
 # sub-units of a plugin shell module. ProcessConfig is intentionally
 # NOT materialized as an entity in v1: it carries no name (singleton
-# attributes only) and no graph check needs to reach into it; codegen
-# prose reads it directly from the module's TOML.
+# attributes only) and no graph check needs to reach into it; the
+# code reads it directly from the module's TOML.
 #
 # The optional `[nih_plug.midi.sysex]` subtable is likewise NOT
 # surfaced as graph attributes for the same reason: it's a nameless
-# config singleton that only codegen prose consumes (to size the
+# config singleton that only guidance consumes (to size the
 # generated `SysExMessage` buffer). No graph check reaches into it.
 #
 # Qualified entity names combine parent module name with the local

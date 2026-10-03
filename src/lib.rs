@@ -121,7 +121,7 @@ pub mod paired_files;
 pub mod path;
 pub mod plugin_root;
 pub mod prompt;
-pub mod prose_lint;
+pub mod guidance_lint;
 pub mod reduction;
 pub mod reductions;
 pub mod reference_lint;

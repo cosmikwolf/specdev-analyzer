@@ -12,10 +12,12 @@
 //!   blocks/<name>/
 //!     schema.yaml
 //!     reduction.yaml
+//!     guidance.md                     # rules for whoever edits the code
 //!     README.md                       # author-facing, NOT inlined
 //!   bridges/<a>+<b>/
 //!     bindings.schema.yaml
 //!     reduction.yaml
+//!     guidance.md
 //!     README.md
 //! ```
 //!
@@ -25,6 +27,8 @@
 //! - block reduction   → `specs/specdev/reductions/blocks/<name>.yaml`
 //! - bridge schema     → `specs/specdev/schemas/inlined/bridges/<a>+<b>.schema.yaml`
 //! - bridge reduction  → `specs/specdev/reductions/bridges/<a>+<b>.yaml`
+//! - block guidance    → `specs/specdev/guidance/blocks/<name>.md`
+//! - bridge guidance   → `specs/specdev/guidance/bridges/<a>+<b>.md`
 //!
 //! After per-unit copies, the unit's schema fragment gets a `$ref` entry
 //! appended to `module.schema.yaml`'s `allOf` array (the aggregator slot).
@@ -146,6 +150,8 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
         bytes: read_file(&reduction_src)?,
     });
 
+    push_guidance(&mut files, &unit_dir, UnitKind::Block, name)?;
+
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
 }
@@ -202,9 +208,30 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
         });
     }
 
+    push_guidance(&mut files, &unit_dir, UnitKind::Bridge, name)?;
+
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
 }
+
+/// The unit's `guidance.md`, when it ships one. `plugin-lint` requires it of
+/// every plugin unit (a stable file set keeps `--merge` working); the copy
+/// path tolerates its absence so a hand-made or older unit still inlines.
+fn push_guidance(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, name: &str) -> Result<()> {
+    let src = unit_dir.join(GUIDANCE_FILE);
+    if src.is_file() {
+        let rel = PathBuf::from(GUIDANCE_FILE);
+        files.push(UnitFile {
+            rel_dst: unit_rel_dst(kind, name, &rel).expect("guidance has a destination"),
+            rel_src_in_unit: rel,
+            bytes: read_file(&src)?,
+        });
+    }
+    Ok(())
+}
+
+/// The guidance file a block, bridge or profile ships at its root.
+pub const GUIDANCE_FILE: &str = "guidance.md";
 
 /// Where a unit file inlines, from its path in the unit — the mapping
 /// `collect_block_files` / `collect_bridge_files` use. `None` for a path the
@@ -220,6 +247,8 @@ pub(crate) fn unit_rel_dst(kind: crate::upstream::UnitKind, name: &str, rel_src:
         }
         (UnitKind::Bridge, "reduction.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.yaml"))),
         (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.contract.yaml"))),
+        (UnitKind::Block, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/blocks/{name}.md"))),
+        (UnitKind::Bridge, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/bridges/{name}.md"))),
         _ => None,
     }
 }
