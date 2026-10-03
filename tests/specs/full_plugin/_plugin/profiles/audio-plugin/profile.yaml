@@ -9,6 +9,12 @@ contract_version: 2
 name: audio-plugin
 language: rust
 
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
+
 # Compile gate, as data: the gate script (and CI) runs each `steps` argv
 # in order in the project root; the first non-zero exit fails the gate.
 # Warnings do not fail the gate; `cargo check` errors do.

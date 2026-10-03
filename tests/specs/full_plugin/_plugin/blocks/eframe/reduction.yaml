@@ -8,8 +8,8 @@ metaschema_version: "v1"
 # initial_size, min_size, resizable, centered, renderer, persist_window,
 # repaint, repaint_interval_ms) is NOT reduced to entities. It is
 # per-module leaf config with nothing to relate to; materializing it
-# would produce entities no relation ever references. It reaches codegen
-# through the module spec directly.
+# would produce entities no relation ever references. The code reads it
+# from the module spec directly.
 #
 # relations: [] — the two kinds are independent. A persisted value does
 # not belong to a viewport, and a viewport does not reference a persisted

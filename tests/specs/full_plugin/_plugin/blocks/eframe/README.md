@@ -41,13 +41,13 @@ windows** — not what is drawn inside. Three reasons:
    else entirely. Keeping it out of the shell block is what lets it be
    reused by a different host.
 3. **The shell is small and finite.** Windows, viewports, storage keys
-   and one repaint policy — a surface that can be covered completely and
-   compiled in a reference crate. Layout is neither small nor finite.
+   and one repaint policy — a surface that can be covered completely.
+   Layout is neither small nor finite.
 
-The practical consequence: this block never emits panel or widget code.
-It emits the `App` impl's *skeleton* — the `logic` and `ui` methods, the
-options, the storage round-trip — and what goes inside `ui` comes from
-elsewhere.
+The practical consequence: this block says nothing about panels or
+widgets. It covers the `App` impl's frame — the `logic` and `ui` methods,
+the options, the storage round-trip — and what goes inside `ui` comes
+from elsewhere.
 
 ## What this block contributes
 
@@ -108,21 +108,20 @@ as continuous repaint and idles at zero CPU.
 
 ## Sharp-test rationale
 
-- **Leg 1 — concreteness.** `eframe` names one specific crate at one
-  pinned version. "Which GUI framework?" cannot substitute — the schema
+- **Leg 1 — concreteness.** `eframe` names one specific crate. "Which GUI framework?" cannot substitute — the schema
   is shaped around eframe's own concepts (`NativeOptions`,
   `ViewportBuilder`, its `Storage` round-trip, the reactive repaint
   model), none of which transfer to another toolkit.
-- **Leg 2 — codegen-completeness.** Conforming TOML produces a running
-  application: options, `App` impl, repaint policy, storage round-trip,
-  child viewports, entry point. All five emission kinds are compiled in
-  `reference/rust/` against the pin.
-- **Leg 3 — no cross-block reach.** The codegen prose names no other
+- **Leg 2 — rule-pack completeness.** Every field constrains the code:
+  window geometry, the repaint policy, each persisted key, each viewport.
+  The guidance carries the rules no check can verify (logic vs painting,
+  reactive repaint, load-once storage, deferred viewports).
+- **Leg 3 — no cross-block reach.** The guidance names no other
   block's types. It does reference `eframe::egui::Ui` and
   `eframe::egui::Context`, but those are eframe's own re-export and
   appear in its own trait signatures — there is no way to describe
   implementing `eframe::App` without them. It reaches into no other
-  block's schema, and emits nothing about layout.
+  block's schema, and says nothing about layout.
 
 ## Companion blocks and profiles
 
@@ -137,12 +136,12 @@ block models topology — panels, regions, purposes — and contributes no
 crates at all, so egui arrives from here. Inline both: this block ends
 at the window, that one starts inside it.
 
-Two obligations follow, both discharged by this block's codegen prose:
+Two obligations follow, both stated in this block's guidance:
 
-1. **The crate-root alias.** Emit `pub use eframe::egui;` once. The
-   egui block's emitted topology code refers to `crate::egui` and
-   resolves through it. Exactly one host per crate emits this line; a
-   second would collide there, which is the intended failure.
+1. **The crate-root alias.** `pub use eframe::egui;` once. Code for the
+   egui block refers to `crate::egui` and resolves through it. Exactly
+   one host per crate has this line; a second would collide there, which
+   is the intended failure.
 2. **The panel API generation.** eframe 0.36 supplies egui 0.36, so the
    egui block's **modern** panel form applies — unified `egui::Panel`,
    `show` taking a `&mut Ui`, sizes via `default_size`. That matches
@@ -160,9 +159,8 @@ it.
 
 ### Profiles
 
-Wants a profile that produces a runnable application. Use **`rust-app`**:
-it emits a `[lib]` testable core plus a `[[bin]]` entry point in one
-crate, which is the shape an eframe application has — headless logic in
+Wants a profile for a runnable application. Use **`rust-app`**: a
+`[lib]` testable core plus a `[[bin]]` entry point in one crate, which is the shape an eframe application has — headless logic in
 the lib, the `run_native` call in the bin. A member of a workspace can
 carry this block too.
 

@@ -8,8 +8,8 @@ description: >
 
   The layer enum carries four tiers, with `host_interface` reserved
   for nih-plug-provided types (no user modules at this layer in v1).
-  PluginFormat / PluginCategory are the closed enums driving
-  codegen-time per-format constant emission.
+  PluginFormat / PluginCategory are the closed enums the plugin's
+  per-format constants follow.
 
 $defs:
   LayerKind:
@@ -30,9 +30,8 @@ $defs:
 
   PluginFormat:
     description: >
-      Plugin distribution format. Drives which `nih_export_*!` macro
-      emits and which target-type the plugin crate's Cargo.toml
-      declares. At least one format must be selected. AU is out
+      Plugin distribution format. The plugin exports each selected
+      format, and its Cargo.toml declares the matching target type. At least one format must be selected. AU is out
       of scope for v1 (separate API surface in nih-plug).
     type: string
     enum:
@@ -42,7 +41,7 @@ $defs:
 
   PluginCategory:
     description: >
-      Plugin category. Maps to per-format constants via codegen prose
+      Plugin category. The plugin's per-format constants follow it:
       VST3_CATEGORIES (a `&str`) and CLAP_FEATURES (a slice of
       `ClapFeature`). Standalone is uncategorized.
     type: string

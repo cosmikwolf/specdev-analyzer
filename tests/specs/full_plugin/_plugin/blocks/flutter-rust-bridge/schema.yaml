@@ -4,14 +4,14 @@ title: "flutter-rust-bridge block (v1)"
 description: >
   Schema fragment contributed by the `flutter-rust-bridge` block. Adds a
   namespaced `[flutter_rust_bridge]` table to `Module` carrying the
-  flutter_rust_bridge (FRB) codegen configuration for a Flutter app that
+  flutter_rust_bridge (FRB) generator configuration for a Flutter app that
   consumes a companion Rust crate over FFI.
 
   The table models FRB's config INPUTS only — where the companion crate
   lives, which of its modules FRB scans, whether the web (wasm) target is
   on — never an item-level mirror of the exposed Rust API. The API
   surface is owned by the companion crate's own spec; the drift tripwire
-  between the two projects is the FRB codegen run itself
+  between the two projects is FRB's own generator run
   (`flutter_rust_bridge_codegen generate` failing or regenerating
   differently), not this spec.
 
@@ -50,7 +50,7 @@ properties:
           for the exposed API (e.g. "crate::api"). This selects WHICH
           MODULES FRB reads — never list symbols here; the symbol surface
           lives in the companion crate's own spec. Entries are joined
-          comma-separated into the generated FRB config file.
+          comma-separated in the FRB config file.
           Third-party-crate scanning is out of scope in v1.
         type: array
         items: { $ref: "#/$defs/RustModulePath" }
@@ -60,20 +60,19 @@ properties:
         description: >
           Whether the web (wasm) target is enabled. Required — the choice
           carries obligations beyond this file: `true` keeps FRB's web
-          codegen on and commits the companion crate to wasm-purity (no
+          output on and commits the companion crate to wasm-purity (no
           platform-bound I/O, no std::thread::spawn, tokio rt only, and
-          it must compile for wasm32-unknown-unknown); `false` emits
-          `no_web: true` and drops the web legs from the build sequence.
+          it must compile for wasm32-unknown-unknown); `false` means
+          `no_web: true` in the FRB config and drops the web legs from the build sequence.
           Align with the project's platform matrix where the profile
           declares one.
         type: boolean
       dart_output:
         description: >
           App-root-relative directory where FRB writes generated Dart.
-          Defaults to "lib/src/rust" (applied by codegen prose — JSON
+          Defaults to "lib/src/rust" (the FRB config's default — JSON
           Schema defaults are not applied at validation time). Everything
-          under it is generator-owned output — never gen-recorded, never
-          hand-edited.
+          under it is FRB's generated output — never hand-edited.
         type: string
         minLength: 1
 

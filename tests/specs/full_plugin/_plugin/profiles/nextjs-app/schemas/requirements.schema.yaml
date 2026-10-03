@@ -73,9 +73,9 @@ $defs:
           body. `build` — captured by build configuration (package.json
           scripts and pins, next.config.ts, tsconfig.json).
           `test` — captured by a test suite; the
-          `requirements_have_satisfiers` check exempts these, but
-          `test_requirements_have_verifiers` warns instead when no test
-          item's `verifies` names the requirement.
+          `requirements_have_satisfiers` check exempts these;
+          `requirements_have_tests` asks for a discovered test named in
+          `verified_by`.
         type: string
         enum: [module, architecture, build, test]
         default: module

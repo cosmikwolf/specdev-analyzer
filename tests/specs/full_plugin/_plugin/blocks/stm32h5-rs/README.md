@@ -22,13 +22,12 @@ Inline `stm32h5-rs` when your project:
 Don't use this block if:
 
 - You're on a different STM32 family (F1/F4/L4/H7/G4/U5 etc.). Each
-  warrants its own block (`stm32f4-rs`, `stm32g4-rs`, …) — codegen
+  warrants its own block (`stm32f4-rs`, `stm32g4-rs`, …) — the HAL type
   mappings differ.
 - You're using `embassy-stm32` directly. The `embassy-stm32` crate is
-  embassy-flavored and would conflict with stm32h5-rs's HAL type
-  emissions; the `embassy+stm32h5-rs` bridge handles that integration.
+  embassy-flavored and would conflict with stm32h5-rs's HAL types; the `embassy+stm32h5-rs` bridge handles that integration.
 - You're writing PAC-only firmware (no HAL). The HAL types are the
-  contract this block emits against.
+  contract this block's guidance is written against.
 
 ## What this block contributes
 
@@ -56,10 +55,10 @@ Reduction kinds (after inline):
 - `stm32h5-rs.Pin` (extends `Module`) — one per `[[stm32h5.pins]]`.
   Qualified name same shape.
 
-Codegen prose (`codegen/rust/README.md`) maps each shape to typed Rust:
-peripherals to `Serial<USART3>` / `Spi<SPI2>` / etc., pins to
-`gpiod.pd8.into_alternate::<7>()`, ISRs to `#[interrupt]`-attributed
-free functions.
+The guidance (`guidance.md`) carries the rules for the code: one typed
+handle per peripheral, typed pins from split GPIO banks, `#[interrupt]`
+handlers named after their vectors, HAL by default and PAC only as an
+escape hatch.
 
 Closed enum for `kind`: `USART | UART | SPI | I2C | GPIO | TIM | ADC |
 DMA | RCC | USB | OCTOSPI`. v1.x can widen as projects need (LPUART,
@@ -70,16 +69,15 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
 - **Concreteness:** ✓ — names a specific MCU family
   (`stm32h5xx-hal` / `stm32h5xx-pac`), not the abstract concept of
   "MCU peripherals."
-- **Codegen-completeness:** ✓ — given a TOML with N peripherals + M
-  pins, prose emits N typed peripheral handles + M typed pin handles +
-  any necessary GPIO bank splits + interrupt-handler scaffolds. The
-  HAL is maturing; some peripherals (USB device classes, crypto)
-  require PAC-fallback documented as an escape hatch.
-- **No cross-block reach:** ✓ — codegen explicitly excludes
+- **Rule-pack completeness:** ✓ — each peripheral and pin entry
+  constrains the code (kind, instance, port, pin, mode, alternate
+  function), and the guidance carries the HAL rules no check can
+  verify. The HAL is maturing; some peripherals need the PAC escape hatch.
+- **No cross-block reach:** ✓ — the guidance explicitly excludes
   `embassy-stm32` and other runtime-flavored HAL crates. Embassy
   integration is bridge territory (`embassy+stm32h5-rs`).
 
-## Deferred (revisit triggers per §12)
+## Deferred (each with a revisit trigger)
 
 - **Clock-tree configuration** — HSE/HSI/PLL1/PLL2/PLL3/peripheral-
   clock setup is one-per-project, not one-per-module. Either lives in
@@ -87,8 +85,7 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
   a future `stm32h5-clocks` block.
 - **GPDMA channel allocation** — GPDMA peripherals are declared via
   `kind = "DMA"` but channel-to-peripheral request line mapping (e.g.
-  "GPDMA1 channel 3 serves USART3_RX") is implicit in HAL construction
-  and codegen. A typed `[[stm32h5.dma_channels]]` entry could promote
+  "GPDMA1 channel 3 serves USART3_RX") is implicit in HAL construction. A typed `[[stm32h5.dma_channels]]` entry could promote
   this; defer until a real project hits the wall.
 - **Interrupt priority** — currently free-form per peripheral
   declaration. NVIC priority assignment could become a typed field
@@ -102,7 +99,7 @@ ETH, RNG, CRC, HASH, AES, LPTIM).
   own block. The conceptual shape (peripherals + pins) overlaps but
   the kind enums and HAL type mappings differ enough to ship as
   separate blocks.
-- **PAC-direct register access** — codegen prose mentions PAC as an
+- **PAC-direct register access** — the guidance names the PAC as an
   escape hatch. A typed `[[stm32h5.raw_registers]]` entry could capture
   this if multiple projects converge on similar low-level patterns; v1
   leaves it informal.

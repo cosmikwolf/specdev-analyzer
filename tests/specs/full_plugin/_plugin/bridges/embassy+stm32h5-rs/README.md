@@ -3,7 +3,7 @@
 A canonical bridge wiring the `embassy` async runtime block to the
 `stm32h5-rs` HAL block. Inline this bridge when a project's modules
 own both `[embassy.tasks]` and `[stm32h5.peripherals]` and need a
-declared, codegen-emitted handoff between them.
+declared handoff between them.
 
 ## When to use
 
@@ -36,7 +36,7 @@ binding entry, from `stm32h5-rs.Peripheral` to `embassy.Task`. Extends
 canonical `depends_on` so layer-dependency / acyclic / reachability
 graph checks work with zero domain knowledge.
 
-**Codegen prose** (`codegen/rust/README.md`): two patterns —
+**Guidance** (`guidance.md`): two patterns —
 - `handoff = "owned"` — peripheral moves into the spawned task.
 - `handoff = "shared"` — peripheral lives in a `Mutex<RawMutex, T>`
   static; multiple tasks acquire `.lock().await` to use it.

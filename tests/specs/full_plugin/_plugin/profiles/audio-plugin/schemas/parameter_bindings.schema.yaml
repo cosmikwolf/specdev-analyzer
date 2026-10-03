@@ -15,13 +15,12 @@ description: |
   reducer resolves `parameter → <shell>.<id>` locally (same reduce-time
   path as the `egui+nih-plug` bridge). The engine stays framework-
   agnostic — it owns only the *target* method, never the parameter
-  surface. Codegen emits one `apply_param_changes` match arm per row in
-  declaration order (see the profile's `codegen/rust/module.conventions.md`,
-  §"Parameter binding model").
+  surface. The code applies one write per row, in declaration order
+  (see the profile's `guidance.md`, "Parameter bindings").
 
   Shape commitments: bindings are **explicit** (no convention
   auto-binding in v1); a single parameter MAY appear on multiple rows
-  (**multi-target allowed**; emission is declaration order; no
+  (**multi-target allowed**; writes apply in declaration order; no
   uniqueness check); context-dependent writes ride the `custom`
   transform escape hatch. Value-transform vocabulary: six named
   transforms + `custom`.
@@ -59,10 +58,10 @@ $defs:
       target_kind:
         description: |
           How the write is expressed.
-            method — `target` is a method path; emit `target(args…)`.
-            field  — `target` is a dotted state path; emit `target = value`.
+            method — `target` is a method path; the write is `target(args…)`.
+            field  — `target` is a dotted state path; the write is `target = value`.
             custom — `target` names a hand-authored fn `(value, &mut self)`;
-                     emit `self.target(value)`. The escape hatch for
+                     the write is `self.target(value)`. The escape hatch for
                      context-dependent or multi-field writes.
         type: string
         enum: [method, field, custom]
@@ -72,13 +71,13 @@ $defs:
           receiver-method (`self.engine.set_op_crs`). For `field`: a
           dotted path on the engine/plugin state (`voice.lfo1.pmd`).
           For `custom`: the name of an author-written fn on the module.
-          Tokens are emitted verbatim at the call site — the spec does
+          Tokens are used verbatim at the call site — the spec does
           not type-check them; the Rust compiler does.
         type: string
         minLength: 1
       target_args:
         description: |
-          Argument list for `method` and `custom` targets, emitted
+          Argument list for `method` and `custom` targets, used
           verbatim in order. The literal token `value` carries the
           parameter's incoming value *after* `value_transform`. Omit
           for `field` targets (the value is the RHS of the assignment)
@@ -94,7 +93,7 @@ $defs:
       description:
         description: |
           Optional prose, load-bearing for `custom` targets: it tells
-          the codegen LLM (and human reviewers) what the hand-authored
+          whoever writes the code (and reviewers) what the hand-authored
           fn must do.
         type: string
 

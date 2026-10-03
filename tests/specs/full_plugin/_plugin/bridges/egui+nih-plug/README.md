@@ -65,33 +65,31 @@ Reduction relation:
   parameter references at validate time without a new graph-check
   primitive.
 
-Codegen prose (`codegen/rust/README.md`) describes how each binding
-maps to Rust egui calls. The 8 widget kinds (WIDGET-KIND-V1) each get one
-emission stanza:
+The guidance (`guidance.md`) says how each binding becomes egui calls in the code. The 8 widget kinds
+(WIDGET-KIND-V1) and the parameter kinds each accepts:
 
-| widget_kind     | egui call                                                                |
-|-----------------|--------------------------------------------------------------------------|
-| `knob`          | `ui.add(egui_extras::Knob::new(...))` — needs `egui_extras` project dep   |
-| `slider`        | `ui.add(widgets::ParamSlider::for_param(...))`                            |
-| `toggle`        | `ui.add(widgets::ParamButton::for_param(...))`                            |
-| `button`        | `ui.button(...)` with momentary `setter.set_parameter` semantics          |
-| `dropdown`      | `ui.add(widgets::ParamComboBox::for_param(...))`                          |
-| `radio_group`   | `for variant in EnumType::variants() { ui.radio_value(...) }` row         |
-| `numeric_field` | `egui::DragValue::new(...).clamp_range(...)` wired through setter         |
-| `value_display` | `ui.label(format!("{}{}", value, unit))` — read-only                      |
+| widget_kind     | parameter kind | in the code |
+|-----------------|----------------|-------------|
+| `knob`          | float, int     | the adapter's parameter slider (no rotary primitive ships) |
+| `slider`        | float, int     | the adapter's parameter slider |
+| `toggle`        | bool           | a plain checkbox wired through the setter |
+| `button`        | bool           | a button with momentary set semantics |
+| `dropdown`      | enum           | a combo box over the enum's variants, wired through the setter |
+| `radio_group`   | enum           | a radio row over the enum's variants |
+| `numeric_field` | float, int     | a drag value clamped to the range, wired through the setter |
+| `value_display` | any            | a read-only label |
 
 ## Sharp-test rationale
 
 - **Concreteness:** ✓ — names two specific blocks (egui + nih-plug)
   and a specific widget vocabulary (WIDGET-KIND-V1's 8 kinds).
-- **Codegen-completeness:** ✓ — given a conforming TOML, the codegen
-  prose produces working Rust source: per-binding widget calls
-  emitted into the egui block's `parameter_controls` region
-  placeholders. No step requires "depends on which X."
+- **Rule-pack completeness:** ✓ — each binding constrains the code
+  (which widget, in which region, for which parameter), and the kind and
+  purpose rules are stated as checkable rules.
 - **Load-bearing semantic role:** ✓ (vs `embassy+stm32h5-rs`'s
   wiring-stub role). The bridge is the only place that knows both
   parameter type AND widget rendering — neither source block has
-  enough context to emit the binding alone.
+  enough context to state the binding alone.
 
 ## Validate-time enforcement
 
@@ -104,16 +102,13 @@ Two layers of validation in v1:
    referential checks (NIH-EGUI-001 / NIH-EGUI-002 equivalents in the
    spike's framing).
 
-2. **Codegen-prose discipline rules** — the bridge's emission code
-   rejects:
+2. **Guidance rules** — the bridge's guidance refuses:
    - Bindings into a region whose `purpose` ≠ `parameter_controls`.
    - `widget_kind` ↔ `parameter.kind` mismatches (e.g.
      `widget_kind = "toggle"` on a `kind = "float"` parameter).
 
-These are NOT graph-check primitives in v1 — promotion to validate-
-time enforcement (NIH-EGUI-003..009 codes) is a bounded follow-up per
-WIDGET-KIND-V1. Trigger: first dogfood that produces a misbinding the codegen-
-prose discipline doesn't catch.
+These are NOT checks yet — an attribute-mapping check between related entities is
+what turns them into checks (NIH-EGUI-003..009).
 
 ## Co-residency requirement (v1)
 
@@ -135,10 +130,9 @@ metering surfaced in the editor.
 
 ## Deferred (revisit triggers, including WIDGET-KIND-V1)
 
-- **Validate-time enforcement of NIH-EGUI-003..009.** v1 catches them
-  in codegen prose; promotion to graph-check primitives requires
-  designing the cross-attribute primitive (relation attribute vs.
-  target entity attribute joint check).
+- **Validate-time enforcement of NIH-EGUI-003..009.** Stated in the
+  guidance today; an attribute-mapping check between related
+  entities is the planned check.
 - **Multi-parameter widgets.** XY pads (2 parameters), envelope
   editors (N parameters). Different binding family — needs
   `parameter_x` / `parameter_y` or `parameters: [...]` array form.

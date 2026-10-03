@@ -63,7 +63,7 @@ FILE_ALLOWLIST=(
   "src/layout.rs"         # mod tests: SpecConfig fixtures
   "src/lineage.rs"        # mod tests: Lineage::default fixtures
   "src/plugin_root.rs"    # mod tests: SpecConfig fixtures
-  "src/prose_lint.rs"     # mod tests: profiles/audio-plugin etc. fixture trees
+  "src/guidance_lint.rs"  # mod tests: profiles/audio-plugin etc. fixture trees
   "src/reductions.rs"     # mod tests: ReductionNamespace fixtures
   "src/upstream.rs"       # mod tests: UnitKind::Block fixtures
 )

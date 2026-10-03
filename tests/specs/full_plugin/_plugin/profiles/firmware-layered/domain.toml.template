@@ -30,8 +30,7 @@ implementation_unblocked                     = "error"
 
 # Convention: typed-relation ref resolution (decided_by, guided_by,
 # project_decisions, supersedes, closes_questions, defaults_for,
-# affects, default_via, satisfies, depends_on, feature_gates,
-# feature.depends_on) is enforced by REDUCE_UNRESOLVED at reduce time
+# affects, default_via, satisfies, depends_on) is enforced by REDUCE_UNRESOLVED at reduce time
 # — when a target name doesn't resolve, reduction drops the edge and
 # emits REDUCE_UNRESOLVED naming the source entity + the unknown
 # target. graph_check is reserved for non-ref-resolution invariants:

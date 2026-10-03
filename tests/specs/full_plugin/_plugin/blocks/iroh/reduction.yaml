@@ -8,12 +8,12 @@ metaschema_version: "v1"
 # The relation buys real validation: a stream naming a channel that was
 # never declared resolves to nothing, and the existing
 # reference_exists / REDUCE_UNRESOLVED machinery flags it before
-# codegen. No new graph-check primitive is needed.
+# any code is written. No new graph-check primitive is needed.
 #
 # The endpoint's own scalar configuration (alpn, role, identity, relay,
 # address_lookup) is NOT reduced to entities — it is per-module leaf
 # config with nothing to relate to, and materializing it would produce
-# entities no relation ever references. It reaches codegen through the
+# entities no relation ever references. The code reads it from the
 # module spec directly.
 #
 # Cross-block relations do not belong here (leg 3). A consumer that

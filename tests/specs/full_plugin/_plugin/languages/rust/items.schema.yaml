@@ -33,7 +33,7 @@ properties:
       `<Type>` prefix: author `RateLimiter::new`, not `RateLimiter<C>::new`).
       `kind = "impl"` is reserved for a TRAIT impl, named `<TraitRef> for
       <TargetType>` — the conformance is the contract; its method bodies
-      are codegen-derived from the trait, not separate items. An inherent
+      are dictated by the trait, not separate items. An inherent
       impl block is never itself an item. Must be unique within the
       module's items[] array.
     type: string
@@ -80,7 +80,7 @@ properties:
       prose alone is insufficient: trait impls with non-obvious
       generics, FFI declarations, macro contracts. Default is to omit;
       the items model is prose-first and signature_hint is reserved for
-      cases where a downstream codegen or audit step needs structural
+      cases where a downstream check or audit step needs structural
       detail.
     type: string
 

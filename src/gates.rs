@@ -222,6 +222,7 @@ run() {
   status=$?
   if [ "$status" -ne 0 ]; then
     if [ "$status" -eq 126 ] || [ "$status" -eq 127 ]; then
+      echo "specdev-gates: $1 could not start: install it (on a CI runner, install it in CI's workflow)" >&2
       status=2
     fi
     echo "specdev-gates: step failed (exit $status): $*" >&2

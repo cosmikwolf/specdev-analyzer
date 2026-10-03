@@ -67,7 +67,7 @@ entities:
     from: "specs/architecture.toml"
     name: "architecture"
 
-  # Decisions — the *how & why*. Codegen prompt walk follows only
+  # Decisions — the *how & why*. `report decisions` follows only
   # `accepted` entries; `superseded` entries persist as reasoning trail.
   - kind: Decision
     extends: structural
@@ -80,7 +80,7 @@ entities:
       text: ".text"
 
   # Open questions — the *known unknowns*. Three statuses
-  # (open / default_committed / closed) shape the codegen-gate behavior.
+  # (open / default_committed / closed) shape the open-question gate.
   - kind: OpenQuestion
     extends: structural
     from: "specs/open_questions/*.toml"

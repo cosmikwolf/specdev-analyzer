@@ -28,11 +28,10 @@ it is the thing a reader most often needs and least often finds.
 | `[[mk20dx.dma_channels]]` | DMA channel handles, DMAMUX-wired when a source is declared |
 | `[[mk20dx.ftms]]` | running PWM channels, or split FTM parts for manual use |
 
-**Crates: `mk20dx-hal`** (with the `mk20d7`, `rt` and `critical-section`
-features) **and `fugit`** for the timer-period literals
-(`codegen/rust/deps.yaml`). The PAC arrives through the `mk20d7` feature —
-never name a PAC crate directly; the bare `mk20d7` name on crates.io is an
-unrelated 2018 crate.
+**Crates the project's `Cargo.toml` needs: `mk20dx-hal`** (with the `mk20d7`,
+`rt` and `critical-section` features) **and `fugit`** for the timer-period
+literals. The PAC arrives through the `mk20d7` feature — never name a PAC crate
+directly; the bare `mk20d7` name on crates.io is an unrelated 2018 crate.
 
 ## v2 scope — pins, interrupts, clock, and six peripheral surfaces
 
@@ -68,20 +67,11 @@ to the concurrency runtime. Neither is a field here.
 
 ## Verification status
 
-**The codegen prose has a compiled witness: `reference/rust/`.** One
-module per emission kind — pins in every mode the schema admits, a
-pin-trigger port interrupt with its dispatch, a `[[mk20dx.interrupts]]`
-vector with its flag clear, the clock preset, and one module per
-peripheral table (covering both construction forms where an entry forks
-on a field: timer with/without period, FTM with/without frequency) —
-type-checked against the published `mk20dx-hal` the block contributes,
-cross-compiled for the family's target triple, with
-`unused_crate_dependencies` denied so a contributed dep nothing exercises
-fails the build. CI compiles it like every other block's reference crate.
-
-The witness has already corrected the prose once: single-channel PWM duty
-is `set_value` (CnV), while `set_duty` exists only on the combine-mode
-channel pair — the draft prose had the pair's method on the channel.
+The guidance (`guidance.md`) carries the rules for the code. `reference/rust/` is a compiled
+crate against the published `mk20dx-hal`: one module per kind — pins in every mode, a pin-trigger port interrupt with
+its dispatch, an interrupt vector with its flag clear, the clock preset, and each peripheral table in both
+construction forms. It corrected the old prose once: single-channel PWM duty is `set_value` (CnV), while `set_duty`
+exists only on the combine-mode channel pair.
 
 The block was zero-crate until 2026-08-31: the HAL's own manifest used to
 declare its PAC by a path outside its repository, which made it
@@ -111,5 +101,6 @@ carries what neither can state alone.
   The same shape recurs for PIT channels, DMA channels, and peripheral
   instances. Recorded rather than approximated: a check that catches most
   collisions would be worse than none, because it would be trusted. The
-  ONE uniqueness rule that is enforced is `[mk20dx.clock]`'s
-  at-most-one-module, as a codegen-refusal rule in the prose.
+  ONE uniqueness rule stated is `[mk20dx.clock]`'s at-most-one-module, as a
+  guidance rule. A composite-key `unique` check is what can check
+  the rest.

@@ -14,6 +14,7 @@
 //!   domain.toml.template
 //!   schemas/{module,architecture,requirements}.schema.yaml
 //!   reductions/project.yaml
+//!   guidance.md               # → specs/specdev/guidance/profile.md
 //!   README.md                 # author-facing, NOT copied
 //! ```
 //!
@@ -276,9 +277,18 @@ fn profile_plan(profile_dir: &Path) -> Result<Vec<ProfileFile>> {
         });
     }
 
-    // When the profile ships a `templates/` directory (referenced from
-    // profile.yaml's `paired_stub.template_file` and any future
-    // template_file fields), copy each file byte-faithfully to
+    // The profile's implementation guidance inlines next to the units' own
+    // (`specs/specdev/guidance/`), recorded like every profile file.
+    if profile_dir.join(crate::inline::GUIDANCE_FILE).is_file() {
+        plan.push(ProfileFile {
+            src_rel: PathBuf::from(crate::inline::GUIDANCE_FILE),
+            dst_rel: PathBuf::from("specs/specdev/guidance/profile.md"),
+            substitute: false,
+        });
+    }
+
+    // When the profile ships a `templates/` directory (the sources of
+    // profile.yaml's `paired_files`), copy each file byte-faithfully to
     // `<target>/specs/specdev/templates/`. Tokens in the file body are
     // resolved at render time (closed `{key}` grammar); bootstrap-time copy
     // is byte-faithful. Subdirectories are not walked in v1 (no shipped

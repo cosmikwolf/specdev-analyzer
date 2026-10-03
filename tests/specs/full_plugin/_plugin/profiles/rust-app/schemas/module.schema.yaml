@@ -52,8 +52,7 @@ properties:
       static, re-export, or macro contributing to the module's
       contractual surface. Sparseness rule (enforced by the language
       schema): every item except `kind = "re_export"` must carry
-      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
-      symbol emission and by the three-stage agentic sync
+      `satisfies` (≥1 requirement id). Consumed by the three-stage agentic sync
       (`items diff` / `items propose` / `items apply`).
     type: array
     items:
@@ -82,13 +81,14 @@ properties:
     minLength: 1
   context_files:
     description: >
-      Per-module list of project-prose files inlined into the codegen
-      prompt. Paths are spec-root-relative (directory containing
-      `spec.toml`). Validate-time checks ensure each file exists, is
-      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
-      `CONTEXT-003`). Order is preserved at prompt-assembly time;
-      files inline in declared order between architecture.toml and the
-      module spec. Globs and section anchors are bounded deferrals.
+      Reference reading for whoever edits this module (a datasheet
+      section, a protocol note); `context --module` lists the paths in
+      declared order. Paths are spec-root-relative (directory
+      containing `spec.toml`). Validate-time checks ensure each file
+      exists, is readable, and is valid UTF-8 (`CONTEXT-001` /
+      `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
+      belongs in a decision or an open question, not here. Globs and
+      section anchors are bounded deferrals.
     type: array
     items:
       type: string
@@ -98,7 +98,7 @@ properties:
     description: >
       Decision ids that inform this module's implementation but aren't
       pinned to any specific requirement (e.g. naming conventions,
-      project-wide build rules). Resolved into the codegen prompt walk
+      project-wide build rules). `report decisions --module` lists them
       alongside the requirement-anchored `decided_by` decisions.
       Validated by graph check `module_guided_by_resolves`.
     type: array

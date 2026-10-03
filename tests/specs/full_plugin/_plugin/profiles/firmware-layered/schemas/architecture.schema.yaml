@@ -5,14 +5,11 @@ description: |
   Shape of `specs/architecture.toml` for firmware-layered projects.
 
   The schema captures project-wide infrastructure picks (platform,
-  runtime, logger) AS WELL AS cross-module port connections. Every
-  Cargo dep is captured here or in the modules; Cargo.toml is emitted
-  by `gen` from these fields. The spec is the source of truth, not
-  Cargo.toml.
+  runtime) AS WELL AS cross-module port connections. Dependencies,
+  features and build profiles live in `Cargo.toml`, which is their only
+  source of truth.
 
-  Validation here is structural; codegen-time soft checks (e.g.,
-  `[platform].mcu_part` consistency with the inlined MCU block) live
-  in the block's codegen prose, not in this schema.
+  Validation here is structural.
 type: object
 additionalProperties: false
 required: [platform]
@@ -65,47 +62,3 @@ $defs:
       from:      { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       to:        { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       flow_type: { type: string }
-
-  Feature:
-    type: object
-    additionalProperties: false
-    required: [name]
-    properties:
-      name:
-        $ref: "enums.schema.yaml#/$defs/FeatureName"
-      description:
-        type: string
-      depends_on:
-        description: >
-          Other features that must be enabled for this feature to be
-          meaningful. Each entry must name a declared feature — an
-          unknown name is a validate error through the
-          `feature_depends_on` relation.
-        type: array
-        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-        uniqueItems: true
-      cargo_deps:
-        description: >
-          Cargo's open-form feature dep strings — accepts `dep:<crate>`
-          (enable an optional dep without the implicit-feature shadow),
-          `<crate>/<feature>` (enable a feature on a dep), and
-          `<crate>?/<feature>` (weak-dep variant). Emitted into the
-          generated Cargo.toml `[features]` table verbatim, after the
-          `depends_on` entries.
-
-          Use `depends_on` for sibling-feature references (resolved at
-          validate time); use this field for cargo-grammar references
-          that the spec cannot resolve. Cargo rejects a `dep:` that
-          names a crate not marked `optional = true`; the spec does not
-          re-check that.
-        type: array
-        items:
-          type: string
-          pattern: "^(dep:[a-z0-9_-]+|[a-z0-9_-]+\\??/[a-z0-9_-]+)$"
-        uniqueItems: true
-      default:
-        description: >
-          When `true`, this feature is in the crate's `[features]
-          default = [...]` set. Defaults to `false`.
-        type: boolean
-        default: false

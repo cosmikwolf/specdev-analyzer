@@ -23,7 +23,7 @@ description: >
 
   This block models topology only. It contributes one crate, the family's
   HAL (`mk20dx-hal`); the PAC arrives through the HAL's part-selection
-  feature. See `codegen/rust/deps.yaml`.
+  feature. The project's `Cargo.toml` declares it.
 
   This schema is self-contained: identifier patterns are inlined rather
   than $ref'd against profile-shipped enums.schema.yaml so the block
@@ -49,7 +49,7 @@ properties:
           Interrupt vectors this module owns, other than the port vectors
           implied by a pin's `interrupt` trigger. Declaring one records
           that the module is responsible for the handler — and, more
-          usefully, tells codegen which source flag has to be cleared.
+          usefully, tells the code which source flag has to be cleared.
 
           A PIT timer's interrupt is declared HERE (vector `PIT0`..`PIT3`),
           not on the timers entry — one fact, one home.
@@ -60,10 +60,10 @@ properties:
           The clock-tree preset, declared by AT MOST ONE module in the
           project — the one that owns chip init. The tree is configured
           once, before any peripheral exists; every peripheral entry in
-          every module is constructed against the frozen result. Codegen
-          refuses a second declaration (the graph primitives cannot
-          express this uniqueness, so it is a codegen-checked rule — see
-          this block's codegen prose).
+          every module is constructed against the frozen result. A second
+          declaration is refused (no graph primitive expresses this
+          uniqueness yet, so it is a guidance rule — see this block's
+          guidance).
         $ref: "#/$defs/Clock"
       timers:
         description: >
@@ -191,12 +191,12 @@ $defs:
       interrupt:
         description: >
           Condition on which this pin raises its port's interrupt. Stated
-          as intent; codegen writes the matching register field.
+          as intent; the code writes the matching register field.
 
           The chip raises ONE vector per port, shared by every
           interrupting pin on it, so a handler dispatches by reading the
-          port's flag register. That is codegen's job, not the spec's —
-          see this block's codegen prose.
+          port's flag register. That is the code's job, not the spec's —
+          see this block's guidance.
 
           The `dma_*` values request a DMA transfer instead of a CPU
           interrupt; they do not produce a handler.
@@ -223,7 +223,7 @@ $defs:
           MK20DX256 datasheet maximum; `mhz96` / `mhz120` are the
           widely-used Teensy 3.1/3.2 overclocks (120 MHz core / 60 MHz
           bus is the Teensy default). Which presets a part accepts is
-          settled at codegen — see the codegen prose.
+          settled in the guidance.
         type: string
         enum: [mhz48, mhz72, mhz96, mhz120]
 
@@ -438,6 +438,6 @@ $defs:
           not enumerate the chip's vector table.
 
           Which peripheral family a vector belongs to — and therefore how
-          its flag is cleared — is derived from this name by codegen, so
+          its flag is cleared — follows from this name, so
           there is no separate field for it.
         $ref: "#/$defs/Identifier"

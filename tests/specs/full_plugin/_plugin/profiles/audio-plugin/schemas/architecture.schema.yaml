@@ -5,19 +5,14 @@ description: |
   Shape of `specs/architecture.toml` for an audio-plugin project. Three
   required tables:
 
-    [plugin]   — vendor / display / format identity. Drives
-                 `nih_export_*!` macro selection and per-format
-                 constant emission.
+    [plugin]   — vendor / display / format identity: the plugin's
+                 export formats and per-format constants follow it.
     [audio]    — main bus channel layout, sample-rate bounds, latency,
                  optional aux input/output sidechains.
-    [runtime]  — panic handler enum, realtime_audit informational flag.
+    [runtime]  — the panic strategy the release build must use.
 
-  Optional `[[features]]` declares Cargo features (parity with
-  library-api); modules may reference these via `feature_gates[]`. The
-  `module_feature_gates_resolve` graph check verifies references resolve.
-
-  Validation here is structural; codegen-time soft checks (e.g. format
-  / category coherence) live in the codegen prose, not in this schema.
+  Validation here is structural; format / category coherence is in the
+  profile's implementation guidance (`guidance.md`), not in this schema.
 type: object
 additionalProperties: false
 required: [plugin, audio, runtime]
@@ -61,16 +56,16 @@ properties:
       category:
         description: |
           Closed enum: instrument | fx | midi-fx | analyzer.
-          Codegen prose maps this to per-format constants
+          The plugin's per-format constants follow it
           (`VST3_CATEGORIES` string, `CLAP_FEATURES` slice). Free-string
           would be VST3-shaped only; per-format separate fields would
           force authors to repeat the same intent four ways.
         $ref: "enums.schema.yaml#/$defs/PluginCategory"
       formats:
         description: |
-          Distribution formats this plugin supports. At least one. Drives
-          which `nih_export_*!` macros emit and which crate-type targets
-          the plugin Cargo.toml declares:
+          Distribution formats this plugin supports. At least one. The plugin
+          exports these formats, and its Cargo.toml declares the matching
+          crate-type targets:
             "vst3"        → cdylib lib target + nih_export_vst3!
             "clap"        → cdylib lib target + nih_export_clap!
             "standalone"  → adds `[[bin]]` standalone target +
@@ -173,41 +168,3 @@ $defs:
         type: integer
         minimum: 1
         maximum: 32
-
-  Feature:
-    description: |
-      One Cargo feature entry. Mirrors library-api's Feature shape so
-      authors moving between profiles see the same vocabulary.
-    type: object
-    additionalProperties: false
-    required: [name]
-    properties:
-      name:
-        $ref: "enums.schema.yaml#/$defs/FeatureName"
-      description:
-        type: string
-      depends_on:
-        description: >
-          Other features that must be enabled for this feature to be
-          meaningful. The `feature_dependencies_resolve` graph check
-          verifies every entry names a declared feature.
-        type: array
-        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-        uniqueItems: true
-      cargo_deps:
-        description: >
-          Cargo's open-form feature dep strings — accepts `dep:<crate>`,
-          `<crate>/<feature>`, and `<crate>?/<feature>`. Emitted into
-          the generated Cargo.toml `[features]` table verbatim, after
-          the `depends_on` entries.
-        type: array
-        items:
-          type: string
-          pattern: "^(dep:[a-z0-9_-]+|[a-z0-9_-]+\\??/[a-z0-9_-]+)$"
-        uniqueItems: true
-      default:
-        description: >
-          When `true`, this feature is in the crate's
-          `[features] default = [...]` set. Defaults to `false`.
-        type: boolean
-        default: false

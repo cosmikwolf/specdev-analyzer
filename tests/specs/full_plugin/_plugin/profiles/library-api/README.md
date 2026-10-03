@@ -1,41 +1,33 @@
 # library-api profile
 
-A profile for Rust library crates where the load-bearing concerns are
-public-API surface, re-exports, and cargo features.
+A profile for Rust library crates whose load-bearing concern is the public API surface: public modules, re-exports,
+the items other crates call.
 
 ## When to use this profile
 
 Use `library-api` for projects that:
 
-- Ship as a Rust library crate (a `src/lib.rs` consumed by other
-  crates, possibly published to crates.io).
-- Have a meaningful public-API surface (`pub` types, `pub use`
-  re-exports, `pub fn` items).
-- Use cargo features to gate optional functionality (`std`, `alloc`,
-  `serde`, etc.).
+- Ship as a Rust library crate (a `src/lib.rs` consumed by other crates, possibly published to crates.io).
+- Have a meaningful public API (`pub` types, `pub use` re-exports, `pub fn` items) worth stating as a contract.
 - Care about API stability and re-export discipline.
 
-Use `firmware-layered` instead for embedded firmware projects with a
-strict layered architecture (HAL → driver → middleware → application).
-
-Use a future profile (none yet) for binary applications, build tools,
-or projects whose primary concerns are neither layered hardware
-abstraction nor library-API surface.
+Use `firmware-layered` for embedded firmware with a strict layered architecture, and `rust-app` for an executable.
 
 ## Profile contents
 
-| File                                       | Role                                                          |
-|--------------------------------------------|---------------------------------------------------------------|
-| `schemas/module.schema.yaml`               | per-module spec shape (visibility, items[], feature_gates)    |
-| `schemas/architecture.schema.yaml`         | `specs/architecture.toml` shape (cargo features list)         |
-| `schemas/requirements.schema.yaml`         | `specs/requirements.toml` shape (sources + reqs)              |
-| `schemas/enums.schema.yaml`                | shared closed vocabularies (`Visibility`, `FeatureName`)      |
-| `reductions/project.yaml`                  | TOML → universal entity/relation graph                        |
-| `codegen/rust/module.conventions.md`       | Rust emission conventions for libraries                       |
-| `spec.toml.template`                       | bootstrap-time `spec.toml` skeleton                           |
-| `domain.toml.template`                     | bootstrap-time `domain.toml` skeleton + graph checks          |
-| `architecture.toml.template`               | bootstrap-time empty features file with examples              |
-| `requirements.toml.template`               | bootstrap-time empty requirements file with examples          |
+| File | Role |
+|---|---|
+| `profile.yaml` | analyzer dispatch: language, compile gate, paired files |
+| `schemas/module.schema.yaml` | per-module spec shape (visibility, optional `items[]`) |
+| `schemas/architecture.schema.yaml` | `specs/architecture.toml` shape (project decisions) |
+| `schemas/requirements.schema.yaml`, `decisions.schema.yaml`, `open_questions.schema.yaml` | ledger entry shapes |
+| `schemas/enums.schema.yaml` | shared closed vocabularies (`Visibility`, `Identifier`) |
+| `reductions/project.yaml` | TOML → universal entity/relation graph |
+| `guidance.md` | implementation guidance, inlined to `specs/specdev/guidance/profile.md` |
+| `spec.toml.template`, `domain.toml.template` | bootstrap seeds |
+| `templates/specdev-ci.yml.template` | the CI workflow, written once |
+
+`Cargo.toml` is the project's: features, dependencies and the MSRV live there, not in the spec.
 
 ## Module shape
 
@@ -47,7 +39,6 @@ visibility = "pub"
 description = "Top-level rendering surface."
 depends_on = ["Buffer", "Style"]
 satisfies = ["REQ-API-001"]
-feature_gates = ["alloc"]
 
 [[items]]
 name = "DisplayInner"
@@ -57,106 +48,66 @@ target = "inner::Inner"
 visibility = "pub"
 ```
 
-This produces `src/display.rs` (declared from `src/lib.rs` as `pub mod
-display;` under `#[cfg(feature = "alloc")]`), with `pub use inner::Inner
-as DisplayInner;` at the top.
+It lives in `src/display.rs`, declared from `src/lib.rs` as `pub mod display;`. `items[]` is the contract surface:
+`specdev-analyzer items diff` compares it with the public symbols in the code, and `/spec-sync-items` reconciles
+them. A module with no code yet carries `planned = true`.
 
-## Triad model
+## Requirements, decisions, open questions
 
-Requirements never travel alone. Three sibling artifacts under
-`specs/` carry the project's intent, choices, and unknowns:
+One file per entry, under `specs/requirements/`, `specs/decisions/` and `specs/open_questions/`:
 
-| File                  | Role                                                              |
-|-----------------------|-------------------------------------------------------------------|
-| `requirements.toml`   | the WHAT — intent and constraints, traced to sources              |
-| `decisions.toml`      | the HOW & WHY — implementation choices pinned over alternatives   |
-| `open_questions.toml` | the KNOWN UNKNOWNS — things the project hasn't answered yet       |
+| Ledger | Role |
+|---|---|
+| requirements | the **what** — intent and constraints the code must satisfy; `verified_by` names the tests |
+| decisions | the **how & why** — choices pinned over alternatives (`accepted` or `superseded`) |
+| open questions | the **known unknowns** — `open`, `default_committed` or `closed` |
 
-A decision (`DEC-001`, "Use `thiserror` for the public error type")
-carries a `status` of `accepted` or `superseded`. Supersession keeps
-both bodies as a reasoning trail: the successor lists
-`supersedes = ["DEC-003"]`, the old entry flips to `superseded`, and
-codegen prompt walks follow only `accepted` decisions. A decision can
-also resolve open questions via `closes_questions[]` / `defaults_for[]`
-— author ONE direction per cross-reference (convention: prefer the
-question-side `closed_by` / `default_via` pointers; see the comment in
-`decisions.toml.template`).
-
-Typed references wire decisions into the rest of the spec:
-
-- `requirement.decided_by[]` — pins the *how* of a requirement
-- `module.guided_by[]` — informs a module without pinning a requirement
-- `architecture.project_decisions[]` — shapes the project as a whole
-
-An open question (`OQ-001`, "Should the error type be an enum or a
-boxed trait object?") lists the requirement ids it `affects` and moves
-through three statuses:
-
-- `open` — no committed answer. **Hard-blocks codegen**: `gen` aborts
-  for any module whose `satisfies[]` reaches this question through its
-  `affects[]`. No CLI flag bypasses the gate.
-- `default_committed` — a decision committed a working default
-  (`default_via`), with a one-line `verify` falsification plan. Codegen
-  proceeds; the placeholder and `verify` text are inlined into the
-  prompt for affected modules.
-- `closed` — a decision resolved it (`closed_by`). Codegen proceeds;
-  the prompt inlines the resolved answer. The entry persists as audit
-  trail.
-
-The in-spec escape from the gate is downgrading a question to
-`default_committed` — committing a provisional default through a
-decision. Use `/spec-question` for that flow and `/spec-decide` to
-record decisions.
-
-Decisions aren't passive documentation: along the module → requirement
-→ `decided_by` walk, each accepted decision's rationale text is inlined
-into the codegen prompt, so a recorded choice (say, a builder-pattern
-constructor API over config structs) directly shapes the generated
-code.
-
-Validation backs all of this. `validate` checks that supersession
-chains are acyclic and consistent (every superseded entry is named by
-exactly one accepted successor), that every cross-reference resolves,
-and it warns about gate-blocking open questions before `gen` refuses.
+A decision reaches a module through the module's `guided_by[]`, the `decided_by[]` of a requirement it satisfies,
+or the workspace tier; `specdev-analyzer report decisions --module <M>` lists them for whoever edits the code. An
+`open` question that reaches a module with code fails `check` (`implementation_unblocked`); the exits are a decision
+that closes it or a committed default with a `verify` line. Use `/spec-decide` and `/spec-question`.
 
 ## Graph checks shipped
 
-- `unique_qualified_names` — every entity has a unique qualified name (collisions across kinds are surfaced)
-- `modules_acyclic` — module dependency graph has no cycles
-- `feature_unique_names` — every cargo feature has a unique name
-- `feature_dependencies_resolve` — feature `depends_on` references resolve
-- `module_feature_gates_resolve` — every `feature_gates` entry names a declared feature
-- `requirement_ids_unique` — every Requirement id is unique
-- `requirement_satisfies_resolves` — Requirement.satisfies references exist
-- `module_satisfies_resolves` — Module.satisfies references exist
+- `unique_qualified_names` — every entity has a unique qualified name
+- `modules_acyclic` — the module dependency graph has no cycles
+- `requirement_ids_unique` — requirement ids are unique
+- `decision_ids_unique` — decision ids are unique
+- `requirements_have_satisfiers` — every requirement is satisfied by a module (error; a `planned` requirement is exempt)
+- `decision_supersedes_acyclic` — supersession chains have no cycle
+- `decision_supersedes_chain_consistency` — every superseded decision is named by exactly one accepted successor
+- `open_question_closed_by_resolves` — `closed_by` names an existing decision
+- `open_question_status_consistency` — `closed_by` / `default_via` name accepted decisions
+- `implementation_unblocked` — the open-question gate, run by `check`: an `open` question reaches no module that has code
+
+`check` adds the source rule, stale `planned` flags, imports against `depends_on`, and requirement ↔ test.
+
+## Gates and CI
+
+`specs/specdev/profile.yaml` declares the compile gates; the analyzer renders them into `scripts/specdev-gates.sh`,
+which runs `specdev-analyzer check` first and then each gate. CI runs the script. Bootstrap writes
+`.github/workflows/specdev.yml` once (yours afterwards); it reads the repository variable `SPECDEV_ANALYZER_REPO` and
+the secret `SPECDEV_ANALYZER_TOKEN` to build the private analyzer.
+
+**Toolchain CI installs:** the stable Rust toolchain (cargo), which also builds `specdev-analyzer`.
+
+CI installs are frozen: commit the lockfile, or the CI install refuses to change it.
 
 ## Deferred
 
-- **`no-private-in-public-api`** — checks that a `pub` re-export's
-  target traces (transitively) to a `pub` module. Expressible via
-  `reachability` with constraint filters that the existing primitive
-  doesn't yet support directly. Will land if dogfood reveals the gap
-  matters.
-- **Typed library-api API constraints** (MSRV, no_std/alloc support as
-  enum fields). Currently expressed as free-form `requirement.text`.
+- **`no-private-in-public-api`** — a `pub` re-export's target traces (transitively) to a `pub` module. Needs
+  constraint filters on `reachability` that the primitive does not support yet.
+- **Typed API constraints** (MSRV, no_std/alloc support as fields). Expressed as requirement text today; `Cargo.toml`
+  holds the MSRV itself.
 
-## Out-of-band context (escape hatch)
+## Context files
 
-When a module needs prose that doesn't fit the structural spec — a DSP
-algorithm derivation, a protocol's wire-format quirks, a citations-list
-the codegen agent must consult — declare it via the per-module
-`context_files = ["docs/dsp-notes.md", ...]` field. The analyzer's
-`prompt --module <Name>` step inlines each file's contents alongside
-the schema-derived prose when assembling the codegen prompt. Paths are
-project-relative; missing files raise `CONTEXT-001` at validate time.
-
-Use sparingly: structural facts (item lists, dependencies, satisfies)
-belong in the schema; `context_files` is for the irreducibly prose
-context that schema can't carry.
+When a module needs reading that the structural spec cannot carry — a protocol's wire-format quirks, an algorithm
+derivation — list it in the module's `context_files = ["docs/protocol-notes.md", ...]`. `specdev-analyzer context
+--module` lists those paths for whoever edits the module; a missing file is `CONTEXT-001`. A choice belongs in a
+decision, not a context file.
 
 ## Extending
 
-Add blocks via `specdev inline <block>` once the relevant blocks ship.
-Bridges via `specdev inline-bridge <a>+<b>`. Edit `specs/specdev/domain.toml`
-directly to add or modify graph checks; once bootstrapped, that file is
-project-owned.
+Add blocks with `/spec-inline <block>` and bridges with `/spec-inline-bridge <a>+<b>`. Edit
+`specs/specdev/domain.toml` to add or change graph checks; once bootstrapped, that file is project-owned.

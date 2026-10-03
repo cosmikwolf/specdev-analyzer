@@ -1,6 +1,5 @@
-# Written once by `specdev-analyzer manifest --write` when absent, then
-# externally owned. Everything below is never generated and never
-# gen-recorded (see the profile README, "Generated-file ownership").
+# Written once by `specdev-analyzer bootstrap` when absent, then owned by
+# the project. Everything below is tool output that is never committed.
 
 # dependencies
 /node_modules

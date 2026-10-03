@@ -11,7 +11,7 @@ use crate::{
     manifest::profile as profile_mod,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    prose_lint, reduction, reference_lint, resolve, validate,
+    guidance_lint, reduction, reference_lint, resolve, validate,
 };
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -194,7 +194,9 @@ pub enum Command {
         merge: bool,
     },
     /// Plugin-author lint: walk a plugin tree and check structural rules
-    /// (currently: bridge directory names are lex-ordered).
+    /// (bridge names lex-ordered, block files, profile contracts, reference
+    /// crates, and each unit's `guidance.md`: present, no fenced code, under
+    /// the size cap, no profile named in a block's or bridge's).
     PluginLint {
         /// Plugin root directory (must contain `.claude-plugin/plugin.json`).
         #[arg(long)]
@@ -528,7 +530,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             since,
             format,
-        } => run_check(project, spec_path.as_deref(), since, &format, no_color),
+        } => run_check(project, spec_path.as_deref(), plugin_flag.as_deref(), since, &format, no_color),
         Command::ExtractItems { project, module } => {
             run_extract_items(project, spec_path.as_deref(), module.as_deref())
         }
@@ -690,7 +692,7 @@ fn run_validate(
 /// classifier, not by version strings: a plugin release that changes
 /// nothing this project uses stays silent, and a file the plugin moved is
 /// never missed. Silent when no plugin root is named, and when `drift`
-/// cannot run — the notice must never turn into a `validate` failure.
+/// cannot run — the notice must never turn into a `validate` or `check` failure.
 fn plugin_ahead_notice(
     layout: &LayoutContext,
     plugin_flag: Option<&std::path::Path>,
@@ -720,6 +722,7 @@ fn plugin_ahead_notice(
 fn run_check(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<&std::path::Path>,
     since: Option<String>,
     format: &str,
     no_color: bool,
@@ -732,13 +735,16 @@ fn run_check(
         }
     };
     let opts = specdev_analyzer::check::CheckOptions { since };
-    let report = match specdev_analyzer::check::run(&layout, &opts) {
+    let mut report = match specdev_analyzer::check::run(&layout, &opts) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
         }
     };
+    if let Some(notice) = plugin_ahead_notice(&layout, plugin_flag) {
+        report.push(notice);
+    }
     match format {
         "yaml" => match specdev_analyzer::check::to_yaml(&report) {
             Ok(y) => print!("{y}"),
@@ -2078,9 +2084,9 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // Inlined codegen prose must be profile-agnostic (`PROSE-PROFILE-001`):
-    // a block/bridge `codegen/<lang>/README.md` must not name a profile.
-    let prose_offenders = match prose_lint::lint_codegen_prose_profiles(&plugin) {
+    // Every unit ships rules-only guidance under the cap (`GUIDANCE-*`), and
+    // a block's or bridge's names no profile (`PROSE-PROFILE-001`).
+    let prose_offenders = match guidance_lint::lint_guidance(&plugin) {
         Ok(o) => o,
         Err(e) => {
             report_error(&e);
@@ -2107,7 +2113,7 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &profile_offenders {
         eprintln!("{o}");
     }
-    // Prose offenders carry their own `PROSE-PROFILE-NNN` code.
+    // Guidance offenders carry their own `GUIDANCE-NNN` / `PROSE-PROFILE-NNN` code.
     for o in &prose_offenders {
         eprintln!("{o}");
     }
@@ -2122,7 +2128,7 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} prose)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} guidance)",
             bridge_offenders.len(),
             block_offenders.len(),
             reference_offenders.len(),
