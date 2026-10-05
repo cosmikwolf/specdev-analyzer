@@ -42,8 +42,8 @@ coordinate (a tool, a bench) is not listed in the spec.
 
 You have a *validated* single-crate project (`library-api`,
 `firmware-layered`, or `audio-plugin`) and want to make it the first
-member of a new workspace. There is no skill for this yet; the move is
-manual and **ordering-sensitive** — `bootstrap` refuses a target whose
+member of a new workspace. `/spec-add-member` does this; the manual
+recipe below is what it automates. The move is **ordering-sensitive** — `bootstrap` refuses a target whose
 `specs/specdev/` already exists (`BOOTSTRAP-001`), so the single-crate
 baseline must leave the root *before* you bootstrap the workspace shell
 there.
@@ -54,7 +54,7 @@ way: the id-bearing baseline (`spec.toml`, `specs/requirements/`,
 `specs/modules/`) and the member's own machinery (`specs/specdev/`) all
 relocate together, and every path
 resolves relative to the member's `spec.toml` — so a moved member
-validates standalone (bidirectional minimality, above). Move the whole
+validates standalone (bidirectional minimality, below). Move the whole
 tree; do not bootstrap the member fresh and clobber it.
 
 ```bash
@@ -88,8 +88,7 @@ specdev-analyzer check --project .
 single-crate `specs/specdev/`, it fails with `BOOTSTRAP-001`. Move the
 baseline out (step 1) first. If the adopted crate is on an older spec
 format, run `specdev-analyzer migrate` at the root once the member is
-listed — a workspace moves to a new format as one. `/spec-add-member`
-automates this move.
+listed — a workspace moves to a new format as one.
 
 ## Composition with member profiles
 

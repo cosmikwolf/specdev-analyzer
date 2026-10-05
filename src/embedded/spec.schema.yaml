@@ -35,7 +35,7 @@ properties:
       language:
         type: string
         description: |
-          Target language for codegen. Must stay in lockstep with the
+          Project language. Must stay in lockstep with the
           profile schema's `language` enum — a language is admitted to
           both enums in the same change, alongside its adapter.
         enum: [rust, c, cpp, dart, typescript]

@@ -214,3 +214,72 @@ fn nothing() {}
         "expected exit 0 (doc-string filter must drop hits); got non-zero.\nstdout:\n{stdout}"
     );
 }
+
+/// A synthetic plugin tree that carries one file with `body`, plus an empty
+/// analyzer `src/` so the name and planning checks have nothing to report.
+fn removed_term_fixture(tag: &str, rel: &str, body: &str) -> (PathBuf, PathBuf) {
+    let workdir = tmp_dir(tag);
+    let plugin = workdir.join("plugin");
+    let synth_src = workdir.join("src");
+    write_minimal_plugin_tree(&plugin);
+    write_synth_src(&plugin, &[(rel, body)]);
+    std::fs::create_dir_all(&synth_src).unwrap();
+    (plugin, synth_src)
+}
+
+/// Test 5: a removed command named in shipped plugin text fails the lint,
+/// and the report names the file and the line.
+#[test]
+fn removed_term_in_plugin_tree_fails_lint() {
+    let (plugin, src) = removed_term_fixture(
+        "removed-term",
+        "skills/spec-design/SKILL.md",
+        "# Design\n\nWhen the spec is done, run `/spec-gen` to write the code.\n",
+    );
+    let out = run_lint(&plugin, Some(&src));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit for a removed term in the plugin tree; got success.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("skills/spec-design/SKILL.md:3:"),
+        "expected the file and line of the hit in stdout; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("removed-term violation"),
+        "expected the removed-term header in stdout; got:\n{stdout}"
+    );
+}
+
+/// Test 6: the per-line escape silences a removed-term hit.
+#[test]
+fn removed_term_escape_silences_hit() {
+    let (plugin, src) = removed_term_fixture(
+        "removed-term-ok",
+        "skills/spec-design/SKILL.md",
+        "Older trees name `/spec-gen` in their ledgers. <!-- REMOVED-TERM-OK: names the old command -->\n",
+    );
+    let out = run_lint(&plugin, Some(&src));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "expected exit 0 with the escape present.\nstdout:\n{stdout}"
+    );
+}
+
+/// Test 7: `CHANGELOG.md` records what was removed, so it is not scanned.
+#[test]
+fn changelog_is_exempt_from_removed_terms() {
+    let (plugin, src) = removed_term_fixture(
+        "removed-term-changelog",
+        "CHANGELOG.md",
+        "## 0.3.0\n\n- Removed `/spec-gen` and `gen-lineage.toml`.\n",
+    );
+    let out = run_lint(&plugin, Some(&src));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "expected exit 0: CHANGELOG.md is exempt.\nstdout:\n{stdout}"
+    );
+}

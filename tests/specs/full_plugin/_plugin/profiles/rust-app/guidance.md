@@ -23,7 +23,8 @@ tests, and review the rest.
 
 ## Files and visibility
 
-- A top-level module is `src/<name>.rs`; a child is `src/<parent>/<child>.rs`, declared from `src/<parent>.rs`.
+- A top-level module is `src/<name>.rs`; a child is `src/<parent>/<child>.rs`, declared from `src/<parent>.rs`, and
+  its spec sets `source_file` (`check` finds only `src/<name>.rs` and `src/<name>/mod.rs` by name).
 - `module.visibility` decides the declaration in the parent. In an application, `pub` means reachable by the crate's
   tests and `main.rs`; a module only its own layer uses is crate-visible.
 - Import siblings by explicit path; no glob imports from the parent.

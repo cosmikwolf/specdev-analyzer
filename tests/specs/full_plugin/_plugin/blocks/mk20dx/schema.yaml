@@ -12,8 +12,8 @@ description: >
   the construction-time facts a board fixes (instance, pins, rates);
   runtime use of a handle is the module's code, not the spec's. I2C,
   I2S, USB and the small analog blocks (CMP / VREF / DAC) stay out —
-  promote them when a project needs one, with their witness in the same
-  commit.
+  promote them when a project needs one, with its guidance checked
+  against the HAL in the same commit.
 
   Where an entry's field is legal on only one part of the family (SPI1,
   ADC1, FTM2, DMA channels 4-15 exist on the MK20DX256 only), the schema
@@ -21,7 +21,7 @@ description: >
   not exist on the smaller part, so a wrong instance fails the build.
   Same philosophy as interrupt vector names.
 
-  This block models topology only. It contributes one crate, the family's
+  This block models topology only. Its code uses one crate, the family's
   HAL (`mk20dx-hal`); the PAC arrives through the HAL's part-selection
   feature. The project's `Cargo.toml` declares it.
 

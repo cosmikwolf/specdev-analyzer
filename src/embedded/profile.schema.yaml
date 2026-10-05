@@ -58,16 +58,14 @@ properties:
 
   paired_files:
     description: |
-      Profile-shipped config files written **once when absent**
-      by `manifest --write`, then externally owned — never rewritten,
-      never gen-recorded (the category `next build`'s `tsconfig.json`
-      rewrite forces). Language-neutral: applied by the shared manifest
-      runner for every language, merged with the rust arm's `[[bin]]`
-      paired stub. `template_file` is read from the inlined
+      Profile-shipped config files that `bootstrap` writes **once when
+      absent**, then owned by the project — never rewritten (`next
+      build` rewrites `tsconfig.json` on its first run). Language-neutral.
+      `template_file` is read from the inlined
       `<specdev_root>/templates/` copy; the only token substituted is
-      `{project_name}`. `target` is project-root-relative; a target the
-      manifest emitter or a `bin.paired_stub` also writes is refused at
-      manifest time (two writers, one path).
+      `{project_name}`. `target` is project-root-relative and must stay
+      inside the project; a bad row is refused before bootstrap writes
+      any byte.
     type: array
     items:
       type: object
@@ -126,8 +124,8 @@ properties:
 
   items:
     description: |
-      items[] extraction policy (#101(b)). Read by `extract-items`,
-      `items diff` and the validate pass's `verified_by` resolution.
+      items[] extraction policy. Read by `extract-items` and
+      `items diff`.
     type: object
     additionalProperties: false
     properties:
@@ -179,7 +177,7 @@ properties:
 
   context:
     description: |
-      `prompt --module` and `context --module` dispatch.
+      `context --module` extras.
     type: object
     additionalProperties: false
     properties:
@@ -195,8 +193,8 @@ properties:
 
   surface:
     description: |
-      validate-pass routing. Replaces `layout.spec.workspace.is_some()`
-      heuristics in Batch A with declarative profile-driven flags.
+      validate-pass routing: declarative profile-driven flags for the
+      surfaces a profile does not have.
     type: object
     additionalProperties: false
     properties:

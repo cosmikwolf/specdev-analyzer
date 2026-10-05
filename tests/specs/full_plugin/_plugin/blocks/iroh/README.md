@@ -109,11 +109,10 @@ describes a stream reading from the channel that carries data out to the
 caller, which cannot be implemented.
 
 The `stream_on_channel` relation catches an unknown channel name but
-**not** a mismatched direction: a block can declare relations (does the
-target resolve?) but not invariants over the related pair's attributes,
-and no block in this tree declares `graph_checks`. Until that changes,
-this is a review item, and it is an easy one to get wrong — note that the
-two entries above differ only in `direction` and `channel`.
+**not** a mismatched direction. A rule pack could check the pair with
+`related_attrs_allowed` over `stream_on_channel`; this block ships no
+pack yet, so it is a review item, and an easy one to get wrong — note
+that the two entries above differ only in `direction` and `channel`.
 
 Note also that a symmetric peer (`role = "both"`) needs **both**
 directions of every flow it participates in — two stream entries and two
@@ -159,10 +158,10 @@ deliberately **not** a bridge: the endpoint side is substantial and lives
 here, while the consumer side is a drain-and-react loop of roughly fifteen
 lines. A bridge contributing that little does not earn its files.
 
-Note also that a bridge's bindings table must co-reside on a **single
-module** carrying both blocks' tables. A layout that puts the transport in
-one crate and its consumer in another cannot express such a bridge at all —
-another reason the crossing belongs here.
+Note also that a bridge's endpoints resolve within one spec root, so a
+layout that puts the transport in one crate and its consumer in another
+cannot express such a bridge at all — another reason the crossing belongs
+here.
 
 ## Deferred
 

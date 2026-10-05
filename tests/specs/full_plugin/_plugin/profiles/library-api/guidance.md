@@ -6,8 +6,9 @@ contract surface, and review the rest.
 
 ## Files and visibility
 
-- A top-level module is `src/<name>.rs`; a child is `src/<parent>/<child>.rs`, declared from `src/<parent>.rs`. Use
-  a `mod.rs` only when the parent itself spans several files.
+- A top-level module is `src/<name>.rs`; a child is `src/<parent>/<child>.rs`, declared from `src/<parent>.rs`, and
+  its spec sets `source_file` (`check` finds only `src/<name>.rs` and `src/<name>/mod.rs` by name). Use a `mod.rs`
+  only when the parent itself spans several files.
 - `module.visibility` decides the declaration in the parent: `pub`, `crate` (crate-visible) or `private`. Inside a
   crate-visible module, items are plain `pub`; the module already limits their reach.
 - Import siblings by explicit path; no glob imports from the parent.
