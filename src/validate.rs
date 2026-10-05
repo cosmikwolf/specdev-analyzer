@@ -11,7 +11,7 @@
 //!      compiled aggregated schema, and resolves the kind references in
 //!      every `domain.toml` graph-check entry against the effective set.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -712,13 +712,42 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
 
                 execute_graph_checks(
                     &dom.project.graph_checks,
-                    "project",
+                    "domain.toml [project]",
+                    &BTreeMap::new(),
                     &kindset,
                     &graph,
                     &dom,
                     layout,
                     report,
                 );
+                // Each inlined rule pack's graph checks, with the pack's
+                // default severities under the project's.
+                let (packs, load_findings) = crate::packs::load_inlined(&layout.specdev_root);
+                report.extend(load_findings);
+                for pack in &packs {
+                    report.push(Finding::new(
+                        "PACK-000",
+                        Severity::Info,
+                        format!(
+                            "loaded rule pack {} ({} graph check(s), {} code check(s))",
+                            pack.path.display(),
+                            pack.file.graph_checks.len(),
+                            pack.file.code_checks.len()
+                        ),
+                    ));
+                    let label = format!("rule pack {}", pack.path.display());
+                    resolve_check_kinds(&pack.file.graph_checks, &kindset, &pack.path, &label, true, report);
+                    execute_graph_checks(
+                        &pack.file.graph_checks,
+                        &label,
+                        &pack.file.rules,
+                        &kindset,
+                        &graph,
+                        &dom,
+                        layout,
+                        report,
+                    );
+                }
                 // Module-scoped checks are reserved for per-module
                 // execution in a future phase; emit an info instead of
                 // running them at the project level.
@@ -816,6 +845,7 @@ fn validate_context_files(
 fn execute_graph_checks(
     checks: &[GraphCheck],
     section: &str,
+    pack_rules: &BTreeMap<String, Severity>,
     kindset: &EffectiveKindSet,
     graph: &Graph,
     domain: &DomainConfig,
@@ -829,18 +859,43 @@ fn execute_graph_checks(
 
     for check in checks {
         let rule = check.rule.as_deref().unwrap_or("?");
-        let severity = domain.severity_of(rule);
+        let severity = crate::packs::severity(&domain.validation.rules, pack_rules, rule);
         let primitive = check.kind.as_str();
 
 
         let view = filter_graph_for_check(&graph_json, check, kindset);
 
         let findings = match primitive {
-            "unique" => check
-                .field
-                .as_deref()
-                .map(|f| graph_checks::unique(&view, f, rule, severity))
-                .unwrap_or_default(),
+            "unique" => match (check.fields.as_deref(), check.field.as_deref()) {
+                (Some(fields), _) => graph_checks::unique_fields(&view, fields, rule, severity),
+                (None, Some(f)) => graph_checks::unique(&view, f, rule, severity),
+                (None, None) => vec![Finding::new(
+                    "DOMAIN-003",
+                    Severity::Error,
+                    format!("{section} graph_check `{rule}` (unique) needs `field` or `fields`; it checked nothing"),
+                )],
+            },
+            "related_attrs_allowed" => {
+                match (
+                    check.relation_scope.as_deref(),
+                    check.left.as_deref(),
+                    check.right.as_deref(),
+                    check.allowed.as_deref(),
+                ) {
+                    (Some(rs), Some(l), Some(r), Some(allowed)) => {
+                        let view = relations_of_kind(&graph_json, rs, kindset);
+                        graph_checks::related_attrs_allowed(&view, l, r, allowed, rule, severity)
+                    }
+                    _ => vec![Finding::new(
+                        "DOMAIN-003",
+                        Severity::Error,
+                        format!(
+                            "{section} graph_check `{rule}` (related_attrs_allowed) needs `relation_scope`, \
+                             `left`, `right` and `allowed`; it checked nothing"
+                        ),
+                    )],
+                }
+            }
             "reference_exists" => {
                 match (check.source_field.as_deref(), check.target_field.as_deref()) {
                     (Some(s), Some(t)) => {
@@ -1093,19 +1148,48 @@ fn execute_graph_checks(
                 "DOMAIN-003",
                 Severity::Warning,
                 format!(
-                    "domain.toml [{section}] graph_check (rule `{rule}`): \
-                     unknown primitive `{other}` — supported: \
-                     unique, reference_exists, reachability, acyclic, \
-                     layer_dependency, requirements_have_satisfiers, \
-                     entity_has_inbound_relation, verified_by_resolves, \
-                     entity_attr_inbound_count, entity_attr_target_attr_equals, \
-                     module_reachable_through_open_question, ids_in_document"
+                    "{section} graph_check (rule `{rule}`): unknown primitive `{other}` — \
+                     supported: {}",
+                    GRAPH_CHECK_PRIMITIVES.join(", ")
                 ),
             )],
         };
 
         report.extend(findings);
     }
+}
+
+/// The graph-check primitives `execute_graph_checks` dispatches on.
+/// `plugin-lint` refuses a rule pack that names any other.
+pub const GRAPH_CHECK_PRIMITIVES: &[&str] = &[
+    "unique",
+    "reference_exists",
+    "reachability",
+    "acyclic",
+    "layer_dependency",
+    "requirements_have_satisfiers",
+    "entity_has_inbound_relation",
+    "verified_by_resolves",
+    "entity_attr_inbound_count",
+    "entity_count",
+    "entity_attr_target_attr_equals",
+    "module_reachable_through_open_question",
+    "ids_in_document",
+    "related_attrs_allowed",
+];
+
+/// The graph with its relations kept to those whose kind extends `scope`
+/// (all entities kept, so endpoints resolve). An unknown `scope` keeps no
+/// relation: the check fails closed.
+fn relations_of_kind(graph_json: &JsonValue, scope: &str, kindset: &EffectiveKindSet) -> JsonValue {
+    let key = kinds::parse(scope).map(|p| p.to_string()).unwrap_or_else(|_| scope.to_string());
+    let mut view = graph_json.clone();
+    if let Some(rels) = view.get_mut("relations").and_then(|v| v.as_array_mut()) {
+        rels.retain(|r| {
+            r.get("kind").and_then(|k| k.as_str()).is_some_and(|k| relation_extends_to(kindset, k, &key))
+        });
+    }
+    view
 }
 
 /// IDS_IN_DOCUMENT: every entity in `entity_scope` (optionally only those
@@ -1402,8 +1486,24 @@ fn resolve_graph_check_kinds(
     section: &str,
     report: &mut Report,
 ) {
+    resolve_check_kinds(checks, kindset, domain_toml_path, &format!("domain.toml [{section}]"), false, report);
+}
+
+/// As [`resolve_graph_check_kinds`], labelled `label`. With `scopes`, the
+/// `entity_scope` and `relation_scope` fields are resolved too: a rule
+/// pack's checks name its own unit's kinds, which are inlined with it, so an
+/// unresolved one there is a typo. (`domain.toml` checks may name a unit
+/// kind before the unit is inlined; those primitives fail closed instead.)
+fn resolve_check_kinds(
+    checks: &[GraphCheck],
+    kindset: &EffectiveKindSet,
+    file: &Path,
+    label: &str,
+    scopes: bool,
+    report: &mut Report,
+) {
     for (idx, check) in checks.iter().enumerate() {
-        let candidates: [&Option<String>; 7] = [
+        let mut candidates: Vec<&Option<String>> = vec![
             &check.scope,
             &check.field,
             &check.source_field,
@@ -1412,6 +1512,9 @@ fn resolve_graph_check_kinds(
             &check.edges_from,
             &check.edges_to,
         ];
+        if scopes {
+            candidates.extend([&check.entity_scope, &check.relation_scope]);
+        }
         for candidate in candidates.iter().copied().flatten() {
             // A field selector like `[*].kind` or `name` is not a kind
             // reference; only strings that parse as a kind path are
@@ -1430,12 +1533,12 @@ fn resolve_graph_check_kinds(
                         "DOMAIN-003",
                         Severity::Error,
                         format!(
-                            "domain.toml [{section}] graph_check #{idx} (rule `{}`): \
+                            "{label} graph_check #{idx} (rule `{}`): \
                              kind reference `{candidate}` is not in the effective kind set",
                             check.rule.as_deref().unwrap_or("?"),
                         ),
                     )
-                    .with_file(domain_toml_path.display().to_string()),
+                    .with_file(file.display().to_string()),
                 );
             }
         }

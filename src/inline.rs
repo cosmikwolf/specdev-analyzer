@@ -18,6 +18,8 @@
 //!     bindings.schema.yaml
 //!     reduction.yaml
 //!     guidance.md
+//!     checks.toml                     # optional rule pack
+//!     languages/<lang>/<file>.scm     # the pack's queries
 //!     README.md
 //! ```
 //!
@@ -29,6 +31,8 @@
 //! - bridge reduction  → `specs/specdev/reductions/bridges/<a>+<b>.yaml`
 //! - block guidance    → `specs/specdev/guidance/blocks/<name>.md`
 //! - bridge guidance   → `specs/specdev/guidance/bridges/<a>+<b>.md`
+//! - rule pack         → `specs/specdev/checks/{blocks,bridges}/<name>.toml`
+//! - pack query        → `specs/specdev/queries/{blocks,bridges}/<name>/<lang>/<file>.scm`
 //!
 //! After per-unit copies, the unit's schema fragment gets a `$ref` entry
 //! appended to `module.schema.yaml`'s `allOf` array (the aggregator slot).
@@ -151,6 +155,7 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
     });
 
     push_guidance(&mut files, &unit_dir, UnitKind::Block, name)?;
+    push_pack(&mut files, &unit_dir, UnitKind::Block, name)?;
 
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
@@ -209,6 +214,7 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
     }
 
     push_guidance(&mut files, &unit_dir, UnitKind::Bridge, name)?;
+    push_pack(&mut files, &unit_dir, UnitKind::Bridge, name)?;
 
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
@@ -233,6 +239,50 @@ fn push_guidance(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, nam
 /// The guidance file a block, bridge or profile ships at its root.
 pub const GUIDANCE_FILE: &str = "guidance.md";
 
+/// The rule pack a block or bridge may ship at its root.
+pub const CHECKS_FILE: &str = "checks.toml";
+
+/// The unit directory that holds a pack's query files, one subdirectory per
+/// language (`languages/<lang>/<file>.scm`).
+pub const QUERIES_DIR: &str = "languages";
+
+/// The unit's rule pack, when it ships one: `checks.toml` and every query
+/// file under `languages/<lang>/`. All languages are copied, so the file set
+/// does not depend on the project.
+fn push_pack(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, name: &str) -> Result<()> {
+    let mut rels = Vec::new();
+    if unit_dir.join(CHECKS_FILE).is_file() {
+        rels.push(PathBuf::from(CHECKS_FILE));
+    }
+    let langs = unit_dir.join(QUERIES_DIR);
+    if langs.is_dir() {
+        for lang in sorted_entries(&langs)? {
+            if !lang.is_dir() {
+                continue;
+            }
+            for f in sorted_entries(&lang)? {
+                if f.is_file() && f.extension().is_some_and(|x| x == "scm") {
+                    rels.push(f.strip_prefix(unit_dir).expect("under the unit dir").to_path_buf());
+                }
+            }
+        }
+    }
+    for rel in rels {
+        let Some(rel_dst) = unit_rel_dst(kind, name, &rel) else { continue };
+        files.push(UnitFile { rel_dst, bytes: read_file(&unit_dir.join(&rel))?, rel_src_in_unit: rel });
+    }
+    Ok(())
+}
+
+fn sorted_entries(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
 /// Where a unit file inlines, from its path in the unit — the mapping
 /// `collect_block_files` / `collect_bridge_files` use. `None` for a path the
 /// analyzer no longer inlines (e.g. `codegen/…`).
@@ -249,7 +299,16 @@ pub(crate) fn unit_rel_dst(kind: crate::upstream::UnitKind, name: &str, rel_src:
         (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.contract.yaml"))),
         (UnitKind::Block, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/blocks/{name}.md"))),
         (UnitKind::Bridge, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/bridges/{name}.md"))),
-        _ => None,
+        (_, CHECKS_FILE) => Some(PathBuf::from(format!("checks/{}/{name}.toml", kind.dir_segment()))),
+        (_, rel) => {
+            // `languages/<lang>/<file>.scm` → `queries/<kind>/<name>/<lang>/<file>.scm`.
+            let rest = rel.strip_prefix(QUERIES_DIR)?.strip_prefix('/')?;
+            let (lang, file) = rest.split_once('/')?;
+            if lang.is_empty() || file.contains('/') || !file.ends_with(".scm") {
+                return None;
+            }
+            Some(PathBuf::from(format!("queries/{}/{name}/{lang}/{file}", kind.dir_segment())))
+        }
     }
 }
 

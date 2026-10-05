@@ -145,7 +145,7 @@ pub fn report_roots(
     Ok(out)
 }
 
-fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
+pub(crate) fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
     if dir.is_file() {
         out.insert(dir.to_path_buf());
         return;

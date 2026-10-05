@@ -506,7 +506,7 @@ fn classify(base: &[u8], ours: &[u8], theirs: &[u8]) -> FileCategory {
 /// Resolve the project-destination path for a unit-relative file. When
 /// the plugin has the file (and therefore a `UnitFile` with `rel_dst`),
 /// use that; otherwise synthesize from the rel_in_unit + unit kind/name.
-fn project_path_for(
+pub(crate) fn project_path_for(
     layout: &LayoutContext,
     kind: UnitKind,
     name: &str,
@@ -516,20 +516,13 @@ fn project_path_for(
     if let Some(f) = plugin_file {
         return layout.specdev_root.join(&f.rel_dst);
     }
-    // Synthesized — best-effort guess for files the plugin no longer has.
-    // Match the pattern collect_*_files would have produced.
+    // The plugin no longer has the file: map it as inline did. A path the
+    // analyzer no longer inlines (`codegen/…`) keeps its old destination.
+    if let Some(dst) = crate::inline::unit_rel_dst(kind, name, rel_in_unit) {
+        return layout.specdev_root.join(dst);
+    }
     let s = rel_in_unit.to_string_lossy();
-    let suffix = if s == "schema.yaml" || s == "bindings.schema.yaml" {
-        match kind {
-            UnitKind::Block => format!("schemas/inlined/blocks/{name}.schema.yaml"),
-            UnitKind::Bridge => format!("schemas/inlined/bridges/{name}.schema.yaml"),
-        }
-    } else if s == "reduction.yaml" {
-        match kind {
-            UnitKind::Block => format!("reductions/blocks/{name}.yaml"),
-            UnitKind::Bridge => format!("reductions/bridges/{name}.yaml"),
-        }
-    } else if let Some(rest) = s.strip_prefix("codegen/") {
+    let suffix = if let Some(rest) = s.strip_prefix("codegen/") {
         let parts: Vec<&str> = rest.splitn(2, '/').collect();
         if parts.len() == 2 && parts[1] == "README.md" {
             let lang = parts[0];

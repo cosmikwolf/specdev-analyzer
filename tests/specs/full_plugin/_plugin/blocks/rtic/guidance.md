@@ -1,7 +1,8 @@
 # rtic — implementation guidance
 
-Rules an agent follows when it writes or edits code for a module with an `[rtic]` table. No check verifies them
-yet; review does.
+Rules an agent follows when it writes or edits code for a module with an `[rtic]` table. The rule pack checks each
+task against the code by name: a missing task is `pack_entity_in_code`, a `binds` or `priority` that differs is
+`pack_attribute_matches`. Review checks the rest.
 
 ## The application
 
@@ -29,7 +30,8 @@ yet; review does.
 - A hardware task never awaits, and never uses a block-on helper. Work that must await goes to a software task.
 - A `spawn` can fail because an instance is already pending — a normal state. Do not unwrap it.
 - At most one `#[idle]`, and only when the spec declares one.
-- The task names, `binds`, `priority` and the resources each task uses match the spec's `[[rtic.tasks]]` entries;
+- The task names, `binds`, `priority` and the resources each task uses match the spec's `[[rtic.tasks]]` entries.
+  Write `priority` in the attribute when the spec gives it, and only then;
   `uses` lists rtic resources only (hardware handles of the chip unit can share the `#[local]` struct).
 
 ## Channels
