@@ -10,6 +10,8 @@
 //! * **open-question gate** (`implementation_unblocked`) — a module that an
 //!   `open` question reaches (local or workspace tier) and whose source
 //!   resolves is an error, planned or not: the gate keys on code existing;
+//! * **rule packs** (`pack_entity_in_code`, `pack_attribute_matches`) —
+//!   each inlined pack's code checks: see [`crate::code_checks`];
 //! * **`--since <ref>`** — every new `planned` / `test_pending` flag, every
 //!   `hard_gate` flip, and every default committed on a `hard_gate = false`
 //!   question between `<ref>` and the working tree (info findings).
@@ -62,6 +64,7 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     open_question_gate(layout, &modules, &domain, &mut report)?;
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
     internal_edges(layout, &modules, &domain, &mut report)?;
+    pack_code_checks(layout, &graph, &modules, &domain, &mut report);
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -160,6 +163,23 @@ fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &
             _ => {}
         }
     }
+}
+
+/// Each inlined rule pack's spec ↔ code checks.
+fn pack_code_checks(
+    layout: &LayoutContext,
+    graph: &Value,
+    modules: &[ModuleState],
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) {
+    let views: Vec<crate::code_checks::ModuleView<'_>> = modules
+        .iter()
+        .map(|m| crate::code_checks::ModuleView { name: &m.name, planned: m.planned, built: m.source.is_some() })
+        .collect();
+    let empty = BTreeMap::new();
+    let rules = domain.as_ref().map(|d| &d.validation.rules).unwrap_or(&empty);
+    crate::code_checks::run(layout, graph, &views, rules, report);
 }
 
 /// The reduced project graph as JSON.

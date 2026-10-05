@@ -11,7 +11,7 @@ use crate::{
     manifest::profile as profile_mod,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    guidance_lint, reduction, reference_lint, resolve, validate,
+    guidance_lint, pack_lint, reduction, reference_lint, resolve, validate,
 };
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -2093,6 +2093,16 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Each block's and bridge's rule pack parses, its queries compile and
+    // hold the captures its checks name, and its rules are prefixed
+    // (`PACK-LINT-*`).
+    let pack_offenders = match pack_lint::lint_packs(&plugin) {
+        Ok(o) => o,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
 
     // Bridge offenders are name-only strings (single finding code is
     // implicit — `BRIDGE-LEX-001`); we prefix at print time.
@@ -2117,23 +2127,29 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &prose_offenders {
         eprintln!("{o}");
     }
+    // Pack offenders carry their own `PACK-LINT-NNN` code.
+    for o in &pack_offenders {
+        eprintln!("{o}");
+    }
 
     let total = bridge_offenders.len()
         + block_offenders.len()
         + reference_offenders.len()
         + profile_offenders.len()
-        + prose_offenders.len();
+        + prose_offenders.len()
+        + pack_offenders.len();
     if total == 0 {
         eprintln!("plugin lint OK at {}", plugin.display());
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} guidance)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} guidance, {} pack)",
             bridge_offenders.len(),
             block_offenders.len(),
             reference_offenders.len(),
             profile_offenders.len(),
-            prose_offenders.len()
+            prose_offenders.len(),
+            pack_offenders.len()
         );
         ExitCode::from(1)
     }

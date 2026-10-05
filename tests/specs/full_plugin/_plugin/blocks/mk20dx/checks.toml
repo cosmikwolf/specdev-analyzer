@@ -1,0 +1,10 @@
+# mk20dx rule pack. Inlined to specs/specdev/checks/blocks/mk20dx.toml; a
+# project changes a check by editing that copy.
+
+# No two pin entries, in any module, claim the same physical pin: the pair
+# (`port`, `pin`) is unique across the project.
+[[graph_checks]]
+kind = "unique"
+rule = "mk20dx.pins_unique"
+scope = "mk20dx.Pin"
+fields = ["attrs.port", "attrs.pin"]

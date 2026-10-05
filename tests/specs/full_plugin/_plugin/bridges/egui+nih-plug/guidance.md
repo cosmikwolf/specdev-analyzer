@@ -1,8 +1,8 @@
 # egui+nih-plug — implementation guidance
 
 Rules an agent follows when it writes or edits the egui editor of a nih-plug plugin: parameter-to-widget bindings and
-the editor host. No check verifies them yet; review does. The kind and purpose rules below are what a future unit
-check will verify.
+the editor host. The rule pack checks the kind rule (`egui+nih-plug.widget_fits_parameter`) and the region rule
+(`egui+nih-plug.widget_in_controls_region`); review checks the rest.
 
 ## The host
 

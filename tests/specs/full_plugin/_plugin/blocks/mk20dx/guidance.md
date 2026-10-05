@@ -1,7 +1,8 @@
 # mk20dx — implementation guidance
 
 Rules an agent follows when it writes or edits code for a module with an `[mk20dx]` table: the MK20DX (Teensy 3.x)
-chip's pins, interrupts, clock and peripherals through its HAL. No check verifies them; review does.
+chip's pins, interrupts, clock and peripherals through its HAL. The rule pack checks that no two pin entries claim the
+same port and pin (`mk20dx.pins_unique`); review checks the rest.
 
 ## Facts never to guess
 

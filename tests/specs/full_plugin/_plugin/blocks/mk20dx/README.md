@@ -94,13 +94,8 @@ carries what neither can state alone.
   `frequency_hz` hands the split parts over for the module's own code —
   the manual surface (channel pairs, deadtime, quadrature) is used, not
   modelled.
-- **"No two modules claim the same physical pin."** Genuinely worth checking
-  and not expressible as a relation — it is a uniqueness property over the
-  `(port, pin)` pair across modules, and the available graph primitives check
-  uniqueness of a single field, references resolving, orphans, and cycles.
-  The same shape recurs for PIT channels, DMA channels, and peripheral
-  instances. Recorded rather than approximated: a check that catches most
-  collisions would be worse than none, because it would be trusted. The
-  ONE uniqueness rule stated is `[mk20dx.clock]`'s at-most-one-module, as a
-  guidance rule. A composite-key `unique` check is what can check
-  the rest.
+- **The same PIT channel, DMA channel or peripheral instance in two
+  modules.** The same shape as the pin check in `checks.toml`
+  (`mk20dx.pins_unique`, a composite-key `unique` over `port` and `pin`),
+  not yet added for these tables. `[mk20dx.clock]`'s at-most-one-module is a
+  guidance rule.

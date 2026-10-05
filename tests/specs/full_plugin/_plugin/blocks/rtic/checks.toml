@@ -1,0 +1,20 @@
+# rtic rule pack. Inlined to specs/specdev/checks/blocks/rtic.toml; a project
+# changes a check by editing that copy.
+#
+# Each spec task is matched to the code by name: `[[rtic.tasks]]` entry
+# `on_tick` in module `Ticker` (entity `Ticker.on_tick`) is the function
+# `on_tick` under `#[task(...)]` or `#[idle]`. A task the code lacks is
+# `pack_entity_in_code`; a `binds` or `priority` that differs, including one
+# side giving it and the other not, is `pack_attribute_matches`.
+
+[[code_checks]]
+language = "rust"
+query = "languages/rust/tasks.scm"
+entity_kind = "rtic.Task"
+key_capture = "task.name"
+arg_key_capture = "arg.key"
+arg_value_capture = "arg.value"
+
+[code_checks.attributes]
+binds = "binds"
+priority = "priority"

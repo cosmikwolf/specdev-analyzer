@@ -1,0 +1,28 @@
+# egui+nih-plug rule pack. Inlined to
+# specs/specdev/checks/bridges/egui+nih-plug.toml; a project changes a check
+# by editing that copy.
+
+# A widget fits its parameter's kind.
+[[graph_checks]]
+kind = "related_attrs_allowed"
+rule = "egui+nih-plug.widget_fits_parameter"
+relation_scope = "egui+nih-plug.widget_binds_parameter"
+left = "relation.widget_kind"
+right = "to.kind"
+allowed = [
+  ["knob", "float"], ["knob", "int"],
+  ["slider", "float"], ["slider", "int"],
+  ["numeric_field", "float"], ["numeric_field", "int"],
+  ["toggle", "bool"], ["button", "bool"],
+  ["dropdown", "enum"], ["radio_group", "enum"],
+  ["value_display", "*"],
+]
+
+# A widget is placed in a region for parameter controls.
+[[graph_checks]]
+kind = "related_attrs_allowed"
+rule = "egui+nih-plug.widget_in_controls_region"
+relation_scope = "egui+nih-plug.widget_binds_parameter"
+left = "from.purpose"
+right = "relation.widget_kind"
+allowed = [["parameter_controls", "*"]]

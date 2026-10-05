@@ -68,6 +68,121 @@ pub fn unique(root: &Value, field: &str, rule: &str, severity: Severity) -> Vec<
     out
 }
 
+/// The scalar at a dotted path under `v` (`attrs.port`), as text. Strings
+/// are taken as they are; numbers and booleans in their JSON form. `None`
+/// for a missing value, `null`, or a non-scalar.
+pub fn scalar_at(v: &Value, path: &str) -> Option<String> {
+    let mut cur = v;
+    for seg in path.split('.') {
+        cur = cur.get(seg)?;
+    }
+    match cur {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The spec file an entity or relation came from.
+fn provenance_file(v: &Value) -> String {
+    v.pointer("/provenance/source_file").and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
+/// UNIQUE over a composite key: each entity in `root.entities[]` is keyed on
+/// the values at `fields` together. Two entities with the same key are a
+/// finding on the second, naming the first. An entity missing any key part
+/// is not keyed — presence is the schema's job.
+pub fn unique_fields(root: &Value, fields: &[String], rule: &str, severity: Severity) -> Vec<Finding> {
+    let Some(entities) = root.get("entities").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(name) = ent.get("name").and_then(Value::as_str) else { continue };
+        let Some(key) = fields.iter().map(|f| scalar_at(ent, f)).collect::<Option<Vec<String>>>() else {
+            continue;
+        };
+        if let Some(first) = seen.get(&key) {
+            let parts: Vec<String> =
+                fields.iter().zip(&key).map(|(f, v)| format!("{f} = {v}")).collect();
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!("`{name}` has the same {} as `{first}`", parts.join(", ")),
+                )
+                .with_file(provenance_file(ent))
+                .with_entity(name),
+            );
+        } else {
+            seen.insert(key, name.to_string());
+        }
+    }
+    out
+}
+
+/// RELATED ATTRS ALLOWED: for each relation in `root.relations[]`, read
+/// `left` and `right` (each `relation.<attr>`, `from.<attr>` or
+/// `to.<attr>`, the endpoints looked up in `root.entities[]`); the pair must
+/// be one of `allowed`, where `"*"` matches any value. A relation with an
+/// unresolved endpoint or a missing attribute is skipped — the reduction and
+/// the schema own those. The finding's entity is `<from> -> <to>`.
+pub fn related_attrs_allowed(
+    root: &Value,
+    left: &str,
+    right: &str,
+    allowed: &[Vec<String>],
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let by_name: HashMap<&str, &Value> = root
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get("name").and_then(Value::as_str).map(|n| (n, e)))
+        .collect();
+    let side = |rel: &Value, spec: &str| -> Option<String> {
+        let (which, attr) = spec.split_once('.')?;
+        let holder = match which {
+            "relation" => rel,
+            "from" | "to" => by_name.get(rel.get(which)?.as_str()?)?,
+            _ => return None,
+        };
+        scalar_at(holder, &format!("attrs.{attr}"))
+    };
+    let fits = |want: &str, have: &str| want == "*" || want == have;
+    let mut out = Vec::new();
+    for rel in root.get("relations").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(from), Some(to)) = (
+            rel.get("from").and_then(Value::as_str),
+            rel.get("to").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let (Some(l), Some(r)) = (side(rel, left), side(rel, right)) else { continue };
+        let ok = allowed
+            .iter()
+            .any(|pair| pair.len() == 2 && fits(&pair[0], &l) && fits(&pair[1], &r));
+        if !ok {
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!(
+                        "`{from}` -> `{to}`: {left} = `{l}` with {right} = `{r}` is not an allowed pair"
+                    ),
+                )
+                .with_file(provenance_file(rel))
+                .with_entity(format!("{from} -> {to}")),
+            );
+        }
+    }
+    out
+}
+
 #[derive(Debug)]
 struct SeenEntry {
     pointer: String,
