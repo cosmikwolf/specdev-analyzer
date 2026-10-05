@@ -40,6 +40,10 @@ pub const ARCHITECTURE_REMOVED: &[&str] = &[
     "runtime.critical_section_impl",
     "runtime.realtime_audit",
     "logger",
+    // An audio plugin's identity, bus and panic constants: the plugin's code
+    // holds them, and nothing reads the copies.
+    "plugin",
+    "audio",
 ];
 
 /// Paths whose values are dependency entries (`crate` / `package` +
@@ -232,10 +236,8 @@ pub fn strip_architecture(text: &str) -> anyhow::Result<(String, Vec<Removed>, b
         take(doc.as_table_mut(), path, &mut removed);
     }
     // A firmware panic handler is a dependency entry (a table); an audio
-    // plugin's is a strategy string and stays.
-    if doc.get("runtime").and_then(|r| r.get("panic_handler")).is_some_and(|p| p.is_table()) {
-        take(doc.as_table_mut(), "runtime.panic_handler", &mut removed);
-    }
+    // plugin's is a strategy string. Both leave.
+    take(doc.as_table_mut(), "runtime.panic_handler", &mut removed);
     if doc.get("runtime").and_then(|r| r.as_table()).is_some_and(|r| r.is_empty()) {
         doc.remove("runtime");
     }

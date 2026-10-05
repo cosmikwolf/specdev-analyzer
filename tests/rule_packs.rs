@@ -521,3 +521,62 @@ fn merge_deletes_a_removed_file_whose_copy_differs_only_in_line_endings() {
     assert!(!t.root.join(q).exists());
     units_clean(&t, &plugin);
 }
+
+// ---------------------------------------------------------------------------
+// `arg_key`: a fixed argument name for a value with no key node.
+// ---------------------------------------------------------------------------
+
+const STYLE_QUERY: &str = r#"(
+  (attribute_item (attribute (identifier) @style))
+  .
+  (function_item name: (identifier) @entity.key)
+  (#any-of? @style "round" "sharp")
+)
+"#;
+
+const STYLE_CHECK: &str = r#"
+[[code_checks]]
+language = "rust"
+query = "languages/rust/styles.scm"
+entity_kind = "tpack.Part"
+key_capture = "entity.key"
+arg_key = "style"
+arg_value_capture = "style"
+
+[code_checks.attributes]
+style = "style"
+"#;
+
+fn style_plugin(tag: &str, checks: &str) -> PathBuf {
+    let plugin = tpack_plugin(tag, false);
+    let unit = plugin.join("blocks/tpack");
+    std::fs::write(unit.join("checks.toml"), checks).unwrap();
+    std::fs::create_dir_all(unit.join("languages/rust")).unwrap();
+    std::fs::write(unit.join("languages/rust/styles.scm"), STYLE_QUERY).unwrap();
+    plugin
+}
+
+#[test]
+fn arg_key_names_the_value_of_a_capture_with_no_key_node() {
+    let plugin = style_plugin("arg-key", STYLE_CHECK);
+    let t = tree_from("arg-key", &plugin, "firmware-layered", "rust", &["tpack"]);
+    let styled = |n: &str, style: &str| format!("[[tpack.parts]]\nname = \"{n}\"\nstyle = \"{style}\"\n\n");
+    t.write("src/parts.rs", "#[round]\nfn same() {}\n#[sharp]\nfn differs() {}\n").write(
+        "specs/modules/Alpha.toml",
+        &(fw_module("Alpha", "source_file = \"src/parts.rs\"\n") + &styled("same", "round") + &styled("differs", "round")),
+    );
+    t.check(&[])
+        .silent("pack_attribute_matches", "Alpha.same")
+        .silent("pack_entity_in_code", "Alpha.same")
+        .fires("pack_attribute_matches", "Alpha.differs", "error");
+}
+
+#[test]
+fn plugin_lint_refuses_arg_key_with_arg_key_capture() {
+    let both = STYLE_CHECK.replace("arg_key = \"style\"", "arg_key = \"style\"\narg_key_capture = \"style\"");
+    let plugin = style_plugin("arg-key-both", &both);
+    assert_eq!(tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(), 1);
+    let good = style_plugin("arg-key-good", STYLE_CHECK);
+    let out = plugin_lint(&good);
+    assert!(out.lines().all(|l| !l.starts_with("tpack:")), "{out}");
+}

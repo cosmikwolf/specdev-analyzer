@@ -56,6 +56,9 @@ pub struct CodeCheck {
     pub key_capture: String,
     #[serde(default)]
     pub arg_key_capture: Option<String>,
+    /// A fixed argument name, used in place of `arg_key_capture`.
+    #[serde(default)]
+    pub arg_key: Option<String>,
     #[serde(default)]
     pub arg_value_capture: Option<String>,
     /// Source argument name → spec attribute name.

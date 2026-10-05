@@ -4,9 +4,9 @@
 //!   * Bootstrap — `--profile audio-plugin` scaffolds the expected
 //!     layout (module + architecture + requirements + enums schemas;
 //!     module.conventions.md; populated templates).
-//!   * Schema validation — required `[plugin]` / `[audio]` / `[runtime]`
-//!     fields, closed-enum coverage (formats, category, channel layout,
-//!     panic_handler), strict SemVer on `[plugin].version`.
+//!   * Schema validation — the architecture holds `project_decisions` only;
+//!     the identity, bus and panic tables of 1.x are refused (2.0 removes
+//!     them: the plugin's code holds those constants).
 //!   * Layer dependency check — upward edges in the four-tier ordering
 //!     (host_interface → plugin_shell → engine → dsp_node) error.
 //!   * Cargo.toml render — `[lib] crate-type = ["cdylib"]` always;
@@ -68,20 +68,8 @@ fn fresh_plugin(tag: &str) -> (PathBuf, LayoutContext) {
     (target, layout)
 }
 
-/// Default architecture.toml that satisfies all required fields. Tests
-/// that need to exercise specific configurations overwrite this.
-const ARCH_DEFAULT: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-category = "instrument"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+/// Default architecture.toml: no key is required.
+const ARCH_DEFAULT: &str = "";
 
 fn write_arch(target: &Path, body: &str) {
     std::fs::write(target.join("specs/architecture.toml"), body).unwrap();
@@ -141,7 +129,8 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
 
     // Templates rendered into project root.
     assert!(target.join("spec.toml").is_file());
-    assert!(target.join("specs/architecture.toml").is_file());
+    // 2.0: the profile's architecture has no key to seed.
+    assert!(!target.join("specs/architecture.toml").exists());
     // 2.0: one file per entry, so no combined ledger is scaffolded.
     assert!(!target.join("specs/requirements.toml").exists());
     assert!(target.join("specs/specdev/domain.toml").is_file());
@@ -233,17 +222,18 @@ depends_on = ["Shell"]
 }
 
 // ---------------------------------------------------------------------------
-// 5 — Architecture schema: closed-enum `category` rejects unknown values.
+// 5 — Architecture schema: the 1.x identity, bus and panic tables are
+//     refused (a 2.0 tree has them only if `migrate` did not run).
 // ---------------------------------------------------------------------------
 #[test]
-fn architecture_schema_rejects_unknown_category() {
-    let (target, _) = fresh_plugin("bad-category");
+fn architecture_schema_refuses_the_removed_identity_tables() {
+    let (target, _) = fresh_plugin("removed-tables");
     write_arch(
         &target,
         r#"[plugin]
 name = "Demo"
 vendor = "ExampleCo"
-category = "unicorn"
+category = "instrument"
 formats = ["vst3"]
 
 [audio]
@@ -258,7 +248,7 @@ panic_handler = "abort"
     let errs = errors_for(&report, "SCHEMA-ARCH");
     assert!(
         !errs.is_empty(),
-        "expected SCHEMA-ARCH error for unknown category; got {report:#?}"
+        "expected SCHEMA-ARCH error for the removed tables; got {report:#?}"
     );
 }
 

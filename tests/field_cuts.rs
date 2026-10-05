@@ -50,7 +50,10 @@ const REMOVED: &[(&str, &[&str])] = &[
             "runtime.allocator",
             "runtime.critical_section_impl",
             "runtime.realtime_audit",
+            "runtime.panic_handler",
             "logger",
+            "plugin",
+            "audio",
         ],
     ),
     (
@@ -450,4 +453,22 @@ fn a_dev_entry_matches_the_dev_dependency_on_its_own_features() {
     let out = text(&migrate(&t, &["--dry-run"]));
     let l = out.lines().find(|l| l.contains("crate = \"postcard\"")).unwrap_or_else(|| panic!("{out}"));
     assert!(l.contains("[in manifest]"), "{out}");
+}
+
+/// The K2 fields (an audio plugin's identity and bus constants, and its
+/// panic strategy) have no reader and live in the plugin's code as
+/// constants: 2.0 removes them, and the report lists each value.
+#[test]
+fn migrate_removes_the_audio_plugin_identity_and_bus_fields() {
+    let text = "[plugin]\nname = \"p\"\nvendor = \"V\"\ncategory = \"fx\"\nformats = [\"clap\"]\nemail = \"a@b\"\nurl = \"https://x\"\nversion = \"0.1.0\"\n\n[audio]\ndefault_channel_layout = \"stereo\"\nmin_sample_rate = 44100\n\n[runtime]\npanic_handler = \"abort\"\nrealtime_audit = false\n";
+    let (out, removed, keys_left) = specdev_analyzer::field_cuts::strip_architecture(text).unwrap();
+    assert!(!keys_left, "nothing is left:\n{out}");
+    let keys: Vec<&str> = removed.iter().map(|r| r.key.as_str()).collect();
+    for k in ["plugin", "audio", "runtime.panic_handler", "runtime.realtime_audit"] {
+        assert!(keys.iter().any(|x| *x == k || x.starts_with(&format!("{k}."))), "{k} not reported: {keys:?}");
+    }
+    let names: String = removed.iter().map(|r| r.value.clone()).collect::<Vec<_>>().join(" ");
+    for v in ["\"V\"", "\"fx\"", "\"stereo\"", "\"abort\""] {
+        assert!(names.contains(v), "value {v} not in the report: {names}");
+    }
 }

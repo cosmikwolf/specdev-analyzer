@@ -25,8 +25,8 @@ MIDI and the process callback of a nih-plug plugin. No check verifies them; revi
 
 - The CLAP id is the vendor and name, lower case, spaces as hyphens — stable once released.
 - Sample-accurate automation stays on unless the plugin documents block-boundary handling.
-- The audio layout combines `[audio]`'s main channel count with `[[nih_plug.audio_ports]]`: aux and sidechain ports
-  by direction, each with its `channel_count`. A `main` port must agree with `[audio]`.
+- The audio layout combines the main bus with `[[nih_plug.audio_ports]]`: aux and sidechain ports by direction, each
+  with its `channel_count`. A `main` port states the main bus's channel count; the layout follows it.
 - MIDI input and output configs follow `input_level` and `output_level` one to one. CC and pitch-bend events arrive
   only at `midi_ccs`.
 

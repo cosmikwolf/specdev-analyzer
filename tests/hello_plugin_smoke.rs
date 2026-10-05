@@ -15,7 +15,7 @@
 //!   │   └── plugin/               # audio-plugin member
 //!   │       ├── Cargo.toml        # [lib] cdylib + [[bin]] standalone
 //!   │       ├── spec.toml
-//!   │       ├── specs/architecture.toml ([plugin]/[audio]/[runtime]) +
+//!   │       ├── (no architecture.toml: nothing to seed) +
 //!   │       │   modules/MyPlugin.toml ([nih_plug] + [egui] + bindings)
 //!
 //! Exit criteria for this hermetic fixture (a cargo build live against
@@ -169,25 +169,6 @@ description = "Sine-wave oscillator for the hello-plugin engine."
             project_name: "plugin".into(),
             target_dir: plugin_dir.clone(),
         },
-    )
-    .unwrap();
-
-    // Plugin architecture: [plugin] / [audio] / [runtime] populated;
-    // declares vst3 + clap + standalone formats.
-    std::fs::write(
-        plugin_dir.join("specs/architecture.toml"),
-        r#"[plugin]
-name = "Hello Plugin"
-vendor = "ExampleCo"
-category = "instrument"
-formats = ["vst3", "clap", "standalone"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
     )
     .unwrap();
 

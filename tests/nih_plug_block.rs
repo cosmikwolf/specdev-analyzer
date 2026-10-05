@@ -67,18 +67,7 @@ fn fresh_audio_project(tag: &str) -> (PathBuf, LayoutContext) {
     (target, layout)
 }
 
-const ARCH_DEFAULT: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-category = "instrument"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+const ARCH_DEFAULT: &str = "";
 
 fn write_default_arch(target: &Path) {
     std::fs::write(target.join("specs/architecture.toml"), ARCH_DEFAULT).unwrap();

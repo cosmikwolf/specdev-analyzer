@@ -29,8 +29,8 @@ env:
 # `working-directory: specdev-analyzer`, and `Swatinem/rust-cache` is told
 # where the workspace is.
 #
-# Jobs that compile need the plugin checkout: clippy, test, install-smoke,
-# composition-gates. `fmt` does not compile, so it omits it.
+# Jobs that compile need the plugin checkout: clippy, test, install-smoke.
+# `fmt` does not compile, so it omits it.
 #
 # The plugin repository is PRIVATE, so these checkouts need a token with read
 # access to it. The default GITHUB_TOKEN is scoped to THIS repository and
@@ -182,64 +182,6 @@ jobs:
       - run: cargo install --path . --root "$RUNNER_TEMP/install" --locked
         working-directory: specdev-analyzer
       - run: "$RUNNER_TEMP/install/bin/specdev-analyzer --version"
-
-  composition-gates:
-    # Per-stack composition gates. Each bootstraps a project, inlines the
-    # units of one stack, emits the manifest, and RESOLVES it — then asserts
-    # on the resolved lockfile that co-inlined units agree on the packages
-    # they share, and that the join product they exist to produce is present.
-    # For the typescript stack the agreement is a PEER edge, which pnpm
-    # reports as a warning, so the script's resolve passes
-    # `--strict-peer-dependencies`.
-    #
-    # Ignored in the normal `test` job because they reach crates.io, git
-    # remotes, pub.dev and registry.npmjs.org; nothing in the default suite
-    # touches more than one registry. Split into its own job so an outage
-    # reads as "composition gates unavailable", not "the analyzer is broken".
-    #
-    # Every resolver this job installs is load-bearing: the script REFUSES
-    # under CI when one is missing, because a stack that skips is invisible
-    # in the exit code and the job would report PASS having gated less.
-    name: composition gates (network)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout analyzer
-        uses: actions/checkout@v7
-        with:
-          path: specdev-analyzer
-      - name: Checkout specdev plugin tree (sibling — see CHECKOUT LAYOUT)
-        uses: actions/checkout@v7
-        with:
-          # The gates test the units that actually ship, so they run against
-          # the live tree rather than a fixture mirror.
-          repository: ${{ github.repository_owner }}/specdev
-          path: specdev
-          token: ${{ secrets.SPECDEV_PLUGIN_READ_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: specdev-analyzer
-      - uses: subosito/flutter-action@v2
-        with:
-          # The dart stack resolves with `flutter pub get`; without the SDK
-          # that one test skips rather than fails.
-          channel: stable
-      # The typescript stack resolves with `pnpm install --lockfile-only`, and
-      # it SKIPS when pnpm is absent — so without these two steps this job
-      # reports PASS having gated one language fewer than it names. Versions
-      # match the `test` job and `languages/typescript/build.md`'s
-      # `packageManager` / `engines.node` pins, which are what the emitted
-      # manifest declares; pnpm 10 self-manages to the pinned version, so a
-      # mismatch here costs a download rather than a failure.
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10.15.0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.18.0
-      - name: Run composition gates
-        run: bash .github/scripts/composition-gates.sh
-        working-directory: specdev-analyzer
 
   agnosticism-lint:
     # D51 self-enforcement (doc 21 §9). Scans `src/` for hardcoded

@@ -2,148 +2,14 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/audio-plugin/architecture.schema.yaml"
 title: "audio-plugin architecture spec (v1)"
 description: |
-  Shape of `specs/architecture.toml` for an audio-plugin project. Three
-  required tables:
-
-    [plugin]   — vendor / display / format identity: the plugin's
-                 export formats and per-format constants follow it.
-    [audio]    — main bus channel layout, sample-rate bounds, latency,
-                 optional aux input/output sidechains.
-    [runtime]  — the panic strategy the release build must use.
-
-  Validation here is structural; format / category coherence is in the
-  profile's implementation guidance (`guidance.md`), not in this schema.
+  Shape of `specs/architecture.toml` for an audio-plugin project. Holds the
+  project-wide decisions list only. The plugin's identity (name, vendor,
+  category, formats), its buses and its panic strategy are constants in the
+  plugin's code and settings in `Cargo.toml`; the profile's implementation
+  guidance (`guidance.md`) gives their rules.
 type: object
 additionalProperties: false
-required: [plugin, audio, runtime]
 properties:
-  plugin:
-    description: |
-      Plugin vendor + identity + distribution. All five required
-      fields are surfaced to hosts in plugin metadata panels.
-    type: object
-    additionalProperties: false
-    required: [name, vendor, category, formats]
-    properties:
-      name:
-        description: |
-          Display name shown by the host. Need not match the crate
-          name. UTF-8 free string; max length unset in v1 (some hosts
-          truncate at ~32 chars — author at your own risk). The
-          `^[^{}]+$` pattern rejects literal `{{...}}` placeholders
-          that leak through bootstrap (F-001 guard).
-        type: string
-        minLength: 1
-        maxLength: 200
-        pattern: "^[^{}]+$"
-      vendor:
-        description: |
-          Vendor / company display name shown by the host.
-        type: string
-        minLength: 1
-        maxLength: 200
-      url:
-        description: |
-          Optional vendor / product URL. Some hosts expose this as a
-          clickable link.
-        type: string
-        format: uri
-      email:
-        description: |
-          Optional vendor support email. nih-plug surfaces this in the
-          generated VST3 / CLAP factory metadata.
-        $ref: "enums.schema.yaml#/$defs/EmailAddress"
-      category:
-        description: |
-          Closed enum: instrument | fx | midi-fx | analyzer.
-          The plugin's per-format constants follow it
-          (`VST3_CATEGORIES` string, `CLAP_FEATURES` slice). Free-string
-          would be VST3-shaped only; per-format separate fields would
-          force authors to repeat the same intent four ways.
-        $ref: "enums.schema.yaml#/$defs/PluginCategory"
-      formats:
-        description: |
-          Distribution formats this plugin supports. At least one. The plugin
-          exports these formats, and its Cargo.toml declares the matching
-          crate-type targets:
-            "vst3"        → cdylib lib target + nih_export_vst3!
-            "clap"        → cdylib lib target + nih_export_clap!
-            "standalone"  → adds `[[bin]]` standalone target +
-                            nih_export_standalone! in src/bin/standalone.rs
-          AU is out of scope for v1 (separate API surface in nih-plug).
-        type: array
-        items: { $ref: "enums.schema.yaml#/$defs/PluginFormat" }
-        minItems: 1
-        uniqueItems: true
-
-  audio:
-    description: |
-      Main audio bus configuration + optional aux buses. Declared at
-      architecture level because format/host negotiation happens at
-      plugin-shell time, not per module.
-    type: object
-    additionalProperties: false
-    required: [default_channel_layout]
-    properties:
-      default_channel_layout:
-        description: |
-          Default channel layout for the main I/O bus. Hosts may
-          renegotiate at instantiation time; this is the plugin's
-          declared preference.
-        $ref: "enums.schema.yaml#/$defs/ChannelLayout"
-      min_sample_rate:
-        description: |
-          Minimum sample rate (Hz) the plugin supports. Optional; if
-          unset, the plugin accepts whatever the host offers. Common
-          values: 22050, 32000, 44100, 48000.
-        type: integer
-        minimum: 1
-      max_sample_rate:
-        description: |
-          Maximum sample rate (Hz). Common values: 96000, 192000,
-          384000. Optional.
-        type: integer
-        minimum: 1
-      latency_samples:
-        description: |
-          Plugin-declared latency in samples. Hosts use this to
-          compensate plugin delay across the project. Default is 0
-          (no declared latency); set this when the DSP path introduces
-          a fixed sample-aligned delay (FFT lookahead, oversampling
-          group delay).
-        type: integer
-        minimum: 0
-        default: 0
-      aux_inputs:
-        description: |
-          Optional auxiliary input buses (sidechains, key inputs).
-          Hosts route additional signals to these. nih-plug accepts
-          arbitrary channel counts per aux bus.
-        type: array
-        items: { $ref: "#/$defs/AuxBus" }
-      aux_outputs:
-        description: |
-          Optional auxiliary output buses (sends, multi-out).
-        type: array
-        items: { $ref: "#/$defs/AuxBus" }
-
-  runtime:
-    description: |
-      Runtime infrastructure picks. `panic_handler` is required; cdylib
-      builds for VST3 require `abort` (the host catches the abort and
-      unloads the plugin). `unwind` is permitted for standalone-only
-      builds.
-    type: object
-    additionalProperties: false
-    required: [panic_handler]
-    properties:
-      panic_handler:
-        description: |
-          Closed enum (`abort` | `unwind`). VST3 requires `abort`
-          because the host's stack must not see Rust unwinding through
-          a C ABI boundary. Standalone-only builds may use `unwind`.
-        $ref: "enums.schema.yaml#/$defs/PanicHandlerKind"
-
   project_decisions:
     description: >
       Decision ids that shape the project as a whole (workspace shape,
@@ -155,16 +21,3 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-
-$defs:
-  AuxBus:
-    type: object
-    additionalProperties: false
-    required: [name, channel_count]
-    properties:
-      name:
-        $ref: "enums.schema.yaml#/$defs/Identifier"
-      channel_count:
-        type: integer
-        minimum: 1
-        maximum: 32

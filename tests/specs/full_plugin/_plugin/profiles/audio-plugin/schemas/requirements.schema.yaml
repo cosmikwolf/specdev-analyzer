@@ -72,9 +72,8 @@ $defs:
           implementation; the `requirements_have_satisfiers` graph
           check warns if no module declares this requirement in its
           `satisfies` array. `architecture` — captured by an
-          architecture-level decision (e.g. `[plugin].formats`,
-          `[audio].default_channel_layout`) and not a module's
-          responsibility. `build` — captured by build configuration
+          architecture-level decision (e.g. the export formats, the
+          main bus layout) and not a module's responsibility. `build` — captured by build configuration
           (Cargo features, target). `test` — captured by a test suite;
           the `requirements_have_satisfiers` check exempts these;
           `requirements_have_tests` asks for a discovered test named in

@@ -48,18 +48,14 @@ embedded firmware.
 | `schemas/enums.schema.yaml` | shared closed vocabularies |
 | `reductions/project.yaml` | TOML → universal entity/relation graph |
 | `guidance.md` | implementation guidance, inlined to `specs/specdev/guidance/profile.md` |
-| `spec.toml.template`, `domain.toml.template`, `architecture.toml.template` | bootstrap seeds |
+| `spec.toml.template`, `domain.toml.template` | bootstrap seeds |
 | `templates/specdev-ci.yml.template` | the CI workflow, written once |
 
 ## Architecture-level vocabulary
 
-Three required tables in `specs/architecture.toml`:
-
-- `[plugin]` — vendor / display / formats / category: the plugin's identity constants and export formats follow it.
-- `[audio]` — main bus channel layout, sample-rate bounds, latency, optional aux input/output sidechains.
-- `[runtime]` — the panic strategy: `abort` for a VST3 cdylib.
-
-These tables have no check against the code yet.
+`specs/architecture.toml` holds `project_decisions` only. The plugin's identity (name, vendor, category, formats),
+its buses and its panic strategy are constants in the code and settings in `Cargo.toml`; a spec copy of them had no
+check and no reader, so the format does not carry one. `guidance.md` gives their rules.
 `Cargo.toml` is the project's: the `cdylib` crate type, the standalone `[[bin]]`, features and dependencies live
 there. A standalone `[[bin]]` needs `crate-type = ["cdylib", "lib"]` — with `["cdylib"]` alone the bin cannot link
 the crate (the guidance says so).

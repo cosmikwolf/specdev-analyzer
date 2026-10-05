@@ -139,7 +139,6 @@ pub mod prompt;
 pub mod guidance_lint;
 pub mod reduction;
 pub mod reductions;
-pub mod reference_lint;
 pub mod report;
 pub mod resolve;
 pub mod resolved;
