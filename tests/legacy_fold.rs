@@ -6,8 +6,7 @@
 //! skipped, an id it holds with other bytes refuses and shows both. Nothing
 //! is overwritten, and the combined file becomes a tombstone again.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{text, tree, Tree};
 

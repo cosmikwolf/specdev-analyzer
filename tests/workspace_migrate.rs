@@ -8,8 +8,7 @@
 //! 3. A command in a member whose format major differs from the root's
 //!    refuses; a directory the root does not list stays standalone.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

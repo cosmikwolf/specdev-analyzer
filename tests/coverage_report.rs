@@ -10,8 +10,7 @@
 //!   * Default format is YAML when `--format` is omitted.
 //!   * Unknown `--format` value errors with `COVERAGE-001`.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

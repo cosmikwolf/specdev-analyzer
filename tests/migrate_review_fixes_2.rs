@@ -12,8 +12,7 @@
 //! 7. Other shipped files that differ get a "left as is" line.
 //! 8. The tombstone's first line is matched by its whole shape.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{text, tree, tree_v1, Tree};
 

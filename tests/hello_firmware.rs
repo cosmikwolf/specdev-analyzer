@@ -11,8 +11,7 @@
 //! manifest gap would hide exactly in prompt assembly / cargo-toml
 //! dispatch / lineage recording, not in schema validation.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

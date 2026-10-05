@@ -18,8 +18,7 @@
 //! 5. Removing `decisions.toml` and `open_questions.toml` leaves
 //!    `validate` clean (additivity regression).
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

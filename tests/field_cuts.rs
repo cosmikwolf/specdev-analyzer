@@ -17,8 +17,7 @@
 //! 7. `context --module` prints `context_files`; `report decisions` still
 //!    reads `codegen_include`.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::{Path, PathBuf};
 

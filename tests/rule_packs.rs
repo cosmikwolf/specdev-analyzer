@@ -24,8 +24,7 @@
 //!
 //! The test unit `tpack` is made here; no shipped unit is named.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::{Path, PathBuf};
 

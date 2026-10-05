@@ -25,8 +25,7 @@
 //!    and its profile files get a baseline, so `source_file` and `planned`
 //!    validate and `drift` no longer reports the profile `not_recorded`.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{text, tree, tree_v1, Tree};
 

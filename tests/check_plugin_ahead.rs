@@ -3,8 +3,7 @@
 //! `PLUGIN-AHEAD-001` info line points at `/spec-drift`. Silent when the
 //! plugin matches.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::{Path, PathBuf};
 

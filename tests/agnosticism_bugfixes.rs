@@ -3,8 +3,7 @@
 //! more tests here; doc-only findings (F-008, F-015 part 1) are not
 //! covered (no behavior to assert).
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

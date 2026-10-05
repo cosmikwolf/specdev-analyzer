@@ -16,8 +16,7 @@
 //!   * F-006 parity — `requirements_have_satisfiers` fires on
 //!     orphan module-nature requirements.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

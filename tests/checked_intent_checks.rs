@@ -24,8 +24,7 @@
 //!    flip and every default committed on a `hard_gate = false` question.
 //! 8. The ids-in-document check is configured in `domain.toml`.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{fw_module, plugin_with_block, requirement, tree, tree_from, tree_lang, Tree};
 
