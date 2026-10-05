@@ -9,8 +9,8 @@ description: >
   architectural role, where its route file lives under `app/`, which side
   of the client/server boundary its body runs on, and its npm
   dependencies. Route files (`page.tsx`, `layout.tsx`, `route.ts`, the
-  boundary files) are derived from these fields — two-line shims that
-  re-export the module body — never modules themselves.
+  boundary files) sit where `app_path` says — two-line shims, written by
+  hand, that re-export the module body — never modules themselves.
 type: object
 # `unevaluatedProperties: false` rather than `additionalProperties: false`
 # because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware

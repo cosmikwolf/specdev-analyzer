@@ -38,7 +38,7 @@ pub struct GlobalArgs {
     pub plugin_root: Option<PathBuf>,
     /// Suppress ANSI colors. Accepted by every subcommand, so a caller can
     /// pass it everywhere; only output that has color changes (today,
-    /// `validate`).
+    /// `validate` and `check`).
     #[arg(long, global = true)]
     pub no_color: bool,
 }
@@ -78,7 +78,8 @@ pub enum Command {
     /// against `depends_on`, the open-question gate (it keys on code
     /// existing), and each inlined rule pack's code checks; with
     /// `--since <ref>`, every new flag and `hard_gate` change since that git
-    /// ref. `planned` and `test_pending` suppress only findings about
+    /// ref (and every default committed on a `hard_gate = false` question).
+    /// `planned` and `test_pending` suppress only findings about
     /// something missing. Exit 0 when no error finding, 1 when any, 2 when
     /// the check could not run.
     Check {
@@ -254,7 +255,7 @@ pub enum Command {
         dry_run: bool,
         /// Also rewrite profile-scaffolded files that are STALE, not just
         /// missing — schemas, templates and `profile.yaml` the plugin has
-        /// moved since this project was bootstrapped (#109).
+        /// moved since this project was bootstrapped.
         ///
         /// Only files whose on-disk hash still matches the hash bootstrap
         /// recorded are rewritten: matching proves nobody hand-edited
@@ -283,8 +284,8 @@ pub enum Command {
         #[command(subcommand)]
         action: ReportAction,
     },
-    /// Run one declared compile gate. Nothing is recorded: a gate's result
-    /// is its exit code.
+    /// Run a declared compile gate (`--label`), or all of them (`--all`).
+    /// Nothing is recorded: a gate's result is its exit code.
     ///
     /// Looks `--label` up in the `gates:` registry of the inlined
     /// `specs/specdev/profile.yaml`, resolves any
