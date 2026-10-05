@@ -29,8 +29,13 @@ pub fn lint_packs(plugin_root: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for kind in ["blocks", "bridges"] {
         let base = plugin_root.join(kind);
-        let Ok(rd) = std::fs::read_dir(&base) else { continue };
-        let mut units: Vec<_> = rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
+        let Ok(rd) = std::fs::read_dir(&base) else {
+            continue;
+        };
+        let mut units: Vec<_> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir())
+            .collect();
         units.sort();
         for unit in units {
             lint_unit(&unit, &mut out)?;
@@ -45,8 +50,13 @@ fn lint_unit(unit: &Path, out: &mut Vec<String>) -> Result<()> {
     if !path.is_file() {
         return Ok(());
     }
-    let name = unit.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let name = unit
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
+        .to_string();
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let pack = match crate::packs::parse(&text) {
         Ok(p) => p,
         Err(e) => {
@@ -66,22 +76,34 @@ fn lint_unit(unit: &Path, out: &mut Vec<String>) -> Result<()> {
             ));
         }
         if !prefixed(rule) {
-            out.push(format!("{name}: [PACK-LINT-005] graph check rule `{rule}` must be named `{prefix}<rule>`"));
+            out.push(format!(
+                "{name}: [PACK-LINT-005] graph check rule `{rule}` must be named `{prefix}<rule>`"
+            ));
         }
     }
     for rule in pack.rules.keys() {
-        if !prefixed(rule) && ![ENTITY_IN_CODE, ATTRIBUTE_MATCHES, KEY_AMBIGUOUS].contains(&rule.as_str()) {
-            out.push(format!("{name}: [PACK-LINT-005] [rules] entry `{rule}` must be named `{prefix}<rule>`"));
+        if !prefixed(rule)
+            && ![ENTITY_IN_CODE, ATTRIBUTE_MATCHES, KEY_AMBIGUOUS].contains(&rule.as_str())
+        {
+            out.push(format!(
+                "{name}: [PACK-LINT-005] [rules] entry `{rule}` must be named `{prefix}<rule>`"
+            ));
         }
     }
     for check in &pack.code_checks {
         let qpath = unit.join(&check.query);
         let Ok(src) = std::fs::read_to_string(&qpath) else {
-            out.push(format!("{name}: [PACK-LINT-002] query {} is missing", check.query));
+            out.push(format!(
+                "{name}: [PACK-LINT-002] query {} is missing",
+                check.query
+            ));
             continue;
         };
         let Some(adapter) = crate::lang::adapter_for(&check.language) else {
-            out.push(format!("{name}: [PACK-LINT-002] query {}: no adapter for language `{}`", check.query, check.language));
+            out.push(format!(
+                "{name}: [PACK-LINT-002] query {}: no adapter for language `{}`",
+                check.query, check.language
+            ));
             continue;
         };
         let mut wanted = vec![check.key_capture.as_str()];

@@ -319,7 +319,10 @@ fn triad_smoke_validate_baseline() {
         .iter()
         // ZFM-003 is an orphan by design (the coverage tests use it); the
         // 2.0 templates make that an error.
-        .filter(|f| matches!(f.severity, specdev_analyzer::Severity::Error) && f.rule != "requirements_have_satisfiers")
+        .filter(|f| {
+            matches!(f.severity, specdev_analyzer::Severity::Error)
+                && f.rule != "requirements_have_satisfiers"
+        })
         .collect();
     assert!(
         errors.is_empty(),
@@ -1002,13 +1005,17 @@ fn triad_red_open_question_gate_runs_in_check() {
         !report
             .findings()
             .iter()
-            .any(|f| f.rule == "implementation_unblocked" && f.entity.as_deref() == Some("module_ok")),
+            .any(|f| f.rule == "implementation_unblocked"
+                && f.entity.as_deref() == Some("module_ok")),
         "codegen_unblocked should not flag module_ok; got:\n{}",
         report.render_plain()
     );
     // `validate` alone no longer runs the gate.
     let spec_only = validate::run_project(&target, None).expect("validate");
-    assert!(!spec_only.findings().iter().any(|f| f.rule == "implementation_unblocked"));
+    assert!(!spec_only
+        .findings()
+        .iter()
+        .any(|f| f.rule == "implementation_unblocked"));
 }
 
 // Regression for the joint-filter — when a project authors dual

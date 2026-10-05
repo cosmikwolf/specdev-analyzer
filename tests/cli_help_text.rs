@@ -131,7 +131,11 @@ fn every_long_help() -> Vec<(String, String)> {
 fn long_help_names_no_removed_term() {
     let pattern = format!("{}|\\bcodegen\\b", removed_terms_pattern());
     let helps = every_long_help();
-    assert!(helps.len() > 15, "expected every subcommand; got {}", helps.len());
+    assert!(
+        helps.len() > 15,
+        "expected every subcommand; got {}",
+        helps.len()
+    );
     let mut hits = Vec::new();
     for (path, help) in &helps {
         let mut child = std::process::Command::new("grep")
@@ -141,7 +145,12 @@ fn long_help_names_no_removed_term() {
             .spawn()
             .expect("grep runs");
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(help.as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(help.as_bytes())
+            .unwrap();
         let out = child.wait_with_output().unwrap();
         match out.status.code() {
             Some(0) => hits.push(format!(
@@ -152,5 +161,9 @@ fn long_help_names_no_removed_term() {
             other => panic!("grep failed on `{path}` ({other:?}): pattern {pattern}"),
         }
     }
-    assert!(hits.is_empty(), "removed terms in long help:\n{}", hits.join("\n"));
+    assert!(
+        hits.is_empty(),
+        "removed terms in long help:\n{}",
+        hits.join("\n")
+    );
 }

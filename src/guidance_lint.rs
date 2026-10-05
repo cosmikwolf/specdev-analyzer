@@ -43,7 +43,11 @@ pub fn lint_guidance(plugin_root: &Path) -> Result<Vec<String>> {
     let mut offenders = Vec::new();
     for kind in ["blocks", "bridges", "profiles"] {
         for unit in unit_dirs(plugin_root, kind)? {
-            let names: &[String] = if kind == "profiles" { &[] } else { &profile_names };
+            let names: &[String] = if kind == "profiles" {
+                &[]
+            } else {
+                &profile_names
+            };
             scan_unit(&unit, names, &mut offenders)?;
         }
     }
@@ -82,7 +86,8 @@ fn scan_unit(unit: &Path, profiles: &[String], offenders: &mut Vec<String>) -> R
         ));
         return Ok(());
     }
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     if text.len() > GUIDANCE_CAP_BYTES {
         offenders.push(format!(
             "{unit_name}: [GUIDANCE-003] {GUIDANCE_FILE} is {} bytes; the cap is {GUIDANCE_CAP_BYTES}",
@@ -164,8 +169,15 @@ mod tests {
 
     /// Two profiles, one block, each with clean guidance.
     fn scaffold(root: &Path) {
-        for p in ["profiles/audio-plugin", "profiles/firmware-layered", "blocks/egui"] {
-            write(&root.join(p).join(GUIDANCE_FILE), "# guidance\n\n- A rule.\n");
+        for p in [
+            "profiles/audio-plugin",
+            "profiles/firmware-layered",
+            "blocks/egui",
+        ] {
+            write(
+                &root.join(p).join(GUIDANCE_FILE),
+                "# guidance\n\n- A rule.\n",
+            );
         }
     }
 
@@ -180,11 +192,20 @@ mod tests {
     fn flags_a_profile_name_in_block_guidance_only() {
         let root = tmp("flag");
         scaffold(&root);
-        write(&root.join("blocks/egui").join(GUIDANCE_FILE), "- Layer on the audio-plugin profile.\n");
-        write(&root.join("profiles/audio-plugin").join(GUIDANCE_FILE), "- The audio-plugin crate is a cdylib.\n");
+        write(
+            &root.join("blocks/egui").join(GUIDANCE_FILE),
+            "- Layer on the audio-plugin profile.\n",
+        );
+        write(
+            &root.join("profiles/audio-plugin").join(GUIDANCE_FILE),
+            "- The audio-plugin crate is a cdylib.\n",
+        );
         let offenders = lint_guidance(&root).unwrap();
         assert_eq!(offenders.len(), 1, "{offenders:?}");
-        assert!(offenders[0].starts_with("egui: [PROSE-PROFILE-001]"), "{offenders:?}");
+        assert!(
+            offenders[0].starts_with("egui: [PROSE-PROFILE-001]"),
+            "{offenders:?}"
+        );
     }
 
     #[test]
@@ -203,10 +224,28 @@ mod tests {
         let root = tmp("shape");
         scaffold(&root);
         fs::remove_file(root.join("profiles/firmware-layered").join(GUIDANCE_FILE)).unwrap();
-        write(&root.join("blocks/egui").join(GUIDANCE_FILE), &format!("~~~\nx\n~~~\n{}", "y".repeat(5000)));
+        write(
+            &root.join("blocks/egui").join(GUIDANCE_FILE),
+            &format!("~~~\nx\n~~~\n{}", "y".repeat(5000)),
+        );
         let offenders = lint_guidance(&root).unwrap();
-        assert!(offenders.iter().any(|o| o.starts_with("firmware-layered: [GUIDANCE-001]")), "{offenders:?}");
-        assert!(offenders.iter().any(|o| o.starts_with("egui: [GUIDANCE-002]")), "{offenders:?}");
-        assert!(offenders.iter().any(|o| o.starts_with("egui: [GUIDANCE-003]")), "{offenders:?}");
+        assert!(
+            offenders
+                .iter()
+                .any(|o| o.starts_with("firmware-layered: [GUIDANCE-001]")),
+            "{offenders:?}"
+        );
+        assert!(
+            offenders
+                .iter()
+                .any(|o| o.starts_with("egui: [GUIDANCE-002]")),
+            "{offenders:?}"
+        );
+        assert!(
+            offenders
+                .iter()
+                .any(|o| o.starts_with("egui: [GUIDANCE-003]")),
+            "{offenders:?}"
+        );
     }
 }

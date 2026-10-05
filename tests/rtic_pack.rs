@@ -35,10 +35,17 @@ fn tasks_are_found_through_other_attributes_and_comments() {
                  [[rtic.tasks]]\nname = \"doc_between\"\nkind = \"software\"\npriority = 1\n\n\
                  [[rtic.tasks]]\nname = \"doc_above\"\nkind = \"software\"\npriority = 1\n\n\
                  [[rtic.tasks]]\nname = \"idle\"\nkind = \"idle\"\n";
-    t.write("src/main.rs", APP)
-        .write("specs/modules/App.toml", &(fw_module("App", "source_file = \"src/main.rs\"\n") + tasks));
+    t.write("src/main.rs", APP).write(
+        "specs/modules/App.toml",
+        &(fw_module("App", "source_file = \"src/main.rs\"\n") + tasks),
+    );
     let c = t.check(&[]);
-    for task in ["App.two_attrs", "App.doc_between", "App.doc_above", "App.idle"] {
+    for task in [
+        "App.two_attrs",
+        "App.doc_between",
+        "App.doc_above",
+        "App.idle",
+    ] {
         c.silent("pack_entity_in_code", task);
     }
     c.silent("pack_attribute_matches", "App.two_attrs")
@@ -66,7 +73,9 @@ mod app {
 #[test]
 fn resources_are_matched_by_struct_or_inline_local_and_sharing() {
     let t = tree("rtic-resources", "firmware-layered", &["rtic", "mk20dx"]);
-    let res = |n: &str, sharing: &str| format!("[[rtic.resources]]\nname = \"{n}\"\nsharing = \"{sharing}\"\ntype = \"u8\"\n\n");
+    let res = |n: &str, sharing: &str| {
+        format!("[[rtic.resources]]\nname = \"{n}\"\nsharing = \"{sharing}\"\ntype = \"u8\"\n\n")
+    };
     let body = format!(
         "[[rtic.tasks]]\nname = \"work\"\nkind = \"software\"\npriority = 1\n\n{}{}{}{}{}",
         res("count", "shared"),
@@ -76,11 +85,14 @@ fn resources_are_matched_by_struct_or_inline_local_and_sharing() {
         res("wrong_place", "local"),
         res("gone", "shared"),
     );
-    t.write("src/main.rs", RESOURCES_APP)
-        .write("specs/modules/App.toml", &(fw_module("App", "source_file = \"src/main.rs\"\n") + &body));
+    t.write("src/main.rs", RESOURCES_APP).write(
+        "specs/modules/App.toml",
+        &(fw_module("App", "source_file = \"src/main.rs\"\n") + &body),
+    );
     let c = t.check(&[]);
     for r in ["App.count", "App.led_on", "App.buf"] {
-        c.silent("pack_entity_in_code", r).silent("pack_attribute_matches", r);
+        c.silent("pack_entity_in_code", r)
+            .silent("pack_attribute_matches", r);
     }
     c.fires("pack_attribute_matches", "App.wrong_place", "error")
         .fires("pack_entity_in_code", "App.gone", "error")

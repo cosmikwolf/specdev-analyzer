@@ -68,14 +68,18 @@ fn hello_rtic_project(tag: &str) -> (PathBuf, LayoutContext) {
     run_inline_block(&layout, &full_plugin(), "rtic").unwrap();
     run_inline_block(&layout, &full_plugin(), "mk20dx").unwrap();
 
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-TICK-001"
 text = "A periodic tick shall increment a counter that a lower-priority task drains."
 
 [[requirement]]
 id = "REQ-LED-001"
 text = "The board LED shall toggle as a liveness indicator."
-"#);
+"#,
+    );
 
     std::fs::write(
         target.join("specs/modules/Ticker.toml"),

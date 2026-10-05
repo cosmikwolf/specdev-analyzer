@@ -48,20 +48,34 @@ fn v1_workspace(tag: &str) -> Tree {
     let r = root
         .read(red)
         .replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"")
-        .replace("\"specs/open_questions/*.toml\"", "\"specs/open_questions.toml\"");
+        .replace(
+            "\"specs/open_questions/*.toml\"",
+            "\"specs/open_questions.toml\"",
+        );
     root.write(red, &r);
     root.write("specs/decisions.toml", DEC_100);
     let frozen = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees/library-api");
     for m in ["a", "b"] {
         copy_dir(&frozen, &root.root.join("crates").join(m));
     }
-    let v = Tree { root: root.root.join("crates/a"), plugin: root.plugin.clone() }.analyzer(&["validate", "-q"]);
-    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "member a must load in 1.x:\n{}", text(&v));
+    let v = Tree {
+        root: root.root.join("crates/a"),
+        plugin: root.plugin.clone(),
+    }
+    .analyzer(&["validate", "-q"]);
+    assert!(
+        text(&v).lines().any(|l| l.starts_with("0 error(s)")),
+        "member a must load in 1.x:\n{}",
+        text(&v)
+    );
     root
 }
 
 fn member(root: &Tree, m: &str) -> Tree {
-    Tree { root: root.root.join("crates").join(m), plugin: root.plugin.clone() }
+    Tree {
+        root: root.root.join("crates").join(m),
+        plugin: root.plugin.clone(),
+    }
 }
 
 fn migrate(t: &Tree) -> std::process::Output {
@@ -81,7 +95,10 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
             if p.is_dir() {
                 walk(root, &p, out);
             } else {
-                out.insert(p.strip_prefix(root).unwrap().to_path_buf(), std::fs::read(&p).unwrap());
+                out.insert(
+                    p.strip_prefix(root).unwrap().to_path_buf(),
+                    std::fs::read(&p).unwrap(),
+                );
             }
         }
     }
@@ -100,9 +117,16 @@ fn migrate_at_the_root_moves_the_root_and_every_member() {
     for m in ["a", "b"] {
         let t = member(&root, m);
         assert_eq!(version(&t), "2.0", "member {m}");
-        assert!(t.root.join("scripts/specdev-gates.sh").is_file(), "member {m} has its gate script");
+        assert!(
+            t.root.join("scripts/specdev-gates.sh").is_file(),
+            "member {m} has its gate script"
+        );
         let v = t.analyzer(&["validate", "-q"]);
-        assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "member {m}:\n{}", text(&v));
+        assert!(
+            text(&v).lines().any(|l| l.starts_with("0 error(s)")),
+            "member {m}:\n{}",
+            text(&v)
+        );
     }
     assert!(root.read("scripts/specdev-gates.sh").contains("crates/a"));
 }
@@ -116,8 +140,16 @@ fn a_refusal_in_one_member_writes_nothing_anywhere() {
     let before = snapshot(&root.root);
     let out = migrate(&root);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
-    assert!(text(&out).contains("MIGRATE-014") && text(&out).contains("crates/b"), "{}", text(&out));
-    assert_eq!(before, snapshot(&root.root), "a refused workspace migrate wrote to disk");
+    assert!(
+        text(&out).contains("MIGRATE-014") && text(&out).contains("crates/b"),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(
+        before,
+        snapshot(&root.root),
+        "a refused workspace migrate wrote to disk"
+    );
 }
 
 #[test]
@@ -128,7 +160,10 @@ fn migrate_in_a_member_refuses_and_names_the_root() {
     let out = migrate(&a);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let all = text(&out);
-    assert!(all.contains("MIGRATE-015") && all.contains(root.root.to_str().unwrap()), "{all}");
+    assert!(
+        all.contains("MIGRATE-015") && all.contains(root.root.to_str().unwrap()),
+        "{all}"
+    );
     assert_eq!(before, snapshot(&root.root));
 }
 
@@ -137,15 +172,29 @@ fn a_member_at_another_major_than_its_root_refuses_every_command() {
     let root = v1_workspace("ws-major");
     assert!(migrate(&root).status.success());
     let a = member(&root, "a");
-    a.write("spec.toml", &a.read("spec.toml").replacen("spec_version = \"2.0\"", "spec_version = \"1.0\"", 1));
+    a.write(
+        "spec.toml",
+        &a.read("spec.toml")
+            .replacen("spec_version = \"2.0\"", "spec_version = \"1.0\"", 1),
+    );
     for args in [&["validate"][..], &["check"][..], &["report", "tests"][..]] {
         let out = a.analyzer(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}:\n{}", text(&out));
-        assert!(text(&out).contains("FORMAT-002"), "{args:?}:\n{}", text(&out));
+        assert!(
+            text(&out).contains("FORMAT-002"),
+            "{args:?}:\n{}",
+            text(&out)
+        );
     }
     // A directory the root does not list is a project of its own.
-    let stray = Tree { root: root.root.join("tools/stray"), plugin: root.plugin.clone() };
-    copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees/library-api"), &stray.root);
+    let stray = Tree {
+        root: root.root.join("tools/stray"),
+        plugin: root.plugin.clone(),
+    };
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees/library-api"),
+        &stray.root,
+    );
     let out = stray.analyzer(&["validate", "-q"]);
     assert!(!text(&out).contains("FORMAT-002"), "{}", text(&out));
 }

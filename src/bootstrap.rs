@@ -438,7 +438,9 @@ pub fn run_bootstrap_with(
             let has_conventions = std::fs::read_dir(&lang_dir)
                 .map(|it| {
                     it.filter_map(|r| r.ok()).any(|e| {
-                        e.file_name().to_str().is_some_and(|s| s.ends_with(".conventions.md"))
+                        e.file_name()
+                            .to_str()
+                            .is_some_and(|s| s.ends_with(".conventions.md"))
                     })
                 })
                 .unwrap_or(false);
@@ -645,8 +647,16 @@ fn check_enclosing_workspace_format(target: &Path) -> Result<()> {
         if let Ok(text) = std::fs::read_to_string(&candidate) {
             if let Ok(doc) = toml::from_str::<toml::Table>(&text) {
                 if doc.contains_key("workspace") {
-                    let version = doc.get("spec_version").and_then(|v| v.as_str()).unwrap_or("1.0").to_string();
-                    let major: u32 = version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(1);
+                    let version = doc
+                        .get("spec_version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1.0")
+                        .to_string();
+                    let major: u32 = version
+                        .split('.')
+                        .next()
+                        .and_then(|m| m.parse().ok())
+                        .unwrap_or(1);
                     if major != crate::config::NEWEST_FORMAT_MAJOR {
                         return Err(anyhow!(
                             "[FORMAT-002] {} would be a {}.0 project inside the workspace at {}, which is at \
@@ -687,10 +697,14 @@ fn profile_language(profile_dir: &Path) -> Result<Option<String>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let value: serde_yaml::Value =
         serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    Ok(value.get("language").and_then(|v| v.as_str()).map(str::to_string))
+    Ok(value
+        .get("language")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
 }
 
 fn manifest_bootstrap_steps(profile_dir: &Path) -> Result<Option<Vec<BootstrapStep>>> {

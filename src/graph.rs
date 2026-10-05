@@ -86,27 +86,44 @@ pub fn scalar_at(v: &Value, path: &str) -> Option<String> {
 
 /// The spec file an entity or relation came from.
 fn provenance_file(v: &Value) -> String {
-    v.pointer("/provenance/source_file").and_then(Value::as_str).unwrap_or_default().to_string()
+    v.pointer("/provenance/source_file")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// UNIQUE over a composite key: each entity in `root.entities[]` is keyed on
 /// the values at `fields` together. Two entities with the same key are a
 /// finding on the second, naming the first. An entity missing any key part
 /// is not keyed — presence is the schema's job.
-pub fn unique_fields(root: &Value, fields: &[String], rule: &str, severity: Severity) -> Vec<Finding> {
+pub fn unique_fields(
+    root: &Value,
+    fields: &[String],
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
     let Some(entities) = root.get("entities").and_then(Value::as_array) else {
         return Vec::new();
     };
     let mut seen: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let mut out = Vec::new();
     for ent in entities {
-        let Some(name) = ent.get("name").and_then(Value::as_str) else { continue };
-        let Some(key) = fields.iter().map(|f| scalar_at(ent, f)).collect::<Option<Vec<String>>>() else {
+        let Some(name) = ent.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(key) = fields
+            .iter()
+            .map(|f| scalar_at(ent, f))
+            .collect::<Option<Vec<String>>>()
+        else {
             continue;
         };
         if let Some(first) = seen.get(&key) {
-            let parts: Vec<String> =
-                fields.iter().zip(&key).map(|(f, v)| format!("{f} = {v}")).collect();
+            let parts: Vec<String> = fields
+                .iter()
+                .zip(&key)
+                .map(|(f, v)| format!("{f} = {v}"))
+                .collect();
             out.push(
                 Finding::new(
                     rule,
@@ -155,14 +172,21 @@ pub fn related_attrs_allowed(
     };
     let fits = |want: &str, have: &str| want == "*" || want == have;
     let mut out = Vec::new();
-    for rel in root.get("relations").and_then(Value::as_array).into_iter().flatten() {
+    for rel in root
+        .get("relations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let (Some(from), Some(to)) = (
             rel.get("from").and_then(Value::as_str),
             rel.get("to").and_then(Value::as_str),
         ) else {
             continue;
         };
-        let (Some(l), Some(r)) = (side(rel, left), side(rel, right)) else { continue };
+        let (Some(l), Some(r)) = (side(rel, left), side(rel, right)) else {
+            continue;
+        };
         let ok = allowed
             .iter()
             .any(|pair| pair.len() == 2 && fits(&pair[0], &l) && fits(&pair[1], &r));
@@ -485,7 +509,12 @@ pub fn requirements_have_satisfiers(root: &Value, rule: &str, severity: Severity
             continue;
         }
         // `planned = true`: not built yet, so a missing satisfier is expected.
-        if ent.get("attrs").and_then(|a| a.get("planned")).and_then(|p| p.as_bool()) == Some(true) {
+        if ent
+            .get("attrs")
+            .and_then(|a| a.get("planned"))
+            .and_then(|p| p.as_bool())
+            == Some(true)
+        {
             continue;
         }
         out.push(

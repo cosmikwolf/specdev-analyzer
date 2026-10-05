@@ -112,7 +112,9 @@ fn inline_block_writes_files_and_lineage() {
         .join("specs/specdev/reductions/blocks/embassy.yaml")
         .is_file());
     // Codegen prose is no longer inlined.
-    assert!(!target.join("specs/specdev/codegen/rust/blocks/embassy/README.md").exists());
+    assert!(!target
+        .join("specs/specdev/codegen/rust/blocks/embassy/README.md")
+        .exists());
     // Lineage gained an [blocks.embassy] entry with origin + content_hash.
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
     let entry = lineage

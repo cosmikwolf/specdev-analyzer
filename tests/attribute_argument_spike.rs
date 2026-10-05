@@ -29,7 +29,10 @@ struct Mapping {
 
 fn load_mapping() -> Mapping {
     let dir = fixture().join("unit");
-    let t: toml::Table = std::fs::read_to_string(dir.join("mapping.toml")).unwrap().parse().unwrap();
+    let t: toml::Table = std::fs::read_to_string(dir.join("mapping.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
     let s = |k: &str| t[k].as_str().unwrap().to_string();
     let attributes = t["attributes"]
         .as_table()
@@ -55,16 +58,29 @@ fn from_code(m: &Mapping, source: &str) -> Values {
     parser.set_language(&lang).unwrap();
     let tree = parser.parse(source, None).unwrap();
     let query = Query::new(&lang, &m.query).expect("query compiles");
-    let idx = |n: &str| query.capture_index_for_name(n).unwrap_or_else(|| panic!("capture @{n}"));
-    let (ki, ai, vi) = (idx(&m.key_capture), idx(&m.arg_key_capture), idx(&m.arg_value_capture));
+    let idx = |n: &str| {
+        query
+            .capture_index_for_name(n)
+            .unwrap_or_else(|| panic!("capture @{n}"))
+    };
+    let (ki, ai, vi) = (
+        idx(&m.key_capture),
+        idx(&m.arg_key_capture),
+        idx(&m.arg_value_capture),
+    );
     let mut out = Values::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(mm) = matches.next() {
         let text = |i: u32| {
-            mm.captures.iter().find(|c| c.index == i).map(|c| source[c.node.byte_range()].to_string())
+            mm.captures
+                .iter()
+                .find(|c| c.index == i)
+                .map(|c| source[c.node.byte_range()].to_string())
         };
-        let (Some(key), Some(arg), Some(val)) = (text(ki), text(ai), text(vi)) else { continue };
+        let (Some(key), Some(arg), Some(val)) = (text(ki), text(ai), text(vi)) else {
+            continue;
+        };
         let entry = out.entry(key).or_default();
         if let Some(attr) = m.attributes.get(&arg) {
             entry.insert(attr.clone(), val);
@@ -80,14 +96,20 @@ fn from_spec(m: &Mapping, specs: &[&str]) -> Values {
         let doc: toml::Table = text.parse().unwrap();
         let mut node = toml::Value::Table(doc);
         for part in m.entity_table.split('.') {
-            node = match node.get(part) { Some(v) => v.clone(), None => toml::Value::Array(vec![]) };
+            node = match node.get(part) {
+                Some(v) => v.clone(),
+                None => toml::Value::Array(vec![]),
+            };
         }
         for ent in node.as_array().unwrap() {
             let key = ent[&m.spec_key].as_str().unwrap().to_string();
             let entry = out.entry(key).or_default();
             for attr in m.attributes.values() {
                 if let Some(v) = ent.get(attr) {
-                    let s = match v { toml::Value::String(s) => s.clone(), other => other.to_string() };
+                    let s = match v {
+                        toml::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
                     entry.insert(attr.clone(), s);
                 }
             }
@@ -104,7 +126,11 @@ fn compare(spec: &Values, code: &Values) -> Vec<String> {
     let mut out = vec![];
     for k in keys {
         let (s, c) = (spec.get(k), code.get(k));
-        let mut attrs: Vec<&String> = s.into_iter().flat_map(|m| m.keys()).chain(c.into_iter().flat_map(|m| m.keys())).collect();
+        let mut attrs: Vec<&String> = s
+            .into_iter()
+            .flat_map(|m| m.keys())
+            .chain(c.into_iter().flat_map(|m| m.keys()))
+            .collect();
         attrs.sort();
         attrs.dedup();
         if s.is_none() || c.is_none() {
@@ -114,7 +140,11 @@ fn compare(spec: &Values, code: &Values) -> Vec<String> {
         for a in attrs {
             let (sv, cv) = (s.unwrap().get(a), c.unwrap().get(a));
             if sv != cv {
-                out.push(format!("{k}.{a}: spec={} code={}", sv.map_or("-", |v| v), cv.map_or("-", |v| v)));
+                out.push(format!(
+                    "{k}.{a}: spec={} code={}",
+                    sv.map_or("-", |v| v),
+                    cv.map_or("-", |v| v)
+                ));
             }
         }
     }
@@ -124,7 +154,10 @@ fn compare(spec: &Values, code: &Values) -> Vec<String> {
 fn corpus() -> (String, Vec<String>) {
     let d = fixture().join("corpus");
     let src = std::fs::read_to_string(d.join("main.rs")).unwrap();
-    let specs = ["Ticker.toml", "Blinky.toml"].iter().map(|f| std::fs::read_to_string(d.join(f)).unwrap()).collect();
+    let specs = ["Ticker.toml", "Blinky.toml"]
+        .iter()
+        .map(|f| std::fs::read_to_string(d.join(f)).unwrap())
+        .collect();
     (src, specs)
 }
 
@@ -144,8 +177,13 @@ fn extraction_yields_separate_values_per_task() {
     let (src, specs) = corpus();
     let (code, _) = run(&src, &specs);
     let expect = |k: &str, pairs: &[(&str, &str)]| {
-        let got = code.get(k).unwrap_or_else(|| panic!("no captures for {k}: {code:?}"));
-        let want: BTreeMap<String, String> = pairs.iter().map(|(a, v)| (a.to_string(), v.to_string())).collect();
+        let got = code
+            .get(k)
+            .unwrap_or_else(|| panic!("no captures for {k}: {code:?}"));
+        let want: BTreeMap<String, String> = pairs
+            .iter()
+            .map(|(a, v)| (a.to_string(), v.to_string()))
+            .collect();
         assert_eq!(got, &want, "{k}");
     };
     assert_eq!(code.len(), 3, "exactly the three tasks: {code:?}");
@@ -166,7 +204,11 @@ fn mapping_as_data_matches_the_spec() {
 #[test]
 fn a_changed_priority_is_reported_exactly() {
     let (src, specs) = corpus();
-    let changed = src.replacen("#[task(shared = [count], priority = 1)]", "#[task(shared = [count], priority = 2)]", 1);
+    let changed = src.replacen(
+        "#[task(shared = [count], priority = 1)]",
+        "#[task(shared = [count], priority = 2)]",
+        1,
+    );
     assert_ne!(changed, src, "the control must change the source");
     let (_, diffs) = run(&changed, &specs);
     assert_eq!(diffs, vec!["drain.priority: spec=1 code=2".to_string()]);
@@ -178,7 +220,10 @@ fn a_changed_binding_is_reported_exactly() {
     let changed = src.replacen("binds = PIT0,", "binds = PIT1,", 1);
     assert_ne!(changed, src, "the control must change the source");
     let (_, diffs) = run(&changed, &specs);
-    assert_eq!(diffs, vec!["on_tick.binds: spec=PIT0 code=PIT1".to_string()]);
+    assert_eq!(
+        diffs,
+        vec!["on_tick.binds: spec=PIT0 code=PIT1".to_string()]
+    );
 }
 
 #[test]

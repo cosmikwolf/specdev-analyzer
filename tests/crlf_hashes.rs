@@ -12,18 +12,29 @@ use std::collections::BTreeMap;
 use ci::{text, tree, tree_v1, Tree};
 
 fn crlf(bytes: &[u8]) -> Vec<u8> {
-    let lf: Vec<u8> = String::from_utf8_lossy(bytes).replace("\r\n", "\n").into_bytes();
-    String::from_utf8(lf).unwrap().replace('\n', "\r\n").into_bytes()
+    let lf: Vec<u8> = String::from_utf8_lossy(bytes)
+        .replace("\r\n", "\n")
+        .into_bytes();
+    String::from_utf8(lf)
+        .unwrap()
+        .replace('\n', "\r\n")
+        .into_bytes()
 }
 
 fn categories(t: &Tree) -> BTreeMap<String, String> {
     let out = t.analyzer(&["drift"]);
-    let v: serde_json::Value = serde_yaml::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}\n{}", text(&out)));
+    let v: serde_json::Value =
+        serde_yaml::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}\n{}", text(&out)));
     v["profile"]["files"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|f| (f["path"].as_str().unwrap().to_string(), f["category"].as_str().unwrap().to_string()))
+        .map(|f| {
+            (
+                f["path"].as_str().unwrap().to_string(),
+                f["category"].as_str().unwrap().to_string(),
+            )
+        })
         .collect()
 }
 
@@ -48,7 +59,11 @@ fn a_crlf_checkout_of_an_unedited_tree_reads_clean() {
     }
     let after = categories(&t);
     for (path, cat) in &after {
-        assert_eq!(Some(cat), before.get(path), "{path}: {cat} on a CRLF checkout");
+        assert_eq!(
+            Some(cat),
+            before.get(path),
+            "{path}: {cat} on a CRLF checkout"
+        );
     }
 }
 
@@ -61,7 +76,9 @@ fn a_record_taken_over_crlf_bytes_matches_the_lf_file() {
     let lineage = t.read("specs/specdev/lineage.toml");
     let mut doc: toml_edit::DocumentMut = lineage.parse().unwrap();
     for (path, _) in profile_records(&t) {
-        if path.ends_with("module.schema.yaml") || before.get(&path).map(String::as_str) != Some("Clean") {
+        if path.ends_with("module.schema.yaml")
+            || before.get(&path).map(String::as_str) != Some("Clean")
+        {
             continue; // the aggregator compares its profile-owned part; an edited file has no bootstrap bytes
         }
         let b = std::fs::read(t.root.join(&path)).unwrap();
@@ -86,6 +103,7 @@ fn migrate_re_records_crlf_hashes_in_the_lf_form() {
     let out = t.analyzer(&["migrate", "--plugin-root", plugin.as_str()]);
     assert!(out.status.success(), "{}", text(&out));
     let rec = profile_records(&t)[path].as_str().unwrap().to_string();
-    let lf = String::from_utf8_lossy(&std::fs::read(t.root.join(path)).unwrap()).replace("\r\n", "\n");
+    let lf =
+        String::from_utf8_lossy(&std::fs::read(t.root.join(path)).unwrap()).replace("\r\n", "\n");
     assert_eq!(rec, sha(lf.as_bytes()), "the record is the LF-form hash");
 }

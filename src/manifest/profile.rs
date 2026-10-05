@@ -57,7 +57,12 @@ pub struct Profile {
 /// the manifest emitters, which no longer exist. The loader drops them
 /// from a contract-1 manifest (an inlined copy in a `1.x` tree) before the
 /// schema runs; a contract-2 manifest that names one is refused.
-pub const RETIRED_SECTIONS: [&str; 4] = ["cargo_toml", "pubspec_yaml", "package_json", "derived_files"];
+pub const RETIRED_SECTIONS: [&str; 4] = [
+    "cargo_toml",
+    "pubspec_yaml",
+    "package_json",
+    "derived_files",
+];
 
 /// One `gates` row. `label` is opaque; `steps` is a list of argv lists run
 /// in order in the project root (never a shell string).
@@ -175,7 +180,8 @@ impl Profile {
     pub fn check_text(text: &str, path: &Path) -> Result<()> {
         let yaml: serde_yaml::Value =
             serde_yaml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
-        let mut value: JsonValue = serde_json::to_value(yaml).with_context(|| format!("converting {}", path.display()))?;
+        let mut value: JsonValue =
+            serde_json::to_value(yaml).with_context(|| format!("converting {}", path.display()))?;
         check_contract_version(&value, path)?;
         drop_retired_sections(&mut value);
         super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
@@ -301,7 +307,9 @@ fn drop_retired_sections(value: &mut JsonValue) {
     if declared >= 2 {
         return;
     }
-    let Some(map) = value.as_object_mut() else { return };
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
     for k in RETIRED_SECTIONS {
         map.remove(k);
     }

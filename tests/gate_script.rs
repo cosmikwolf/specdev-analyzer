@@ -32,7 +32,11 @@ fn set_gates(t: &Tree, gates: &str) {
     let rest = body
         .split("\ngates:")
         .nth(1)
-        .map(|r| r.split_once("\n\n").map(|(_, after)| after.to_string()).unwrap_or_default())
+        .map(|r| {
+            r.split_once("\n\n")
+                .map(|(_, after)| after.to_string())
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     t.write(rel, &format!("{head}\n{gates}\n{rest}"));
 }
@@ -62,12 +66,19 @@ fn runner_and_script_agree_on_every_case() {
         ("stdin", "[/bin/sh, -c, \"read line\"]", 1),
         ("missing", "[definitely-not-a-real-binary-xyz, --go]", 2),
         ("failing", "[/bin/sh, -c, \"exit 3\"]", 3),
-        ("token", "[/bin/echo, \"${root.platform.target_triple}\"]", 2),
+        (
+            "token",
+            "[/bin/echo, \"${root.platform.target_triple}\"]",
+            2,
+        ),
     ];
     for (label, step, want) in cases {
         // Nested: the project sits two levels below where the script starts.
         let t = tree(&format!("gs-parity-{label}"), "library-api", &[]);
-        set_gates(&t, &format!("gates:\n  - label: {label}\n    steps:\n      - {step}\n"));
+        set_gates(
+            &t,
+            &format!("gates:\n  - label: {label}\n    steps:\n      - {step}\n"),
+        );
         emit(&t);
         let runner = t.analyzer(&["gate", "--label", label]);
         let where_runner = std::fs::read_to_string(t.root.join("where.txt")).ok();
@@ -77,7 +88,10 @@ fn runner_and_script_agree_on_every_case() {
         let where_script = std::fs::read_to_string(t.root.join("where.txt")).ok();
         assert_eq!(code(&runner), *want, "runner `{label}`:\n{}", text(&runner));
         assert_eq!(code(&script), *want, "script `{label}`:\n{}", text(&script));
-        assert_eq!(where_runner, where_script, "`{label}`: the two ran in different directories");
+        assert_eq!(
+            where_runner, where_script,
+            "`{label}`: the two ran in different directories"
+        );
         if *label == "ok" {
             let w = where_script.expect("the ok gate writes where.txt");
             assert_eq!(
@@ -87,7 +101,11 @@ fn runner_and_script_agree_on_every_case() {
             );
         }
         if *label == "token" {
-            assert!(String::from_utf8_lossy(&script.stderr).contains("target_triple"), "{}", text(&script));
+            assert!(
+                String::from_utf8_lossy(&script.stderr).contains("target_triple"),
+                "{}",
+                text(&script)
+            );
         }
     }
 }
@@ -95,16 +113,28 @@ fn runner_and_script_agree_on_every_case() {
 #[test]
 fn the_script_runs_check_first_and_stops_on_its_failure() {
     let t = tree("gs-check-first", "library-api", &[]);
-    set_gates(&t, "gates:\n  - label: mark\n    steps:\n      - [/bin/sh, -c, \"touch gate-ran\"]\n");
+    set_gates(
+        &t,
+        "gates:\n  - label: mark\n    steps:\n      - [/bin/sh, -c, \"touch gate-ran\"]\n",
+    );
     emit(&t);
     let body = t.read(SCRIPT);
     let check_at = body.find(" check").expect("the script runs check");
-    assert!(check_at < body.find("gate-ran").unwrap(), "check comes before every gate:\n{body}");
+    assert!(
+        check_at < body.find("gate-ran").unwrap(),
+        "check comes before every gate:\n{body}"
+    );
     // A module with no source: `check` fails, and no gate runs.
-    t.write("specs/modules/ghost.toml", "name = \"ghost\"\nvisibility = \"crate\"\ndescription = \"x\"\n");
+    t.write(
+        "specs/modules/ghost.toml",
+        "name = \"ghost\"\nvisibility = \"crate\"\ndescription = \"x\"\n",
+    );
     let out = run_script(&t.root, &t.root.join(SCRIPT));
     assert_eq!(code(&out), 1, "{}", text(&out));
-    assert!(!t.root.join("gate-ran").exists(), "a gate ran after check failed");
+    assert!(
+        !t.root.join("gate-ran").exists(),
+        "a gate ran after check failed"
+    );
     std::fs::remove_file(t.root.join("specs/modules/ghost.toml")).unwrap();
     let out = run_script(&t.root, &t.root.join(SCRIPT));
     assert_eq!(code(&out), 0, "{}", text(&out));
@@ -115,8 +145,14 @@ fn the_script_runs_check_first_and_stops_on_its_failure() {
 fn bootstrap_and_migrate_write_the_script_and_the_gitattributes_line() {
     let t = tree("gs-bootstrap", "library-api", &[]);
     assert!(t.root.join(SCRIPT).is_file(), "bootstrap writes the script");
-    assert!(t.read(".gitattributes").contains("scripts/specdev-gates.sh text eol=lf"));
-    let sh = Command::new("sh").args(["-n", SCRIPT]).current_dir(&t.root).output().unwrap();
+    assert!(t
+        .read(".gitattributes")
+        .contains("scripts/specdev-gates.sh text eol=lf"));
+    let sh = Command::new("sh")
+        .args(["-n", SCRIPT])
+        .current_dir(&t.root)
+        .output()
+        .unwrap();
     assert!(sh.status.success(), "sh -n: {}", text(&sh));
 
     let v1 = tree_v1("gs-migrate", "library-api");
@@ -125,7 +161,9 @@ fn bootstrap_and_migrate_write_the_script_and_the_gitattributes_line() {
     let out = v1.analyzer(&["migrate", "--plugin-root", plugin.as_str()]);
     assert!(out.status.success(), "{}", text(&out));
     assert!(v1.root.join(SCRIPT).is_file(), "migrate writes the script");
-    assert!(v1.read(".gitattributes").contains("scripts/specdev-gates.sh text eol=lf"));
+    assert!(v1
+        .read(".gitattributes")
+        .contains("scripts/specdev-gates.sh text eol=lf"));
 }
 
 #[test]
@@ -135,7 +173,11 @@ fn an_existing_gitattributes_is_not_rewritten_and_the_line_is_printed() {
     let out = t.analyzer(&["gate", "--emit"]);
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(t.read(".gitattributes"), "*.png binary\n");
-    assert!(text(&out).contains("scripts/specdev-gates.sh text eol=lf"), "{}", text(&out));
+    assert!(
+        text(&out).contains("scripts/specdev-gates.sh text eol=lf"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -146,14 +188,25 @@ fn validate_reports_a_stale_or_missing_script() {
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
     };
     assert!(!rules(&t).contains("GATE-SCRIPT-"), "{}", rules(&t));
-    set_gates(&t, "gates:\n  - label: other\n    steps:\n      - [/bin/echo, changed]\n");
+    set_gates(
+        &t,
+        "gates:\n  - label: other\n    steps:\n      - [/bin/echo, changed]\n",
+    );
     let r = rules(&t);
-    assert!(r.lines().any(|l| l.starts_with("error") && l.contains("GATE-SCRIPT-001")), "{r}");
+    assert!(
+        r.lines()
+            .any(|l| l.starts_with("error") && l.contains("GATE-SCRIPT-001")),
+        "{r}"
+    );
     emit(&t);
     assert!(!rules(&t).contains("GATE-SCRIPT-"));
     std::fs::remove_file(t.root.join(SCRIPT)).unwrap();
     let r = rules(&t);
-    assert!(r.lines().any(|l| l.starts_with("warning") && l.contains("GATE-SCRIPT-002")), "{r}");
+    assert!(
+        r.lines()
+            .any(|l| l.starts_with("warning") && l.contains("GATE-SCRIPT-002")),
+        "{r}"
+    );
 }
 
 #[test]
@@ -167,7 +220,11 @@ fn gate_all_runs_every_gate_and_module_is_ignored() {
     assert!(out.status.success(), "{}", text(&out));
     assert!(t.root.join("a-ran").exists() && t.root.join("b-ran").exists());
     let out = t.analyzer(&["gate", "--label", "a", "--module", "anything"]);
-    assert!(out.status.success(), "--module is accepted and ignored:\n{}", text(&out));
+    assert!(
+        out.status.success(),
+        "--module is accepted and ignored:\n{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -194,5 +251,8 @@ fn a_workspace_root_script_runs_each_member_in_order() {
     let out = run_script(&root.root, &root.root.join(SCRIPT));
     assert_eq!(code(&out), 4, "{}", text(&out));
     assert!(root.root.join("crates/one/ran").exists());
-    assert!(!root.root.join("crates/two/ran").exists(), "stops at the first failing member");
+    assert!(
+        !root.root.join("crates/two/ran").exists(),
+        "stops at the first failing member"
+    );
 }

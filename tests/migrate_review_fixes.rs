@@ -49,14 +49,22 @@ fn entries_appended_to_a_tombstone_are_reported_and_folded() {
     let tomb = t.read("specs/decisions.toml");
     assert!(specdev_analyzer::entries::is_tombstone(&tomb));
     t.write("specs/decisions.toml", &format!("{tomb}{DEC_900}"));
-    assert!(!specdev_analyzer::entries::is_tombstone(&t.read("specs/decisions.toml")));
+    assert!(!specdev_analyzer::entries::is_tombstone(
+        &t.read("specs/decisions.toml")
+    ));
     let v = t.analyzer(&["validate"]);
     assert!(text(&v).contains("ENTRY-LEGACY-001"), "{}", text(&v));
     let out = migrate(&t, &[]);
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(t.read("specs/decisions/DEC-900.toml"), DEC_900);
-    assert!(specdev_analyzer::entries::is_tombstone(&t.read("specs/decisions.toml")));
-    assert_eq!(t.read("specs/decisions.toml"), tomb, "the tombstone is rewritten as it was");
+    assert!(specdev_analyzer::entries::is_tombstone(
+        &t.read("specs/decisions.toml")
+    ));
+    assert_eq!(
+        t.read("specs/decisions.toml"),
+        tomb,
+        "the tombstone is rewritten as it was"
+    );
 }
 
 /// A 2.0 root with a 1.x member (an interrupted run, or a 1.x crate added).
@@ -71,13 +79,27 @@ fn a_2x_root_moves_its_1x_member() {
         ),
     );
     copy_dir(&frozen(), &root.root.join("crates/a"));
-    let a = Tree { root: root.root.join("crates/a"), plugin: root.plugin.clone() };
-    assert!(text(&a.analyzer(&["validate"])).contains("FORMAT-002"), "the member refuses first");
+    let a = Tree {
+        root: root.root.join("crates/a"),
+        plugin: root.plugin.clone(),
+    };
+    assert!(
+        text(&a.analyzer(&["validate"])).contains("FORMAT-002"),
+        "the member refuses first"
+    );
     let out = migrate(&root, &[]);
     assert!(out.status.success(), "{}", text(&out));
-    assert!(a.read("spec.toml").starts_with("spec_version = \"2.0\""), "{}", text(&out));
+    assert!(
+        a.read("spec.toml").starts_with("spec_version = \"2.0\""),
+        "{}",
+        text(&out)
+    );
     let v = a.analyzer(&["validate", "-q"]);
-    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&v));
+    assert!(
+        text(&v).lines().any(|l| l.starts_with("0 error(s)")),
+        "{}",
+        text(&v)
+    );
 }
 
 /// A 1.x root whose member is already 2.0: the root still moves.
@@ -100,24 +122,50 @@ fn a_1x_root_with_a_2x_member_moves() {
         &root
             .read(red)
             .replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"")
-            .replace("\"specs/open_questions/*.toml\"", "\"specs/open_questions.toml\""),
+            .replace(
+                "\"specs/open_questions/*.toml\"",
+                "\"specs/open_questions.toml\"",
+            ),
     );
     copy_dir(&frozen(), &root.root.join("crates/a"));
-    let a = Tree { root: root.root.join("crates/a"), plugin: root.plugin.clone() };
-    assert!(migrate(&a, &[]).status.code() == Some(1), "a member refuses migrate");
+    let a = Tree {
+        root: root.root.join("crates/a"),
+        plugin: root.plugin.clone(),
+    };
+    assert!(
+        migrate(&a, &[]).status.code() == Some(1),
+        "a member refuses migrate"
+    );
     // Simulate the interrupted run: the member was written, the root not.
     let plugin = root.plugin.to_str().unwrap().to_string();
     let solo = a.root.join("spec.toml");
     let body = a.read("spec.toml");
     // Move the member alone by hiding it from the root, then restore.
-    root.write("spec.toml", &root.read("spec.toml").replace("path = \"crates/a\"", "path = \"crates/hidden\""));
+    root.write(
+        "spec.toml",
+        &root
+            .read("spec.toml")
+            .replace("path = \"crates/a\"", "path = \"crates/hidden\""),
+    );
     let o = a.analyzer(&["migrate", "--plugin-root", plugin.as_str()]);
     assert!(o.status.success(), "{}", text(&o));
-    root.write("spec.toml", &root.read("spec.toml").replace("path = \"crates/hidden\"", "path = \"crates/a\""));
-    assert!(std::fs::read_to_string(&solo).unwrap() != body, "member moved to 2.0");
+    root.write(
+        "spec.toml",
+        &root
+            .read("spec.toml")
+            .replace("path = \"crates/hidden\"", "path = \"crates/a\""),
+    );
+    assert!(
+        std::fs::read_to_string(&solo).unwrap() != body,
+        "member moved to 2.0"
+    );
     let out = migrate(&root, &[]);
     assert!(out.status.success(), "{}", text(&out));
-    assert!(root.read("spec.toml").starts_with("spec_version = \"2.0\""), "{}", text(&out));
+    assert!(
+        root.read("spec.toml").starts_with("spec_version = \"2.0\""),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -132,7 +180,10 @@ fn a_2x_root_folds_legacy_content_in_its_members() {
     );
     copy_dir(&frozen(), &root.root.join("crates/a"));
     assert!(migrate(&root, &[]).status.success());
-    let a = Tree { root: root.root.join("crates/a"), plugin: root.plugin.clone() };
+    let a = Tree {
+        root: root.root.join("crates/a"),
+        plugin: root.plugin.clone(),
+    };
     a.write("specs/decisions.toml", DEC_900);
     let out = migrate(&root, &[]);
     assert!(out.status.success(), "{}", text(&out));
@@ -142,7 +193,12 @@ fn a_2x_root_folds_legacy_content_in_its_members() {
 #[test]
 fn bootstrap_under_a_workspace_of_another_major_refuses() {
     let root = tree("boot-mixed", "rust-workspace", &[]);
-    root.write("spec.toml", &root.read("spec.toml").replacen("spec_version = \"2.0\"", "spec_version = \"1.0\"", 1));
+    root.write(
+        "spec.toml",
+        &root
+            .read("spec.toml")
+            .replacen("spec_version = \"2.0\"", "spec_version = \"1.0\"", 1),
+    );
     let target = root.root.join("crates/new");
     std::fs::create_dir_all(&target).unwrap();
     let err = specdev_analyzer::bootstrap::run_bootstrap(
@@ -164,31 +220,53 @@ fn a_recorded_profile_file_that_is_missing_is_not_written_again() {
     let t = tree_v1("recorded-missing", "library-api");
     std::fs::remove_file(t.root.join("specs/architecture.toml")).unwrap();
     assert!(migrate(&t, &[]).status.success());
-    assert!(!t.root.join("specs/architecture.toml").exists(), "the format step wrote it again");
+    assert!(
+        !t.root.join("specs/architecture.toml").exists(),
+        "the format step wrote it again"
+    );
     assert!(migrate(&t, &[]).status.success());
-    assert!(!t.root.join("specs/architecture.toml").exists(), "the shell step wrote it again");
+    assert!(
+        !t.root.join("specs/architecture.toml").exists(),
+        "the shell step wrote it again"
+    );
 }
 
 #[test]
 fn the_report_names_every_removal_and_the_warning_says_commit_first() {
     let t = tree_v1("report-complete", "firmware-layered");
-    let spec = t.read("spec.toml").replacen("language = \"rust\"\n", "language = \"rust\"\ncrate_shape = \"library\"\n", 1);
+    let spec = t.read("spec.toml").replacen(
+        "language = \"rust\"\n",
+        "language = \"rust\"\ncrate_shape = \"library\"\n",
+        1,
+    );
     t.write("spec.toml", &spec);
     // An edited profile.yaml with a column-0 comment right after a retired section.
     let rel = "specs/specdev/profile.yaml";
-    let p = t.read(rel).replacen("\ngates:", "\n# keep: a note about the gates\ngates:", 1);
+    let p = t
+        .read(rel)
+        .replacen("\ngates:", "\n# keep: a note about the gates\ngates:", 1);
     t.write(rel, &format!("{p}# local edit\n"));
     // An unrecorded tree: no baseline, so schemas are replaced and warned.
     let lineage = t.read("specs/specdev/lineage.toml");
-    t.write("specs/specdev/lineage.toml", &lineage[..lineage.find("[profile_files]").unwrap()]);
+    t.write(
+        "specs/specdev/lineage.toml",
+        &lineage[..lineage.find("[profile_files]").unwrap()],
+    );
     let dry = migrate(&t, &["--dry-run"]);
     let d = text(&dry);
     assert!(d.contains("crate_shape"), "{d}");
-    assert!(d.contains("cargo_toml"), "the retired section is named:\n{d}");
+    assert!(
+        d.contains("cargo_toml"),
+        "the retired section is named:\n{d}"
+    );
     assert!(d.contains("commit or stash"), "the warning block:\n{d}");
     let out = migrate(&t, &[]);
     assert!(out.status.success(), "{}", text(&out));
-    assert!(t.read(rel).contains("# keep: a note about the gates"), "{}", t.read(rel));
+    assert!(
+        t.read(rel).contains("# keep: a note about the gates"),
+        "{}",
+        t.read(rel)
+    );
 }
 
 #[test]
@@ -205,12 +283,24 @@ fn a_workspace_dry_run_shows_the_member_steps() {
             ),
     );
     let red = "specs/specdev/reductions/project.yaml";
-    root.write(red, &root.read(red).replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"").replace("\"specs/open_questions/*.toml\"", "\"specs/open_questions.toml\""));
+    root.write(
+        red,
+        &root
+            .read(red)
+            .replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"")
+            .replace(
+                "\"specs/open_questions/*.toml\"",
+                "\"specs/open_questions.toml\"",
+            ),
+    );
     copy_dir(&frozen(), &root.root.join("crates/a"));
     let out = migrate(&root, &["--dry-run"]);
     let d = text(&out);
     assert!(out.status.success(), "{d}");
-    assert!(d.contains("crates/a") && d.contains("would write scripts/specdev-gates.sh"), "{d}");
+    assert!(
+        d.contains("crates/a") && d.contains("would write scripts/specdev-gates.sh"),
+        "{d}"
+    );
 }
 
 #[test]
@@ -237,7 +327,14 @@ fn migrate_does_not_hide_a_plugin_move_in_an_inlined_unit() {
     let before: toml::Table = t.read("specs/specdev/lineage.toml").parse().unwrap();
     // The plugin moves the unit after it was inlined.
     let schema = plugin.join("blocks/probe/schema.yaml");
-    std::fs::write(&schema, format!("{}description: a later plugin line\n", std::fs::read_to_string(&schema).unwrap())).unwrap();
+    std::fs::write(
+        &schema,
+        format!(
+            "{}description: a later plugin line\n",
+            std::fs::read_to_string(&schema).unwrap()
+        ),
+    )
+    .unwrap();
     let out = migrate(&t, &[]);
     assert!(out.status.success(), "{}", text(&out));
     let after: toml::Table = t.read("specs/specdev/lineage.toml").parse().unwrap();
@@ -247,5 +344,8 @@ fn migrate_does_not_hide_a_plugin_move_in_an_inlined_unit() {
     );
     let drift = t.analyzer(&["drift", "--plugin-root", plugin.to_str().unwrap()]);
     let d = String::from_utf8_lossy(&drift.stdout);
-    assert!(d.contains("probe") && d.contains("PluginMoved"), "drift must still report the move:\n{d}");
+    assert!(
+        d.contains("probe") && d.contains("PluginMoved"),
+        "drift must still report the move:\n{d}"
+    );
 }

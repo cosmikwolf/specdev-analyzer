@@ -256,7 +256,11 @@ fn removed_term_in_plugin_tree_fails_lint() {
 /// `git ls-files` path (the one CI and the live tree use) instead of the
 /// directory walk. Untracked files count, so no commit is needed.
 fn as_git_tree(plugin: &Path) {
-    let st = Command::new("git").args(["init", "-q"]).current_dir(plugin).status().unwrap();
+    let st = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(plugin)
+        .status()
+        .unwrap();
     assert!(st.success(), "git init failed");
 }
 
@@ -274,7 +278,10 @@ fn removed_term_in_git_plugin_tree_fails_lint() {
     as_git_tree(&plugin);
     let out = run_lint(&plugin, Some(&src));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(!out.status.success(), "expected non-zero exit on the git path.\nstdout:\n{stdout}");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit on the git path.\nstdout:\n{stdout}"
+    );
     assert!(
         stdout.contains("skills/spec-design/SKILL.md:3:"),
         "expected the file and line of the hit in stdout; got:\n{stdout}"
@@ -288,7 +295,11 @@ fn removed_term_escape_silences_hit() {
     let line = "Older trees name `/spec-gen` in their ledgers.";
     for git in BOTH_PATHS {
         let (plugin, src) = removed_term_fixture(
-            if git { "removed-term-ok-git" } else { "removed-term-ok" },
+            if git {
+                "removed-term-ok-git"
+            } else {
+                "removed-term-ok"
+            },
             "skills/spec-design/SKILL.md",
             &format!("{line} <!-- REMOVED-TERM-OK: names the old command -->\n"),
         );
@@ -297,11 +308,20 @@ fn removed_term_escape_silences_hit() {
         }
         let out = run_lint(&plugin, Some(&src));
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(out.status.success(), "git={git}: expected exit 0 with the escape.\nstdout:\n{stdout}");
+        assert!(
+            out.status.success(),
+            "git={git}: expected exit 0 with the escape.\nstdout:\n{stdout}"
+        );
 
-        write_synth_src(&plugin, &[("skills/spec-design/SKILL.md", &format!("{line}\n"))]);
+        write_synth_src(
+            &plugin,
+            &[("skills/spec-design/SKILL.md", &format!("{line}\n"))],
+        );
         let out = run_lint(&plugin, Some(&src));
-        assert!(!out.status.success(), "git={git}: the same line without the escape must fail");
+        assert!(
+            !out.status.success(),
+            "git={git}: the same line without the escape must fail"
+        );
     }
 }
 
@@ -312,7 +332,11 @@ fn changelog_is_exempt_from_removed_terms() {
     let body = "## 0.3.0\n\n- Removed `/spec-gen` and `gen-lineage.toml`.\n";
     for git in BOTH_PATHS {
         let (plugin, src) = removed_term_fixture(
-            if git { "removed-term-changelog-git" } else { "removed-term-changelog" },
+            if git {
+                "removed-term-changelog-git"
+            } else {
+                "removed-term-changelog"
+            },
             "CHANGELOG.md",
             body,
         );
@@ -321,10 +345,16 @@ fn changelog_is_exempt_from_removed_terms() {
         }
         let out = run_lint(&plugin, Some(&src));
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(out.status.success(), "git={git}: expected exit 0, CHANGELOG.md is exempt.\nstdout:\n{stdout}");
+        assert!(
+            out.status.success(),
+            "git={git}: expected exit 0, CHANGELOG.md is exempt.\nstdout:\n{stdout}"
+        );
 
         write_synth_src(&plugin, &[("docs/CHANGELOG-notes.md", body)]);
         let out = run_lint(&plugin, Some(&src));
-        assert!(!out.status.success(), "git={git}: the same text outside CHANGELOG.md must fail");
+        assert!(
+            !out.status.success(),
+            "git={git}: the same text outside CHANGELOG.md must fail"
+        );
     }
 }

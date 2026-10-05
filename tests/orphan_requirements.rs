@@ -77,14 +77,18 @@ fn orphans(report: &Report, rule: &str) -> Vec<Finding> {
 #[test]
 fn orphan_module_requirement_fires_warning() {
     let (target, _) = fresh_library("orphan-module");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-API-001"
 text = "Public types must implement Debug."
 
 [[requirement]]
 id = "REQ-API-002"
 text = "Public types must implement Clone where applicable."
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -115,7 +119,10 @@ satisfies = ["REQ-API-001"]
 #[test]
 fn architecture_build_test_natures_exempt_from_check() {
     let (target, _) = fresh_library("nature-exempt");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-ARCH-001"
 text = "All public types live in pub module exports."
 nature = "architecture"
@@ -134,7 +141,8 @@ nature = "test"
 id = "REQ-API-001"
 text = "Implements Debug."
 nature = "module"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -158,7 +166,10 @@ satisfies = ["REQ-API-001"]
 #[test]
 fn multiple_orphans_emit_one_finding_each() {
     let (target, _) = fresh_library("multi-orphan");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-001"
 text = "first orphan"
 
@@ -169,7 +180,8 @@ text = "second orphan"
 [[requirement]]
 id = "REQ-003"
 text = "third orphan"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -190,11 +202,15 @@ visibility = "pub"
 #[test]
 fn unknown_nature_value_rejected_at_schema_time() {
     let (target, _) = fresh_library("unknown-nature");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-001"
 text = "bad nature"
 nature = "philosophical"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -248,7 +264,10 @@ visibility = "pub"
 #[test]
 fn mixed_natures_only_module_orphans_fire() {
     let (target, _) = fresh_library("mixed");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-COVERED-001"
 text = "covered"
 
@@ -270,7 +289,8 @@ nature = "architecture"
 id = "REQ-BUILD-001"
 text = "exempt"
 nature = "build"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"

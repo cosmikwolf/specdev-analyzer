@@ -147,7 +147,9 @@ fn run_merge_unit(
         }
         let ours_path = crate::drift::project_path_for(layout, kind, name, rel, None);
         match std::fs::read(&ours_path) {
-            Ok(ours) if crate::hash::to_lf(&ours) == crate::hash::to_lf(base) => removed.push(ours_path),
+            Ok(ours) if crate::hash::to_lf(&ours) == crate::hash::to_lf(base) => {
+                removed.push(ours_path)
+            }
             Ok(_) => {
                 return Err(anyhow!(
                     "[MERGE-FILESET] {kind:?} `{name}`: the plugin removed {}, and the project edited its copy at {}; keep or delete the copy by hand, then remove {} from the upstream/ snapshot and rerun --merge.",

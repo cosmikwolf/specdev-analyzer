@@ -102,7 +102,8 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
         .collect();
     files.sort();
     for file in files {
-        let text = std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
+        let text = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
         let Ok(doc) = text.parse::<toml::Table>() else {
             continue; // a parse error is already validate's finding
         };
@@ -111,7 +112,11 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
             .get("name")
             .and_then(toml::Value::as_str)
             .map(str::to_string)
-            .or_else(|| file.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+            .or_else(|| {
+                file.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+            })
             .unwrap_or_default();
         let planned = doc.get("planned").and_then(toml::Value::as_bool) == Some(true);
         let source = adapter.as_deref().and_then(|a| {
@@ -124,7 +129,13 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
             )
         });
         let depends_on = string_list(doc.get("depends_on"));
-        out.push(ModuleState { name, file, planned, source, depends_on });
+        out.push(ModuleState {
+            name,
+            file,
+            planned,
+            source,
+            depends_on,
+        });
     }
     Ok(out)
 }
@@ -175,10 +186,17 @@ fn pack_code_checks(
 ) {
     let views: Vec<crate::code_checks::ModuleView<'_>> = modules
         .iter()
-        .map(|m| crate::code_checks::ModuleView { name: &m.name, planned: m.planned, built: m.source.is_some() })
+        .map(|m| crate::code_checks::ModuleView {
+            name: &m.name,
+            planned: m.planned,
+            built: m.source.is_some(),
+        })
         .collect();
     let empty = BTreeMap::new();
-    let rules = domain.as_ref().map(|d| &d.validation.rules).unwrap_or(&empty);
+    let rules = domain
+        .as_ref()
+        .map(|d| &d.validation.rules)
+        .unwrap_or(&empty);
     crate::code_checks::run(layout, graph, &views, rules, report);
 }
 
@@ -195,7 +213,12 @@ fn project_graph(layout: &LayoutContext) -> Result<Value> {
 fn satisfiers_of(graph: &Value, modules: &[ModuleState]) -> BTreeMap<String, Vec<String>> {
     let module_names: BTreeSet<&str> = modules.iter().map(|m| m.name.as_str()).collect();
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for r in graph.get("relations").and_then(Value::as_array).into_iter().flatten() {
+    for r in graph
+        .get("relations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let (Some(from), Some(to)) = (
             r.get("from").and_then(Value::as_str),
             r.get("to").and_then(Value::as_str),
@@ -203,7 +226,9 @@ fn satisfiers_of(graph: &Value, modules: &[ModuleState]) -> BTreeMap<String, Vec
             continue;
         };
         if module_names.contains(from) {
-            out.entry(to.to_string()).or_default().push(from.to_string());
+            out.entry(to.to_string())
+                .or_default()
+                .push(from.to_string());
         }
     }
     out
@@ -227,17 +252,30 @@ fn stale_planned_requirements(
         .collect();
     let satisfiers = satisfiers_of(graph, modules);
     let sev = severity(domain, "stale_planned", Severity::Warning);
-    for e in graph.get("entities").and_then(Value::as_array).into_iter().flatten() {
+    for e in graph
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
         if !is_requirement_kind(kind) {
             continue;
         }
-        let Some(id) = e.get("name").and_then(Value::as_str) else { continue };
-        let planned = e.get("attrs").and_then(|a| a.get("planned")).and_then(Value::as_bool) == Some(true);
+        let Some(id) = e.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let planned = e
+            .get("attrs")
+            .and_then(|a| a.get("planned"))
+            .and_then(Value::as_bool)
+            == Some(true);
         if !planned {
             continue;
         }
-        let Some(sats) = satisfiers.get(id) else { continue };
+        let Some(sats) = satisfiers.get(id) else {
+            continue;
+        };
         if !sats.is_empty() && sats.iter().all(|s| built.contains(s.as_str())) {
             report.push(
                 Finding::new(
@@ -259,13 +297,23 @@ fn stale_planned_requirements(
 fn declared_rule(domain: &Option<DomainConfig>, kind: &str, default: &str) -> String {
     domain
         .as_ref()
-        .and_then(|d| d.project.graph_checks.iter().find(|c| c.kind == kind).and_then(|c| c.rule.clone()))
+        .and_then(|d| {
+            d.project
+                .graph_checks
+                .iter()
+                .find(|c| c.kind == kind)
+                .and_then(|c| c.rule.clone())
+        })
         .unwrap_or_else(|| default.to_string())
 }
 
 fn string_list(v: Option<&toml::Value>) -> Vec<String> {
     v.and_then(toml::Value::as_array)
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -297,18 +345,30 @@ fn test_checks(
     let sev_res = severity(domain, &resolves, Severity::Error);
     let sev_ignored = severity(domain, "verified_only_by_ignored_tests", Severity::Info);
     let sev_stale = severity(domain, "stale_test_pending", Severity::Warning);
-    let planned_module: BTreeMap<&str, bool> = modules.iter().map(|m| (m.name.as_str(), m.planned)).collect();
+    let planned_module: BTreeMap<&str, bool> = modules
+        .iter()
+        .map(|m| (m.name.as_str(), m.planned))
+        .collect();
     let satisfiers = satisfiers_of(graph, modules);
 
     let store = crate::entries::EntryStore::for_layout(layout);
-    let requirements = store.load(crate::entries::EntryKind::Requirement).unwrap_or_default();
+    let requirements = store
+        .load(crate::entries::EntryKind::Requirement)
+        .unwrap_or_default();
     for entry in requirements {
         let v = &entry.value;
-        let Some(id) = v.get("id").and_then(toml::Value::as_str) else { continue };
-        let nature = v.get("nature").and_then(toml::Value::as_str).unwrap_or("module");
+        let Some(id) = v.get("id").and_then(toml::Value::as_str) else {
+            continue;
+        };
+        let nature = v
+            .get("nature")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("module");
         let planned_set = v.get("planned").and_then(toml::Value::as_bool) == Some(true);
         let derived = satisfiers.get(id).is_some_and(|s| {
-            !s.is_empty() && s.iter().all(|m| planned_module.get(m.as_str()).copied().unwrap_or(false))
+            !s.is_empty()
+                && s.iter()
+                    .all(|m| planned_module.get(m.as_str()).copied().unwrap_or(false))
         });
         let planned = planned_set || derived;
         let pending_flag = v.get("test_pending").and_then(toml::Value::as_bool) == Some(true);
@@ -335,15 +395,25 @@ fn test_checks(
             for (n, hits) in &resolved {
                 if hits.is_empty() {
                     report.push(
-                        Finding::new(&resolves, sev_res, format!("`{id}`: `verified_by` names `{n}`, which is no discovered test"))
-                            .with_file(&file)
-                            .with_entity(id),
+                        Finding::new(
+                            &resolves,
+                            sev_res,
+                            format!(
+                                "`{id}`: `verified_by` names `{n}`, which is no discovered test"
+                            ),
+                        )
+                        .with_file(&file)
+                        .with_entity(id),
                     );
                 }
             }
         }
         let all_resolve = !resolved.is_empty() && resolved.iter().all(|(_, h)| !h.is_empty());
-        if all_resolve && !planned && !pending_flag && resolved.iter().all(|(_, h)| h.iter().all(|t| t.pending)) {
+        if all_resolve
+            && !planned
+            && !pending_flag
+            && resolved.iter().all(|(_, h)| h.iter().all(|t| t.pending))
+        {
             report.push(
                 Finding::new(
                     "verified_only_by_ignored_tests",
@@ -368,14 +438,25 @@ fn test_checks(
     }
 
     // Every other entity kind that carries `verified_by`.
-    for e in graph.get("entities").and_then(Value::as_array).into_iter().flatten() {
+    for e in graph
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
         if is_requirement_kind(kind) {
             continue;
         }
-        let Some(name) = e.get("name").and_then(Value::as_str) else { continue };
+        let Some(name) = e.get("name").and_then(Value::as_str) else {
+            continue;
+        };
         let attrs = e.get("attrs");
-        if attrs.and_then(|a| a.get("planned")).and_then(Value::as_bool) == Some(true) {
+        if attrs
+            .and_then(|a| a.get("planned"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
             continue;
         }
         let names: Vec<&str> = attrs
@@ -386,8 +467,12 @@ fn test_checks(
         for n in names {
             if disc.resolve(n).is_empty() {
                 report.push(
-                    Finding::new(&resolves, sev_res, format!("`{name}`: `verified_by` names `{n}`, which is no discovered test"))
-                        .with_entity(name),
+                    Finding::new(
+                        &resolves,
+                        sev_res,
+                        format!("`{name}`: `verified_by` names `{n}`, which is no discovered test"),
+                    )
+                    .with_entity(name),
                 );
             }
         }
@@ -412,8 +497,10 @@ fn internal_edges(
             depends_on: m.depends_on.clone(),
         })
         .collect();
-    let file_of: BTreeMap<&str, String> =
-        modules.iter().map(|m| (m.name.as_str(), m.file.display().to_string())).collect();
+    let file_of: BTreeMap<&str, String> = modules
+        .iter()
+        .map(|m| (m.name.as_str(), m.file.display().to_string()))
+        .collect();
     let edges = crate::import_edges::module_edges(layout, &nodes)?;
     let sev = severity(domain, "internal_edges_declared", Severity::Error);
     for e in edges.undeclared {
@@ -502,8 +589,14 @@ fn spec_files(layout: &LayoutContext, rev: Option<&str>) -> Result<BTreeMap<Stri
             .map(|p| rel(layout, &p))
             .collect(),
         Some(rev) => {
-            let ls = git(layout, &["ls-tree", "-r", "--name-only", rev, "--", &specs_rel])?;
-            ls.lines().filter(|l| l.ends_with(".toml")).map(str::to_string).collect()
+            let ls = git(
+                layout,
+                &["ls-tree", "-r", "--name-only", rev, "--", &specs_rel],
+            )?;
+            ls.lines()
+                .filter(|l| l.ends_with(".toml"))
+                .map(str::to_string)
+                .collect()
         }
     };
     for p in paths {
@@ -566,8 +659,15 @@ fn flags_of(files: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Flags> {
     let read = |v: &toml::Value| Flags {
         planned: v.get("planned").and_then(toml::Value::as_bool) == Some(true),
         test_pending: v.get("test_pending").and_then(toml::Value::as_bool) == Some(true),
-        hard_gate: v.get("hard_gate").and_then(toml::Value::as_bool).unwrap_or(true),
-        status: v.get("status").and_then(toml::Value::as_str).unwrap_or("").to_string(),
+        hard_gate: v
+            .get("hard_gate")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true),
+        status: v
+            .get("status")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     };
     let mut out = BTreeMap::new();
     for (path, doc) in files {
@@ -578,7 +678,12 @@ fn flags_of(files: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Flags> {
             continue;
         }
         for table in ["requirement", "open_question"] {
-            for entry in doc.get(table).and_then(toml::Value::as_array).into_iter().flatten() {
+            for entry in doc
+                .get(table)
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if let Some(id) = entry.get("id").and_then(toml::Value::as_str) {
                     out.insert(id.to_string(), read(entry));
                 }
@@ -598,7 +703,10 @@ fn since_report(
     let after = flags_of(&spec_files(layout, None)?);
     let info = |rule: &str| severity(domain, rule, Severity::Info);
     for (key, now) in &after {
-        let was = before.get(key).cloned().unwrap_or(Flags { hard_gate: true, ..Default::default() });
+        let was = before.get(key).cloned().unwrap_or(Flags {
+            hard_gate: true,
+            ..Default::default()
+        });
         for (flag, set_now, set_before) in [
             ("planned", now.planned, was.planned),
             ("test_pending", now.test_pending, was.test_pending),
@@ -619,12 +727,16 @@ fn since_report(
                 Finding::new(
                     "since_hard_gate_flip",
                     info("since_hard_gate_flip"),
-                    format!("`{key}`: `hard_gate` {} → {} since {since}", was.hard_gate, now.hard_gate),
+                    format!(
+                        "`{key}`: `hard_gate` {} → {} since {since}",
+                        was.hard_gate, now.hard_gate
+                    ),
                 )
                 .with_entity(key),
             );
         }
-        if !now.hard_gate && now.status == "default_committed" && was.status != "default_committed" {
+        if !now.hard_gate && now.status == "default_committed" && was.status != "default_committed"
+        {
             report.push(
                 Finding::new(
                     "since_default_committed",

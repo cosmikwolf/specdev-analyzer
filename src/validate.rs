@@ -746,7 +746,14 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                         ),
                     ));
                     let label = format!("rule pack {}", pack.path.display());
-                    resolve_check_kinds(&pack.file.graph_checks, &kindset, &pack.path, &label, true, report);
+                    resolve_check_kinds(
+                        &pack.file.graph_checks,
+                        &kindset,
+                        &pack.path,
+                        &label,
+                        true,
+                        report,
+                    );
                     execute_graph_checks(
                         &pack.file.graph_checks,
                         &label,
@@ -799,7 +806,11 @@ fn validate_context_files(
     let context_files: Vec<String> = parsed
         .get("context_files")
         .and_then(toml::Value::as_array)
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     for rel in &context_files {
         let abs = layout.project_root.join(rel);
@@ -871,7 +882,6 @@ fn execute_graph_checks(
         let rule = check.rule.as_deref().unwrap_or("?");
         let severity = crate::packs::severity(&domain.validation.rules, pack_rules, rule);
         let primitive = check.kind.as_str();
-
 
         let view = filter_graph_for_check(&graph_json, check, kindset);
 
@@ -1192,11 +1202,15 @@ pub const GRAPH_CHECK_PRIMITIVES: &[&str] = &[
 /// (all entities kept, so endpoints resolve). An unknown `scope` keeps no
 /// relation: the check fails closed.
 fn relations_of_kind(graph_json: &JsonValue, scope: &str, kindset: &EffectiveKindSet) -> JsonValue {
-    let key = kinds::parse(scope).map(|p| p.to_string()).unwrap_or_else(|_| scope.to_string());
+    let key = kinds::parse(scope)
+        .map(|p| p.to_string())
+        .unwrap_or_else(|_| scope.to_string());
     let mut view = graph_json.clone();
     if let Some(rels) = view.get_mut("relations").and_then(|v| v.as_array_mut()) {
         rels.retain(|r| {
-            r.get("kind").and_then(|k| k.as_str()).is_some_and(|k| relation_extends_to(kindset, k, &key))
+            r.get("kind")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| relation_extends_to(kindset, k, &key))
         });
     }
     view
@@ -1213,7 +1227,8 @@ fn ids_in_document(
     rule: &str,
     severity: Severity,
 ) -> Vec<Finding> {
-    let (Some(scope), Some(document)) = (check.entity_scope.as_deref(), check.document.as_deref()) else {
+    let (Some(scope), Some(document)) = (check.entity_scope.as_deref(), check.document.as_deref())
+    else {
         return vec![Finding::new(
             "DOMAIN-003",
             Severity::Warning,
@@ -1233,7 +1248,12 @@ fn ids_in_document(
         )];
     };
     let mut out = Vec::new();
-    for ent in graph_json.get("entities").and_then(|v| v.as_array()).into_iter().flatten() {
+    for ent in graph_json
+        .get("entities")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
         let (Some(kind), Some(name)) = (
             ent.get("kind").and_then(|v| v.as_str()),
             ent.get("name").and_then(|v| v.as_str()),
@@ -1243,8 +1263,14 @@ fn ids_in_document(
         if !entity_extends_to(kindset, kind, &key) {
             continue;
         }
-        if let (Some(attr), Some(want)) = (check.entity_attr.as_deref(), check.entity_attr_value.as_deref()) {
-            let have = ent.get("attrs").and_then(|a| a.get(attr)).and_then(|v| v.as_str());
+        if let (Some(attr), Some(want)) = (
+            check.entity_attr.as_deref(),
+            check.entity_attr_value.as_deref(),
+        ) {
+            let have = ent
+                .get("attrs")
+                .and_then(|a| a.get(attr))
+                .and_then(|v| v.as_str());
             if have != Some(want) {
                 continue;
             }
@@ -1496,7 +1522,14 @@ fn resolve_graph_check_kinds(
     section: &str,
     report: &mut Report,
 ) {
-    resolve_check_kinds(checks, kindset, domain_toml_path, &format!("domain.toml [{section}]"), false, report);
+    resolve_check_kinds(
+        checks,
+        kindset,
+        domain_toml_path,
+        &format!("domain.toml [{section}]"),
+        false,
+        report,
+    );
 }
 
 /// As [`resolve_graph_check_kinds`], labelled `label`. With `scopes`, the
@@ -1632,11 +1665,6 @@ fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
     (all.len(), open)
 }
 
-
-
-
-
-
 /// Count entities of kind `Module` in the unfiltered graph JSON.
 /// F-003: used to decide whether to collapse `requirements_have_satisfiers`
 /// findings into a single summary line on a zero-module project.
@@ -1715,4 +1743,3 @@ fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> 
         }
     }
 }
-

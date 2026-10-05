@@ -30,7 +30,10 @@ const IMPORTS_QUERY: &str = include_str!("../embedded/languages/typescript/impor
 const TESTS_QUERY: &str = include_str!("../embedded/languages/typescript/tests.scm");
 
 impl LanguageAdapter for TypeScriptAdapter {
-    fn manifest_facts(&self, project_root: &std::path::Path) -> Option<crate::manifest_facts::ManifestFacts> {
+    fn manifest_facts(
+        &self,
+        project_root: &std::path::Path,
+    ) -> Option<crate::manifest_facts::ManifestFacts> {
         crate::manifest_facts::npm(project_root)
     }
 
@@ -53,7 +56,9 @@ impl LanguageAdapter for TypeScriptAdapter {
     /// `*.test.ts(x)` and `*.spec.ts(x)` (vitest, jest, Playwright).
     fn is_test_file(&self, rel: &Path) -> bool {
         let name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"].iter().any(|s| name.ends_with(s))
+        [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"]
+            .iter()
+            .any(|s| name.ends_with(s))
     }
 
     fn name(&self) -> &'static str {
@@ -103,7 +108,12 @@ impl LanguageAdapter for TypeScriptAdapter {
     /// A relative specifier from the importing file's directory, or a
     /// `tsconfig` `paths` alias; each tried as written, with `.ts` / `.tsx`,
     /// and as a directory `index`. A package specifier is external.
-    fn resolve_import(&self, spec: &str, from: &Path, ctx: &super::ImportContext) -> Vec<std::path::PathBuf> {
+    fn resolve_import(
+        &self,
+        spec: &str,
+        from: &Path,
+        ctx: &super::ImportContext,
+    ) -> Vec<std::path::PathBuf> {
         let s = spec.trim();
         let mut bases: Vec<std::path::PathBuf> = Vec::new();
         if s.starts_with("./") || s.starts_with("../") {
@@ -117,7 +127,9 @@ impl LanguageAdapter for TypeScriptAdapter {
                 };
                 let Some(rest) = rest else { continue };
                 for target in targets {
-                    bases.push(super::normalize_rel(Path::new(&target.replacen('*', rest, 1))));
+                    bases.push(super::normalize_rel(Path::new(
+                        &target.replacen('*', rest, 1),
+                    )));
                 }
             }
         }
@@ -162,7 +174,11 @@ impl LanguageAdapter for TypeScriptAdapter {
                     .into_iter()
                     .flatten()
                     .filter_map(|t| t.as_str())
-                    .map(|t| super::normalize_rel(&Path::new(base).join(t)).to_string_lossy().into_owned())
+                    .map(|t| {
+                        super::normalize_rel(&Path::new(base).join(t))
+                            .to_string_lossy()
+                            .into_owned()
+                    })
                     .collect();
                 (pattern.clone(), targets)
             })

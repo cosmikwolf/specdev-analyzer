@@ -610,10 +610,7 @@ pub(crate) fn read_open_questions(
                     .collect()
             })
             .unwrap_or_default();
-        out.insert(
-            id.to_string(),
-            OpenQuestionEntry { status, affects },
-        );
+        out.insert(id.to_string(), OpenQuestionEntry { status, affects });
     }
     Ok(out)
 }

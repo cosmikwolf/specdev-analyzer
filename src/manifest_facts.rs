@@ -44,20 +44,41 @@ fn s(v: &toml::Value) -> Option<String> {
 /// the Cargo workspace root (the nearest ancestor `Cargo.toml` with a
 /// `[workspace]` table).
 pub fn cargo(root: &Path) -> Option<ManifestFacts> {
-    let doc: toml::Table = std::fs::read_to_string(root.join("Cargo.toml")).ok()?.parse().ok()?;
+    let doc: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
+        .ok()?
+        .parse()
+        .ok()?;
     let ws = cargo_workspace(root, &doc);
-    let ws_deps = ws.as_ref().and_then(|w| w.get("dependencies")).and_then(|d| d.as_table()).cloned().unwrap_or_default();
-    let ws_pkg = ws.as_ref().and_then(|w| w.get("package")).and_then(|d| d.as_table()).cloned().unwrap_or_default();
+    let ws_deps = ws
+        .as_ref()
+        .and_then(|w| w.get("dependencies"))
+        .and_then(|d| d.as_table())
+        .cloned()
+        .unwrap_or_default();
+    let ws_pkg = ws
+        .as_ref()
+        .and_then(|w| w.get("package"))
+        .and_then(|d| d.as_table())
+        .cloned()
+        .unwrap_or_default();
     let mut facts = ManifestFacts::default();
     let mut tables: Vec<(&toml::Table, bool)> = Vec::new();
-    for (key, dev) in [("dependencies", false), ("dev-dependencies", true), ("build-dependencies", false)] {
+    for (key, dev) in [
+        ("dependencies", false),
+        ("dev-dependencies", true),
+        ("build-dependencies", false),
+    ] {
         if let Some(t) = doc.get(key).and_then(|v| v.as_table()) {
             tables.push((t, dev));
         }
     }
     if let Some(targets) = doc.get("target").and_then(|v| v.as_table()) {
         for t in targets.values().filter_map(|v| v.as_table()) {
-            for (key, dev) in [("dependencies", false), ("dev-dependencies", true), ("build-dependencies", false)] {
+            for (key, dev) in [
+                ("dependencies", false),
+                ("dev-dependencies", true),
+                ("build-dependencies", false),
+            ] {
                 if let Some(d) = t.get(key).and_then(|v| v.as_table()) {
                     tables.push((d, dev));
                 }
@@ -65,7 +86,11 @@ pub fn cargo(root: &Path) -> Option<ManifestFacts> {
         }
     }
     // A workspace root lists its own shared dependencies too.
-    if let Some(d) = doc.get("workspace").and_then(|w| w.get("dependencies")).and_then(|v| v.as_table()) {
+    if let Some(d) = doc
+        .get("workspace")
+        .and_then(|w| w.get("dependencies"))
+        .and_then(|v| v.as_table())
+    {
         tables.push((d, false));
     }
     for (table, dev) in tables {
@@ -74,10 +99,23 @@ pub fn cargo(root: &Path) -> Option<ManifestFacts> {
             facts.deps.entry(name).or_default().push(dep);
         }
     }
-    let pkg = doc.get("package").and_then(|v| v.as_table()).cloned().unwrap_or_default();
-    for field in ["version", "description", "license", "edition", "repository", "rust-version"] {
+    let pkg = doc
+        .get("package")
+        .and_then(|v| v.as_table())
+        .cloned()
+        .unwrap_or_default();
+    for field in [
+        "version",
+        "description",
+        "license",
+        "edition",
+        "repository",
+        "rust-version",
+    ] {
         let v = match pkg.get(field) {
-            Some(toml::Value::Table(t)) if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) => {
+            Some(toml::Value::Table(t))
+                if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) =>
+            {
                 ws_pkg.get(field).and_then(s)
             }
             Some(v) => s(v),
@@ -103,7 +141,10 @@ fn cargo_workspace(root: &Path, doc: &toml::Table) -> Option<toml::Table> {
     }
     let mut cur = root.parent();
     while let Some(dir) = cur {
-        if let Some(t) = std::fs::read_to_string(dir.join("Cargo.toml")).ok().and_then(|x| x.parse::<toml::Table>().ok()) {
+        if let Some(t) = std::fs::read_to_string(dir.join("Cargo.toml"))
+            .ok()
+            .and_then(|x| x.parse::<toml::Table>().ok())
+        {
             if let Some(w) = t.get("workspace").and_then(|v| v.as_table()) {
                 return Some(w.clone());
             }
@@ -114,13 +155,19 @@ fn cargo_workspace(root: &Path, doc: &toml::Table) -> Option<toml::Table> {
 }
 
 fn cargo_dep(key: &str, v: &toml::Value, ws: &toml::Table, dev: bool) -> (String, ManifestDep) {
-    let mut dep = ManifestDep { dev, ..Default::default() };
+    let mut dep = ManifestDep {
+        dev,
+        ..Default::default()
+    };
     let mut name = key.to_string();
     match v {
         toml::Value::String(version) => dep.version = Some(version.clone()),
         toml::Value::Table(t) => {
-            dep.own_features =
-                t.get("features").and_then(|f| f.as_array()).map(|a| a.iter().filter_map(s).collect()).unwrap_or_default();
+            dep.own_features = t
+                .get("features")
+                .and_then(|f| f.as_array())
+                .map(|a| a.iter().filter_map(s).collect())
+                .unwrap_or_default();
             let mut merged = t.clone();
             if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) {
                 match ws.get(key) {
@@ -130,8 +177,17 @@ fn cargo_dep(key: &str, v: &toml::Value, ws: &toml::Table, dev: bool) -> (String
                     Some(toml::Value::Table(base)) => {
                         let mut b = base.clone();
                         // The member's features add to the workspace's.
-                        let mut feats: Vec<toml::Value> = b.get("features").and_then(|f| f.as_array()).cloned().unwrap_or_default();
-                        feats.extend(t.get("features").and_then(|f| f.as_array()).cloned().unwrap_or_default());
+                        let mut feats: Vec<toml::Value> = b
+                            .get("features")
+                            .and_then(|f| f.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        feats.extend(
+                            t.get("features")
+                                .and_then(|f| f.as_array())
+                                .cloned()
+                                .unwrap_or_default(),
+                        );
                         for (k, v) in t {
                             if k != "workspace" && k != "features" {
                                 b.insert(k.clone(), v.clone());
@@ -154,8 +210,14 @@ fn cargo_dep(key: &str, v: &toml::Value, ws: &toml::Table, dev: bool) -> (String
                 .and_then(|f| f.as_array())
                 .map(|a| a.iter().filter_map(s).collect())
                 .unwrap_or_default();
-            dep.default_features = merged.get("default-features").or(merged.get("default_features")).and_then(|v| v.as_bool());
-            dep.optional = merged.get("optional").and_then(|v| v.as_bool()).unwrap_or(false);
+            dep.default_features = merged
+                .get("default-features")
+                .or(merged.get("default_features"))
+                .and_then(|v| v.as_bool());
+            dep.optional = merged
+                .get("optional")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             dep.source = merged
                 .get("path")
                 .and_then(s)
@@ -169,16 +231,34 @@ fn cargo_dep(key: &str, v: &toml::Value, ws: &toml::Table, dev: bool) -> (String
 
 /// `package.json` at `root`.
 pub fn npm(root: &Path) -> Option<ManifestFacts> {
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join("package.json")).ok()?).ok()?;
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("package.json")).ok()?).ok()?;
     let mut facts = ManifestFacts::default();
-    for (key, dev) in [("dependencies", false), ("devDependencies", true), ("peerDependencies", false), ("optionalDependencies", false)] {
+    for (key, dev) in [
+        ("dependencies", false),
+        ("devDependencies", true),
+        ("peerDependencies", false),
+        ("optionalDependencies", false),
+    ] {
         if let Some(m) = v.get(key).and_then(|d| d.as_object()) {
             for (name, ver) in m {
                 let version = ver.as_str().map(str::to_string);
                 let source = version.as_deref().and_then(|x| {
-                    ["link:", "file:", "workspace:", "git+", "github:"].iter().any(|p| x.starts_with(p)).then(|| x.to_string())
+                    ["link:", "file:", "workspace:", "git+", "github:"]
+                        .iter()
+                        .any(|p| x.starts_with(p))
+                        .then(|| x.to_string())
                 });
-                facts.deps.entry(name.clone()).or_default().push(ManifestDep { version, source, dev, ..Default::default() });
+                facts
+                    .deps
+                    .entry(name.clone())
+                    .or_default()
+                    .push(ManifestDep {
+                        version,
+                        source,
+                        dev,
+                        ..Default::default()
+                    });
             }
         }
     }
@@ -192,19 +272,35 @@ pub fn npm(root: &Path) -> Option<ManifestFacts> {
 
 /// `pubspec.yaml` at `root`.
 pub fn pub_(root: &Path) -> Option<ManifestFacts> {
-    let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(root.join("pubspec.yaml")).ok()?).ok()?;
+    let v: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(root.join("pubspec.yaml")).ok()?).ok()?;
     let mut facts = ManifestFacts::default();
-    for (key, dev) in [("dependencies", false), ("dev_dependencies", true), ("dependency_overrides", false)] {
+    for (key, dev) in [
+        ("dependencies", false),
+        ("dev_dependencies", true),
+        ("dependency_overrides", false),
+    ] {
         if let Some(m) = v.get(key).and_then(|d| d.as_mapping()) {
             for (name, spec) in m {
                 let Some(name) = name.as_str() else { continue };
-                let mut dep = ManifestDep { dev, ..Default::default() };
+                let mut dep = ManifestDep {
+                    dev,
+                    ..Default::default()
+                };
                 match spec {
                     serde_yaml::Value::String(x) => dep.version = Some(x.clone()),
                     serde_yaml::Value::Mapping(m) => {
-                        dep.version = m.get("version").and_then(|x| x.as_str()).map(str::to_string);
+                        dep.version = m
+                            .get("version")
+                            .and_then(|x| x.as_str())
+                            .map(str::to_string);
                         dep.source = ["sdk", "path", "git", "hosted"].iter().find_map(|k| {
-                            m.get(*k).map(|x| format!("{k}:{}", x.as_str().map(str::to_string).unwrap_or_else(|| "…".into())))
+                            m.get(*k).map(|x| {
+                                format!(
+                                    "{k}:{}",
+                                    x.as_str().map(str::to_string).unwrap_or_else(|| "…".into())
+                                )
+                            })
                         });
                     }
                     _ => {}

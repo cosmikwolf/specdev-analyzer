@@ -6,12 +6,12 @@ use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
     diagnostics::report_error,
-    drift, inline,
+    drift, guidance_lint, inline,
     layout::LayoutContext,
     manifest::profile as profile_mod,
-    merge, migrate,
+    merge, migrate, pack_lint,
     plugin_root::{self, PluginRootInputs},
-    guidance_lint, pack_lint, reduction, resolve, validate,
+    reduction, resolve, validate,
 };
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -538,7 +538,14 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             since,
             format,
-        } => run_check(project, spec_path.as_deref(), plugin_flag.as_deref(), since, &format, no_color),
+        } => run_check(
+            project,
+            spec_path.as_deref(),
+            plugin_flag.as_deref(),
+            since,
+            &format,
+            no_color,
+        ),
         Command::ExtractItems { project, module } => {
             run_extract_items(project, spec_path.as_deref(), module.as_deref())
         }
@@ -575,7 +582,14 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             dry_run,
             refresh,
             plan_unresolved,
-        } => run_migrate(project, spec_path.as_deref(), plugin_flag, dry_run, refresh, plan_unresolved),
+        } => run_migrate(
+            project,
+            spec_path.as_deref(),
+            plugin_flag,
+            dry_run,
+            refresh,
+            plan_unresolved,
+        ),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
         Command::Gate {
             project,
@@ -1425,7 +1439,10 @@ fn run_migrate(
     };
     // The format step first: a `1.x` tree moves to `2.0`, then the unit and
     // profile-shell steps below run on the moved tree.
-    let opts = specdev_analyzer::format_migration::FormatOptions { dry_run, plan_unresolved };
+    let opts = specdev_analyzer::format_migration::FormatOptions {
+        dry_run,
+        plan_unresolved,
+    };
     let format = match specdev_analyzer::format_migration::run(&layout, &plugin, opts) {
         Ok(r) => r,
         Err(e) => {
@@ -1455,7 +1472,9 @@ fn run_migrate(
             );
         }
         for m in &format.tests_only {
-            println!("  module `{m}`: its source file holds only tests; check that it is the right file");
+            println!(
+                "  module `{m}`: its source file holds only tests; check that it is the right file"
+            );
         }
         if !format.replaced_unrecorded.is_empty() {
             println!(
@@ -1497,7 +1516,12 @@ fn run_migrate(
         .spec
         .workspace
         .as_ref()
-        .map(|ws| ws.members.iter().map(|m| layout.project_root.join(&m.path)).collect())
+        .map(|ws| {
+            ws.members
+                .iter()
+                .map(|m| layout.project_root.join(&m.path))
+                .collect()
+        })
         .unwrap_or_default();
     for dir in &members {
         let member = match LayoutContext::discover_unchecked(dir) {
@@ -1806,7 +1830,11 @@ pub(crate) fn print_emit_report(r: &specdev_analyzer::gates::EmitReport) {
 fn run_one_gate(layout: &LayoutContext, label: &str) -> ExitCode {
     match specdev_analyzer::gates::run_gate(layout, label) {
         Ok(run) => {
-            println!("gate {} {}", run.label, if run.pass { "pass" } else { "fail" });
+            println!(
+                "gate {} {}",
+                run.label,
+                if run.pass { "pass" } else { "fail" }
+            );
             if run.pass {
                 ExitCode::SUCCESS
             } else {
@@ -1929,7 +1957,11 @@ fn run_report_tests(
         } else {
             roots.iter().map(|r| layout.project_root.join(r)).collect()
         };
-        specdev_analyzer::test_discovery::discover_roots(adapter.as_ref(), &layout.project_root, &roots)
+        specdev_analyzer::test_discovery::discover_roots(
+            adapter.as_ref(),
+            &layout.project_root,
+            &roots,
+        )
     };
     match result.and_then(|d| specdev_analyzer::test_discovery::to_yaml(&d)) {
         Ok(y) => {

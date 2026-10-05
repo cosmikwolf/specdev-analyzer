@@ -97,7 +97,11 @@ impl LayoutContext {
         let spec_toml_path = project_root.join("spec.toml");
         let spec = SpecConfig::load(&spec_toml_path)
             .with_context(|| format!("loading {}", spec_toml_path.display()))?;
-        Ok(Self::from_spec(project_root.to_path_buf(), spec_toml_path, spec))
+        Ok(Self::from_spec(
+            project_root.to_path_buf(),
+            spec_toml_path,
+            spec,
+        ))
     }
 
     /// Build a context from a parsed manifest. Pure path arithmetic; useful
@@ -320,12 +324,21 @@ fn check_member_format(project_root: &Path, spec: &SpecConfig) -> Result<()> {
     let Some(root_spec) = find_workspace_root_spec(project_root)? else {
         return Ok(());
     };
-    let text = std::fs::read_to_string(&root_spec).with_context(|| format!("reading {}", root_spec.display()))?;
+    let text = std::fs::read_to_string(&root_spec)
+        .with_context(|| format!("reading {}", root_spec.display()))?;
     let root_version = toml::from_str::<toml::Table>(&text)
         .ok()
-        .and_then(|t| t.get("spec_version").and_then(|v| v.as_str()).map(str::to_string))
+        .and_then(|t| {
+            t.get("spec_version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .unwrap_or_default();
-    let root_major: u32 = root_version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(1);
+    let root_major: u32 = root_version
+        .split('.')
+        .next()
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(1);
     if root_major != spec.format_major() {
         let root = root_spec.parent().unwrap_or(&root_spec);
         anyhow::bail!(
