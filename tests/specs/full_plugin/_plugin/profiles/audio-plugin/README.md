@@ -152,15 +152,12 @@ host binding).
 > bridge whenever the plugin ships an editor, even before any
 > `parameter_widgets` entries exist.
 
-> **Bridge co-residency rule (v1).** When you inline a bridge whose
-> two endpoint blocks both contribute tables on a module
-> (e.g. `egui+nih-plug` requires both `[nih_plug]` and `[egui]`), all
-> three — both block tables AND the bindings table — must live on the
-> SAME module (typically the `plugin_shell` module). v1 does not
-> support cross-module bindings; the analyzer surfaces this as a
-> `REDUCE_UNRESOLVED` finding with a `hint:` line pointing at the
-> bridge's README. Each bridge's README documents whether co-residency
-> applies.
+> **Bridge co-residency rule.** `egui+nih-plug` needs both block
+> tables (`[nih_plug]` and `[egui]`) AND its bindings table on the
+> SAME module (typically the `plugin_shell` module). A binding that
+> reaches another module surfaces as a `REDUCE_UNRESOLVED` finding with
+> a `hint:` line from the bridge's contract. Each bridge's README
+> documents whether co-residency applies.
 
 To customize the layer ordering or add additional graph checks, edit
 the project's `specs/specdev/domain.toml` directly — once

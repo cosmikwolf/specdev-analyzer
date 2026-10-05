@@ -32,9 +32,8 @@ why a green build is not evidence.
    Cargokit look for `libhello-rust.so`; cargo wrote `libhello_rust.so`;
    the existence filter drops it, the `jniLibs/<buildType>/<abi>/` staging
    directories are created and left **empty**, and the source set Cargokit
-   registers contributes nothing. This is a spec-owned fact: set
-   `[project].name` in the companion crate's `spec.toml`, so
-   `manifest --write` keeps it. Note that `bootstrap --name` documents
+   registers contributes nothing. The fix is the companion crate's
+   `[package].name` in its `Cargo.toml`. Note that `bootstrap --name` documents
    itself as "lowercase, hyphens" — correct for a normal crate, wrong for
    an FRB companion.
 

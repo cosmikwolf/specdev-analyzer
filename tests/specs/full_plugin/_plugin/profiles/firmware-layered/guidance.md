@@ -6,8 +6,8 @@ layers and the imports, and review does the rest.
 
 ## Crate and files
 
-- One file per module, under its layer's directory (`src/<layer>/<name>.rs`), so the path shows the layer. The crate
-  root declares the populated layers.
+- One file per module. `check` finds `src/<snake_name>.rs` or `src/<snake_name>/mod.rs`; a module filed elsewhere,
+  for example under its layer's directory (`src/<layer>/<name>.rs`), sets `source_file` in its spec.
 - A binary crate's root is `src/main.rs`: `no_std`, `no_main`, the runtime's entry, the interrupt bindings that the
   units prescribe, and the panic handler. A library member's root is `src/lib.rs`: `no_std` and re-exports only — no
   entry, no interrupt bindings, no panic handler.

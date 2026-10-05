@@ -85,7 +85,7 @@ The guidance (`guidance.md`) says how each binding becomes egui calls in the cod
   and a specific widget vocabulary (WIDGET-KIND-V1's 8 kinds).
 - **Rule-pack completeness:** ✓ — each binding constrains the code
   (which widget, in which region, for which parameter), and the kind and
-  purpose rules are stated as checkable rules.
+  purpose rules are checked by its rule pack.
 - **Load-bearing semantic role:** ✓ (vs `embassy+stm32h5-rs`'s
   wiring-stub role). The bridge is the only place that knows both
   parameter type AND widget rendering — neither source block has
@@ -102,13 +102,15 @@ Two layers of validation in v1:
    referential checks (NIH-EGUI-001 / NIH-EGUI-002 equivalents in the
    spike's framing).
 
-2. **Guidance rules** — the bridge's guidance refuses:
-   - Bindings into a region whose `purpose` ≠ `parameter_controls`.
-   - `widget_kind` ↔ `parameter.kind` mismatches (e.g.
-     `widget_kind = "toggle"` on a `kind = "float"` parameter).
+2. **The rule pack** (`checks.toml`, `related_attrs_allowed` over
+   `widget_binds_parameter`) refuses:
+   - Bindings into a region whose `purpose` ≠ `parameter_controls`
+     (`egui+nih-plug.widget_in_controls_region`).
+   - `widget_kind` ↔ `parameter.kind` mismatches, e.g.
+     `widget_kind = "toggle"` on a `kind = "float"` parameter
+     (`egui+nih-plug.widget_fits_parameter`).
 
-These are NOT checks yet — an attribute-mapping check between related entities is
-what turns them into checks (NIH-EGUI-003..009).
+The guidance's other rules are review items.
 
 ## Co-residency requirement (v1)
 
@@ -130,9 +132,6 @@ metering surfaced in the editor.
 
 ## Deferred (revisit triggers, including WIDGET-KIND-V1)
 
-- **Validate-time enforcement of NIH-EGUI-003..009.** Stated in the
-  guidance today; an attribute-mapping check between related
-  entities is the planned check.
 - **Multi-parameter widgets.** XY pads (2 parameters), envelope
   editors (N parameters). Different binding family — needs
   `parameter_x` / `parameter_y` or `parameters: [...]` array form.

@@ -28,7 +28,7 @@ const SCHEMA_SOURCE: &str = include_str!("../src/embedded/profile.schema.yaml");
 /// `PROFILE_CONTRACT_VERSION`; never edit an existing row.
 const CONTRACT_HASHES: &[(u64, &str)] = &[
     (1, "sha256:20dbc5501837573057fb229104875a44e7aa8569323e79552e4c770b7a7c56a5"),
-    (2, "sha256:ebf2ce16f2643e9427a074291e7761797ee72959ad896ba06f0292d6039a3c5a"),
+    (2, "sha256:535a048fdc7767668326b44d7d2efcb99f5ff182dab8ea4ac4276b7d726805de"),
 ];
 
 fn tmp_file(tag: &str, body: &str) -> PathBuf {

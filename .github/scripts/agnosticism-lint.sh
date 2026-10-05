@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two checks:
+# Four checks:
 #
 #   1. NAME agnosticism: no hardcoded profile/block/bridge name string
 #      literals in `specdev-analyzer/src/` (excluding `embedded/`,
@@ -9,8 +9,12 @@
 #      planning-workspace pointers under `src/` or `tests/` — every file,
 #      not just `.rs`. See the "Planning-references check" section near the
 #      bottom for carve-outs.
+#   3. PLUGIN-TREE planning references: the same ban over the shipped
+#      plugin tree.
+#   4. PLUGIN-TREE removed terms: no removed command, file or concept named
+#      in the shipped plugin tree (`CHANGELOG.md` exempt).
 #
-# Both run every invocation; the script exits non-zero if either fails.
+# All run every invocation; the script exits non-zero if any fails.
 #
 # Usage:
 #   .github/scripts/agnosticism-lint.sh [<plugin-tree-path>]
@@ -350,10 +354,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Removed-terms check over the plugin tree.
+#
+# The analyzer once generated code: `/spec-gen`, the `gen-*` ledgers, the
+# `--skeleton` handoff, codegen prose, reference crates and their checks,
+# per-block `deps.yaml`, and the subcommands that served them. All of it is
+# gone. A skill or a guidance file that still names one sends the agent
+# after a command or a file that does not exist, and no other gate sees it.
+#
+# The list lives here and not in `plugin-lint`: it is this project's
+# history, not a rule for third-party plugin authors. `tests/cli_help_text.rs`
+# reads this line and runs the same list over every subcommand's long help,
+# so keep the pattern on one line as `REMOVED_TERMS_RE='…'`.
+#
+# Measured legitimate and deliberately not matched: the kept decision field
+# `codegen_include`, flutter_rust_bridge's own `flutter_rust_bridge_codegen`,
+# and plain "hand-edit" wording about other tools' generated files.
+#
+# `CHANGELOG.md` is exempt: it is where a removal is recorded. A line that
+# must name a removed term (a migration note for old trees) takes a trailing
+# `REMOVED-TERM-OK: <reason>` escape.
+REMOVED_TERMS_RE='/spec-gen|spec-gen\b|gen-lineage|gen-drift|gen-plan|gen-record|--skeleton|HANDOFF\.md|codegen prose|codegen/|module\.conventions|codegen_unblocked|[Rr]eference[- ]crate|manifest --write|reference_cases|REF-(COVERAGE|ARITY|PIN)|CONTEXT-100|deps\.yaml|specdev-analyzer (gen|prompt|derive|manifest|cargo-toml)\b'
+
+if git -C "$plugin_tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  removed_hits=$(git -C "$plugin_tree" ls-files --cached --others --exclude-standard \
+    | grep -v '^CHANGELOG\.md$' \
+    | sed "s|^|$plugin_tree/|" \
+    | tr '\n' '\0' \
+    | xargs -0 -r grep -HnEI "$REMOVED_TERMS_RE" 2>/dev/null \
+    | grep -v 'REMOVED-TERM-OK' || true)
+else
+  removed_hits=$(grep -rnEI \
+    --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='target' \
+    "$REMOVED_TERMS_RE" "$plugin_tree" 2>/dev/null \
+    | grep -v "^$plugin_tree/CHANGELOG\.md:" \
+    | grep -v 'REMOVED-TERM-OK' || true)
+fi
+
+removed_count=0
+if [ -n "$removed_hits" ]; then
+  echo "plugin-tree removed-term violation(s) — the text names a removed command,"
+  echo "file or concept (rewrite it to what ships now, or escape a genuine keeper"
+  echo "with a trailing \`REMOVED-TERM-OK: <reason>\`):"
+  echo "$removed_hits" | sed 's/^/  /'
+  removed_count=$(printf '%s\n' "$removed_hits" | grep -c .)
+  echo
+else
+  echo "agnosticism-lint: plugin-tree removed-terms clean."
+fi
+
+# ---------------------------------------------------------------------------
 # Combined verdict.
-total=$((violation_count + planning_count + plugin_planning_count))
+total=$((violation_count + planning_count + plugin_planning_count + removed_count))
 if [ "$total" -eq 0 ]; then
   exit 0
 fi
-echo "agnosticism-lint: $violation_count name violation(s), $planning_count analyzer planning-reference violation(s), $plugin_planning_count plugin-tree planning-reference violation(s)." >&2
+echo "agnosticism-lint: $violation_count name violation(s), $planning_count analyzer planning-reference violation(s), $plugin_planning_count plugin-tree planning-reference violation(s), $removed_count plugin-tree removed-term violation(s)." >&2
 exit 1

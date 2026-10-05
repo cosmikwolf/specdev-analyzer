@@ -15,18 +15,20 @@ it is the thing a reader most often needs and least often finds.
 
 ## What it contributes
 
-| Table | Becomes |
+| Table | States |
 |---|---|
-| `[[mk20dx.pins]]` | typed pin handles, moved into the declared mode |
-| `interrupt` on a pin | the port handler's trigger config and per-pin dispatch |
-| `[[mk20dx.interrupts]]` | a handler per declared vector, with the right flag-clear |
+| `[[mk20dx.pins]]` | which pins the module owns, and each pin's mode |
+| `interrupt` on a pin | the pin's trigger, raised on its port's vector |
+| `[[mk20dx.interrupts]]` | every other vector the module handles |
 | `[mk20dx.clock]` | the one-per-project clock-tree preset (`freeze_at`) |
-| `[[mk20dx.timers]]` | PIT channel handles, started when a period is declared |
-| `[[mk20dx.spi]]` | an SPI master wired with the module's own alternate pins |
-| `[[mk20dx.uarts]]` | a UART wired the same way, split into halves on demand |
-| `[[mk20dx.adcs]]` | a configured, calibrated ADC handle |
-| `[[mk20dx.dma_channels]]` | DMA channel handles, DMAMUX-wired when a source is declared |
-| `[[mk20dx.ftms]]` | running PWM channels, or split FTM parts for manual use |
+| `[[mk20dx.timers]]` | the PIT channels the module owns, and their periods |
+| `[[mk20dx.spi]]` | the SPI masters the module owns, on its own alternate pins |
+| `[[mk20dx.uarts]]` | the UARTs the module owns, on its own pins |
+| `[[mk20dx.adcs]]` | the ADCs the module owns, and their configuration |
+| `[[mk20dx.dma_channels]]` | the DMA channels the module owns, and their DMAMUX sources |
+| `[[mk20dx.ftms]]` | the FTM timers the module owns: PWM channels, or the parts for manual use |
+
+The guidance says what the code builds from each.
 
 **Crates the project's `Cargo.toml` needs: `mk20dx-hal`** (with the `mk20d7`,
 `rt` and `critical-section` features) **and `fugit`** for the timer-period
@@ -36,11 +38,11 @@ directly; the bare `mk20d7` name on crates.io is an unrelated 2018 crate.
 ## v2 scope — pins, interrupts, clock, and six peripheral surfaces
 
 v2 adds the clock preset and the peripheral instances (PIT / SPI / UART /
-ADC / DMA / FTM) that were deferred from v1 behind the reference-crate
-gate. Peripheral entries model OWNERSHIP and construction-time facts;
+ADC / DMA / FTM) that v1 deferred. Peripheral entries model OWNERSHIP and construction-time facts;
 runtime use of a handle is the module's code. Still out: I2C, I2S, USB,
 and the small analog blocks (CMP / VREF / DAC) — promote each when a
-project needs it, with its witness in the same commit.
+project needs it, with its guidance checked against the HAL in the same
+commit.
 
 SPI and UART entries name their pins from the module's own `pins` table,
 and those references are declared as reduction relations — a name that
@@ -86,8 +88,8 @@ carries what neither can state alone.
 ## Deferred
 
 - **I2C, I2S, USB, CMP / VREF / DAC.** Out of the modelled surface until a
-  project needs one; each promotion carries its witness in the same
-  commit.
+  project needs one; each promotion checks its guidance against the HAL
+  in the same commit.
 - **FTM combine mode and input capture.** An `ftms` entry without
   `frequency_hz` hands the split parts over for the module's own code —
   the manual surface (channel pairs, deadtime, quadrature) is used, not

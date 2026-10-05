@@ -187,7 +187,7 @@ code: panel ordering, the panel API generation, and what each region
 ## Deferred (each carries a revisit trigger)
 
 - **More region purposes** — `list`, `log`, `plot`, `form` alongside
-  the five shipped. Each needs its own scaffold, and `free_form`
+  the five shipped. Each needs its own guidance rules, and `free_form`
   covers all of them adequately today. Promote when a project reports
   the five are inadequate for its interface.
 - **Themed styling** — `[egui.style]` for color palettes, font
@@ -204,6 +204,6 @@ code: panel ordering, the panel API generation, and what each region
   the host's root surface. A host that declares child windows (an
   `[eframe]` viewport does) would need a Panel → child-window relation,
   which is cross-unit wiring and therefore a bridge, not a field here.
-- **Per-region `text` field for `label_block`** — v1 leaves label
-  text TODO-stubbed; promoting to a `text: [string]` field could
-  remove the TODO. Bounded follow-up.
+- **Per-region `text` field for `label_block`** — label text lives in
+  the code today; a `text: [string]` field would state it in the spec.
+  Bounded follow-up.

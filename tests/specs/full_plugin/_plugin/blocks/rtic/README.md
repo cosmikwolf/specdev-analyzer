@@ -71,9 +71,10 @@ software-task priority level.**
 
 ## Checks
 
-The task names, `binds`, `priority` and resources in `[[rtic.tasks]]` are the facts a spec ↔ code check reads from
-`#[task(...)]` attributes (the attribute arguments are separate syntax nodes a query can read).
-Until that check ships as a rule pack, review holds the code to them. A `uses` list names rtic resources only; the
+The block's rule pack (`checks.toml`) reads the code: each `[[rtic.tasks]]` entry against its `#[task(...)]`
+attribute (name, `binds`, `priority`), and each `[[rtic.resources]]` entry against the `#[shared]` / `#[local]`
+structs and inline locals (name, `sharing`). A missing entity is `pack_entity_in_code`, a differing argument
+`pack_attribute_matches`. A task's `uses` list is not checked; review holds it. It names rtic resources only; the
 chip's hardware handles can share the `#[local]` struct.
 
 ## Deferred

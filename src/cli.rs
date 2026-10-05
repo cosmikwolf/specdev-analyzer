@@ -31,15 +31,14 @@ pub struct GlobalArgs {
     /// discovery. Shared by every subcommand that reads project state.
     #[arg(long, global = true)]
     pub spec_path: Option<PathBuf>,
-    /// Explicit plugin root override for `bootstrap`, `inline`, and
-    /// `inline-bridge`. Highest precedence in the resolution chain (see
-    /// [`plugin_root`]).
+    /// Explicit plugin root. Highest precedence wherever a subcommand finds
+    /// the plugin tree: `bootstrap`, `inline`, `inline-bridge`, `migrate`,
+    /// `drift`, `validate`, `check`, and the analyzer-version notice.
     #[arg(long, global = true)]
     pub plugin_root: Option<PathBuf>,
     /// Suppress ANSI colors. Accepted by every subcommand, so a caller can
     /// pass it everywhere; only output that has color changes (today,
-    /// `validate`). Per-subcommand before, it made every other subcommand
-    /// exit 2 on an unknown argument (#123).
+    /// `validate`).
     #[arg(long, global = true)]
     pub no_color: bool,
 }
@@ -72,11 +71,16 @@ pub enum Command {
         #[arg(long, short = 'q')]
         quiet: bool,
     },
-    /// The spec checked against the code: `validate`, then the source rule,
-    /// stale `planned` flags, the open-question gate (it keys on code
-    /// existing), and with `--since <ref>` every new flag and `hard_gate`
-    /// change since that git ref. Exit 0 when no error finding, 1 when any,
-    /// 2 when the check could not run.
+    /// The spec checked against the code: `validate`, then the checks that
+    /// read the source tree — the source rule (`source_resolves`), stale
+    /// `planned` flags, requirement ↔ test (`requirements_have_tests`,
+    /// `verified_by_resolves`, `stale_test_pending`), internal imports
+    /// against `depends_on`, the open-question gate (it keys on code
+    /// existing), and each inlined rule pack's code checks; with
+    /// `--since <ref>`, every new flag and `hard_gate` change since that git
+    /// ref. `planned` and `test_pending` suppress only findings about
+    /// something missing. Exit 0 when no error finding, 1 when any, 2 when
+    /// the check could not run.
     Check {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -90,10 +94,11 @@ pub enum Command {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Extract structured items (top-level language constructs) from each module's
-    /// source file. Output is the substrate the items[] sync diffs run
-    /// against; v1 consumers are `verified_by_resolves` and the `/spec-reverse`
-    /// skill.
+    /// Extract structured items (top-level language constructs) from each
+    /// module's source file with the language's tree-sitter adapter, and
+    /// print them as YAML. A module whose source does not resolve shows
+    /// `source_file: null`. `items diff` runs the same extraction; the
+    /// `/spec-reverse` skill reads this output.
     ExtractItems {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -147,14 +152,16 @@ pub enum Command {
         /// Profile name (e.g. `firmware-layered`, `library-api`).
         #[arg(long)]
         profile: String,
-        /// Target language for codegen. The `language` enums in
-        /// `spec.schema.yaml` and `profile.schema.yaml` are the source of
-        /// truth and admit `rust`, `c`, `cpp`, `dart` and `typescript`;
-        /// not every one of them has a manifest emitter (see `manifest`).
+        /// Project language. It must match the `language:` the profile's
+        /// `profile.yaml` declares; it is written into `spec.toml` and picks
+        /// the tree-sitter adapter the checks read the code with. The
+        /// `language` enums in `spec.schema.yaml` and `profile.schema.yaml`
+        /// are the source of truth and admit `rust`, `c`, `cpp`, `dart` and
+        /// `typescript`.
         #[arg(long)]
         language: String,
         /// Project name (lowercase, hyphens). Becomes `[project].name` in
-        /// the generated `spec.toml`.
+        /// the new `spec.toml`.
         #[arg(long)]
         name: String,
         /// Directory to bootstrap into. Created if it doesn't exist;
@@ -202,9 +209,11 @@ pub enum Command {
         #[arg(long)]
         plugin: PathBuf,
     },
-    /// Focused dependency cone for one module. Emits the
-    /// schema files, plugin-tree READMEs, target module path, and the
-    /// one-hop set of related sibling modules. Skill consumers
+    /// Focused dependency cone for one module, as YAML: the schema files,
+    /// the plugin READMEs of the profile and of each inlined block and
+    /// bridge, the inlined implementation guidance, the target module path
+    /// and its `context_files`, and the one-hop set of related sibling
+    /// modules. Skill consumers
     /// (`/spec-design`, `/spec-edit`, `/spec-reverse`) read only the
     /// listed files instead of every module under `specs/modules/`.
     /// Read-only graph projection over the existing reduction; no new
@@ -223,17 +232,18 @@ pub enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Populate manifests for projects bootstrapped before the manifest
-    /// formats shipped. Walks the project's lineage,
-    /// resolves which profile / blocks / bridges it has, and byte-copies
-    /// the missing manifests (`profile.yaml`, `templates/*`, per-block
-    /// `deps.yaml`, per-bridge `contract.yaml`) from the plugin tree's
-    /// HEAD. Lineage `content_hash` is updated to the new rolled-up hash;
-    /// `origin` / `origin_version` / `inlined_at` stay frozen — they
-    /// record the original inline, not the migration. No-op when the
-    /// manifests are already present (true byte-stable idempotency).
-    /// Backward-compat aid; deletion gated on the future `default-fallback
-    /// removal` trigger.
+    /// Bring a project up to the current format and plugin file set. A
+    /// `1.x` project first moves to `2.0`: one file per decision,
+    /// requirement, source and open question; test items move to the
+    /// requirements as `verified_by`; modules whose source does not resolve
+    /// are reported (see `--plan-unresolved`). Then, for the profile and for
+    /// each inlined block and bridge in the lineage, files the plugin ships
+    /// and the project lacks (guidance, rule packs, schemas, templates) are
+    /// copied in, and `scripts/specdev-gates.sh` is written on a `2.x` tree.
+    /// A workspace root does its members first. Lineage `content_hash`
+    /// moves with a copy; `origin` / `origin_version` / `inlined_at` stay
+    /// frozen. A unit already current is skipped. Exit 1 when a step
+    /// refuses or a recorded unit is missing from the plugin tree.
     Migrate {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -267,16 +277,14 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
-    /// Reports over the validated spec. `report coverage` emits the
-    /// requirements → modules matrix that the retired `gen --skeleton`
-    /// HANDOFF.md used to carry as one of its sections; the subcommand
-    /// reads `requirements.toml` + `specs/modules/*.toml` and emits a
-    /// machine-readable matrix without source-tree emission.
+    /// Reports over the validated spec: requirement coverage, decisions per
+    /// module, imports, discovered tests, and the module dependency graph.
     Report {
         #[command(subcommand)]
         action: ReportAction,
     },
-    /// Run one declared compile gate and record its result.
+    /// Run one declared compile gate. Nothing is recorded: a gate's result
+    /// is its exit code.
     ///
     /// Looks `--label` up in the `gates:` registry of the inlined
     /// `specs/specdev/profile.yaml`, resolves any
@@ -285,12 +293,11 @@ pub enum Command {
     /// process per argv list, inherited environment, stdin closed, the
     /// first non-zero exit stops the gate. Output is printed: everything
     /// on a failure, a step's stderr on a pass when it is non-empty.
-    /// Then it hashes the key (AFTER the run — the gate rewrites the
-    /// lockfile) and writes the rows: always the batch row, plus one row
-    /// per `--module` for a `scope: module` gate. Exits with the gate's
-    /// own exit code; exit 2 means the gate did not run (a step could not
-    /// start, a token resolved to nothing, the registry is missing) or
-    /// its rows could not be written.
+    /// Exits with the gate's own exit code; exit 2 means the gate did not
+    /// run (a step could not start, a token resolved to nothing, the
+    /// registry is missing). The project's CI runs
+    /// `scripts/specdev-gates.sh` (`check`, then every gate) from the same
+    /// registry; `--emit` writes it.
     Gate {
         /// Project root (directory the analyzer searches from). Defaults to cwd.
         #[arg(long, default_value = ".")]
@@ -315,8 +322,8 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ReportAction {
-    /// Emit the requirements → modules coverage matrix. Reads
-    /// `specs/requirements.toml` for requirement ids and walks
+    /// Emit the requirements → modules coverage matrix. Reads the
+    /// project's requirement entries for ids and walks
     /// `specs/modules/*.toml` for module-level and items[]-level
     /// `satisfies` entries. Output: structured matrix plus an
     /// `orphans` list of unsatisfied requirements. Default format

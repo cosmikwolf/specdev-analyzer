@@ -35,10 +35,10 @@ use crate::manifest::{BootstrapStep, Profile};
 pub struct BootstrapInputs {
     /// Profile to scaffold (`firmware-layered`, `library-api`, …).
     pub profile: String,
-    /// Target language for codegen. The `language` enums in
-    /// `spec.schema.yaml` and `profile.schema.yaml` are the source of truth
-    /// and admit `rust`, `c`, `cpp`, `dart` and `typescript`; not every one
-    /// of them has a manifest emitter.
+    /// Project language; must match the profile's `language:`. The
+    /// `language` enums in `spec.schema.yaml` and `profile.schema.yaml` are
+    /// the source of truth and admit `rust`, `c`, `cpp`, `dart` and
+    /// `typescript`.
     pub language: String,
     /// Project name; conventionally lowercase + hyphens.
     pub project_name: String,
