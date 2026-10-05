@@ -374,7 +374,7 @@ fi
 # `CHANGELOG.md` is exempt: it is where a removal is recorded. A line that
 # must name a removed term (a migration note for old trees) takes a trailing
 # `REMOVED-TERM-OK: <reason>` escape.
-REMOVED_TERMS_RE='/spec-gen|spec-gen\b|gen-lineage|gen-drift|gen-plan|gen-record|--skeleton|HANDOFF\.md|codegen prose|codegen/|module\.conventions|codegen_unblocked|[Rr]eference[- ]crate|manifest --write|reference_cases|REF-(COVERAGE|ARITY|PIN)|CONTEXT-100|deps\.yaml|specdev-analyzer (gen|prompt|derive|manifest|cargo-toml)\b'
+REMOVED_TERMS_RE='/spec-gen|spec-gen\b|gen-lineage|gen-drift|gen-plan|gen-record|--skeleton|HANDOFF\.md|codegen prose|codegen/|module\.conventions|codegen_unblocked|[Rr]eference[- ]crate|manifest --write|reference_cases|REF-(COVERAGE|ARITY|PIN)|CONTEXT-100|deps\.yaml|specdev-analyzer (gen|prompt|derive|manifest)\b|\bcargo-toml\b'
 
 if git -C "$plugin_tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   removed_hits=$(git -C "$plugin_tree" ls-files --cached --others --exclude-standard \

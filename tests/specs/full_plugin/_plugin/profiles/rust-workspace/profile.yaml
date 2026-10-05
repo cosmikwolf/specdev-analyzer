@@ -2,10 +2,9 @@
 # Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
 # Inlined to project at specs/specdev/profile.yaml during bootstrap.
 #
-# `shape: workspace` is descriptive metadata. The actual cargo-toml dispatch
-# fires off `[workspace]` table presence in spec.toml (layout-driven dispatch
-# carve-out). The PROFILE-LAYOUT-MISMATCH validate check ensures the two
-# signals agree.
+# A workspace root is the project whose spec.toml carries
+# `[[workspace.members]]`; `bootstrap.steps` below writes that root and a
+# stub for each member.
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
