@@ -120,6 +120,9 @@ fn build_v1_project(tag: &str) -> PathBuf {
     );
 
     let specs = target.join("specs");
+    // Git stores no empty directory, so a checkout of the frozen tree has no
+    // `specs/modules/` until something writes into it.
+    std::fs::create_dir_all(specs.join("modules")).unwrap();
     std::fs::write(
         specs.join("decisions.toml"),
         format!("{DECISIONS_HEADER}{DEC_001}\n{DEC_002}"),
