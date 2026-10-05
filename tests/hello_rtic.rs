@@ -12,8 +12,7 @@
 //! is not re-tested here; it is stack-independent and covered on the
 //! embassy firmware stack.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

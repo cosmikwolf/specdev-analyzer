@@ -5,8 +5,7 @@
 //! load-bearing assertion is agreement: for every module, the decision and
 //! open-question ids in the report are exactly those the prompt carries.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

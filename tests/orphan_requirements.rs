@@ -10,8 +10,7 @@
 //! is wired in both `firmware-layered` and `library-api` profiles
 //! out of the box.
 
-#[path = "common/ledger.rs"]
-mod ledger;
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 

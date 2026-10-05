@@ -25,8 +25,7 @@
 //! Every file mixes cells that must fire with cells that must stay silent,
 //! so a `check` that reports nothing cannot pass it.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{fw_module, requirement, tree, Tree};
 

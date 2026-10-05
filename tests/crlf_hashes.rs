@@ -5,8 +5,7 @@
 //! CRLF bytes still matches the same file checked out with LF (the
 //! read-both window), and `migrate` re-records it in the LF form.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::collections::BTreeMap;
 

@@ -10,8 +10,7 @@
 //!    commit first.
 //! 6. `gate --emit` refuses in a 1.x tree.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::Path;
 

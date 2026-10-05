@@ -16,8 +16,7 @@
 //! 7. The gate script tells the reader to install a command that could not
 //!    start.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::{Path, PathBuf};
 

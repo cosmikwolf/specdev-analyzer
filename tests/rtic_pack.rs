@@ -2,8 +2,7 @@
 //! whose `#[task]` attribute is not directly above the `fn` (a second
 //! attribute, a doc comment between them) is still found and checked.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use ci::{fw_module, tree};
 

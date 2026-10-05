@@ -16,8 +16,7 @@
 //! 6. A workspace root's script runs each member's script in order and
 //!    stops at the first failure.
 
-#[path = "common/checked_intent.rs"]
-mod ci;
+use crate::ci;
 
 use std::path::Path;
 use std::process::{Command, Output};
