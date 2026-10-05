@@ -402,6 +402,17 @@ fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Js
     Ok(docs)
 }
 
+/// Layout directories that may be absent: they hold only units the project
+/// inlines and module specs it writes, so a fresh clone has none of them.
+const MAY_BE_EMPTY_DIRS: &[&str] = &[
+    "specs/specdev/schemas/inlined/blocks/",
+    "specs/specdev/schemas/inlined/bridges/",
+    "specs/specdev/reductions/blocks/",
+    "specs/specdev/reductions/bridges/",
+    "specs/specdev/reductions/bridges/local/",
+    "specs/modules/",
+];
+
 /// Layout pass: enumerate `specs/specdev/`, run the aggregator
 /// `$ref` resolver, load reductions, and surface `domain.toml`'s
 /// graph-check entry count. Findings only — does not gate later passes.
@@ -445,11 +456,10 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             if suppress_module && entry.label == "specs/modules/" {
                 continue;
             }
-            // Skip the missing-warning for the codegen <lang> directory:
-            // it is profile-driven and the project may not have authored
-            // codegen yet. (Intent originally lived in the file loop, where
-            // it was dead code since codegen/<lang>/ is a directory entry.)
-            if entry.label.starts_with("specs/specdev/codegen/") {
+            // A directory that holds only what the project adds later is
+            // created empty, and git does not store an empty directory, so
+            // every clone lacks it. Absent means "none yet", not missing.
+            if MAY_BE_EMPTY_DIRS.contains(&entry.label.as_str()) {
                 continue;
             }
             report.push(Finding::new(
