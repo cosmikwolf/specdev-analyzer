@@ -102,7 +102,10 @@ pub struct ReportLine {
 impl ReportLine {
     /// The lines `migrate` prints.
     pub fn render(&self, verb: &str) -> String {
-        let mut s = format!("{verb}remove from {}: {} = {}  [{}]", self.file, self.removed.key, self.removed.value, self.mark);
+        let mut s = format!(
+            "{verb}remove from {}: {} = {}  [{}]",
+            self.file, self.removed.key, self.removed.value, self.mark
+        );
         for c in &self.removed.comments {
             s.push_str("\n      ");
             s.push_str(c);
@@ -113,7 +116,13 @@ impl ReportLine {
 
 fn comments_of(decor: Option<&str>) -> Vec<String> {
     decor
-        .map(|d| d.lines().map(str::trim).filter(|l| l.starts_with('#')).map(str::to_string).collect())
+        .map(|d| {
+            d.lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with('#'))
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -128,7 +137,13 @@ fn one_line(item: &Item) -> String {
                 }
             }
             inline.fmt();
-            inline.to_string().trim().trim_start_matches('{').trim_end_matches('}').trim().to_string()
+            inline
+                .to_string()
+                .trim()
+                .trim_start_matches('{')
+                .trim_end_matches('}')
+                .trim()
+                .to_string()
         }
         Item::ArrayOfTables(a) => format!("{} entries", a.len()),
         Item::None => String::new(),
@@ -175,7 +190,9 @@ fn take(table: &mut Table, path: &str, out: &mut Vec<Removed>) {
             }
         }
         None => {
-            let Some(item) = table.remove(head) else { return };
+            let Some(item) = table.remove(head) else {
+                return;
+            };
             let key = head.to_string();
             match &item {
                 Item::ArrayOfTables(a) => {
@@ -191,11 +208,17 @@ fn take(table: &mut Table, path: &str, out: &mut Vec<Removed>) {
                 }
                 Item::Table(t) => {
                     // A sub-table of tables (`[logger.provider]` …): one line each.
-                    let nested: Vec<(String, Item)> =
-                        t.iter().filter(|(_, v)| v.is_table()).map(|(k, v)| (k.to_string(), v.clone())).collect();
+                    let nested: Vec<(String, Item)> = t
+                        .iter()
+                        .filter(|(_, v)| v.is_table())
+                        .map(|(k, v)| (k.to_string(), v.clone()))
+                        .collect();
                     if !nested.is_empty() && nested.len() == t.len() {
                         for (k, v) in nested {
-                            let comments = v.as_table().and_then(|x| x.decor().prefix()).and_then(|p| p.as_str());
+                            let comments = v
+                                .as_table()
+                                .and_then(|x| x.decor().prefix())
+                                .and_then(|p| p.as_str());
                             out.push(Removed {
                                 key: format!("{key}.{k}"),
                                 value: one_line(&v),
@@ -238,7 +261,11 @@ pub fn strip_architecture(text: &str) -> anyhow::Result<(String, Vec<Removed>, b
     // A firmware panic handler is a dependency entry (a table); an audio
     // plugin's is a strategy string. Both leave.
     take(doc.as_table_mut(), "runtime.panic_handler", &mut removed);
-    if doc.get("runtime").and_then(|r| r.as_table()).is_some_and(|r| r.is_empty()) {
+    if doc
+        .get("runtime")
+        .and_then(|r| r.as_table())
+        .is_some_and(|r| r.is_empty())
+    {
         doc.remove("runtime");
     }
     let keys_left = !doc.as_table().is_empty();
@@ -269,7 +296,9 @@ pub fn strip_module(doc: &mut DocumentMut) -> Vec<Removed> {
                                     }
                                 }
                             }
-                        } else if let Some(params) = t.get_mut(field).and_then(Item::as_array_of_tables_mut) {
+                        } else if let Some(params) =
+                            t.get_mut(field).and_then(Item::as_array_of_tables_mut)
+                        {
                             for p in params.iter_mut() {
                                 take(p, inner, removed);
                             }
@@ -286,21 +315,33 @@ pub fn strip_module(doc: &mut DocumentMut) -> Vec<Removed> {
 }
 
 fn dep_name(v: &toml::Value) -> Option<String> {
-    ["crate", "package", "name"].iter().find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(str::to_string))
+    ["crate", "package", "name"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(str::to_string))
 }
 
 fn compare_dep(spec: &toml::Value, m: &ManifestDep) -> Vec<String> {
     let mut diff = Vec::new();
-    if let (Some(a), Some(b)) = (spec.get("version").and_then(|v| v.as_str()), m.version.as_deref()) {
+    if let (Some(a), Some(b)) = (
+        spec.get("version").and_then(|v| v.as_str()),
+        m.version.as_deref(),
+    ) {
         if a != b {
             diff.push(format!("version {a} vs {b}"));
         }
     }
     if let Some(f) = spec.get("features").and_then(|v| v.as_array()) {
-        let mut a: Vec<String> = f.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+        let mut a: Vec<String> = f
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
         // A `source = "workspace"` entry states the member's own additions.
         let workspace = spec.get("source").and_then(|v| v.as_str()) == Some("workspace");
-        let mut b = if workspace { m.own_features.clone() } else { m.features.clone() };
+        let mut b = if workspace {
+            m.own_features.clone()
+        } else {
+            m.features.clone()
+        };
         a.sort();
         b.sort();
         if a != b {
@@ -342,7 +383,9 @@ fn compare_dep(spec: &toml::Value, m: &ManifestDep) -> Vec<String> {
 /// Mark one removed value against the manifest (`None`: the package has no
 /// manifest).
 pub fn mark(removed: &Removed, facts: Option<&ManifestFacts>) -> String {
-    let Some(facts) = facts else { return "spec-only".into() };
+    let Some(facts) = facts else {
+        return "spec-only".into();
+    };
     let path = removed.key.as_str();
     if DEPENDENCY_PATHS.contains(&path) {
         if let Some(raw) = &removed.raw {
@@ -352,11 +395,15 @@ pub fn mark(removed: &Removed, facts: Option<&ManifestFacts>) -> String {
                     Some(entries) => {
                         // The entry in the same table (dev or not) is the one
                         // to compare with; any exact match is a match.
-                        let diffs: Vec<Vec<String>> = entries.iter().map(|m| compare_dep(raw, m)).collect();
+                        let diffs: Vec<Vec<String>> =
+                            entries.iter().map(|m| compare_dep(raw, m)).collect();
                         if diffs.iter().any(Vec::is_empty) {
                             "in manifest".into()
                         } else {
-                            let want_dev = raw.get("test_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let want_dev = raw
+                                .get("test_only")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
                             let best = entries.iter().position(|m| m.dev == want_dev).unwrap_or(0);
                             format!("differs: {}", diffs[best].join(", "))
                         }
@@ -366,7 +413,10 @@ pub fn mark(removed: &Removed, facts: Option<&ManifestFacts>) -> String {
         }
     }
     if let Some((_, field)) = PACKAGE_PATHS.iter().find(|(p, _)| *p == path) {
-        let spec_value = removed.raw.as_ref().and_then(|v| v.as_str().map(str::to_string));
+        let spec_value = removed
+            .raw
+            .as_ref()
+            .and_then(|v| v.as_str().map(str::to_string));
         return match (spec_value, facts.package.get(*field)) {
             (_, None) => "not in manifest".into(),
             (Some(a), Some(b)) if &a == b => "in manifest".into(),
@@ -374,7 +424,12 @@ pub fn mark(removed: &Removed, facts: Option<&ManifestFacts>) -> String {
             (None, Some(_)) => "not compared".into(),
         };
     }
-    if removed.raw.as_ref().is_some_and(|v| v.get("description").is_some()) || path.ends_with("description") {
+    if removed
+        .raw
+        .as_ref()
+        .is_some_and(|v| v.get("description").is_some())
+        || path.ends_with("description")
+    {
         return "prose".into();
     }
     "not compared".into()
@@ -382,8 +437,15 @@ pub fn mark(removed: &Removed, facts: Option<&ManifestFacts>) -> String {
 
 /// Reduction kinds and relations that existed only to keep a removed copy
 /// consistent with itself.
-pub const REMOVED_KINDS: &[&str] =
-    &["Feature", "feature_depends_on", "module_feature_gate", "WorkspaceDependency", "workspace_default_member", "Workspace", "test_verifies"];
+pub const REMOVED_KINDS: &[&str] = &[
+    "Feature",
+    "feature_depends_on",
+    "module_feature_gate",
+    "WorkspaceDependency",
+    "workspace_default_member",
+    "Workspace",
+    "test_verifies",
+];
 
 /// A reduction file without the entries of [`REMOVED_KINDS`] (each `- kind:`
 /// list item, with the comment block directly above it). Returns the text
@@ -401,7 +463,10 @@ pub fn drop_reduction_kinds(text: &str) -> (String, Vec<String>) {
             if REMOVED_KINDS.contains(&kind) {
                 let ind = indent_of(l);
                 removed.push(kind.to_string());
-                while out.last().is_some_and(|p| p.trim().starts_with('#') && indent_of(p) == ind) {
+                while out
+                    .last()
+                    .is_some_and(|p| p.trim().starts_with('#') && indent_of(p) == ind)
+                {
                     out.pop();
                 }
                 i += 1;

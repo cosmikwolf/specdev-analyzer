@@ -143,7 +143,12 @@ pub fn gate_commands(layout: &LayoutContext, gate: &Gate) -> Result<Vec<Vec<Stri
                     format!(
                         "gate `{}`: the step token `{}` resolves against {}",
                         gate.label,
-                        gate.steps.iter().flatten().find(|e| e.contains("${")).map(String::as_str).unwrap_or(""),
+                        gate.steps
+                            .iter()
+                            .flatten()
+                            .find(|e| e.contains("${"))
+                            .map(String::as_str)
+                            .unwrap_or(""),
                         layout.architecture_toml_path.display()
                     )
                 },
@@ -251,9 +256,14 @@ pub fn render_script(layout: &LayoutContext) -> Result<Option<String>> {
     let Some(profile) = Profile::load_inlined(&layout.specdev_root)? else {
         return Ok(None);
     };
-    out.push_str("\necho 'specdev-gates: check' >&2\nrun \"${SPECDEV_ANALYZER:-specdev-analyzer}\" check\n");
+    out.push_str(
+        "\necho 'specdev-gates: check' >&2\nrun \"${SPECDEV_ANALYZER:-specdev-analyzer}\" check\n",
+    );
     for gate in &profile.gates {
-        out.push_str(&format!("\necho {} >&2\n", shell_quote(&format!("specdev-gates: gate {}", gate.label))));
+        out.push_str(&format!(
+            "\necho {} >&2\n",
+            shell_quote(&format!("specdev-gates: gate {}", gate.label))
+        ));
         match gate_commands(layout, gate) {
             Ok(steps) => {
                 for argv in steps {
@@ -295,7 +305,8 @@ pub fn emit_script(layout: &LayoutContext) -> Result<EmitReport> {
     let path = layout.project_root.join(SCRIPT_REL);
     if std::fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
         }
         std::fs::write(&path, &body).with_context(|| format!("writing {}", path.display()))?;
         #[cfg(unix)]
@@ -308,7 +319,8 @@ pub fn emit_script(layout: &LayoutContext) -> Result<EmitReport> {
     let attrs = layout.project_root.join(".gitattributes");
     match std::fs::read_to_string(&attrs) {
         Ok(text) => {
-            report.gitattributes_line_missing = !text.lines().any(|l| l.trim() == GITATTRIBUTES_LINE);
+            report.gitattributes_line_missing =
+                !text.lines().any(|l| l.trim() == GITATTRIBUTES_LINE);
         }
         Err(_) => {
             std::fs::write(&attrs, format!("{GITATTRIBUTES_LINE}\n"))
@@ -329,7 +341,10 @@ pub fn script_findings(layout: &LayoutContext) -> Vec<crate::report::Finding> {
         return Vec::new();
     }
     let has_gates = layout.spec.workspace.is_some()
-        || Profile::load_inlined(&layout.specdev_root).ok().flatten().is_some_and(|p| !p.gates.is_empty());
+        || Profile::load_inlined(&layout.specdev_root)
+            .ok()
+            .flatten()
+            .is_some_and(|p| !p.gates.is_empty());
     if !has_gates {
         return Vec::new();
     }

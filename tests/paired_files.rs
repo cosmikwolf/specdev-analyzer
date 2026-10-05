@@ -67,8 +67,18 @@ fn plugin_with_row(tag: &str, extra_row: &str) -> PathBuf {
     copy_dir(&full_plugin(), &root);
     let p = root.join("profiles/nextjs-app/profile.yaml");
     let body = fs::read_to_string(&p).unwrap();
-    assert!(body.contains("paired_files:\n"), "fixture profile declares paired_files");
-    fs::write(&p, body.replace("paired_files:\n", &format!("paired_files:\n  - {extra_row}\n"))).unwrap();
+    assert!(
+        body.contains("paired_files:\n"),
+        "fixture profile declares paired_files"
+    );
+    fs::write(
+        &p,
+        body.replace(
+            "paired_files:\n",
+            &format!("paired_files:\n  - {extra_row}\n"),
+        ),
+    )
+    .unwrap();
     root
 }
 
@@ -124,12 +134,6 @@ fn nextjs_app_paired_files_match_the_declared_set_and_bootstrap_copies_every_tem
     }
 }
 
-
-
-
-
-
-
 #[test]
 fn profile_without_paired_files_still_loads() {
     let dir = tmp_workspace("no-paired");
@@ -162,7 +166,10 @@ fn an_existing_file_at_a_paired_target_is_kept() {
         "// user-owned\n",
         "an existing paired file is never overwritten"
     );
-    assert!(target.join("tsconfig.json").is_file(), "the absent ones are still written");
+    assert!(
+        target.join("tsconfig.json").is_file(),
+        "the absent ones are still written"
+    );
 }
 
 /// Every refusal comes before bootstrap writes anything.
@@ -172,7 +179,10 @@ fn assert_refused_before_any_write(tag: &str, row: &str, needle: &str) {
     fs::create_dir_all(&target).unwrap();
     let err = format!("{:#}", bootstrap_into(&plugin, &target).unwrap_err());
     assert!(err.contains(needle), "{err}");
-    assert!(!target.join("specs").exists(), "nothing is written when a row is refused");
+    assert!(
+        !target.join("specs").exists(),
+        "nothing is written when a row is refused"
+    );
     assert!(!target.join("spec.toml").exists());
 }
 

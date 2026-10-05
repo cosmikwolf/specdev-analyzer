@@ -197,10 +197,18 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
     let mut guidance_paths = vec![guidance_dir.join("profile.md")];
     let mut block_names: Vec<&String> = lineage.blocks.keys().collect();
     block_names.sort();
-    guidance_paths.extend(block_names.iter().map(|n| guidance_dir.join("blocks").join(format!("{n}.md"))));
+    guidance_paths.extend(
+        block_names
+            .iter()
+            .map(|n| guidance_dir.join("blocks").join(format!("{n}.md"))),
+    );
     let mut bridge_names: Vec<&String> = lineage.bridges.keys().collect();
     bridge_names.sort();
-    guidance_paths.extend(bridge_names.iter().map(|n| guidance_dir.join("bridges").join(format!("{n}.md"))));
+    guidance_paths.extend(
+        bridge_names
+            .iter()
+            .map(|n| guidance_dir.join("bridges").join(format!("{n}.md"))),
+    );
     let guidance: Vec<String> = guidance_paths
         .iter()
         .filter(|p| p.is_file())
@@ -224,7 +232,11 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         .ok()
         .and_then(|text| text.parse::<toml::Table>().ok())
         .and_then(|doc| doc.get("context_files").and_then(|v| v.as_array()).cloned())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok(ContextFiles {

@@ -28,7 +28,15 @@ use crate::lang::{LanguageAdapter, TestIdentityStyle};
 use crate::layout::LayoutContext;
 
 /// Directory names a walk never enters.
-const SKIP_DIRS: &[&str] = &["node_modules", "target", ".git", ".dart_tool", "build", "dist", ".next"];
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".git",
+    ".dart_tool",
+    "build",
+    "dist",
+    ".next",
+];
 
 /// One discovered test.
 #[derive(Debug, Clone)]
@@ -58,13 +66,20 @@ impl Discovery {
     /// The tests a `verified_by` name resolves to: those whose identity
     /// is the name, or every test under a container of that name.
     pub fn resolve(&self, name: &str) -> Vec<&DiscoveredTest> {
-        let by_identity: Vec<&DiscoveredTest> =
-            self.tests.iter().filter(|t| t.identity.as_deref() == Some(name)).collect();
+        let by_identity: Vec<&DiscoveredTest> = self
+            .tests
+            .iter()
+            .filter(|t| t.identity.as_deref() == Some(name))
+            .collect();
         if !by_identity.is_empty() {
             return by_identity;
         }
         if self.containers.contains(name) {
-            return self.tests.iter().filter(|t| t.groups.iter().any(|g| g == name)).collect();
+            return self
+                .tests
+                .iter()
+                .filter(|t| t.groups.iter().any(|g| g == name))
+                .collect();
         }
         Vec::new()
     }
@@ -77,14 +92,30 @@ pub fn discover_project(layout: &LayoutContext) -> Result<Discovery> {
         return Ok(Discovery::default());
     };
     let mut roots: Vec<PathBuf> = vec![layout.project_root.join(&layout.spec.paths.source)];
-    roots.extend(layout.spec.paths.tests.iter().map(|t| layout.project_root.join(t)));
-    roots.extend(adapter.conventional_test_roots().iter().map(|r| layout.project_root.join(r)));
+    roots.extend(
+        layout
+            .spec
+            .paths
+            .tests
+            .iter()
+            .map(|t| layout.project_root.join(t)),
+    );
+    roots.extend(
+        adapter
+            .conventional_test_roots()
+            .iter()
+            .map(|r| layout.project_root.join(r)),
+    );
     let modules = module_files(layout, adapter.as_ref());
     discover(adapter.as_ref(), &layout.project_root, &roots, &modules)
 }
 
 /// Discover the tests under explicit `roots` (`report tests --root`).
-pub fn discover_roots(adapter: &dyn LanguageAdapter, project_root: &Path, roots: &[PathBuf]) -> Result<Discovery> {
+pub fn discover_roots(
+    adapter: &dyn LanguageAdapter,
+    project_root: &Path,
+    roots: &[PathBuf],
+) -> Result<Discovery> {
     discover(adapter, project_root, roots, &BTreeMap::new())
 }
 
@@ -98,10 +129,16 @@ fn module_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> BTreeM
     let mut files: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     files.sort();
     for f in files {
-        let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        let Ok(doc) = text.parse::<toml::Table>() else { continue };
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let Ok(doc) = text.parse::<toml::Table>() else {
+            continue;
+        };
         let doc = toml::Value::Table(doc);
-        let Some(name) = doc.get("name").and_then(toml::Value::as_str) else { continue };
+        let Some(name) = doc.get("name").and_then(toml::Value::as_str) else {
+            continue;
+        };
         if let Some(src) = crate::items::source_map::resolve_source_path(
             name,
             crate::items::source_map::source_file_override(&doc),
@@ -109,18 +146,24 @@ fn module_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> BTreeM
             &layout.project_root,
             &layout.spec.paths.source,
         ) {
-            out.entry(rel(&layout.project_root, &src)).or_insert_with(|| name.to_string());
+            out.entry(rel(&layout.project_root, &src))
+                .or_insert_with(|| name.to_string());
         }
     }
     out
 }
 
 fn rel(root: &Path, p: &Path) -> String {
-    p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name();
@@ -163,7 +206,10 @@ fn discover(
             walk(r, &mut files);
         }
     }
-    let mut disc = Discovery { checked: true, ..Default::default() };
+    let mut disc = Discovery {
+        checked: true,
+        ..Default::default()
+    };
     for path in files {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if !exts.contains(&ext) {
@@ -173,11 +219,16 @@ fn discover(
         if !adapter.is_test_file(Path::new(&rel_path)) {
             continue;
         }
-        let source = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         let lang = adapter.tree_sitter_language_for(ext);
         let mut parser = Parser::new();
-        parser.set_language(&lang).context("setting the tree-sitter language")?;
-        let Some(tree) = parser.parse(&source, None) else { continue };
+        parser
+            .set_language(&lang)
+            .context("setting the tree-sitter language")?;
+        let Some(tree) = parser.parse(&source, None) else {
+            continue;
+        };
         let query = Query::new(&lang, query_src)
             .with_context(|| format!("compiling the {} tests.scm query", adapter.name()))?;
         let idx = |n: &str| query.capture_index_for_name(n);
@@ -196,20 +247,24 @@ fn discover(
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches.next() {
-            let node_of = |i: Option<u32>| i.and_then(|i| m.captures.iter().find(|c| c.index == i).map(|c| c.node));
+            let node_of = |i: Option<u32>| {
+                i.and_then(|i| m.captures.iter().find(|c| c.index == i).map(|c| c.node))
+            };
             if let (Some(g), Some(gn)) = (node_of(c_group), node_of(c_group_name)) {
                 groups.push((g.start_byte(), g.end_byte(), text(gn)));
             }
             let Some(t) = node_of(c_test) else { continue };
-            let entry = tests.entry((t.start_byte(), t.end_byte())).or_insert(RawTest {
-                start: t.start_byte(),
-                end: t.end_byte(),
-                name: None,
-                suite: None,
-                named: false,
-                unnamed: false,
-                pending: false,
-            });
+            let entry = tests
+                .entry((t.start_byte(), t.end_byte()))
+                .or_insert(RawTest {
+                    start: t.start_byte(),
+                    end: t.end_byte(),
+                    name: None,
+                    suite: None,
+                    named: false,
+                    unnamed: false,
+                    pending: false,
+                });
             if let Some(n) = node_of(c_name) {
                 entry.name = Some(text(n));
                 entry.named = true;
@@ -259,20 +314,32 @@ fn discover(
 /// least one test, and every top-level node either inert (a comment, an
 /// attribute, an import — [`LanguageAdapter::is_inert_top_level`]) or inside
 /// a test or test group. `false` when the language ships no `tests.scm`.
-pub fn holds_only_tests(adapter: &dyn LanguageAdapter, project_root: &Path, rel: &Path) -> Result<bool> {
+pub fn holds_only_tests(
+    adapter: &dyn LanguageAdapter,
+    project_root: &Path,
+    rel: &Path,
+) -> Result<bool> {
     let Some(query_src) = adapter.tests_query() else {
         return Ok(false);
     };
     let path = project_root.join(rel);
-    let source = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");
     let lang = adapter.tree_sitter_language_for(ext);
     let mut parser = Parser::new();
-    parser.set_language(&lang).context("setting the tree-sitter language")?;
-    let Some(tree) = parser.parse(&source, None) else { return Ok(false) };
+    parser
+        .set_language(&lang)
+        .context("setting the tree-sitter language")?;
+    let Some(tree) = parser.parse(&source, None) else {
+        return Ok(false);
+    };
     let query = Query::new(&lang, query_src)
         .with_context(|| format!("compiling the {} tests.scm query", adapter.name()))?;
-    let (c_test, c_group) = (query.capture_index_for_name("test"), query.capture_index_for_name("group"));
+    let (c_test, c_group) = (
+        query.capture_index_for_name("test"),
+        query.capture_index_for_name("group"),
+    );
     let mut spans: Vec<(usize, usize)> = Vec::new();
     let mut tests = 0;
     let mut cursor = QueryCursor::new();
@@ -294,7 +361,9 @@ pub fn holds_only_tests(adapter: &dyn LanguageAdapter, project_root: &Path, rel:
     let mut walker = root.walk();
     let only = root.named_children(&mut walker).all(|n| {
         adapter.is_inert_top_level(n.kind())
-            || spans.iter().any(|(s, e)| *s <= n.start_byte() && n.end_byte() <= *e)
+            || spans
+                .iter()
+                .any(|(s, e)| *s <= n.start_byte() && n.end_byte() <= *e)
     });
     Ok(only)
 }
@@ -309,7 +378,11 @@ fn strip_quotes(s: &str) -> &str {
     t
 }
 
-fn assign_identities(disc: &mut Discovery, style: TestIdentityStyle, module_of_file: &BTreeMap<String, String>) {
+fn assign_identities(
+    disc: &mut Discovery,
+    style: TestIdentityStyle,
+    module_of_file: &BTreeMap<String, String>,
+) {
     let mut count: BTreeMap<String, usize> = BTreeMap::new();
     for t in &disc.tests {
         if let Some(b) = &t.base {

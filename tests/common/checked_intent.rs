@@ -85,7 +85,10 @@ pub fn tree_from(tag: &str, plugin: &Path, profile: &str, language: &str, blocks
     for b in blocks {
         run_inline_block(&layout, plugin, b).unwrap();
     }
-    let t = Tree { root, plugin: plugin.to_path_buf() };
+    let t = Tree {
+        root,
+        plugin: plugin.to_path_buf(),
+    };
     to_v2(&t);
     t
 }
@@ -94,11 +97,16 @@ pub fn tree_from(tag: &str, plugin: &Path, profile: &str, language: &str, blocks
 /// the released tools left it: combined ledgers, inlined `codegen/`,
 /// `gen-lineage.toml` (library-api), `codegen_unblocked` in `domain.toml`.
 pub fn tree_v1(tag: &str, profile: &str) -> Tree {
-    let frozen = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1_trees").join(profile);
+    let frozen = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1_trees")
+        .join(profile);
     assert!(frozen.is_dir(), "no frozen 1.x tree for {profile}");
     let root = tmp_dir(tag).join("proj");
     copy_dir(&frozen, &root);
-    Tree { root, plugin: plugin_root() }
+    Tree {
+        root,
+        plugin: plugin_root(),
+    }
 }
 
 const LEDGERS: [&str; 4] = ["requirements", "decisions", "open_questions", "sources"];
@@ -110,7 +118,10 @@ fn to_v2(t: &Tree) {
     let spec = root.join("spec.toml");
     let text = std::fs::read_to_string(&spec).unwrap();
     let text = text.replacen("spec_version = \"1.0\"", "spec_version = \"2.0\"", 1);
-    assert!(text.starts_with("spec_version = \"2.0\""), "unexpected spec.toml head: {text}");
+    assert!(
+        text.starts_with("spec_version = \"2.0\""),
+        "unexpected spec.toml head: {text}"
+    );
     std::fs::write(&spec, text).unwrap();
     // One file per entry, starting empty: no combined ledger, no seeded entry.
     for ledger in ["requirements.toml", "decisions.toml", "open_questions.toml"] {
@@ -135,7 +146,10 @@ fn to_v2(t: &Tree) {
         let body = std::fs::read_to_string(&f).unwrap();
         let mut out = body.clone();
         for l in ["requirements", "decisions", "open_questions"] {
-            out = out.replace(&format!("\"specs/{l}.toml\""), &format!("\"specs/{l}/*.toml\""));
+            out = out.replace(
+                &format!("\"specs/{l}.toml\""),
+                &format!("\"specs/{l}/*.toml\""),
+            );
         }
         if out != body {
             std::fs::write(&f, out).unwrap();
@@ -144,8 +158,18 @@ fn to_v2(t: &Tree) {
     // The gate rule is renamed; it and the coverage check are errors (the
     // 1.x templates ship both as "warning").
     let domain = root.join("specs/specdev/domain.toml");
-    let d = std::fs::read_to_string(&domain).unwrap().replace("codegen_unblocked", "implementation_unblocked");
-    std::fs::write(&domain, set_severity(&set_severity(&d, "requirements_have_satisfiers", "error"), "implementation_unblocked", "error")).unwrap();
+    let d = std::fs::read_to_string(&domain)
+        .unwrap()
+        .replace("codegen_unblocked", "implementation_unblocked");
+    std::fs::write(
+        &domain,
+        set_severity(
+            &set_severity(&d, "requirements_have_satisfiers", "error"),
+            "implementation_unblocked",
+            "error",
+        ),
+    )
+    .unwrap();
 }
 
 /// `domain` with `[validation.rules]` entry `rule` set to `severity`,
@@ -155,7 +179,11 @@ pub fn set_severity(domain: &str, rule: &str, severity: &str) -> String {
         .lines()
         .map(|l| {
             let key = l.split('=').next().unwrap_or("").trim();
-            if key == rule && l.contains('=') && !l.trim_start().starts_with('#') && !l.contains("rule =") {
+            if key == rule
+                && l.contains('=')
+                && !l.trim_start().starts_with('#')
+                && !l.contains("rule =")
+            {
                 format!("{rule} = \"{severity}\"")
             } else {
                 l.to_string()
@@ -203,7 +231,11 @@ pub fn plugin_with_block(tag: &str, name: &str, schema: &str, reduction: &str) -
     std::fs::create_dir_all(&b).unwrap();
     std::fs::write(b.join("schema.yaml"), schema).unwrap();
     std::fs::write(b.join("reduction.yaml"), reduction).unwrap();
-    std::fs::write(b.join("README.md"), format!("# {name}\n\nTest-only block.\n")).unwrap();
+    std::fs::write(
+        b.join("README.md"),
+        format!("# {name}\n\nTest-only block.\n"),
+    )
+    .unwrap();
     root
 }
 
@@ -297,7 +329,11 @@ impl From<Output> for Check {
                     })
                     .collect()
             });
-        Check { exit: out.status.code(), report, raw }
+        Check {
+            exit: out.status.code(),
+            report,
+            raw,
+        }
     }
 }
 
@@ -311,7 +347,10 @@ impl Check {
     }
 
     fn matching(&self, rule: &str, entity: &str) -> Vec<&Finding> {
-        self.ran().iter().filter(|f| f.rule == rule && f.entity == entity).collect()
+        self.ran()
+            .iter()
+            .filter(|f| f.rule == rule && f.entity == entity)
+            .collect()
     }
 
     /// `rule` fired for `entity` at `severity`.
@@ -330,7 +369,11 @@ impl Check {
     #[track_caller]
     pub fn silent(&self, rule: &str, entity: &str) -> &Self {
         let hits = self.matching(rule, entity);
-        assert!(hits.is_empty(), "expected no {rule} for `{entity}`; got {hits:?}\n{}", self.raw);
+        assert!(
+            hits.is_empty(),
+            "expected no {rule} for `{entity}`; got {hits:?}\n{}",
+            self.raw
+        );
         self
     }
 
@@ -338,7 +381,11 @@ impl Check {
     #[track_caller]
     pub fn nothing_about(&self, entity: &str) -> &Self {
         let hits: Vec<&Finding> = self.ran().iter().filter(|f| f.entity == entity).collect();
-        assert!(hits.is_empty(), "expected no findings about `{entity}`; got {hits:?}\n{}", self.raw);
+        assert!(
+            hits.is_empty(),
+            "expected no findings about `{entity}`; got {hits:?}\n{}",
+            self.raw
+        );
         self
     }
 

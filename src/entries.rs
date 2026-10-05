@@ -109,12 +109,21 @@ pub const TOMBSTONE_SECOND_LINE: &str =
 /// specdev-analyzer migrate — upgrade specdev-analyzer to <x.y.z> or later`,
 /// each `<dir>` a `specs/<name>/` path.
 fn is_tombstone_first_line(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix(TOMBSTONE_PREFIX) else { return false };
-    let Some((dirs, tail)) = rest.split_once(" by specdev-analyzer migrate — upgrade specdev-analyzer to ") else {
+    let Some(rest) = line.strip_prefix(TOMBSTONE_PREFIX) else {
         return false;
     };
-    let Some(version) = tail.strip_suffix(" or later") else { return false };
-    let version_ok = version.split('.').count() == 3 && version.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    let Some((dirs, tail)) =
+        rest.split_once(" by specdev-analyzer migrate — upgrade specdev-analyzer to ")
+    else {
+        return false;
+    };
+    let Some(version) = tail.strip_suffix(" or later") else {
+        return false;
+    };
+    let version_ok = version.split('.').count() == 3
+        && version
+            .split('.')
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
     let dirs_ok = dirs.split(" and ").all(|d| {
         d.strip_prefix("specs/")
             .and_then(|x| x.strip_suffix('/'))
@@ -141,7 +150,8 @@ fn after_tombstone(text: &str) -> Option<String> {
     let lf = text.replace("\r\n", "\n");
     let mut it = lf.splitn(3, '\n');
     let (a, b) = (it.next()?, it.next()?);
-    (is_tombstone_first_line(a) && b == TOMBSTONE_SECOND_LINE).then(|| it.next().unwrap_or("").to_string())
+    (is_tombstone_first_line(a) && b == TOMBSTONE_SECOND_LINE)
+        .then(|| it.next().unwrap_or("").to_string())
 }
 
 /// One entry: the table it was read from and the file that holds it.
@@ -391,18 +401,25 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         }
         seen.push(combined);
         let path = specs_dir.join(combined);
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         if is_tombstone(&text) {
             continue;
         }
         // Entries appended under a tombstone (a merge from an old branch) are
         // folded like any combined file; the tombstone is written again.
         let text = after_tombstone(&text).unwrap_or(text);
-        let kinds: Vec<EntryKind> =
-            EntryKind::ALL.into_iter().filter(|k| k.combined_file() == combined).collect();
+        let kinds: Vec<EntryKind> = EntryKind::ALL
+            .into_iter()
+            .filter(|k| k.combined_file() == combined)
+            .collect();
         let parsed: toml::Table =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        if let Some(other) = parsed.keys().find(|k| !kinds.iter().any(|kind| kind.table() == k.as_str())) {
+        if let Some(other) = parsed
+            .keys()
+            .find(|k| !kinds.iter().any(|kind| kind.table() == k.as_str()))
+        {
             bail!(
                 "[MIGRATE-011] {} holds `{other}`, which is not an entry table; move it by hand first",
                 path.display()
@@ -412,14 +429,23 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
         let mut count = 0;
         for (kind, piece) in &pieces {
             let one: toml::Table = toml::from_str(piece).with_context(|| {
-                format!("[MIGRATE-012] {}: an entry does not parse on its own:\n{piece}", path.display())
+                format!(
+                    "[MIGRATE-012] {}: an entry does not parse on its own:\n{piece}",
+                    path.display()
+                )
             })?;
             let arr = one.get(kind.table()).and_then(toml::Value::as_array);
             let Some([entry]) = arr.map(Vec::as_slice) else {
-                bail!("[MIGRATE-012] {}: a piece does not hold exactly one entry:\n{piece}", path.display());
+                bail!(
+                    "[MIGRATE-012] {}: a piece does not hold exactly one entry:\n{piece}",
+                    path.display()
+                );
             };
             let Some(id) = entry.get("id").and_then(toml::Value::as_str) else {
-                bail!("[MIGRATE-012] {}: an entry has no `id`:\n{piece}", path.display());
+                bail!(
+                    "[MIGRATE-012] {}: an entry has no `id`:\n{piece}",
+                    path.display()
+                );
             };
             let rel = PathBuf::from(kind.entry_dir()).join(format!("{id}.toml"));
             let abs = specs_dir.join(&rel);
@@ -435,15 +461,25 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
                 continue;
             }
             if plan.writes.iter().any(|(r, _)| r == &rel) {
-                conflicts.push(format!("{} (two entries with id `{id}` in {combined})", abs.display()));
+                conflicts.push(format!(
+                    "{} (two entries with id `{id}` in {combined})",
+                    abs.display()
+                ));
                 continue;
             }
             plan.writes.push((rel, piece.clone().into_bytes()));
             count += 1;
         }
         // Every entry was cut out, and nothing else.
-        let total: usize =
-            kinds.iter().map(|k| parsed.get(k.table()).and_then(toml::Value::as_array).map_or(0, Vec::len)).sum();
+        let total: usize = kinds
+            .iter()
+            .map(|k| {
+                parsed
+                    .get(k.table())
+                    .and_then(toml::Value::as_array)
+                    .map_or(0, Vec::len)
+            })
+            .sum();
         if total != pieces.len() {
             bail!(
                 "[MIGRATE-012] {}: {total} entries parse, but {} were cut out; split it by hand",
@@ -474,13 +510,17 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
                 plan.writes.push((readme, body.into_bytes()));
             }
         }
-        let dirs: Vec<String> = kinds.iter().map(|k| format!("specs/{}/", k.entry_dir())).collect();
+        let dirs: Vec<String> = kinds
+            .iter()
+            .map(|k| format!("specs/{}/", k.entry_dir()))
+            .collect();
         let tomb = format!(
             "{TOMBSTONE_PREFIX}{} by specdev-analyzer migrate — upgrade specdev-analyzer to {FIRST_PER_ENTRY_ANALYZER} or later\n\
              {TOMBSTONE_SECOND_LINE}\n",
             dirs.join(" and ")
         );
-        plan.tombstones.push((PathBuf::from(combined), tomb.into_bytes()));
+        plan.tombstones
+            .push((PathBuf::from(combined), tomb.into_bytes()));
         plan.moved.push((PathBuf::from(combined), count));
     }
     if !conflicts.is_empty() {
@@ -494,7 +534,10 @@ pub fn plan_split(specs_dir: &Path) -> Result<SplitPlan> {
 }
 
 fn indent(text: &str) -> String {
-    text.lines().map(|l| format!("      {l}")).collect::<Vec<_>>().join("\n")
+    text.lines()
+        .map(|l| format!("      {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The header (text before the first entry) and each entry's text.
@@ -502,10 +545,16 @@ fn cut_entries(text: &str, kinds: &[EntryKind]) -> (String, Vec<(EntryKind, Stri
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let header_kind = |l: &str| {
         let t = l.trim();
-        kinds.iter().copied().find(|k| t == format!("[[{}]]", k.table()))
+        kinds
+            .iter()
+            .copied()
+            .find(|k| t == format!("[[{}]]", k.table()))
     };
-    let starts: Vec<(usize, EntryKind)> =
-        lines.iter().enumerate().filter_map(|(i, l)| header_kind(l).map(|k| (i, k))).collect();
+    let starts: Vec<(usize, EntryKind)> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| header_kind(l).map(|k| (i, k)))
+        .collect();
     // A comment block directly above a header (no blank line between)
     // belongs to that entry.
     let lead = |i: usize| {
@@ -520,7 +569,10 @@ fn cut_entries(text: &str, kinds: &[EntryKind]) -> (String, Vec<(EntryKind, Stri
     let mut pieces = Vec::new();
     for (n, (i, kind)) in starts.iter().enumerate() {
         let begin = lead(*i);
-        let end = starts.get(n + 1).map(|(j, _)| lead(*j)).unwrap_or(lines.len());
+        let end = starts
+            .get(n + 1)
+            .map(|(j, _)| lead(*j))
+            .unwrap_or(lines.len());
         let mut piece = lines[begin..end].concat();
         let trimmed = piece.trim_end().len();
         piece.truncate(trimmed);
@@ -543,8 +595,13 @@ pub fn rewrite_reduction_paths(text: &str) -> String {
             if !l.contains(&old) || kind == EntryKind::Source {
                 continue;
             }
-            let reads_sources = kind == EntryKind::Requirement && block_reads(&lines, i, EntryKind::Source);
-            let target = if reads_sources { EntryKind::Source } else { kind };
+            let reads_sources =
+                kind == EntryKind::Requirement && block_reads(&lines, i, EntryKind::Source);
+            let target = if reads_sources {
+                EntryKind::Source
+            } else {
+                kind
+            };
             l = l.replace(&old, &format!("\"specs/{}/*.toml\"", target.entry_dir()));
         }
         out.push_str(&l);

@@ -25,7 +25,12 @@ impl LanguageAdapter for CAdapter {
 
     /// A quoted include, from the including file's directory, then from the
     /// source root.
-    fn resolve_import(&self, spec: &str, from: &std::path::Path, ctx: &super::ImportContext) -> Vec<std::path::PathBuf> {
+    fn resolve_import(
+        &self,
+        spec: &str,
+        from: &std::path::Path,
+        ctx: &super::ImportContext,
+    ) -> Vec<std::path::PathBuf> {
         let dir = from.parent().unwrap_or(std::path::Path::new(""));
         vec![
             super::normalize_rel(&dir.join(spec)),

@@ -21,7 +21,6 @@ use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-
     report::{Finding, Report},
     validate, Severity,
 };

@@ -108,7 +108,10 @@ fn audio_plugin_bootstrap_substitutes_project_name() {
     // The profile seeds no architecture.toml in 2.0; the name lands in spec.toml.
     assert!(!target.join("specs/architecture.toml").exists());
     let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
-    assert!(spec.contains("\"myplugin\""), "the project name was not substituted:\n{spec}");
+    assert!(
+        spec.contains("\"myplugin\""),
+        "the project name was not substituted:\n{spec}"
+    );
     assert_substituted_outputs_have_no_placeholders(&target, "audio-plugin");
 }
 

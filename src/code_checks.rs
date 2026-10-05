@@ -75,7 +75,9 @@ pub fn run(
     report: &mut Report,
 ) {
     let language = layout.spec.project.language.as_str();
-    let Some(adapter) = crate::lang::adapter_for(language) else { return };
+    let Some(adapter) = crate::lang::adapter_for(language) else {
+        return;
+    };
     let (packs, _) = crate::packs::load_inlined(&layout.specdev_root); // load errors: validate's
     let checks: Vec<(&Pack, &CodeCheck)> = packs
         .iter()
@@ -87,13 +89,19 @@ pub fn run(
     }
     let files = source_files(layout, adapter.as_ref());
     // The same rule, and default, as a planned module's stale flag.
-    let stale_sev = project_rules.get(STALE).copied().unwrap_or(Severity::Warning);
+    let stale_sev = project_rules
+        .get(STALE)
+        .copied()
+        .unwrap_or(Severity::Warning);
     for (pack, check) in checks {
         let sev = |rule: &str| crate::packs::severity(project_rules, &pack.file.rules, rule);
         let code = match code_values(layout, adapter.as_ref(), pack, check, &files) {
             Ok(code) => code,
             Err(msg) => {
-                report.push(Finding::new(QUERY_RULE, Severity::Error, msg).with_file(pack.path.display().to_string()));
+                report.push(
+                    Finding::new(QUERY_RULE, Severity::Error, msg)
+                        .with_file(pack.path.display().to_string()),
+                );
                 continue;
             }
         };
@@ -105,9 +113,16 @@ pub fn run(
 fn source_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> Vec<PathBuf> {
     let exts = adapter.file_extensions();
     let mut all = BTreeSet::new();
-    crate::import_edges::walk(&layout.project_root.join(&layout.spec.paths.source), &mut all);
+    crate::import_edges::walk(
+        &layout.project_root.join(&layout.spec.paths.source),
+        &mut all,
+    );
     all.into_iter()
-        .filter(|p| p.extension().and_then(|e| e.to_str()).is_some_and(|e| exts.contains(&e)))
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.contains(&e))
+        })
         .collect()
 }
 
@@ -131,17 +146,37 @@ fn code_values(
 ) -> Result<CodeValues, String> {
     let qpath = pack
         .query_path(&layout.specdev_root, check)
-        .ok_or_else(|| format!("rule pack {}: query path `{}` is not `languages/<lang>/<file>.scm`", pack.path.display(), check.query))?;
-    let qsrc = std::fs::read_to_string(&qpath)
-        .map_err(|e| format!("rule pack {}: cannot read query {}: {e}", pack.path.display(), qpath.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "rule pack {}: query path `{}` is not `languages/<lang>/<file>.scm`",
+                pack.path.display(),
+                check.query
+            )
+        })?;
+    let qsrc = std::fs::read_to_string(&qpath).map_err(|e| {
+        format!(
+            "rule pack {}: cannot read query {}: {e}",
+            pack.path.display(),
+            qpath.display()
+        )
+    })?;
     let mut queries: BTreeMap<String, (Language, Query)> = BTreeMap::new();
     let mut out = CodeValues::new();
     for file in files {
-        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+        let ext = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
         if !queries.contains_key(&ext) {
             let lang = adapter.tree_sitter_language_for(&ext);
-            let query = Query::new(&lang, &qsrc)
-                .map_err(|e| format!("query {} does not compile for `{}`: {e}", qpath.display(), check.language))?;
+            let query = Query::new(&lang, &qsrc).map_err(|e| {
+                format!(
+                    "query {} does not compile for `{}`: {e}",
+                    qpath.display(),
+                    check.language
+                )
+            })?;
             queries.insert(ext.clone(), (lang, query));
         }
         let (lang, query) = &queries[&ext];
@@ -153,12 +188,16 @@ fn code_values(
         let key_i = idx(&check.key_capture)?;
         let arg_i = check.arg_key_capture.as_deref().map(idx).transpose()?;
         let val_i = check.arg_value_capture.as_deref().map(idx).transpose()?;
-        let Ok(source) = std::fs::read_to_string(file) else { continue };
+        let Ok(source) = std::fs::read_to_string(file) else {
+            continue;
+        };
         let mut parser = Parser::new();
         if parser.set_language(lang).is_err() {
             continue;
         }
-        let Some(tree) = parser.parse(&source, None) else { continue };
+        let Some(tree) = parser.parse(&source, None) else {
+            continue;
+        };
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches.next() {
@@ -166,13 +205,18 @@ fn code_values(
                 i.and_then(|i| m.captures.iter().find(|c| c.index == i))
                     .map(|c| strip_quotes(&source[c.node.byte_range()]).to_string())
             };
-            let Some(key_node) = m.captures.iter().find(|c| c.index == key_i).map(|c| c.node) else {
+            let Some(key_node) = m.captures.iter().find(|c| c.index == key_i).map(|c| c.node)
+            else {
                 continue;
             };
             let key = strip_quotes(&source[key_node.byte_range()]).to_string();
             let rel = file.strip_prefix(&layout.project_root).unwrap_or(file);
             let entry = out.entry(key).or_default();
-            entry.sites.insert(format!("{}:{}", rel.display(), key_node.start_position().row + 1));
+            entry.sites.insert(format!(
+                "{}:{}",
+                rel.display(),
+                key_node.start_position().row + 1
+            ));
             let arg_name = text(arg_i).or_else(|| check.arg_key.clone());
             if let (Some(k), Some(v)) = (arg_name, text(val_i)) {
                 entry.args.insert(k, v);
@@ -191,21 +235,32 @@ fn compare(
     stale_sev: Severity,
     report: &mut Report,
 ) {
-    for e in graph.get("entities").and_then(Value::as_array).into_iter().flatten() {
+    for e in graph
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if e.get("kind").and_then(Value::as_str) != Some(check.entity_kind.as_str()) {
             continue;
         }
-        let Some(name) = e.get("name").and_then(Value::as_str) else { continue };
-        let Some((module, key)) = modules
-            .iter()
-            .find_map(|m| name.strip_prefix(m.name).and_then(|r| r.strip_prefix('.')).map(|k| (m, k)))
-        else {
+        let Some(name) = e.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((module, key)) = modules.iter().find_map(|m| {
+            name.strip_prefix(m.name)
+                .and_then(|r| r.strip_prefix('.'))
+                .map(|k| (m, k))
+        }) else {
             continue;
         };
         if !module.built {
             continue; // `source_resolves` owns a module with no source
         }
-        let file = e.pointer("/provenance/source_file").and_then(Value::as_str).unwrap_or_default();
+        let file = e
+            .pointer("/provenance/source_file")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let planned = e.pointer("/attrs/planned").and_then(Value::as_bool) == Some(true);
         let Some(entry) = code.get(key) else {
             if !planned {
@@ -213,7 +268,10 @@ fn compare(
                     Finding::new(
                         ENTITY_IN_CODE,
                         sev(ENTITY_IN_CODE),
-                        format!("`{name}` ({}) is not in the code: no match for `{key}`", check.entity_kind),
+                        format!(
+                            "`{name}` ({}) is not in the code: no match for `{key}`",
+                            check.entity_kind
+                        ),
                     )
                     .with_file(file)
                     .with_entity(name),
@@ -258,20 +316,30 @@ fn compare(
                 let spec = scalar_at(e, &format!("attrs.{attr}"));
                 let have = args.get(arg).cloned();
                 (spec != have).then(|| {
-                    format!("`{attr}` is {} in the spec, {} in the code", shown(&spec), shown(&have))
+                    format!(
+                        "`{attr}` is {} in the spec, {} in the code",
+                        shown(&spec),
+                        shown(&have)
+                    )
                 })
             })
             .collect();
         if !diffs.is_empty() {
             report.push(
-                Finding::new(ATTRIBUTE_MATCHES, sev(ATTRIBUTE_MATCHES), format!("`{name}`: {}", diffs.join("; ")))
-                    .with_file(file)
-                    .with_entity(name),
+                Finding::new(
+                    ATTRIBUTE_MATCHES,
+                    sev(ATTRIBUTE_MATCHES),
+                    format!("`{name}`: {}", diffs.join("; ")),
+                )
+                .with_file(file)
+                .with_entity(name),
             );
         }
     }
 }
 
 fn shown(v: &Option<String>) -> String {
-    v.as_deref().map(|s| format!("`{s}`")).unwrap_or_else(|| "absent".to_string())
+    v.as_deref()
+        .map(|s| format!("`{s}`"))
+        .unwrap_or_else(|| "absent".to_string())
 }

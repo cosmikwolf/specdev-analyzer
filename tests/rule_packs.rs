@@ -154,7 +154,11 @@ const QUERY: &str = r#"(
 fn tpack_plugin(tag: &str, with_pack: bool) -> PathBuf {
     let plugin = plugin_with_block(tag, "tpack", SCHEMA, REDUCTION);
     let unit = plugin.join("blocks/tpack");
-    std::fs::write(unit.join("guidance.md"), "# tpack — implementation guidance\n\n- A test rule.\n").unwrap();
+    std::fs::write(
+        unit.join("guidance.md"),
+        "# tpack — implementation guidance\n\n- A test rule.\n",
+    )
+    .unwrap();
     if with_pack {
         add_pack(&unit);
     }
@@ -175,7 +179,10 @@ fn units_clean(t: &Tree, plugin: &Path) {
     let yaml = report.to_yaml().unwrap();
     assert!(report.invariants.is_empty(), "{yaml}");
     assert!(
-        report.units.iter().all(|u| u.files.iter().all(|f| f.category == FileCategory::Clean)),
+        report
+            .units
+            .iter()
+            .all(|u| u.files.iter().all(|f| f.category == FileCategory::Clean)),
         "{yaml}"
     );
 }
@@ -196,7 +203,11 @@ fn part(name: &str, bank: &str, slot: u8) -> String {
 fn project_severity(t: &Tree, rule: &str, severity: &str) {
     let d = t.read("specs/specdev/domain.toml");
     assert!(d.contains("[validation.rules]\n"), "{d}");
-    let d = d.replacen("[validation.rules]\n", &format!("[validation.rules]\n\"{rule}\" = \"{severity}\"\n"), 1);
+    let d = d.replacen(
+        "[validation.rules]\n",
+        &format!("[validation.rules]\n\"{rule}\" = \"{severity}\"\n"),
+        1,
+    );
     t.write("specs/specdev/domain.toml", &d);
 }
 
@@ -205,10 +216,21 @@ fn inline_writes_the_pack_and_its_queries_into_the_snapshot() {
     let plugin = tpack_plugin("inline", true);
     let t = tree_from("inline", &plugin, "firmware-layered", "rust", &["tpack"]);
     assert_eq!(t.read("specs/specdev/checks/blocks/tpack.toml"), CHECKS);
-    assert_eq!(t.read("specs/specdev/queries/blocks/tpack/rust/parts.scm"), QUERY);
+    assert_eq!(
+        t.read("specs/specdev/queries/blocks/tpack/rust/parts.scm"),
+        QUERY
+    );
     let snap = read_upstream_unit(&t.root.join("specs/specdev"), UnitKind::Block, "tpack").unwrap();
-    assert!(snap.contains_key(Path::new("checks.toml")), "{:?}", snap.keys());
-    assert!(snap.contains_key(Path::new("languages/rust/parts.scm")), "{:?}", snap.keys());
+    assert!(
+        snap.contains_key(Path::new("checks.toml")),
+        "{:?}",
+        snap.keys()
+    );
+    assert!(
+        snap.contains_key(Path::new("languages/rust/parts.scm")),
+        "{:?}",
+        snap.keys()
+    );
     units_clean(&t, &plugin);
 }
 
@@ -220,35 +242,77 @@ fn migrate_writes_the_pack_into_a_tree_inlined_before_it_existed() {
     add_pack(&plugin.join("blocks/tpack"));
     let out = t.analyzer(&["migrate"]);
     assert!(out.status.success(), "migrate:\n{}", text(&out));
-    assert!(t.root.join("specs/specdev/checks/blocks/tpack.toml").is_file(), "{}", text(&out));
-    assert!(t.root.join("specs/specdev/queries/blocks/tpack/rust/parts.scm").is_file(), "{}", text(&out));
+    assert!(
+        t.root
+            .join("specs/specdev/checks/blocks/tpack.toml")
+            .is_file(),
+        "{}",
+        text(&out)
+    );
+    assert!(
+        t.root
+            .join("specs/specdev/queries/blocks/tpack/rust/parts.scm")
+            .is_file(),
+        "{}",
+        text(&out)
+    );
     let report = run_drift(&layout(&t), &plugin).unwrap();
-    assert!(report.invariants.is_empty(), "no invariant: {:?}", report.invariants);
+    assert!(
+        report.invariants.is_empty(),
+        "no invariant: {:?}",
+        report.invariants
+    );
 }
 
 #[test]
 fn unique_fields_reports_a_duplicate_composite_key_only() {
     let plugin = tpack_plugin("unique", true);
     let t = tree_from("unique", &plugin, "firmware-layered", "rust", &["tpack"]);
-    t.write("specs/modules/Alpha.toml", &module("Alpha", &(part("a1", "A", 1) + &part("a2", "A", 2))))
-        // Same bank and slot as Alpha.a1: a duplicate.
-        .write("specs/modules/Beta.toml", &module("Beta", &(part("b1", "A", 1) + &part("b2", "B", 2))));
+    t.write(
+        "specs/modules/Alpha.toml",
+        &module("Alpha", &(part("a1", "A", 1) + &part("a2", "A", 2))),
+    )
+    // Same bank and slot as Alpha.a1: a duplicate.
+    .write(
+        "specs/modules/Beta.toml",
+        &module("Beta", &(part("b1", "A", 1) + &part("b2", "B", 2))),
+    );
     let c = t.check(&[]);
-    let hits: Vec<_> = c.ran().iter().filter(|f| f.rule == "tpack.parts_unique").collect();
-    assert_eq!(hits.len(), 1, "one duplicate (A, 1); A2 and B2 differ in one part:\n{}", c.raw);
+    let hits: Vec<_> = c
+        .ran()
+        .iter()
+        .filter(|f| f.rule == "tpack.parts_unique")
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "one duplicate (A, 1); A2 and B2 differ in one part:\n{}",
+        c.raw
+    );
     // The pack's [rules] makes it a warning.
     assert_eq!(hits[0].severity, "warning", "{}", c.raw);
-    assert!(hits[0].entity == "Beta.b1" || hits[0].entity == "Alpha.a1", "{:?}", hits[0]);
+    assert!(
+        hits[0].entity == "Beta.b1" || hits[0].entity == "Alpha.a1",
+        "{:?}",
+        hits[0]
+    );
 }
 
 #[test]
 fn the_project_severity_overrides_the_pack_severity() {
     let plugin = tpack_plugin("severity", true);
     let t = tree_from("severity", &plugin, "firmware-layered", "rust", &["tpack"]);
-    t.write("specs/modules/Alpha.toml", &module("Alpha", &(part("a1", "A", 1) + &part("a2", "A", 1))));
+    t.write(
+        "specs/modules/Alpha.toml",
+        &module("Alpha", &(part("a1", "A", 1) + &part("a2", "A", 1))),
+    );
     project_severity(&t, "tpack.parts_unique", "info");
     let c = t.check(&[]);
-    let hits: Vec<_> = c.ran().iter().filter(|f| f.rule == "tpack.parts_unique").collect();
+    let hits: Vec<_> = c
+        .ran()
+        .iter()
+        .filter(|f| f.rule == "tpack.parts_unique")
+        .collect();
     assert_eq!(hits.len(), 1, "{}", c.raw);
     assert_eq!(hits[0].severity, "info", "{}", c.raw);
 }
@@ -256,7 +320,13 @@ fn the_project_severity_overrides_the_pack_severity() {
 #[test]
 fn a_rule_no_one_sets_is_an_error() {
     let plugin = tpack_plugin("default-sev", true);
-    let t = tree_from("default-sev", &plugin, "firmware-layered", "rust", &["tpack"]);
+    let t = tree_from(
+        "default-sev",
+        &plugin,
+        "firmware-layered",
+        "rust",
+        &["tpack"],
+    );
     // A knob whose mode does not fit the part's style: no [rules] entry.
     t.write(
         "specs/modules/Alpha.toml",
@@ -266,7 +336,8 @@ fn a_rule_no_one_sets_is_an_error() {
                 + "[[tpack.knobs]]\nname = \"k\"\ntarget = \"p\"\nmode = \"fast\"\n"),
         ),
     );
-    t.check(&[]).fires("tpack.knob_mode_fits", "Alpha.k -> Alpha.p", "error");
+    t.check(&[])
+        .fires("tpack.knob_mode_fits", "Alpha.k -> Alpha.p", "error");
 }
 
 #[test]
@@ -296,7 +367,11 @@ fn related_attrs_allowed_checks_the_pair_and_accepts_a_wildcard() {
     c.silent("tpack.knob_mode_fits", "Alpha.ok -> Alpha.sharp")
         .fires("tpack.knob_mode_fits", "Alpha.bad -> Alpha.round", "error")
         .silent("tpack.knob_mode_fits", "Alpha.wild -> Alpha.round")
-        .fires("tpack.knob_mode_fits", "Alpha.unlisted -> Alpha.sharp", "error")
+        .fires(
+            "tpack.knob_mode_fits",
+            "Alpha.unlisted -> Alpha.sharp",
+            "error",
+        )
         .silent("tpack.knob_mode_fits", "Alpha.nostyle -> Alpha.plain");
 }
 
@@ -304,12 +379,19 @@ fn related_attrs_allowed_checks_the_pair_and_accepts_a_wildcard() {
 fn a_pack_that_fails_its_schema_is_an_error_naming_the_file() {
     let plugin = tpack_plugin("bad-pack", true);
     let t = tree_from("bad-pack", &plugin, "firmware-layered", "rust", &["tpack"]);
-    t.write("specs/specdev/checks/blocks/tpack.toml", "[[graph_checks]]\nkind = 5\n");
+    t.write(
+        "specs/specdev/checks/blocks/tpack.toml",
+        "[[graph_checks]]\nkind = 5\n",
+    );
     let c = t.check(&[]);
     let hits: Vec<_> = c.ran().iter().filter(|f| f.rule == "PACK-001").collect();
     assert_eq!(hits.len(), 1, "{}", c.raw);
     assert_eq!(hits[0].severity, "error");
-    assert!(c.raw.contains("checks/blocks/tpack.toml"), "the finding names the file:\n{}", c.raw);
+    assert!(
+        c.raw.contains("checks/blocks/tpack.toml"),
+        "the finding names the file:\n{}",
+        c.raw
+    );
     assert_eq!(c.exit, Some(1));
 }
 
@@ -349,9 +431,16 @@ fn merge_writes_a_file_the_plugin_added() {
     add_pack(&plugin.join("blocks/tpack"));
     run_merge_block(&layout(&t), &plugin, "tpack").expect("merge carries an added file");
     assert_eq!(t.read("specs/specdev/checks/blocks/tpack.toml"), CHECKS);
-    assert_eq!(t.read("specs/specdev/queries/blocks/tpack/rust/parts.scm"), QUERY);
+    assert_eq!(
+        t.read("specs/specdev/queries/blocks/tpack/rust/parts.scm"),
+        QUERY
+    );
     let snap = read_upstream_unit(&t.root.join("specs/specdev"), UnitKind::Block, "tpack").unwrap();
-    assert!(snap.contains_key(Path::new("checks.toml")), "{:?}", snap.keys());
+    assert!(
+        snap.contains_key(Path::new("checks.toml")),
+        "{:?}",
+        snap.keys()
+    );
     units_clean(&t, &plugin);
 }
 
@@ -361,22 +450,39 @@ fn merge_deletes_a_removed_file_the_project_did_not_edit() {
     let t = tree_from("merge-rm", &plugin, "firmware-layered", "rust", &["tpack"]);
     std::fs::remove_dir_all(plugin.join("blocks/tpack/languages")).unwrap();
     run_merge_block(&layout(&t), &plugin, "tpack").expect("merge carries a removed file");
-    assert!(!t.root.join("specs/specdev/queries/blocks/tpack/rust/parts.scm").exists());
+    assert!(!t
+        .root
+        .join("specs/specdev/queries/blocks/tpack/rust/parts.scm")
+        .exists());
     let snap = read_upstream_unit(&t.root.join("specs/specdev"), UnitKind::Block, "tpack").unwrap();
-    assert!(!snap.contains_key(Path::new("languages/rust/parts.scm")), "{:?}", snap.keys());
+    assert!(
+        !snap.contains_key(Path::new("languages/rust/parts.scm")),
+        "{:?}",
+        snap.keys()
+    );
     units_clean(&t, &plugin);
 }
 
 #[test]
 fn merge_refuses_a_removed_file_the_project_edited() {
     let plugin = tpack_plugin("merge-edited", true);
-    let t = tree_from("merge-edited", &plugin, "firmware-layered", "rust", &["tpack"]);
+    let t = tree_from(
+        "merge-edited",
+        &plugin,
+        "firmware-layered",
+        "rust",
+        &["tpack"],
+    );
     let q = "specs/specdev/queries/blocks/tpack/rust/parts.scm";
     t.write(q, &format!(";; a local note\n{QUERY}"));
     std::fs::remove_dir_all(plugin.join("blocks/tpack/languages")).unwrap();
-    let err = run_merge_block(&layout(&t), &plugin, "tpack").expect_err("an edited removed file refuses");
+    let err =
+        run_merge_block(&layout(&t), &plugin, "tpack").expect_err("an edited removed file refuses");
     let msg = format!("{err:#}");
-    assert!(msg.contains("languages/rust/parts.scm"), "names the file: {msg}");
+    assert!(
+        msg.contains("languages/rust/parts.scm"),
+        "names the file: {msg}"
+    );
     assert!(t.root.join(q).is_file(), "the edited copy stays");
 }
 
@@ -395,7 +501,10 @@ fn plugin_lint(plugin: &Path) -> String {
 }
 
 fn tpack_lines(out: &str, code: &str) -> Vec<String> {
-    out.lines().filter(|l| l.starts_with("tpack:") && l.contains(code)).map(str::to_string).collect()
+    out.lines()
+        .filter(|l| l.starts_with("tpack:") && l.contains(code))
+        .map(str::to_string)
+        .collect()
 }
 
 #[test]
@@ -409,8 +518,15 @@ fn plugin_lint_accepts_a_good_pack() {
 #[test]
 fn plugin_lint_refuses_a_pack_that_fails_its_schema() {
     let plugin = tpack_plugin("lint-schema", true);
-    std::fs::write(plugin.join("blocks/tpack/checks.toml"), "[[graph_checks]]\nkind = 5\n").unwrap();
-    assert_eq!(tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(), 1);
+    std::fs::write(
+        plugin.join("blocks/tpack/checks.toml"),
+        "[[graph_checks]]\nkind = 5\n",
+    )
+    .unwrap();
+    assert_eq!(
+        tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(),
+        1
+    );
 }
 
 #[test]
@@ -418,7 +534,11 @@ fn plugin_lint_refuses_a_query_that_does_not_compile_or_lacks_a_capture() {
     let plugin = tpack_plugin("lint-query", true);
     let q = plugin.join("blocks/tpack/languages/rust/parts.scm");
     std::fs::write(&q, "(function_item name: (identifier) @entity.key\n").unwrap();
-    assert_eq!(tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-002]").len(), 1, "does not compile");
+    assert_eq!(
+        tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-002]").len(),
+        1,
+        "does not compile"
+    );
     std::fs::write(&q, "(function_item name: (identifier) @entity.key)\n").unwrap();
     let out = plugin_lint(&plugin);
     let hits = tpack_lines(&out, "[PACK-LINT-003]");
@@ -431,11 +551,22 @@ fn plugin_lint_refuses_an_unknown_primitive_and_an_unprefixed_rule() {
     let plugin = tpack_plugin("lint-rules", true);
     let checks = CHECKS
         .replace("kind = \"unique\"", "kind = \"unique_ish\"")
-        .replace("rule = \"tpack.knob_mode_fits\"", "rule = \"knob_mode_fits\"");
+        .replace(
+            "rule = \"tpack.knob_mode_fits\"",
+            "rule = \"knob_mode_fits\"",
+        );
     std::fs::write(plugin.join("blocks/tpack/checks.toml"), checks).unwrap();
     let out = plugin_lint(&plugin);
-    assert_eq!(tpack_lines(&out, "[PACK-LINT-004]").len(), 1, "unknown primitive:\n{out}");
-    assert_eq!(tpack_lines(&out, "[PACK-LINT-005]").len(), 1, "unprefixed rule:\n{out}");
+    assert_eq!(
+        tpack_lines(&out, "[PACK-LINT-004]").len(),
+        1,
+        "unknown primitive:\n{out}"
+    );
+    assert_eq!(
+        tpack_lines(&out, "[PACK-LINT-005]").len(),
+        1,
+        "unprefixed rule:\n{out}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -463,8 +594,14 @@ fn an_inlined_query_that_does_not_compile_is_pack_002() {
     let plugin = tpack_plugin("pack-002", true);
     let t = tree_from("pack-002", &plugin, "firmware-layered", "rust", &["tpack"]);
     t.write("src/parts.rs", PARTS_SRC)
-        .write("specs/modules/Alpha.toml", &(fw_module("Alpha", "source_file = \"src/parts.rs\"\n") + &part("found_ok", "A", 1)))
-        .write("specs/specdev/queries/blocks/tpack/rust/parts.scm", "(function_item name: (identifier) @entity.key\n");
+        .write(
+            "specs/modules/Alpha.toml",
+            &(fw_module("Alpha", "source_file = \"src/parts.rs\"\n") + &part("found_ok", "A", 1)),
+        )
+        .write(
+            "specs/specdev/queries/blocks/tpack/rust/parts.scm",
+            "(function_item name: (identifier) @entity.key\n",
+        );
     let c = t.check(&[]);
     let hits: Vec<_> = c.ran().iter().filter(|f| f.rule == "PACK-002").collect();
     assert_eq!(hits.len(), 1, "{}", c.raw);
@@ -475,18 +612,42 @@ fn an_inlined_query_that_does_not_compile_is_pack_002() {
 #[test]
 fn a_graph_check_missing_its_arguments_fails_the_schema() {
     for (tag, from, to) in [
-        ("no-fields", "fields = [\"attrs.bank\", \"attrs.slot\"]\n", ""),
-        ("no-allowed", "allowed = [[\"fast\", \"sharp\"], [\"slow\", \"*\"]]\n", ""),
+        (
+            "no-fields",
+            "fields = [\"attrs.bank\", \"attrs.slot\"]\n",
+            "",
+        ),
+        (
+            "no-allowed",
+            "allowed = [[\"fast\", \"sharp\"], [\"slow\", \"*\"]]\n",
+            "",
+        ),
     ] {
         let plugin = tpack_plugin(&format!("lint-{tag}"), true);
         let checks = CHECKS.replace(from, to);
         assert_ne!(checks, CHECKS, "{tag}");
         std::fs::write(plugin.join("blocks/tpack/checks.toml"), &checks).unwrap();
-        assert_eq!(tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(), 1, "{tag}");
-        let t = tree_from(tag, &tpack_plugin(&format!("run-{tag}"), true), "firmware-layered", "rust", &["tpack"]);
+        assert_eq!(
+            tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(),
+            1,
+            "{tag}"
+        );
+        let t = tree_from(
+            tag,
+            &tpack_plugin(&format!("run-{tag}"), true),
+            "firmware-layered",
+            "rust",
+            &["tpack"],
+        );
         t.write("specs/specdev/checks/blocks/tpack.toml", &checks);
         let c = t.check(&[]);
-        assert!(c.ran().iter().any(|f| f.rule == "PACK-001" && f.severity == "error"), "{tag}:\n{}", c.raw);
+        assert!(
+            c.ran()
+                .iter()
+                .any(|f| f.rule == "PACK-001" && f.severity == "error"),
+            "{tag}:\n{}",
+            c.raw
+        );
     }
 }
 
@@ -505,18 +666,28 @@ fn the_primitive_list_names_every_dispatch_arm() {
         })
         .collect();
     let listed: std::collections::BTreeSet<&str> =
-        specdev_analyzer::validate::GRAPH_CHECK_PRIMITIVES.iter().copied().collect();
+        specdev_analyzer::validate::GRAPH_CHECK_PRIMITIVES
+            .iter()
+            .copied()
+            .collect();
     assert_eq!(arms, listed);
 }
 
 #[test]
 fn merge_deletes_a_removed_file_whose_copy_differs_only_in_line_endings() {
     let plugin = tpack_plugin("merge-crlf", true);
-    let t = tree_from("merge-crlf", &plugin, "firmware-layered", "rust", &["tpack"]);
+    let t = tree_from(
+        "merge-crlf",
+        &plugin,
+        "firmware-layered",
+        "rust",
+        &["tpack"],
+    );
     let q = "specs/specdev/queries/blocks/tpack/rust/parts.scm";
     t.write(q, &QUERY.replace('\n', "\r\n"));
     std::fs::remove_dir_all(plugin.join("blocks/tpack/languages")).unwrap();
-    run_merge_block(&layout(&t), &plugin, "tpack").expect("a line-ending difference is not an edit");
+    run_merge_block(&layout(&t), &plugin, "tpack")
+        .expect("a line-ending difference is not an edit");
     assert!(!t.root.join(q).exists());
     units_clean(&t, &plugin);
 }
@@ -559,10 +730,17 @@ fn style_plugin(tag: &str, checks: &str) -> PathBuf {
 fn arg_key_names_the_value_of_a_capture_with_no_key_node() {
     let plugin = style_plugin("arg-key", STYLE_CHECK);
     let t = tree_from("arg-key", &plugin, "firmware-layered", "rust", &["tpack"]);
-    let styled = |n: &str, style: &str| format!("[[tpack.parts]]\nname = \"{n}\"\nstyle = \"{style}\"\n\n");
-    t.write("src/parts.rs", "#[round]\nfn same() {}\n#[sharp]\nfn differs() {}\n").write(
+    let styled =
+        |n: &str, style: &str| format!("[[tpack.parts]]\nname = \"{n}\"\nstyle = \"{style}\"\n\n");
+    t.write(
+        "src/parts.rs",
+        "#[round]\nfn same() {}\n#[sharp]\nfn differs() {}\n",
+    )
+    .write(
         "specs/modules/Alpha.toml",
-        &(fw_module("Alpha", "source_file = \"src/parts.rs\"\n") + &styled("same", "round") + &styled("differs", "round")),
+        &(fw_module("Alpha", "source_file = \"src/parts.rs\"\n")
+            + &styled("same", "round")
+            + &styled("differs", "round")),
     );
     t.check(&[])
         .silent("pack_attribute_matches", "Alpha.same")
@@ -572,9 +750,15 @@ fn arg_key_names_the_value_of_a_capture_with_no_key_node() {
 
 #[test]
 fn plugin_lint_refuses_arg_key_with_arg_key_capture() {
-    let both = STYLE_CHECK.replace("arg_key = \"style\"", "arg_key = \"style\"\narg_key_capture = \"style\"");
+    let both = STYLE_CHECK.replace(
+        "arg_key = \"style\"",
+        "arg_key = \"style\"\narg_key_capture = \"style\"",
+    );
     let plugin = style_plugin("arg-key-both", &both);
-    assert_eq!(tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(), 1);
+    assert_eq!(
+        tpack_lines(&plugin_lint(&plugin), "[PACK-LINT-001]").len(),
+        1
+    );
     let good = style_plugin("arg-key-good", STYLE_CHECK);
     let out = plugin_lint(&good);
     assert!(out.lines().all(|l| !l.starts_with("tpack:")), "{out}");

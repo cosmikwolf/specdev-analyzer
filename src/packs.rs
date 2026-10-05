@@ -88,17 +88,27 @@ fn validator() -> &'static jsonschema::Validator {
     CELL.get_or_init(|| {
         let value: serde_json::Value =
             serde_yaml::from_str(SCHEMA_YAML).expect("embedded checks.schema.yaml parses");
-        jsonschema::options().build(&value).expect("embedded checks.schema.yaml compiles")
+        jsonschema::options()
+            .build(&value)
+            .expect("embedded checks.schema.yaml compiles")
     })
 }
 
 /// Parse and validate a pack's text. The error lists every schema failure.
 pub fn parse(text: &str) -> Result<PackFile> {
-    let table: toml::Table = text.parse().map_err(|e| anyhow!("does not parse as TOML: {e}"))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e| anyhow!("does not parse as TOML: {e}"))?;
     let json = serde_json::to_value(&table).context("converting to JSON")?;
     let errors: Vec<String> = validator()
         .iter_errors(&json)
-        .map(|e| format!("{} at `{}`", crate::diagnostics::format_schema_error(&e), e.instance_path()))
+        .map(|e| {
+            format!(
+                "{} at `{}`",
+                crate::diagnostics::format_schema_error(&e),
+                e.instance_path()
+            )
+        })
         .collect();
     if !errors.is_empty() {
         return Err(anyhow!("fails checks.schema.yaml: {}", errors.join("; ")));
@@ -113,21 +123,32 @@ pub fn load_inlined(specdev_root: &Path) -> (Vec<Pack>, Vec<Finding>) {
     let mut findings = Vec::new();
     for kind in [UnitKind::Block, UnitKind::Bridge] {
         let dir = specdev_root.join("checks").join(kind.dir_segment());
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut paths: Vec<PathBuf> = rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|x| x == "toml"))
             .collect();
         paths.sort();
         for path in paths {
-            let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+            let Some(name) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+            else {
                 continue;
             };
             let loaded = std::fs::read_to_string(&path)
                 .map_err(|e| anyhow!("cannot be read: {e}"))
                 .and_then(|text| parse(&text));
             match loaded {
-                Ok(file) => packs.push(Pack { kind, name, path, file }),
+                Ok(file) => packs.push(Pack {
+                    kind,
+                    name,
+                    path,
+                    file,
+                }),
                 Err(e) => findings.push(
                     Finding::new(
                         PACK_LOAD_RULE,
@@ -148,5 +169,9 @@ pub fn severity(
     pack: &BTreeMap<String, Severity>,
     rule: &str,
 ) -> Severity {
-    project.get(rule).or_else(|| pack.get(rule)).copied().unwrap_or(Severity::Error)
+    project
+        .get(rule)
+        .or_else(|| pack.get(rule))
+        .copied()
+        .unwrap_or(Severity::Error)
 }

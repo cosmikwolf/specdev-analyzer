@@ -115,7 +115,6 @@ fn plugin_version(plugin_root: &Path) -> Result<String> {
     Ok(v.to_string())
 }
 
-
 /// Collect the file set for a block from the plugin tree.
 pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<UnitFile>> {
     let unit_dir = plugin_root.join("blocks").join(name);
@@ -223,7 +222,12 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
 /// The unit's `guidance.md`, when it ships one. `plugin-lint` requires it of
 /// every plugin unit (a stable file set keeps `--merge` working); the copy
 /// path tolerates its absence so a hand-made or older unit still inlines.
-fn push_guidance(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, name: &str) -> Result<()> {
+fn push_guidance(
+    files: &mut Vec<UnitFile>,
+    unit_dir: &Path,
+    kind: UnitKind,
+    name: &str,
+) -> Result<()> {
     let src = unit_dir.join(GUIDANCE_FILE);
     if src.is_file() {
         let rel = PathBuf::from(GUIDANCE_FILE);
@@ -262,14 +266,24 @@ fn push_pack(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, name: &
             }
             for f in sorted_entries(&lang)? {
                 if f.is_file() && f.extension().is_some_and(|x| x == "scm") {
-                    rels.push(f.strip_prefix(unit_dir).expect("under the unit dir").to_path_buf());
+                    rels.push(
+                        f.strip_prefix(unit_dir)
+                            .expect("under the unit dir")
+                            .to_path_buf(),
+                    );
                 }
             }
         }
     }
     for rel in rels {
-        let Some(rel_dst) = unit_rel_dst(kind, name, &rel) else { continue };
-        files.push(UnitFile { rel_dst, bytes: read_file(&unit_dir.join(&rel))?, rel_src_in_unit: rel });
+        let Some(rel_dst) = unit_rel_dst(kind, name, &rel) else {
+            continue;
+        };
+        files.push(UnitFile {
+            rel_dst,
+            bytes: read_file(&unit_dir.join(&rel))?,
+            rel_src_in_unit: rel,
+        });
     }
     Ok(())
 }
@@ -286,20 +300,39 @@ fn sorted_entries(dir: &Path) -> Result<Vec<PathBuf>> {
 /// Where a unit file inlines, from its path in the unit — the mapping
 /// `collect_block_files` / `collect_bridge_files` use. `None` for a path the
 /// analyzer no longer inlines (e.g. `codegen/…`).
-pub(crate) fn unit_rel_dst(kind: crate::upstream::UnitKind, name: &str, rel_src: &Path) -> Option<PathBuf> {
+pub(crate) fn unit_rel_dst(
+    kind: crate::upstream::UnitKind,
+    name: &str,
+    rel_src: &Path,
+) -> Option<PathBuf> {
     use crate::upstream::UnitKind;
     let s = rel_src.to_string_lossy().replace('\\', "/");
     match (kind, s.as_str()) {
-        (UnitKind::Block, "schema.yaml") => Some(PathBuf::from(format!("schemas/inlined/blocks/{name}.schema.yaml"))),
-        (UnitKind::Block, "reduction.yaml") => Some(PathBuf::from(format!("reductions/blocks/{name}.yaml"))),
-        (UnitKind::Bridge, "bindings.schema.yaml") => {
-            Some(PathBuf::from(format!("schemas/inlined/bridges/{name}.schema.yaml")))
+        (UnitKind::Block, "schema.yaml") => Some(PathBuf::from(format!(
+            "schemas/inlined/blocks/{name}.schema.yaml"
+        ))),
+        (UnitKind::Block, "reduction.yaml") => {
+            Some(PathBuf::from(format!("reductions/blocks/{name}.yaml")))
         }
-        (UnitKind::Bridge, "reduction.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.yaml"))),
-        (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!("reductions/bridges/{name}.contract.yaml"))),
-        (UnitKind::Block, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/blocks/{name}.md"))),
-        (UnitKind::Bridge, GUIDANCE_FILE) => Some(PathBuf::from(format!("guidance/bridges/{name}.md"))),
-        (_, CHECKS_FILE) => Some(PathBuf::from(format!("checks/{}/{name}.toml", kind.dir_segment()))),
+        (UnitKind::Bridge, "bindings.schema.yaml") => Some(PathBuf::from(format!(
+            "schemas/inlined/bridges/{name}.schema.yaml"
+        ))),
+        (UnitKind::Bridge, "reduction.yaml") => {
+            Some(PathBuf::from(format!("reductions/bridges/{name}.yaml")))
+        }
+        (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!(
+            "reductions/bridges/{name}.contract.yaml"
+        ))),
+        (UnitKind::Block, GUIDANCE_FILE) => {
+            Some(PathBuf::from(format!("guidance/blocks/{name}.md")))
+        }
+        (UnitKind::Bridge, GUIDANCE_FILE) => {
+            Some(PathBuf::from(format!("guidance/bridges/{name}.md")))
+        }
+        (_, CHECKS_FILE) => Some(PathBuf::from(format!(
+            "checks/{}/{name}.toml",
+            kind.dir_segment()
+        ))),
         (_, rel) => {
             // `languages/<lang>/<file>.scm` → `queries/<kind>/<name>/<lang>/<file>.scm`.
             let rest = rel.strip_prefix(QUERIES_DIR)?.strip_prefix('/')?;
@@ -307,7 +340,10 @@ pub(crate) fn unit_rel_dst(kind: crate::upstream::UnitKind, name: &str, rel_src:
             if lang.is_empty() || file.contains('/') || !file.ends_with(".scm") {
                 return None;
             }
-            Some(PathBuf::from(format!("queries/{}/{name}/{lang}/{file}", kind.dir_segment())))
+            Some(PathBuf::from(format!(
+                "queries/{}/{name}/{lang}/{file}",
+                kind.dir_segment()
+            )))
         }
     }
 }
@@ -323,7 +359,11 @@ pub(crate) fn snapshot_rollup(
     let mut files: Vec<UnitFile> = snapshot
         .iter()
         .filter_map(|(rel, bytes)| {
-            unit_rel_dst(kind, name, rel).map(|dst| UnitFile { rel_dst: dst, rel_src_in_unit: rel.clone(), bytes: bytes.clone() })
+            unit_rel_dst(kind, name, rel).map(|dst| UnitFile {
+                rel_dst: dst,
+                rel_src_in_unit: rel.clone(),
+                bytes: bytes.clone(),
+            })
         })
         .collect();
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
@@ -846,7 +886,10 @@ mod tests {
     #[test]
     fn unit_rel_dst_matches_the_collectors() {
         let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/specs/full_plugin/_plugin");
-        for (kind, dir) in [(crate::upstream::UnitKind::Block, "blocks"), (crate::upstream::UnitKind::Bridge, "bridges")] {
+        for (kind, dir) in [
+            (crate::upstream::UnitKind::Block, "blocks"),
+            (crate::upstream::UnitKind::Bridge, "bridges"),
+        ] {
             for e in std::fs::read_dir(plugin.join(dir)).unwrap().flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 let files = match kind {
@@ -855,7 +898,11 @@ mod tests {
                 };
                 let Ok(files) = files else { continue };
                 for f in files {
-                    assert_eq!(unit_rel_dst(kind, &name, &f.rel_src_in_unit), Some(f.rel_dst.clone()), "{name}");
+                    assert_eq!(
+                        unit_rel_dst(kind, &name, &f.rel_src_in_unit),
+                        Some(f.rel_dst.clone()),
+                        "{name}"
+                    );
                 }
             }
         }
@@ -868,8 +915,14 @@ mod tests {
             rel_src_in_unit: PathBuf::from("schema.yaml"),
             bytes: b.to_vec(),
         };
-        assert_eq!(rollup_hash(&[file(b"a: 1\nb: 2\n")]), rollup_hash(&[file(b"a: 1\r\nb: 2\r\n")]));
-        assert_ne!(rollup_hash(&[file(b"a: 1\n")]), rollup_hash(&[file(b"a: 2\n")]));
+        assert_eq!(
+            rollup_hash(&[file(b"a: 1\nb: 2\n")]),
+            rollup_hash(&[file(b"a: 1\r\nb: 2\r\n")])
+        );
+        assert_ne!(
+            rollup_hash(&[file(b"a: 1\n")]),
+            rollup_hash(&[file(b"a: 2\n")])
+        );
     }
 
     proptest::proptest! {

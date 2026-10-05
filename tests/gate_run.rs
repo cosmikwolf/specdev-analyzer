@@ -93,19 +93,17 @@ fn lineage(root: &Path) -> String {
 fn a_passing_gate_prints_pass_and_records_nothing() {
     let root = tmp("pass");
     project(&root, ONE_GATE);
-    let (code, out, err) = run(
-        &root,
-        &[
-            "gate", "--label", "ok",
-        ],
-    );
+    let (code, out, err) = run(&root, &["gate", "--label", "ok"]);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(out.trim(), "gate ok pass", "{out}");
     // A step's stderr on a pass is surfaced — the compiler warnings a
     // human reader used to see are not lost — and on stderr, not stdout.
     assert!(err.contains("warn-stderr"), "{err}");
     assert!(!out.contains("warn-stderr"), "{out}");
-    assert!(!root.join("specs/specdev/gen-lineage.toml").exists(), "a gate records nothing");
+    assert!(
+        !root.join("specs/specdev/gen-lineage.toml").exists(),
+        "a gate records nothing"
+    );
 }
 
 #[test]

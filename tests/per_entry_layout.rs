@@ -82,18 +82,29 @@ fn set_reduction_layout(project: &Path, version: &str) {
     let text = std::fs::read_to_string(&path).unwrap();
     if version.starts_with('2') {
         assert!(
-            ["requirements", "decisions", "open_questions"].iter().any(|d| text.contains(&format!("\"specs/{d}/*.toml\""))),
+            ["requirements", "decisions", "open_questions"]
+                .iter()
+                .any(|d| text.contains(&format!("\"specs/{d}/*.toml\""))),
             "not a 2.0 reduction"
         );
         return;
     }
     let text = text
         .replace("\"specs/sources/*.toml\"", "\"specs/requirements.toml\"")
-        .replace("\"specs/requirements/*.toml\"", "\"specs/requirements.toml\"")
+        .replace(
+            "\"specs/requirements/*.toml\"",
+            "\"specs/requirements.toml\"",
+        )
         .replace("\"specs/decisions/*.toml\"", "\"specs/decisions.toml\"")
-        .replace("\"specs/open_questions/*.toml\"", "\"specs/open_questions.toml\"");
+        .replace(
+            "\"specs/open_questions/*.toml\"",
+            "\"specs/open_questions.toml\"",
+        );
     for dir in ["sources", "requirements", "decisions", "open_questions"] {
-        assert!(!text.contains(&format!("\"specs/{dir}/*.toml\"")), "{dir} glob still named");
+        assert!(
+            !text.contains(&format!("\"specs/{dir}/*.toml\"")),
+            "{dir} glob still named"
+        );
     }
     std::fs::write(&path, text).unwrap();
 }

@@ -61,7 +61,6 @@ fn errors(report: &Report) -> Vec<&Finding> {
         .collect()
 }
 
-
 // ---------------------------------------------------------------------------
 // 1 — Live plugin snapshot bootstraps firmware-layered with full picks
 //     and the default architecture.toml validates clean.

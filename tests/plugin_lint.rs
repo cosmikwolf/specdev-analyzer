@@ -33,9 +33,7 @@ fn live_plugin_lint_passes() {
     let mut findings = Vec::new();
     findings.extend(inline::lint_plugin_bridges(&plugin).expect("lint_plugin_bridges"));
     findings.extend(inline::lint_plugin_blocks(&plugin).expect("lint_plugin_blocks"));
-    findings.extend(
-        guidance_lint::lint_guidance(&plugin).expect("lint_guidance"),
-    );
+    findings.extend(guidance_lint::lint_guidance(&plugin).expect("lint_guidance"));
     findings.extend(pack_lint::lint_packs(&plugin).expect("lint_packs"));
 
     assert!(

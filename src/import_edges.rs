@@ -83,22 +83,32 @@ fn slash(p: &Path) -> String {
 }
 
 /// The imports of one project-relative file, each resolved.
-pub fn file_imports(adapter: &dyn LanguageAdapter, ctx: &ImportContext, rel: &Path) -> Result<Vec<FileImport>> {
+pub fn file_imports(
+    adapter: &dyn LanguageAdapter,
+    ctx: &ImportContext,
+    rel: &Path,
+) -> Result<Vec<FileImport>> {
     let Some(query_src) = adapter.imports_query() else {
         return Ok(Vec::new());
     };
     let path = ctx.project_root.join(rel);
-    let source = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let source =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");
     let lang = adapter.tree_sitter_language_for(ext);
     let mut parser = Parser::new();
-    parser.set_language(&lang).context("setting the tree-sitter language")?;
+    parser
+        .set_language(&lang)
+        .context("setting the tree-sitter language")?;
     let Some(tree) = parser.parse(&source, None) else {
         return Ok(Vec::new());
     };
     let query = Query::new(&lang, query_src)
         .with_context(|| format!("compiling the {} imports.scm query", adapter.name()))?;
-    let (c_src, c_re) = (query.capture_index_for_name("import.source"), query.capture_index_for_name("import.reexport"));
+    let (c_src, c_re) = (
+        query.capture_index_for_name("import.source"),
+        query.capture_index_for_name("import.reexport"),
+    );
     let mut out = Vec::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -114,7 +124,11 @@ pub fn file_imports(adapter: &dyn LanguageAdapter, ctx: &ImportContext, rel: &Pa
                 .into_iter()
                 .find(|cand| ctx.project_root.join(cand).is_file())
                 .map(|p| slash(&p));
-            out.push(FileImport { spec, resolved, reexport });
+            out.push(FileImport {
+                spec,
+                resolved,
+                reexport,
+            });
         }
     }
     Ok(out)
@@ -138,7 +152,10 @@ pub fn report_roots(
         if !exts.contains(&ext) {
             continue;
         }
-        let rel = abs.strip_prefix(&ctx.project_root).unwrap_or(&abs).to_path_buf();
+        let rel = abs
+            .strip_prefix(&ctx.project_root)
+            .unwrap_or(&abs)
+            .to_path_buf();
         let imports = file_imports(adapter, ctx, &rel)?;
         out.push((slash(&rel), imports));
     }
@@ -150,13 +167,23 @@ pub(crate) fn walk(dir: &Path, out: &mut BTreeSet<PathBuf>) {
         out.insert(dir.to_path_buf());
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         if p.is_dir() {
             let name = e.file_name();
-            if !["node_modules", "target", ".git", ".dart_tool", "build", "dist", ".next"]
-                .contains(&name.to_string_lossy().as_ref())
+            if ![
+                "node_modules",
+                "target",
+                ".git",
+                ".dart_tool",
+                "build",
+                "dist",
+                ".next",
+            ]
+            .contains(&name.to_string_lossy().as_ref())
             {
                 walk(&p, out);
             }
@@ -181,15 +208,30 @@ pub fn module_edges(layout: &LayoutContext, modules: &[ModuleNode]) -> Result<Ed
     let mut sources: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for m in modules {
         let Some(src) = &m.source else { continue };
-        sources.entry(src.clone()).or_default().insert(m.name.clone());
-        owners.entry(src.clone()).or_default().insert(m.name.clone());
+        sources
+            .entry(src.clone())
+            .or_default()
+            .insert(m.name.clone());
+        owners
+            .entry(src.clone())
+            .or_default()
+            .insert(m.name.clone());
         for twin in adapter.module_twin_files(Path::new(src)) {
-            owners.entry(slash(&twin)).or_default().insert(m.name.clone());
+            owners
+                .entry(slash(&twin))
+                .or_default()
+                .insert(m.name.clone());
         }
     }
-    let depends: BTreeMap<&str, &Vec<String>> = modules.iter().map(|m| (m.name.as_str(), &m.depends_on)).collect();
+    let depends: BTreeMap<&str, &Vec<String>> = modules
+        .iter()
+        .map(|m| (m.name.as_str(), &m.depends_on))
+        .collect();
 
-    let mut edges = Edges { checked: true, ..Default::default() };
+    let mut edges = Edges {
+        checked: true,
+        ..Default::default()
+    };
     let mut cache: BTreeMap<String, Vec<FileImport>> = BTreeMap::new();
     for (file, group) in &sources {
         if group.len() > 1 {
@@ -200,15 +242,32 @@ pub fn module_edges(layout: &LayoutContext, modules: &[ModuleNode]) -> Result<Ed
         }
         let declared: BTreeSet<&str> = group
             .iter()
-            .flat_map(|m| depends.get(m.as_str()).into_iter().flat_map(|d| d.iter().map(String::as_str)))
+            .flat_map(|m| {
+                depends
+                    .get(m.as_str())
+                    .into_iter()
+                    .flat_map(|d| d.iter().map(String::as_str))
+            })
             .collect();
         let from = group.iter().next().cloned().unwrap_or_default();
         let imports = imports_of(adapter.as_ref(), &ctx, file, &mut cache)?;
         let mut reported: BTreeSet<String> = BTreeSet::new();
         for imp in &imports {
-            let Some(target) = &imp.resolved else { continue };
-            for to in target_modules(adapter.as_ref(), &ctx, target, &owners, &mut cache, &mut BTreeSet::new())? {
-                if group.contains(&to) || declared.contains(to.as_str()) || !reported.insert(to.clone()) {
+            let Some(target) = &imp.resolved else {
+                continue;
+            };
+            for to in target_modules(
+                adapter.as_ref(),
+                &ctx,
+                target,
+                &owners,
+                &mut cache,
+                &mut BTreeSet::new(),
+            )? {
+                if group.contains(&to)
+                    || declared.contains(to.as_str())
+                    || !reported.insert(to.clone())
+                {
                     continue;
                 }
                 edges.undeclared.push(UndeclaredEdge {
@@ -280,5 +339,7 @@ pub fn to_yaml(files: &[(String, Vec<FileImport>)]) -> Result<String> {
             })
         })
         .collect();
-    Ok(serde_yaml::to_string(&serde_json::json!({ "files": files }))?)
+    Ok(serde_yaml::to_string(
+        &serde_json::json!({ "files": files }),
+    )?)
 }

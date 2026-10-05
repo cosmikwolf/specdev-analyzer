@@ -27,7 +27,10 @@ fn plugin_copy(tag: &str) -> PathBuf {
         .join(format!(
             "specdev-check-plugin-ahead-{tag}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ))
         .join("_plugin");
     copy_dir(&plugin_root(), &root);
@@ -39,11 +42,19 @@ fn check_reports_a_plugin_that_moved_ahead() {
     let plugin = plugin_copy("ahead");
     let t = tree_from("ahead", &plugin, "firmware-layered", "rust", &["rtic"]);
     let quiet = t.analyzer(&["check"]);
-    assert!(!text(&quiet).contains("PLUGIN-AHEAD-001"), "silent while the plugin matches:\n{}", text(&quiet));
+    assert!(
+        !text(&quiet).contains("PLUGIN-AHEAD-001"),
+        "silent while the plugin matches:\n{}",
+        text(&quiet)
+    );
 
     let g = plugin.join("blocks/rtic/guidance.md");
     let body = std::fs::read_to_string(&g).unwrap();
     std::fs::write(&g, format!("{body}- One more rule.\n")).unwrap();
     let out = t.analyzer(&["check"]);
-    assert!(text(&out).contains("PLUGIN-AHEAD-001"), "check names the plugin move:\n{}", text(&out));
+    assert!(
+        text(&out).contains("PLUGIN-AHEAD-001"),
+        "check names the plugin move:\n{}",
+        text(&out)
+    );
 }

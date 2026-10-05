@@ -164,8 +164,15 @@ pub fn run_migrate(
                 }
                 // Nothing missing: the plugin moved content the project already
                 // has. Re-recording would hide that from `drift`; leave it.
-                if !files.iter().any(|f| !layout.specdev_root.join(&f.rel_dst).exists()) {
-                    report.plugin_moved.push(SkippedUnit { kind: UnitKind::Block, name: name.clone(), hash: new_hash });
+                if !files
+                    .iter()
+                    .any(|f| !layout.specdev_root.join(&f.rel_dst).exists())
+                {
+                    report.plugin_moved.push(SkippedUnit {
+                        kind: UnitKind::Block,
+                        name: name.clone(),
+                        hash: new_hash,
+                    });
                     continue;
                 }
                 let written = apply_unit_migration(layout, UnitKind::Block, name, &files, dry_run)?;
@@ -177,9 +184,11 @@ pub fn run_migrate(
                     files_written: written,
                 });
                 if !dry_run {
-                    let snap = upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Block, name)?;
+                    let snap =
+                        upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Block, name)?;
                     if let Some(e) = lineage.blocks.get_mut(name) {
-                        e.content_hash = crate::inline::snapshot_rollup(UnitKind::Block, name, &snap);
+                        e.content_hash =
+                            crate::inline::snapshot_rollup(UnitKind::Block, name, &snap);
                     }
                 }
             }
@@ -215,8 +224,15 @@ pub fn run_migrate(
                     });
                     continue;
                 }
-                if !files.iter().any(|f| !layout.specdev_root.join(&f.rel_dst).exists()) {
-                    report.plugin_moved.push(SkippedUnit { kind: UnitKind::Bridge, name: name.clone(), hash: new_hash });
+                if !files
+                    .iter()
+                    .any(|f| !layout.specdev_root.join(&f.rel_dst).exists())
+                {
+                    report.plugin_moved.push(SkippedUnit {
+                        kind: UnitKind::Bridge,
+                        name: name.clone(),
+                        hash: new_hash,
+                    });
                     continue;
                 }
                 let written =
@@ -229,9 +245,11 @@ pub fn run_migrate(
                     files_written: written,
                 });
                 if !dry_run {
-                    let snap = upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Bridge, name)?;
+                    let snap =
+                        upstream::read_upstream_unit(&layout.specdev_root, UnitKind::Bridge, name)?;
                     if let Some(e) = lineage.bridges.get_mut(name) {
-                        e.content_hash = crate::inline::snapshot_rollup(UnitKind::Bridge, name, &snap);
+                        e.content_hash =
+                            crate::inline::snapshot_rollup(UnitKind::Bridge, name, &snap);
                     }
                 }
             }

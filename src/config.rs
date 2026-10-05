@@ -39,8 +39,15 @@ pub struct SpecConfig {
 
 /// `[project]` keys a `1.x` `spec.toml` may carry that `2.0` removed: their
 /// only reader was the manifest emitter.
-pub const RETIRED_PROJECT_KEYS: [&str; 7] =
-    ["crate_shape", "crate_type", "version", "edition", "license", "repository", "description"];
+pub const RETIRED_PROJECT_KEYS: [&str; 7] = [
+    "crate_shape",
+    "crate_type",
+    "version",
+    "edition",
+    "license",
+    "repository",
+    "description",
+];
 
 /// `[workspace]` keys a `1.x` `spec.toml` may carry that `2.0` removed: copies of
 /// the Cargo workspace.
@@ -140,7 +147,10 @@ impl SpecConfig {
                     project.remove(k);
                 }
             }
-            if let Some(ws) = raw_json.get_mut("workspace").and_then(|p| p.as_object_mut()) {
+            if let Some(ws) = raw_json
+                .get_mut("workspace")
+                .and_then(|p| p.as_object_mut())
+            {
                 for k in RETIRED_WORKSPACE_KEYS {
                     ws.remove(k);
                 }

@@ -72,7 +72,9 @@ fn bootstrap_copies_profile_templates_to_inlined_tree() {
         "bootstrap must copy templates/* to specs/specdev/templates/* — missing {}",
         inlined.display()
     );
-    let plugin_src = full_plugin().join("profiles/audio-plugin/templates").join(name);
+    let plugin_src = full_plugin()
+        .join("profiles/audio-plugin/templates")
+        .join(name);
     assert_eq!(
         fs::read(&plugin_src).unwrap(),
         fs::read(&inlined).unwrap(),
@@ -91,11 +93,16 @@ fn bootstrap_skips_templates_when_profile_has_none() {
     fs::remove_dir_all(profile_dir.join("templates")).unwrap();
     let manifest = profile_dir.join("profile.yaml");
     let text = fs::read_to_string(&manifest).unwrap();
-    let kept: Vec<&str> =
-        text.lines().filter(|l| !l.starts_with("paired_files:") && !l.contains("template_file:")).collect();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with("paired_files:") && !l.contains("template_file:"))
+        .collect();
     fs::write(&manifest, kept.join("\n") + "\n").unwrap();
 
     let target = bootstrap(&plugin, &workspace, "library-api");
     let templates_dir = target.join("specs/specdev/templates");
-    assert!(!templates_dir.exists(), "no templates/ dir in profile → no templates/ in target");
+    assert!(
+        !templates_dir.exists(),
+        "no templates/ dir in profile → no templates/ in target"
+    );
 }

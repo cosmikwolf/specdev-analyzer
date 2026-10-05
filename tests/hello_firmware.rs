@@ -75,14 +75,18 @@ fn hello_firmware_project(tag: &str) -> (PathBuf, LayoutContext) {
     )
     .unwrap();
 
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-LED-001"
 text = "The board LED shall blink at 1 Hz as a liveness indicator."
 
 [[requirement]]
 id = "REQ-UART-001"
 text = "Bytes received on USART3 shall be echoed back unmodified."
-"#);
+"#,
+    );
 
     std::fs::write(
         target.join("specs/modules/Blinky.toml"),

@@ -10,9 +10,7 @@
 
 use std::path::PathBuf;
 
-use specdev_analyzer::manifest::{
-    BindingLocality, BootstrapStep, BridgeContract, Profile,
-};
+use specdev_analyzer::manifest::{BindingLocality, BootstrapStep, BridgeContract, Profile};
 
 fn tmp_path(tag: &str, ext: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
@@ -261,7 +259,10 @@ cargo_toml:
     let p = write("profile-retired", body);
     let err = Profile::load(&p).expect_err("a retired section should fail");
     let msg = format!("{err:#}");
-    assert!(msg.contains("MANIFEST-001") && msg.contains("cargo_toml"), "{msg}");
+    assert!(
+        msg.contains("MANIFEST-001") && msg.contains("cargo_toml"),
+        "{msg}"
+    );
 }
 
 #[test]

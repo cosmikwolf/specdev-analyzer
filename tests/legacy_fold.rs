@@ -30,9 +30,15 @@ fn migrate_folds_new_entries_and_skips_identical_ones() {
     assert!(out.status.success(), "{}", text(&out));
     assert_eq!(t.read("specs/decisions/DEC-001.toml"), DEC_1);
     assert_eq!(t.read("specs/decisions/DEC-002.toml"), DEC_2);
-    assert!(specdev_analyzer::entries::is_tombstone(&t.read("specs/decisions.toml")));
+    assert!(specdev_analyzer::entries::is_tombstone(
+        &t.read("specs/decisions.toml")
+    ));
     let v = t.analyzer(&["validate"]);
-    assert!(!text(&v).contains("ENTRY-LEGACY-001") && text(&v).contains("0 error(s)"), "{}", text(&v));
+    assert!(
+        !text(&v).contains("ENTRY-LEGACY-001") && text(&v).contains("0 error(s)"),
+        "{}",
+        text(&v)
+    );
 }
 
 #[test]
@@ -43,7 +49,16 @@ fn an_entry_with_other_bytes_refuses_and_shows_both() {
     let out = migrate(&t);
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let all = text(&out);
-    assert!(all.contains("Both sides agree.") && all.contains("The branch changed it."), "{all}");
-    assert!(!t.root.join("specs/decisions/DEC-001.toml").exists(), "a refused fold wrote a file");
-    assert_eq!(t.read("specs/decisions.toml"), format!("{DEC_1}\n{DEC_2_OTHER}"));
+    assert!(
+        all.contains("Both sides agree.") && all.contains("The branch changed it."),
+        "{all}"
+    );
+    assert!(
+        !t.root.join("specs/decisions/DEC-001.toml").exists(),
+        "a refused fold wrote a file"
+    );
+    assert_eq!(
+        t.read("specs/decisions.toml"),
+        format!("{DEC_1}\n{DEC_2_OTHER}")
+    );
 }

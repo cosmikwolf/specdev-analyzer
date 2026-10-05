@@ -119,7 +119,9 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
     }
 
     // Profile codegen conventions are no longer copied.
-    assert!(!target.join("specs/specdev/codegen/rust/module.conventions.md").exists());
+    assert!(!target
+        .join("specs/specdev/codegen/rust/module.conventions.md")
+        .exists());
 
     // Project-level reduction.
     assert!(target
@@ -265,7 +267,10 @@ panic_handler = "abort"
 fn requirements_have_satisfiers_fires_on_orphan_module_requirement() {
     let (target, _) = fresh_plugin("orphan-req");
     write_arch(&target, ARCH_DEFAULT);
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-AUDIO-001"
 text = "Plugin must not allocate on the audio thread."
 
@@ -273,7 +278,8 @@ text = "Plugin must not allocate on the audio thread."
 id = "REQ-FORMAT-001"
 text = "Plugin ships as VST3 + CLAP."
 nature = "architecture"
-"#);
+"#,
+    );
     write_module(
         &target,
         "MyPlugin",
@@ -325,7 +331,10 @@ fn parameters_have_bindings_silent_when_parameter_kind_absent() {
     write_arch(&target, ARCH_DEFAULT);
     // Requirements + sources, no modules, no nih-plug block inlined: the
     // `nih-plug.Parameter` kind never enters the effective kind set.
-    ledger::write(&target, "requirements.toml", r#"[[source]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[source]]
 id = "user-stories"
 kind = "user"
 title = "stories"
@@ -338,7 +347,8 @@ source = ["user-stories"]
 [[requirement]]
 id = "ZX7-002"
 text = "SysEx import loads voices."
-"#);
+"#,
+    );
 
     let report = validate::run_project(&target, None).unwrap();
     let flood = warnings_for(&report, "parameters_have_bindings");

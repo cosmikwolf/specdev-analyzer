@@ -52,7 +52,11 @@ const ERROR_RULES: &[&str] = &["requirements_have_satisfiers", "implementation_u
 
 /// Graph checks the format drops: their relation came from spec test
 /// items, which the format does not have.
-const DROPPED_RULES: &[&str] = &["test_requirements_have_verifiers", "feature_unique_names", "workspace_dependencies_unique"];
+const DROPPED_RULES: &[&str] = &[
+    "test_requirements_have_verifiers",
+    "feature_unique_names",
+    "workspace_dependencies_unique",
+];
 
 /// Options for the format step.
 #[derive(Debug, Clone, Copy, Default)]
@@ -121,13 +125,19 @@ impl Overlay {
         if let Ok(rd) = std::fs::read_dir(self.root.join(dir)) {
             for e in rd.flatten() {
                 let p = e.path();
-                if p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("toml")) {
+                if p.is_file()
+                    && p.extension()
+                        .is_some_and(|x| x.eq_ignore_ascii_case("toml"))
+                {
                     out.insert(dir.join(e.file_name()));
                 }
             }
         }
         for p in self.writes.keys() {
-            if p.parent() == Some(dir) && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("toml")) {
+            if p.parent() == Some(dir)
+                && p.extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("toml"))
+            {
                 out.insert(p.clone());
             }
         }
@@ -165,7 +175,8 @@ impl Overlay {
 
 fn write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
 }
@@ -184,7 +195,11 @@ fn utf8(bytes: Vec<u8>, rel: &Path) -> Result<String> {
 
 fn string_list(item: Option<&Item>) -> Vec<String> {
     item.and_then(Item::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -213,7 +228,11 @@ struct Plan {
 /// a refusal in any of them stops the run before a byte is written, and
 /// then the members are written, the root last. In a member the step
 /// refuses and names the root.
-pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> Result<FormatReport> {
+pub fn run(
+    layout: &LayoutContext,
+    plugin_root: &Path,
+    opts: FormatOptions,
+) -> Result<FormatReport> {
     if let Some(root_spec) = crate::layout::find_workspace_root_spec(&layout.project_root)? {
         if layout.spec.format_major() >= 2 {
             // A member at the root's major may still fold its own legacy content.
@@ -246,7 +265,11 @@ pub fn run(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> R
             plans.push((Some(m.path.clone()), plan));
         }
     }
-    let root_plan = if root_is_current { fold_plan(layout, opts)? } else { Some(plan_one(layout, plugin_root, opts)?) };
+    let root_plan = if root_is_current {
+        fold_plan(layout, opts)?
+    } else {
+        Some(plan_one(layout, plugin_root, opts)?)
+    };
     plans.push((None, root_plan));
     finish(plans, layout, opts, root_is_current)
 }
@@ -258,24 +281,60 @@ fn finish(
     opts: FormatOptions,
     root_is_current: bool,
 ) -> Result<FormatReport> {
-    let plans: Vec<(Option<String>, Plan)> = plans.into_iter().filter_map(|(m, p)| p.map(|p| (m, p))).collect();
+    let plans: Vec<(Option<String>, Plan)> = plans
+        .into_iter()
+        .filter_map(|(m, p)| p.map(|p| (m, p)))
+        .collect();
     if plans.is_empty() {
-        return Ok(FormatReport { already_current: true, ..Default::default() });
+        return Ok(FormatReport {
+            already_current: true,
+            ..Default::default()
+        });
     }
     if !opts.dry_run {
         for (_, plan) in &plans {
-            plan.ov.apply(plan.lineage.as_ref().map(|l| (l, plan.specdev_root.as_path())), Path::new("spec.toml"))?;
+            plan.ov.apply(
+                plan.lineage
+                    .as_ref()
+                    .map(|l| (l, plan.specdev_root.as_path())),
+                Path::new("spec.toml"),
+            )?;
         }
     }
-    let mut report = FormatReport { folded: root_is_current, ..Default::default() };
+    let mut report = FormatReport {
+        folded: root_is_current,
+        ..Default::default()
+    };
     for (member, plan) in plans {
-        let tag = member.as_ref().map(|m| format!("[{m}] ")).unwrap_or_default();
+        let tag = member
+            .as_ref()
+            .map(|m| format!("[{m}] "))
+            .unwrap_or_default();
         let moved = plan.lineage.is_some();
-        report.lines.extend(plan.report.lines.into_iter().map(|l| format!("{tag}{l}")));
-        report.unresolved.extend(plan.report.unresolved.into_iter().map(|l| format!("{tag}{l}")));
-        report.planned.extend(plan.report.planned.into_iter().map(|l| format!("{tag}{l}")));
-        report.tests_only.extend(plan.report.tests_only.into_iter().map(|l| format!("{tag}{l}")));
-        report.replaced_unrecorded.extend(plan.report.replaced_unrecorded.into_iter().map(|l| format!("{tag}{l}")));
+        report
+            .lines
+            .extend(plan.report.lines.into_iter().map(|l| format!("{tag}{l}")));
+        report.unresolved.extend(
+            plan.report
+                .unresolved
+                .into_iter()
+                .map(|l| format!("{tag}{l}")),
+        );
+        report
+            .planned
+            .extend(plan.report.planned.into_iter().map(|l| format!("{tag}{l}")));
+        report.tests_only.extend(
+            plan.report
+                .tests_only
+                .into_iter()
+                .map(|l| format!("{tag}{l}")),
+        );
+        report.replaced_unrecorded.extend(
+            plan.report
+                .replaced_unrecorded
+                .into_iter()
+                .map(|l| format!("{tag}{l}")),
+        );
         if let (Some(m), true) = (member, moved) {
             report.members.push(layout.project_root.join(m));
         }
@@ -306,7 +365,12 @@ fn fold_plan(layout: &LayoutContext, opts: FormatOptions) -> Result<Option<Plan>
     for (rel, bytes) in split.writes.into_iter().chain(split.tombstones) {
         ov.write(&specs_rel.join(rel), bytes);
     }
-    Ok(Some(Plan { ov, lineage: None, specdev_root: layout.specdev_root.clone(), report }))
+    Ok(Some(Plan {
+        ov,
+        lineage: None,
+        specdev_root: layout.specdev_root.clone(),
+        report,
+    }))
 }
 
 /// Plan the step for one project.
@@ -317,7 +381,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         .meta
         .as_ref()
         .map(|m| m.profile.clone())
-        .ok_or_else(|| anyhow!("[MIGRATE-001] no [meta] in lineage.toml; the project is pre-bootstrap"))?;
+        .ok_or_else(|| {
+            anyhow!("[MIGRATE-001] no [meta] in lineage.toml; the project is pre-bootstrap")
+        })?;
     let root = &layout.project_root;
     let specs_rel = rel_to(root, &layout.specs_dir);
     let specdev_rel = rel_to(root, &layout.specdev_root);
@@ -340,13 +406,22 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     }
 
     // The project's own manifest, for the removal report's marks.
-    let facts = crate::lang::adapter_for(&layout.spec.project.language).and_then(|a| a.manifest_facts(root));
-    let report_removed = |file: &Path, removed: Vec<crate::field_cuts::Removed>, lines: &mut Vec<String>| {
-        for r in removed {
-            let mark = crate::field_cuts::mark(&r, facts.as_ref());
-            lines.push(crate::field_cuts::ReportLine { file: slash(file), removed: r, mark }.render(verb));
-        }
-    };
+    let facts = crate::lang::adapter_for(&layout.spec.project.language)
+        .and_then(|a| a.manifest_facts(root));
+    let report_removed =
+        |file: &Path, removed: Vec<crate::field_cuts::Removed>, lines: &mut Vec<String>| {
+            for r in removed {
+                let mark = crate::field_cuts::mark(&r, facts.as_ref());
+                lines.push(
+                    crate::field_cuts::ReportLine {
+                        file: slash(file),
+                        removed: r,
+                        mark,
+                    }
+                    .render(verb),
+                );
+            }
+        };
 
     // 2. Module specs: test items and the fields 2.0 removes.
     let modules_rel = rel_to(root, &layout.modules_dir);
@@ -354,7 +429,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     let mut verified: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rel in ov.toml_files(&modules_rel) {
         let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
-        let mut doc: DocumentMut = text.parse().with_context(|| format!("parsing {}", rel.display()))?;
+        let mut doc: DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", rel.display()))?;
         let name = doc
             .get("name")
             .and_then(Item::as_str)
@@ -386,7 +463,14 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         }
         let satisfies = string_list(doc.get("satisfies"));
         let planned = doc.get("planned").and_then(Item::as_bool) == Some(true);
-        modules.push(ModuleSpec { rel, name, doc, changed, satisfies, planned });
+        modules.push(ModuleSpec {
+            rel,
+            name,
+            doc,
+            changed,
+            satisfies,
+            planned,
+        });
     }
 
     // 3. Sources.
@@ -395,9 +479,16 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         if m.planned {
             continue;
         }
-        let as_value: toml::Value = toml::from_str(&m.doc.to_string()).unwrap_or(toml::Value::Boolean(false));
+        let as_value: toml::Value =
+            toml::from_str(&m.doc.to_string()).unwrap_or(toml::Value::Boolean(false));
         let source = adapter.as_deref().and_then(|a| {
-            resolve_source_path(&m.name, source_file_override(&as_value), a, root, &layout.spec.paths.source)
+            resolve_source_path(
+                &m.name,
+                source_file_override(&as_value),
+                a,
+                root,
+                &layout.spec.paths.source,
+            )
         });
         match source {
             None => {
@@ -427,11 +518,17 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     }
 
     // 4. Requirements: `verified_by`, then `test_pending`.
-    let req_dir = rel_to(root, &EntryStore::at(&layout.specs_dir, EntryLayout::PerEntry).expected_file(EntryKind::Requirement));
+    let req_dir = rel_to(
+        root,
+        &EntryStore::at(&layout.specs_dir, EntryLayout::PerEntry)
+            .expected_file(EntryKind::Requirement),
+    );
     let mut flagged = 0;
     for rel in ov.toml_files(&req_dir) {
         let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
-        let mut doc: DocumentMut = text.parse().with_context(|| format!("parsing {}", rel.display()))?;
+        let mut doc: DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", rel.display()))?;
         let Some(req) = doc
             .get_mut(EntryKind::Requirement.table())
             .and_then(Item::as_array_of_tables_mut)
@@ -439,7 +536,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         else {
             continue;
         };
-        let Some(id) = req.get("id").and_then(Item::as_str).map(str::to_string) else { continue };
+        let Some(id) = req.get("id").and_then(Item::as_str).map(str::to_string) else {
+            continue;
+        };
         let mut changed = false;
         let mut names = string_list(req.get("verified_by"));
         for n in verified.get(&id).into_iter().flatten() {
@@ -456,10 +555,17 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             req["verified_by"] = value(arr);
         }
         let nature = req.get("nature").and_then(Item::as_str).unwrap_or("module");
-        let satisfiers: Vec<&ModuleSpec> = modules.iter().filter(|m| m.satisfies.contains(&id)).collect();
+        let satisfiers: Vec<&ModuleSpec> = modules
+            .iter()
+            .filter(|m| m.satisfies.contains(&id))
+            .collect();
         let planned = req.get("planned").and_then(Item::as_bool) == Some(true)
             || (!satisfiers.is_empty() && satisfiers.iter().all(|m| m.planned));
-        if matches!(nature, "module" | "test") && !planned && names.is_empty() && req.get("test_pending").is_none() {
+        if matches!(nature, "module" | "test")
+            && !planned
+            && names.is_empty()
+            && req.get("test_pending").is_none()
+        {
             req["test_pending"] = value(true);
             changed = true;
             flagged += 1;
@@ -469,7 +575,10 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         }
     }
     if !verified.is_empty() {
-        report.lines.push(format!("{verb}set `verified_by` on {} requirement(s)", verified.len()));
+        report.lines.push(format!(
+            "{verb}set `verified_by` on {} requirement(s)",
+            verified.len()
+        ));
     }
     if flagged > 0 {
         report.lines.push(format!(
@@ -480,7 +589,10 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     // 5. Profile files.
     let profile_dir = plugin_root.join("profiles").join(&profile);
     if !profile_dir.is_dir() {
-        bail!("[MIGRATE-002] profile `{profile}` not found in the plugin tree at {}", profile_dir.display());
+        bail!(
+            "[MIGRATE-002] profile `{profile}` not found in the plugin tree at {}",
+            profile_dir.display()
+        );
     }
     let inputs = BootstrapInputs {
         profile: profile.clone(),
@@ -509,20 +621,30 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         let text = utf8(ours.clone(), &arch_rel)?;
         let (stripped, cut, keys_left) = crate::field_cuts::strip_architecture(&text)?;
         report_removed(&arch_rel, cut, &mut report.lines);
-        let clean = recorded.get(&arch_key).is_some_and(|r| bootstrap::profile_file_matches(&arch_key, &ours, r).unwrap_or(false));
+        let clean = recorded
+            .get(&arch_key)
+            .is_some_and(|r| bootstrap::profile_file_matches(&arch_key, &ours, r).unwrap_or(false));
         match expected.get(&arch_key) {
             Some(theirs) if clean => {
                 if &ours != theirs {
                     ov.write(&arch_rel, theirs.clone());
-                    records.insert(arch_key.clone(), bootstrap::profile_file_hash(&arch_key, theirs)?);
+                    records.insert(
+                        arch_key.clone(),
+                        bootstrap::profile_file_hash(&arch_key, theirs)?,
+                    );
                     report.lines.push(format!("{verb}refresh {arch_key} to the plugin's {TARGET_VERSION} copy (unchanged since bootstrap)"));
                 }
             }
             None if !keys_left => {
                 ov.deletes.insert(arch_rel.clone());
                 deleted.insert(arch_key.clone());
-                let left: Vec<String> = stripped.lines().filter(|l| l.trim_start().starts_with('#')).map(str::to_string).collect();
-                let mut line = format!("{verb}delete {arch_key} (no key left; the profile ships no template)");
+                let left: Vec<String> = stripped
+                    .lines()
+                    .filter(|l| l.trim_start().starts_with('#'))
+                    .map(str::to_string)
+                    .collect();
+                let mut line =
+                    format!("{verb}delete {arch_key} (no key left; the profile ships no template)");
                 for c in left {
                     line.push_str(&format!("\n      {c}  [prose]"));
                 }
@@ -543,18 +665,24 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         }
         let rel = PathBuf::from(key);
         handled.insert(rel.clone());
-        let mechanical =
-            rel == spec_rel || rel == domain_rel || rel == profile_rel || rel.starts_with(&reductions_rel);
+        let mechanical = rel == spec_rel
+            || rel == domain_rel
+            || rel == profile_rel
+            || rel.starts_with(&reductions_rel);
         let Some(ours) = ov.read(&rel) else {
             if recorded.contains_key(key) {
                 // Recorded but missing: the user (or a migration) deleted it.
                 // Writing it back would undo that; `drift` reports it.
-                report.lines.push(format!("{verb}leave {key} deleted (recorded, but not in the project)"));
+                report.lines.push(format!(
+                    "{verb}leave {key} deleted (recorded, but not in the project)"
+                ));
                 continue;
             }
             ov.write(&rel, theirs.clone());
             records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
-            report.lines.push(format!("{verb}write {key} (new in the plugin)"));
+            report
+                .lines
+                .push(format!("{verb}write {key} (new in the plugin)"));
             continue;
         };
         let ours_hash = bootstrap::profile_file_hash(key, &ours)?;
@@ -576,7 +704,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                     report.lines.push(format!("{verb}{c} in {key}"));
                 }
             }
-            if ours_hash != theirs_hash || (!bootstrap::CO_OWNED_AGGREGATORS.contains(&key.as_str()) && &ours != theirs) {
+            if ours_hash != theirs_hash
+                || (!bootstrap::CO_OWNED_AGGREGATORS.contains(&key.as_str()) && &ours != theirs)
+            {
                 let new = take_plugin_bytes(key, &ours, theirs)?;
                 ov.write(&rel, new);
                 records.insert(key.clone(), theirs_hash);
@@ -603,9 +733,13 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 }
                 new
             } else {
-                let (new, kinds) = crate::field_cuts::drop_reduction_kinds(&entries::rewrite_reduction_paths(&text));
+                let (new, kinds) = crate::field_cuts::drop_reduction_kinds(
+                    &entries::rewrite_reduction_paths(&text),
+                );
                 for k in kinds {
-                    report.lines.push(format!("{verb}remove the `{k}` entry from {key} (it read a removed field)"));
+                    report.lines.push(format!(
+                        "{verb}remove the `{k}` entry from {key} (it read a removed field)"
+                    ));
                 }
                 new
             };
@@ -615,7 +749,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                         "{verb}remove the manifest-emitter sections and gate `scope` from {key}; contract_version 2"
                     ));
                 } else if rel != spec_rel && rel != domain_rel {
-                    report.lines.push(format!("{verb}point {key} at the per-entry files"));
+                    report
+                        .lines
+                        .push(format!("{verb}point {key} at the per-entry files"));
                 }
                 if bootstrap::profile_file_hash(key, new.as_bytes())? == theirs_hash {
                     records.insert(key.clone(), theirs_hash);
@@ -632,14 +768,22 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 // What the replacement removes: the lines of the project's copy
                 // the plugin's copy does not have.
                 let new_text = String::from_utf8_lossy(&new).into_owned();
-                let keep: std::collections::HashSet<&str> = new_text.lines().map(str::trim_end).collect();
+                let keep: std::collections::HashSet<&str> =
+                    new_text.lines().map(str::trim_end).collect();
                 let ours_text = String::from_utf8_lossy(&ours).into_owned();
-                let lost: Vec<String> =
-                    ours_text.lines().map(str::trim_end).filter(|l| !l.is_empty() && !keep.contains(l)).map(|l| format!("      - {l}")).collect();
+                let lost: Vec<String> = ours_text
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|l| !l.is_empty() && !keep.contains(l))
+                    .map(|l| format!("      - {l}"))
+                    .collect();
                 report.replaced_unrecorded.push(if lost.is_empty() {
                     key.clone()
                 } else {
-                    format!("{key} — lines the replacement removes:\n{}", lost.join("\n"))
+                    format!(
+                        "{key} — lines the replacement removes:\n{}",
+                        lost.join("\n")
+                    )
                 });
                 ov.write(&rel, new);
                 records.insert(key.clone(), theirs_hash.clone());
@@ -650,7 +794,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         }
         if !rel.starts_with(&schemas_rel) && ours_hash != theirs_hash {
             // Neither a precise edit nor a schema: left as it is, and said so.
-            report.lines.push(format!("{verb}left {key} as is (it differs from the plugin's copy; `drift` shows it)"));
+            report.lines.push(format!(
+                "{verb}left {key} as is (it differs from the plugin's copy; `drift` shows it)"
+            ));
         }
     }
     // The inlined language tier is a schema with no record (bootstrap never
@@ -661,14 +807,20 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             let lang = e.file_name().to_string_lossy().into_owned();
             let rel = langs_rel.join(&lang).join("items.schema.yaml");
             let Some(ours) = ov.read(&rel) else { continue };
-            let Ok(theirs) = std::fs::read(plugin_root.join("languages").join(&lang).join("items.schema.yaml")) else {
+            let Ok(theirs) = std::fs::read(
+                plugin_root
+                    .join("languages")
+                    .join(&lang)
+                    .join("items.schema.yaml"),
+            ) else {
                 continue;
             };
             if ours == theirs {
                 continue;
             }
             let theirs_text = String::from_utf8_lossy(&theirs).into_owned();
-            let keep: std::collections::HashSet<&str> = theirs_text.lines().map(str::trim_end).collect();
+            let keep: std::collections::HashSet<&str> =
+                theirs_text.lines().map(str::trim_end).collect();
             let ours_text = String::from_utf8_lossy(&ours).into_owned();
             let lost: Vec<String> = ours_text
                 .lines()
@@ -683,21 +835,30 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             report.replaced_unrecorded.push(if lost.is_empty() {
                 key.clone()
             } else {
-                format!("{key} — lines not in the plugin's copy:\n{}", lost.join("\n"))
+                format!(
+                    "{key} — lines not in the plugin's copy:\n{}",
+                    lost.join("\n")
+                )
             });
             ov.write(&rel, theirs);
         }
     }
 
     // Reductions the profile does not own (inlined units) still name files.
-    for rel in walk_files(&root.join(&reductions_rel)).into_iter().map(|p| rel_to(root, &p)) {
+    for rel in walk_files(&root.join(&reductions_rel))
+        .into_iter()
+        .map(|p| rel_to(root, &p))
+    {
         if handled.contains(&rel) {
             continue;
         }
         let text = utf8(ov.read(&rel).unwrap_or_default(), &rel)?;
         let new = entries::rewrite_reduction_paths(&text);
         if new != text {
-            report.lines.push(format!("{verb}point {} at the per-entry files", slash(&rel)));
+            report.lines.push(format!(
+                "{verb}point {} at the per-entry files",
+                slash(&rel)
+            ));
             ov.write(&rel, new.into_bytes());
         }
     }
@@ -723,35 +884,54 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
             }
             records.insert(key.clone(), bootstrap::profile_file_hash(key, theirs)?);
         }
-        report.lines.push(format!("{verb}record a first [profile_files] baseline (the tree had none)"));
+        report.lines.push(format!(
+            "{verb}record a first [profile_files] baseline (the tree had none)"
+        ));
     }
 
     // 6. Generation state.
     let gen_lineage = specdev_rel.join("gen-lineage.toml");
     if ov.read(&gen_lineage).is_some() {
         ov.deletes.insert(gen_lineage.clone());
-        report.lines.push(format!("{verb}remove {}", slash(&gen_lineage)));
+        report
+            .lines
+            .push(format!("{verb}remove {}", slash(&gen_lineage)));
     }
     let codegen = specdev_rel.join("codegen");
     if root.join(&codegen).is_dir() {
         ov.delete_dirs.insert(codegen.clone());
-        report.lines.push(format!("{verb}remove {}/", slash(&codegen)));
+        report
+            .lines
+            .push(format!("{verb}remove {}/", slash(&codegen)));
     }
 
     // 6b. Unit snapshots lose their `codegen/` files with the inlined
     // `codegen/`; each unit is re-recorded from the snapshot that remains.
     for (kind, names) in [
-        (crate::upstream::UnitKind::Block, lineage.blocks.keys().cloned().collect::<Vec<_>>()),
-        (crate::upstream::UnitKind::Bridge, lineage.bridges.keys().cloned().collect::<Vec<_>>()),
+        (
+            crate::upstream::UnitKind::Block,
+            lineage.blocks.keys().cloned().collect::<Vec<_>>(),
+        ),
+        (
+            crate::upstream::UnitKind::Bridge,
+            lineage.bridges.keys().cloned().collect::<Vec<_>>(),
+        ),
     ] {
         for name in names {
             let snap = crate::upstream::read_upstream_unit(&layout.specdev_root, kind, &name)?;
             if !snap.keys().any(|p| p.starts_with("codegen")) {
                 continue;
             }
-            let dir = rel_to(root, &crate::upstream::upstream_dir(&layout.specdev_root, kind, &name)).join("codegen");
+            let dir = rel_to(
+                root,
+                &crate::upstream::upstream_dir(&layout.specdev_root, kind, &name),
+            )
+            .join("codegen");
             ov.delete_dirs.insert(dir.clone());
-            let kept: BTreeMap<PathBuf, Vec<u8>> = snap.into_iter().filter(|(p, _)| !p.starts_with("codegen")).collect();
+            let kept: BTreeMap<PathBuf, Vec<u8>> = snap
+                .into_iter()
+                .filter(|(p, _)| !p.starts_with("codegen"))
+                .collect();
             let hash = crate::inline::snapshot_rollup(kind, &name, &kept);
             let entry = match kind {
                 crate::upstream::UnitKind::Block => lineage.blocks.get_mut(&name),
@@ -772,7 +952,10 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     }
 
     // 7. Lineage.
-    let moved_combined: Vec<String> = entries::combined_files_rel(&specs_rel).iter().map(|p| slash(p)).collect();
+    let moved_combined: Vec<String> = entries::combined_files_rel(&specs_rel)
+        .iter()
+        .map(|p| slash(p))
+        .collect();
     let before = lineage.profile_files.len();
     lineage.profile_files.retain(|k, _| {
         let p = PathBuf::from(k);
@@ -781,13 +964,17 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     });
     let dropped = before - lineage.profile_files.len();
     if dropped > 0 {
-        report.lines.push(format!("{verb}drop {dropped} record(s) of moved or removed files from [profile_files]"));
+        report.lines.push(format!(
+            "{verb}drop {dropped} record(s) of moved or removed files from [profile_files]"
+        ));
     }
     lineage.profile_files.extend(records);
     if let Some(meta) = lineage.meta.as_mut() {
         if let Some(v) = meta.plugin_version.take() {
             meta.bootstrapped_with.get_or_insert(v);
-            report.lines.push(format!("{verb}rename lineage.toml [meta].plugin_version to bootstrapped_with"));
+            report.lines.push(format!(
+                "{verb}rename lineage.toml [meta].plugin_version to bootstrapped_with"
+            ));
         }
     }
 
@@ -808,14 +995,31 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     // every command.
     if let Some(bytes) = ov.writes.get(&spec_rel) {
         crate::config::SpecConfig::parse(&root.join(&spec_rel), &utf8(bytes.clone(), &spec_rel)?)
-            .map_err(|e| anyhow!("[MIGRATE-016] the planned spec.toml does not load ({e:#}); nothing was changed"))?;
+            .map_err(|e| {
+            anyhow!(
+                "[MIGRATE-016] the planned spec.toml does not load ({e:#}); nothing was changed"
+            )
+        })?;
     }
     if let Some(bytes) = ov.writes.get(&profile_rel) {
-        crate::manifest::profile::Profile::check_text(&utf8(bytes.clone(), &profile_rel)?, &root.join(&profile_rel))
-            .map_err(|e| anyhow!("[MIGRATE-016] the planned {} does not load ({e:#}); nothing was changed", slash(&profile_rel)))?;
+        crate::manifest::profile::Profile::check_text(
+            &utf8(bytes.clone(), &profile_rel)?,
+            &root.join(&profile_rel),
+        )
+        .map_err(|e| {
+            anyhow!(
+                "[MIGRATE-016] the planned {} does not load ({e:#}); nothing was changed",
+                slash(&profile_rel)
+            )
+        })?;
     }
 
-    Ok(Plan { ov, lineage: Some(lineage), specdev_root: layout.specdev_root.clone(), report })
+    Ok(Plan {
+        ov,
+        lineage: Some(lineage),
+        specdev_root: layout.specdev_root.clone(),
+        report,
+    })
 }
 
 /// The plugin's bytes for `key`; a co-owned aggregator keeps the unit
@@ -825,17 +1029,27 @@ fn take_plugin_bytes(key: &str, ours: &[u8], theirs: &[u8]) -> Result<Vec<u8>> {
         return Ok(theirs.to_vec());
     }
     let refs = |bytes: &[u8]| -> Result<Vec<serde_yaml::Value>> {
-        let v: serde_yaml::Value = serde_yaml::from_slice(bytes).with_context(|| format!("parsing {key}"))?;
-        Ok(v.get("allOf").and_then(|a| a.as_sequence()).cloned().unwrap_or_default())
+        let v: serde_yaml::Value =
+            serde_yaml::from_slice(bytes).with_context(|| format!("parsing {key}"))?;
+        Ok(v.get("allOf")
+            .and_then(|a| a.as_sequence())
+            .cloned()
+            .unwrap_or_default())
     };
     let ours_refs = refs(ours)?;
     let theirs_refs = refs(theirs)?;
-    let extra: Vec<serde_yaml::Value> = ours_refs.into_iter().filter(|r| !theirs_refs.contains(r)).collect();
+    let extra: Vec<serde_yaml::Value> = ours_refs
+        .into_iter()
+        .filter(|r| !theirs_refs.contains(r))
+        .collect();
     if extra.is_empty() {
         return Ok(theirs.to_vec());
     }
-    let mut v: serde_yaml::Value = serde_yaml::from_slice(theirs).with_context(|| format!("parsing {key}"))?;
-    let map = v.as_mapping_mut().ok_or_else(|| anyhow!("{key}: root is not a mapping"))?;
+    let mut v: serde_yaml::Value =
+        serde_yaml::from_slice(theirs).with_context(|| format!("parsing {key}"))?;
+    let map = v
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow!("{key}: root is not a mapping"))?;
     let seq = map
         .entry(serde_yaml::Value::from("allOf"))
         .or_insert(serde_yaml::Value::Sequence(Vec::new()))
@@ -853,7 +1067,11 @@ fn take_test_items(doc: &mut DocumentMut) -> Vec<(String, Vec<String>)> {
         let mut keep = toml_edit::ArrayOfTables::new();
         for t in items.iter() {
             if t.get("test").and_then(Item::as_bool) == Some(true) {
-                let name = t.get("name").and_then(Item::as_str).unwrap_or("").to_string();
+                let name = t
+                    .get("name")
+                    .and_then(Item::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 out.push((name, string_list(t.get("verifies"))));
             } else {
                 keep.push(t.clone());
@@ -874,12 +1092,24 @@ fn take_test_items(doc: &mut DocumentMut) -> Vec<(String, Vec<String>)> {
                 .and_then(Value::as_bool)
                 == Some(true);
             if is_test {
-                let t = arr.get(i).and_then(Value::as_inline_table).cloned().unwrap_or_default();
-                let name = t.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                let t = arr
+                    .get(i)
+                    .and_then(Value::as_inline_table)
+                    .cloned()
+                    .unwrap_or_default();
+                let name = t
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let verifies = t
                     .get("verifies")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 out.push((name, verifies));
                 arr.remove(i);
@@ -918,7 +1148,9 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
         // A column-0 comment ends a retired section only when the next content
         // line is at column 0 too: then it belongs to what follows.
         if skipping && line.starts_with('#') {
-            let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty() && !l.starts_with('#'));
+            let next = lines[i + 1..]
+                .iter()
+                .find(|l| !l.trim().is_empty() && !l.starts_with('#'));
             if next.is_none_or(|l| !l.starts_with(' ')) {
                 skipping = false;
             }
@@ -955,7 +1187,9 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
             skip_indent = None;
         }
         let trimmed = line.trim();
-        let scope_value = trimmed.strip_prefix("scope:").map(|v| v.split('#').next().unwrap_or("").trim());
+        let scope_value = trimmed
+            .strip_prefix("scope:")
+            .map(|v| v.split('#').next().unwrap_or("").trim());
         if section == "gates" && matches!(scope_value, Some("module") | Some("batch")) {
             removed.push(format!("    {line}"));
             continue;
@@ -970,7 +1204,11 @@ fn profile_contract_2(text: &str) -> (String, Vec<String>) {
     if !has_version {
         out = format!("contract_version: 2\n{out}");
     }
-    let removed = removed.into_iter().map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty()).collect();
+    let removed = removed
+        .into_iter()
+        .map(|r| r.trim_end().to_string())
+        .filter(|r| !r.is_empty())
+        .collect();
     (out, removed)
 }
 
@@ -1001,8 +1239,13 @@ fn spec_2_0(text: &str) -> Result<(String, Vec<crate::field_cuts::Removed>)> {
 }
 
 fn spec_removed(table: &str, key: &str, item: &Item) -> crate::field_cuts::Removed {
-    let value = item.as_value().map(|v| v.to_string().trim().to_string()).unwrap_or_default();
-    let raw = toml::from_str::<toml::Table>(&format!("x = {value}")).ok().and_then(|t| t.get("x").cloned());
+    let value = item
+        .as_value()
+        .map(|v| v.to_string().trim().to_string())
+        .unwrap_or_default();
+    let raw = toml::from_str::<toml::Table>(&format!("x = {value}"))
+        .ok()
+        .and_then(|t| t.get("x").cloned());
     let comments = item
         .as_value()
         .map(|v| {
@@ -1010,11 +1253,22 @@ fn spec_removed(table: &str, key: &str, item: &Item) -> crate::field_cuts::Remov
                 .into_iter()
                 .flatten()
                 .filter_map(|r| r.as_str())
-                .flat_map(|s| s.lines().map(str::trim).filter(|l| l.starts_with('#')).map(str::to_string).collect::<Vec<_>>())
+                .flat_map(|s| {
+                    s.lines()
+                        .map(str::trim)
+                        .filter(|l| l.starts_with('#'))
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
                 .collect()
         })
         .unwrap_or_default();
-    crate::field_cuts::Removed { key: format!("[{table}].{key}"), value, comments, raw }
+    crate::field_cuts::Removed {
+        key: format!("[{table}].{key}"),
+        value,
+        comments,
+        raw,
+    }
 }
 
 /// `domain.toml` in the target format, and one line per change.
@@ -1038,7 +1292,10 @@ fn domain_2_0(text: &str) -> Result<(String, Vec<String>)> {
         if let Some(checks) = graph_checks(&mut doc) {
             for t in checks.iter_mut() {
                 if t.get("rule").and_then(Item::as_str) == Some(old) {
-                    let decor = t.get("rule").and_then(Item::as_value).map(|v| v.decor().clone());
+                    let decor = t
+                        .get("rule")
+                        .and_then(Item::as_value)
+                        .map(|v| v.decor().clone());
                     let mut v = Value::from(*new);
                     if let Some(d) = decor {
                         *v.decor_mut() = d;
@@ -1059,7 +1316,9 @@ fn domain_2_0(text: &str) -> Result<(String, Vec<String>)> {
         .and_then(Item::as_table_like_mut)
     {
         for rule in ERROR_RULES {
-            let Some(item) = rules.get_mut(rule) else { continue };
+            let Some(item) = rules.get_mut(rule) else {
+                continue;
+            };
             let old = item.as_str().unwrap_or("").to_string();
             if old != "error" {
                 let decor = item.as_value().map(|v| v.decor().clone());
@@ -1081,13 +1340,18 @@ fn domain_2_0(text: &str) -> Result<(String, Vec<String>)> {
         let before = checks.len();
         checks.retain(|t| {
             let rule = t.get("rule").and_then(Item::as_str).unwrap_or("");
-            let over_removed_kind = ["scope", "entity_scope", "relation_scope"]
-                .iter()
-                .any(|k| t.get(k).and_then(Item::as_str).is_some_and(|s| crate::field_cuts::REMOVED_KINDS.contains(&s)));
+            let over_removed_kind = ["scope", "entity_scope", "relation_scope"].iter().any(|k| {
+                t.get(k)
+                    .and_then(Item::as_str)
+                    .is_some_and(|s| crate::field_cuts::REMOVED_KINDS.contains(&s))
+            });
             !DROPPED_RULES.contains(&rule) && !over_removed_kind
         });
         if checks.len() != before {
-            changes.push(format!("remove {} graph check(s) over removed fields", before - checks.len()));
+            changes.push(format!(
+                "remove {} graph check(s) over removed fields",
+                before - checks.len()
+            ));
         }
     }
     Ok((doc.to_string(), changes))

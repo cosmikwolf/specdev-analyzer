@@ -35,8 +35,14 @@ fn module_states(tag: &str) -> Tree {
     let t = tree(tag, "firmware-layered", &[]);
     t.write("specs/modules/BuiltOk.toml", &fw_module("BuiltOk", ""))
         .write("specs/modules/Missing.toml", &fw_module("Missing", ""))
-        .write("specs/modules/PlannedEmpty.toml", &fw_module("PlannedEmpty", "planned = true\n"))
-        .write("specs/modules/PlannedBuilt.toml", &fw_module("PlannedBuilt", "planned = true\n"))
+        .write(
+            "specs/modules/PlannedEmpty.toml",
+            &fw_module("PlannedEmpty", "planned = true\n"),
+        )
+        .write(
+            "specs/modules/PlannedBuilt.toml",
+            &fw_module("PlannedBuilt", "planned = true\n"),
+        )
         .write("src/built_ok.rs", "pub fn built() {}\n")
         .write("src/planned_built.rs", "pub fn built() {}\n");
     t
@@ -65,7 +71,11 @@ fn modules_by_open_question_gate() {
             "[[open_question]]\nid = \"OQ-001\"\ntitle = \"Open\"\nstatus = \"open\"\ntext = \"Unknown.\"\naffects = [\"REQ-GATE-001\"]\n",
         );
     for m in ["BuiltOk", "Missing", "PlannedEmpty", "PlannedBuilt"] {
-        let planned = if m.starts_with("Planned") { "planned = true\n" } else { "" };
+        let planned = if m.starts_with("Planned") {
+            "planned = true\n"
+        } else {
+            ""
+        };
         t.write(
             &format!("specs/modules/{m}.toml"),
             &fw_module(m, &format!("{planned}satisfies = [\"REQ-GATE-001\"]\n")),
@@ -81,13 +91,28 @@ fn modules_by_open_question_gate() {
 #[test]
 fn modules_by_internal_edges() {
     let t = module_states("edges");
-    t.write("specs/modules/Target.toml", "name = \"Target\"\nlayer = \"driver\"\ndescription = \"Imported.\"\n")
-        .write("src/target.rs", "pub fn poke() {}\n")
-        .write("specs/modules/Declared.toml", &fw_module("Declared", "depends_on = [\"Target\"]\n"))
-        .write("src/declared.rs", "use crate::target::poke;\npub fn run() { poke() }\n")
-        // Undeclared imports from both states whose source resolves.
-        .write("src/built_ok.rs", "use crate::target::poke;\npub fn built() { poke() }\n")
-        .write("src/planned_built.rs", "use crate::target::poke;\npub fn built() { poke() }\n");
+    t.write(
+        "specs/modules/Target.toml",
+        "name = \"Target\"\nlayer = \"driver\"\ndescription = \"Imported.\"\n",
+    )
+    .write("src/target.rs", "pub fn poke() {}\n")
+    .write(
+        "specs/modules/Declared.toml",
+        &fw_module("Declared", "depends_on = [\"Target\"]\n"),
+    )
+    .write(
+        "src/declared.rs",
+        "use crate::target::poke;\npub fn run() { poke() }\n",
+    )
+    // Undeclared imports from both states whose source resolves.
+    .write(
+        "src/built_ok.rs",
+        "use crate::target::poke;\npub fn built() { poke() }\n",
+    )
+    .write(
+        "src/planned_built.rs",
+        "use crate::target::poke;\npub fn built() { poke() }\n",
+    );
     let c = t.check(&[]);
     c.fires("internal_edges_declared", "BuiltOk", "error")
         .silent("internal_edges_declared", "Missing")
@@ -114,7 +139,9 @@ mod app {
 "#;
 
 fn task(name: &str, priority: u8, extra: &str) -> String {
-    format!("[[rtic.tasks]]\nname = \"{name}\"\nkind = \"software\"\npriority = {priority}\n{extra}\n")
+    format!(
+        "[[rtic.tasks]]\nname = \"{name}\"\nkind = \"software\"\npriority = {priority}\n{extra}\n"
+    )
 }
 
 #[test]
@@ -136,7 +163,10 @@ fn modules_and_unit_entries_by_pack_spec_to_code() {
             ),
         )
         // Not planned, no source: only the source rule applies.
-        .write("specs/modules/NoSrc.toml", &(fw_module("NoSrc", "") + &task("nosrc_task", 1, "")))
+        .write(
+            "specs/modules/NoSrc.toml",
+            &(fw_module("NoSrc", "") + &task("nosrc_task", 1, "")),
+        )
         // Planned module, no source: its entries' absence is suppressed.
         .write(
             "specs/modules/Future.toml",
@@ -145,7 +175,8 @@ fn modules_and_unit_entries_by_pack_spec_to_code() {
         // Planned module whose source resolves: stale warning, entries still checked.
         .write(
             "specs/modules/PlannedBuilt.toml",
-            &(fw_module("PlannedBuilt", &format!("planned = true\n{main}")) + &task("pb_task", 1, "")),
+            &(fw_module("PlannedBuilt", &format!("planned = true\n{main}"))
+                + &task("pb_task", 1, "")),
         )
         // Planned unit table: passes down to its entries.
         .write(
@@ -197,12 +228,21 @@ fn requirement_states(tag: &str) -> Tree {
         ("REQ-C-001", "verified_by = [\"missing_c1\"]\n"),
         ("REQ-C-002", ""),
         // Row 4: planned = true (set).
-        ("REQ-D-001", "planned = true\nverified_by = [\"missing_d1\"]\n"),
+        (
+            "REQ-D-001",
+            "planned = true\nverified_by = [\"missing_d1\"]\n",
+        ),
         ("REQ-D-002", "planned = true\n"),
         // Row 5: test_pending = true.
         ("REQ-E-001", "test_pending = true\n"),
-        ("REQ-E-002", "test_pending = true\nverified_by = [\"real_test\"]\n"),
-        ("REQ-E-003", "test_pending = true\nverified_by = [\"missing_e3\"]\n"),
+        (
+            "REQ-E-002",
+            "test_pending = true\nverified_by = [\"real_test\"]\n",
+        ),
+        (
+            "REQ-E-003",
+            "test_pending = true\nverified_by = [\"missing_e3\"]\n",
+        ),
         ("REQ-E-004", "test_pending = true\n"),
         // Row 6: both flags.
         ("REQ-F-001", "planned = true\ntest_pending = true\n"),
@@ -210,15 +250,41 @@ fn requirement_states(tag: &str) -> Tree {
         ("REQ-G-001", "verified_by = [\"ignored_test\"]\n"),
     ];
     for (id, extra) in reqs {
-        t.write(&format!("specs/requirements/{id}.toml"), &requirement(id, extra));
-    }
-    let built = ["REQ-A-001", "REQ-A-002", "REQ-A-003", "REQ-D-002", "REQ-E-001", "REQ-E-002", "REQ-E-003", "REQ-G-001"];
-    let sat = |ids: &[&str]| format!("satisfies = [{}]\n", ids.iter().map(|i| format!("\"{i}\"")).collect::<Vec<_>>().join(", "));
-    t.write("specs/modules/BuiltOk.toml", &fw_module("BuiltOk", &sat(&built)))
-        .write(
-            "specs/modules/PlannedEmpty.toml",
-            &fw_module("PlannedEmpty", &format!("planned = true\n{}", sat(&["REQ-C-001", "REQ-C-002"]))),
+        t.write(
+            &format!("specs/requirements/{id}.toml"),
+            &requirement(id, extra),
         );
+    }
+    let built = [
+        "REQ-A-001",
+        "REQ-A-002",
+        "REQ-A-003",
+        "REQ-D-002",
+        "REQ-E-001",
+        "REQ-E-002",
+        "REQ-E-003",
+        "REQ-G-001",
+    ];
+    let sat = |ids: &[&str]| {
+        format!(
+            "satisfies = [{}]\n",
+            ids.iter()
+                .map(|i| format!("\"{i}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    t.write(
+        "specs/modules/BuiltOk.toml",
+        &fw_module("BuiltOk", &sat(&built)),
+    )
+    .write(
+        "specs/modules/PlannedEmpty.toml",
+        &fw_module(
+            "PlannedEmpty",
+            &format!("planned = true\n{}", sat(&["REQ-C-001", "REQ-C-002"])),
+        ),
+    );
     t
 }
 

@@ -100,11 +100,15 @@ fn empty_requirements_emits_empty_matrix_no_error() {
 #[test]
 fn orphan_requirement_flagged_in_matrix_and_orphans() {
     let target = fresh_library_project("orphan");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-001"
 nature = "functional"
 text = "the orphan requirement"
-"#);
+"#,
+    );
     let (success, stdout, _stderr) = run_coverage(&target, None);
     assert!(success);
     // The matrix carries a row for REQ-001; satisfied_by is empty; the
@@ -120,11 +124,15 @@ text = "the orphan requirement"
 #[test]
 fn multi_satisfier_requirement_lists_all_modules() {
     let target = fresh_library_project("multi");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-002"
 nature = "functional"
 text = "satisfied by two modules"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Alpha.toml"),
         r#"name = "Alpha"
@@ -159,11 +167,15 @@ satisfies = ["REQ-002"]
 #[test]
 fn item_level_satisfies_counts_as_module_satisfaction() {
     let target = fresh_library_project("item-level");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-003"
 nature = "functional"
 text = "satisfied by an item, not the module"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Gamma.toml"),
         r#"name = "Gamma"
@@ -198,11 +210,15 @@ satisfies = ["REQ-003"]
 #[test]
 fn markdown_format_emits_table() {
     let target = fresh_library_project("md");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-010"
 nature = "functional"
 text = "covered"
-"#);
+"#,
+    );
     std::fs::write(
         target.join("specs/modules/Delta.toml"),
         r#"name = "Delta"
@@ -228,11 +244,15 @@ satisfies = ["REQ-010"]
 #[test]
 fn markdown_format_flags_orphan_in_table() {
     let target = fresh_library_project("md-orphan");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-011"
 nature = "functional"
 text = "no satisfier"
-"#);
+"#,
+    );
     let (success, stdout, _stderr) = run_coverage(&target, Some("md"));
     assert!(success);
     assert!(
@@ -274,7 +294,10 @@ fn unknown_format_errors_coverage_001() {
 #[test]
 fn matrix_follows_entry_file_order() {
     let target = fresh_library_project("order");
-    ledger::write(&target, "requirements.toml", r#"[[requirement]]
+    ledger::write(
+        &target,
+        "requirements.toml",
+        r#"[[requirement]]
 id = "REQ-Z"
 nature = "functional"
 text = "z first"
@@ -283,7 +306,8 @@ text = "z first"
 id = "REQ-A"
 nature = "functional"
 text = "a second"
-"#);
+"#,
+    );
     let (success, stdout, _stderr) = run_coverage(&target, None);
     assert!(success);
     let z_idx = stdout.find("REQ-Z").expect("REQ-Z present");

@@ -104,7 +104,10 @@ pub struct MetaSection {
 impl MetaSection {
     /// The plugin version at bootstrap, under either name.
     pub fn bootstrapped_with(&self) -> &str {
-        self.bootstrapped_with.as_deref().or(self.plugin_version.as_deref()).unwrap_or("")
+        self.bootstrapped_with
+            .as_deref()
+            .or(self.plugin_version.as_deref())
+            .unwrap_or("")
     }
 }
 

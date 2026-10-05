@@ -467,7 +467,11 @@ fn audio_plugin_templates_copied() {
     let _ = std::fs::remove_file(pre.join("profile.yaml"));
     let _ = std::fs::remove_dir_all(pre.join("templates"));
     std::fs::create_dir_all(pre.join("codegen/rust")).unwrap();
-    std::fs::write(pre.join("codegen/rust/module.conventions.md"), "# pre-manifest\n").unwrap();
+    std::fs::write(
+        pre.join("codegen/rust/module.conventions.md"),
+        "# pre-manifest\n",
+    )
+    .unwrap();
 
     let (target, layout) = fresh_project("audio-bootstrap", &synthetic_pre_plugin, "audio-plugin");
     assert!(!target.join("specs/specdev/profile.yaml").exists());
@@ -546,7 +550,8 @@ fn migrate_updates_upstream_snapshot() {
     run_inline_bridge(&layout, &minimal_plugin(), "embassy+lvgl").unwrap();
 
     // Pre-migrate upstream snapshot has no contract.yaml.
-    let upstream_dir = upstream::upstream_dir(&layout.specdev_root, UnitKind::Bridge, "embassy+lvgl");
+    let upstream_dir =
+        upstream::upstream_dir(&layout.specdev_root, UnitKind::Bridge, "embassy+lvgl");
     assert!(upstream_dir.is_dir());
     assert!(!upstream_dir.join("contract.yaml").exists());
 

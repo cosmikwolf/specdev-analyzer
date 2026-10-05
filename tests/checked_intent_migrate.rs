@@ -117,7 +117,9 @@ source = "crates-io"
         .write("src/testsonly.rs", "#[cfg(test)]\nmod t {\n    #[test]\n    fn bench_like() {}\n}\n");
     assert!(t.root.join("specs/specdev/gen-lineage.toml").is_file());
     assert!(t.root.join("specs/specdev/codegen").is_dir());
-    assert!(t.read("specs/specdev/domain.toml").contains("codegen_unblocked"));
+    assert!(t
+        .read("specs/specdev/domain.toml")
+        .contains("codegen_unblocked"));
     // The input must be a valid 1.x tree, or a red test proves nothing.
     let v = t.analyzer(&["validate", "-q"]);
     assert!(
@@ -151,11 +153,23 @@ fn migrate_removes_generation_state() {
     let t = v1_project("mig-state");
     migrate(&t, &[]);
     assert!(t.read("spec.toml").starts_with("spec_version = \"2.0\""));
-    assert!(!t.root.join("specs/specdev/gen-lineage.toml").exists(), "gen-lineage.toml must go");
-    assert!(!t.root.join("specs/specdev/gen-lineage").exists(), "no per-module lineage directory appears");
-    assert!(!t.root.join("specs/specdev/codegen").exists(), "inlined codegen/ must go");
+    assert!(
+        !t.root.join("specs/specdev/gen-lineage.toml").exists(),
+        "gen-lineage.toml must go"
+    );
+    assert!(
+        !t.root.join("specs/specdev/gen-lineage").exists(),
+        "no per-module lineage directory appears"
+    );
+    assert!(
+        !t.root.join("specs/specdev/codegen").exists(),
+        "inlined codegen/ must go"
+    );
     let tested = toml_at(&t, "specs/modules/tested.toml");
-    assert!(!tested.contains_key("external_deps"), "manifest-restating table must go: {tested:?}");
+    assert!(
+        !tested.contains_key("external_deps"),
+        "manifest-restating table must go: {tested:?}"
+    );
 }
 
 #[test]
@@ -166,25 +180,54 @@ fn migrate_moves_verifies_and_sets_test_pending() {
     let test_items = tested
         .get("items")
         .and_then(|i| i.as_array())
-        .map(|a| a.iter().filter(|i| i.get("test").and_then(|v| v.as_bool()) == Some(true)).count())
+        .map(|a| {
+            a.iter()
+                .filter(|i| i.get("test").and_then(|v| v.as_bool()) == Some(true))
+                .count()
+        })
         .unwrap_or(0);
-    assert_eq!(test_items, 0, "test items leave the module spec: {tested:?}");
+    assert_eq!(
+        test_items, 0,
+        "test items leave the module spec: {tested:?}"
+    );
     let r1 = requirement_of(&t, "REQ-M-001");
-    assert_eq!(r1["verified_by"].as_array().unwrap(), &vec![toml::Value::String("test_parse".into())]);
+    assert_eq!(
+        r1["verified_by"].as_array().unwrap(),
+        &vec![toml::Value::String("test_parse".into())]
+    );
     assert!(r1.get("test_pending").is_none(), "{r1:?}");
     // Built, no test: truthful flag.
-    assert_eq!(requirement_of(&t, "REQ-M-002").get("test_pending").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        requirement_of(&t, "REQ-M-002")
+            .get("test_pending")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
     // Its satisfier is unbuilt but not marked planned (no --plan-unresolved): flagged too.
-    assert_eq!(requirement_of(&t, "REQ-M-003").get("test_pending").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        requirement_of(&t, "REQ-M-003")
+            .get("test_pending")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 #[test]
 fn migrate_reports_unresolved_and_tests_only_modules_and_plans_only_when_asked() {
     let t = v1_project("mig-report");
     let out = migrate(&t, &[]);
-    assert!(out.contains("unbuilt"), "report the module with no resolvable source:\n{out}");
-    assert!(out.contains("testsonly"), "report the module whose source is only tests:\n{out}");
-    assert!(!toml_at(&t, "specs/modules/unbuilt.toml").contains_key("planned"), "nothing planned unless asked");
+    assert!(
+        out.contains("unbuilt"),
+        "report the module with no resolvable source:\n{out}"
+    );
+    assert!(
+        out.contains("testsonly"),
+        "report the module whose source is only tests:\n{out}"
+    );
+    assert!(
+        !toml_at(&t, "specs/modules/unbuilt.toml").contains_key("planned"),
+        "nothing planned unless asked"
+    );
     t.check(&[]).fires("source_resolves", "unbuilt", "error");
 }
 
@@ -193,11 +236,24 @@ fn plan_unresolved_runs_before_test_pending() {
     let t = v1_project("mig-plan");
     migrate(&t, &["--plan-unresolved"]);
     let unbuilt = toml_at(&t, "specs/modules/unbuilt.toml");
-    assert_eq!(unbuilt.get("planned").and_then(|v| v.as_bool()), Some(true), "{unbuilt:?}");
+    assert_eq!(
+        unbuilt.get("planned").and_then(|v| v.as_bool()),
+        Some(true),
+        "{unbuilt:?}"
+    );
     // REQ-M-003's only satisfier is now planned: derived planned, so no test_pending.
-    assert!(requirement_of(&t, "REQ-M-003").get("test_pending").is_none());
-    assert_eq!(requirement_of(&t, "REQ-M-002").get("test_pending").and_then(|v| v.as_bool()), Some(true));
-    t.check(&[]).silent("source_resolves", "unbuilt").nothing_about("REQ-M-003");
+    assert!(requirement_of(&t, "REQ-M-003")
+        .get("test_pending")
+        .is_none());
+    assert_eq!(
+        requirement_of(&t, "REQ-M-002")
+            .get("test_pending")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    t.check(&[])
+        .silent("source_resolves", "unbuilt")
+        .nothing_about("REQ-M-003");
 }
 
 #[test]
@@ -217,18 +273,39 @@ fn migrate_renames_the_gate_rule() {
 fn migrate_sets_the_error_severities() {
     let t = v1_project("mig-severity");
     let before = t.read("specs/specdev/domain.toml");
-    assert!(severity(&before, "requirements_have_satisfiers") == Some("warning".into()), "fixture: {before}");
-    assert!(severity(&before, "codegen_unblocked") == Some("warning".into()), "fixture: {before}");
+    assert!(
+        severity(&before, "requirements_have_satisfiers") == Some("warning".into()),
+        "fixture: {before}"
+    );
+    assert!(
+        severity(&before, "codegen_unblocked") == Some("warning".into()),
+        "fixture: {before}"
+    );
     let out = migrate(&t, &[]);
     let after = t.read("specs/specdev/domain.toml");
-    assert_eq!(severity(&after, "requirements_have_satisfiers").as_deref(), Some("error"), "{after}");
-    assert_eq!(severity(&after, "implementation_unblocked").as_deref(), Some("error"), "{after}");
-    assert!(out.contains("requirements_have_satisfiers") && out.contains("implementation_unblocked"), "report each change:\n{out}");
+    assert_eq!(
+        severity(&after, "requirements_have_satisfiers").as_deref(),
+        Some("error"),
+        "{after}"
+    );
+    assert_eq!(
+        severity(&after, "implementation_unblocked").as_deref(),
+        Some("error"),
+        "{after}"
+    );
+    assert!(
+        out.contains("requirements_have_satisfiers") && out.contains("implementation_unblocked"),
+        "report each change:\n{out}"
+    );
 }
 
 fn severity(domain: &str, rule: &str) -> Option<String> {
     let doc: toml::Table = domain.parse().ok()?;
-    doc.get("validation")?.get("rules")?.get(rule)?.as_str().map(str::to_string)
+    doc.get("validation")?
+        .get("rules")?
+        .get(rule)?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// `schema` without the top-level property `name` (two-space indent) and
@@ -238,7 +315,8 @@ fn without_property(schema: &str, name: &str) -> String {
     let mut out = String::new();
     let mut skipping = false;
     for line in schema.split_inclusive('\n') {
-        let at_property = line.starts_with("  ") && !line.starts_with("   ") && !line.trim().is_empty();
+        let at_property =
+            line.starts_with("  ") && !line.starts_with("   ") && !line.trim().is_empty();
         let at_top = !line.starts_with(' ') && !line.trim().is_empty();
         if line.trim_end() == header {
             skipping = true;
@@ -262,7 +340,10 @@ fn migrate_refreshes_an_old_inlined_profile_schema() {
     let schema_rel = "specs/specdev/schemas/module.schema.yaml";
     let schema = t.read(schema_rel);
     t.write(schema_rel, &without_property(&schema, "source_file"));
-    assert!(!t.read(schema_rel).contains("source_file"), "the property and its body must go");
+    assert!(
+        !t.read(schema_rel).contains("source_file"),
+        "the property and its body must go"
+    );
     let lineage = t.read("specs/specdev/lineage.toml");
     let cut = lineage.find("[profile_files]").expect("baseline present");
     t.write("specs/specdev/lineage.toml", &lineage[..cut]);
@@ -285,11 +366,17 @@ fn migrate_refreshes_an_old_inlined_profile_schema() {
     );
     let after = t.analyzer(&["validate", "-q"]);
     let all = text(&after);
-    assert!(!all.contains("'source_file' was unexpected") && !all.contains("'planned' was unexpected"), "{all}");
+    assert!(
+        !all.contains("'source_file' was unexpected") && !all.contains("'planned' was unexpected"),
+        "{all}"
+    );
     let drift = t.analyzer(&["drift"]);
     let d = String::from_utf8_lossy(&drift.stdout);
     let profile = d.split("profile:").nth(1).unwrap_or("");
-    assert!(!profile.contains("not_recorded"), "profile files must have a baseline after migrate:\n{d}");
+    assert!(
+        !profile.contains("not_recorded"),
+        "profile files must have a baseline after migrate:\n{d}"
+    );
 }
 
 /// A new project starts in the 2.0 format: no step of `migrate` has work
@@ -300,7 +387,10 @@ fn bootstrap_writes_the_2_0_format() {
     let root = std::env::temp_dir().join(format!(
         "specdev-checked-intent-boot2-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     for profile in ["library-api", "firmware-layered"] {
         let target = root.join(profile);
@@ -315,27 +405,59 @@ fn bootstrap_writes_the_2_0_format() {
             },
         )
         .unwrap();
-        let read = |rel: &str| std::fs::read_to_string(target.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        let read = |rel: &str| {
+            std::fs::read_to_string(target.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+        };
         let spec: toml::Table = read("spec.toml").parse().unwrap();
         assert_eq!(spec["spec_version"].as_str(), Some("2.0"), "{profile}");
-        assert_eq!(spec["project"].get("max_parallel_agents").and_then(|v| v.as_integer()), Some(1), "{profile}");
+        assert_eq!(
+            spec["project"]
+                .get("max_parallel_agents")
+                .and_then(|v| v.as_integer()),
+            Some(1),
+            "{profile}"
+        );
         for ledger in ["requirements", "decisions", "open_questions"] {
-            assert!(!target.join(format!("specs/{ledger}.toml")).exists(), "{profile}: no combined {ledger}.toml");
+            assert!(
+                !target.join(format!("specs/{ledger}.toml")).exists(),
+                "{profile}: no combined {ledger}.toml"
+            );
         }
-        assert!(!target.join("specs/specdev/codegen").exists(), "{profile}: no inlined codegen/");
+        assert!(
+            !target.join("specs/specdev/codegen").exists(),
+            "{profile}: no inlined codegen/"
+        );
         let reduction = read("specs/specdev/reductions/project.yaml");
         for ledger in ["requirements", "decisions", "open_questions"] {
-            assert!(!reduction.contains(&format!("\"specs/{ledger}.toml\"")), "{profile}: {ledger} not globbed");
+            assert!(
+                !reduction.contains(&format!("\"specs/{ledger}.toml\"")),
+                "{profile}: {ledger} not globbed"
+            );
         }
-        assert!(reduction.contains("\"specs/requirements/*.toml\""), "{profile}");
+        assert!(
+            reduction.contains("\"specs/requirements/*.toml\""),
+            "{profile}"
+        );
         let domain = read("specs/specdev/domain.toml");
-        assert_eq!(severity(&domain, "requirements_have_satisfiers").as_deref(), Some("error"), "{profile}");
-        assert_eq!(severity(&domain, "implementation_unblocked").as_deref(), Some("error"), "{profile}");
+        assert_eq!(
+            severity(&domain, "requirements_have_satisfiers").as_deref(),
+            Some("error"),
+            "{profile}"
+        );
+        assert_eq!(
+            severity(&domain, "implementation_unblocked").as_deref(),
+            Some("error"),
+            "{profile}"
+        );
         assert!(!domain.contains("codegen_unblocked"), "{profile}");
-        assert!(!domain.contains("test_requirements_have_verifiers"), "{profile}");
+        assert!(
+            !domain.contains("test_requirements_have_verifiers"),
+            "{profile}"
+        );
         let lineage: toml::Table = read("specs/specdev/lineage.toml").parse().unwrap();
         assert!(
-            lineage["meta"].get("bootstrapped_with").is_some() && lineage["meta"].get("plugin_version").is_none(),
+            lineage["meta"].get("bootstrapped_with").is_some()
+                && lineage["meta"].get("plugin_version").is_none(),
             "{profile}: {lineage:?}"
         );
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_specdev-analyzer"))
@@ -345,20 +467,34 @@ fn bootstrap_writes_the_2_0_format() {
             .output()
             .unwrap();
         let all = text(&out);
-        assert!(out.status.success() && all.contains("0 error(s)"), "{profile}:\n{all}");
-        assert!(!all.lines().any(|l| l.to_lowercase().contains("info") && l.contains("migrate")), "{profile}:\n{all}");
+        assert!(
+            out.status.success() && all.contains("0 error(s)"),
+            "{profile}:\n{all}"
+        );
+        assert!(
+            !all.lines()
+                .any(|l| l.to_lowercase().contains("info") && l.contains("migrate")),
+            "{profile}:\n{all}"
+        );
     }
 }
 
 /// Every file under the project root, path → bytes.
 fn snapshot(t: &Tree) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
-    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>) {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+    ) {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
             if p.is_dir() {
                 walk(root, &p, out);
             } else {
-                out.insert(p.strip_prefix(root).unwrap().to_path_buf(), std::fs::read(&p).unwrap());
+                out.insert(
+                    p.strip_prefix(root).unwrap().to_path_buf(),
+                    std::fs::read(&p).unwrap(),
+                );
             }
         }
     }
@@ -370,7 +506,12 @@ fn snapshot(t: &Tree) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>
 fn migrate_refused(t: &Tree) -> String {
     let plugin = t.plugin.to_str().unwrap().to_string();
     let out = t.analyzer(&["migrate", "--plugin-root", plugin.as_str()]);
-    assert_eq!(out.status.code(), Some(1), "migrate must refuse:\n{}", text(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "migrate must refuse:\n{}",
+        text(&out)
+    );
     text(&out)
 }
 
@@ -392,10 +533,16 @@ fn migrate_refuses_an_edited_schema_and_writes_nothing() {
 #[test]
 fn migrate_refuses_a_conflicting_entry_file() {
     let t = v1_project("mig-refuse-entry");
-    t.write("specs/requirements/REQ-M-001.toml", "[[requirement]]\nid = \"REQ-M-001\"\ntext = \"Another text.\"\n");
+    t.write(
+        "specs/requirements/REQ-M-001.toml",
+        "[[requirement]]\nid = \"REQ-M-001\"\ntext = \"Another text.\"\n",
+    );
     let before = snapshot(&t);
     let out = migrate_refused(&t);
-    assert!(out.contains("MIGRATE-010") && out.contains("REQ-M-001.toml"), "{out}");
+    assert!(
+        out.contains("MIGRATE-010") && out.contains("REQ-M-001.toml"),
+        "{out}"
+    );
     assert_eq!(before, snapshot(&t), "a refused migrate wrote to disk");
 }
 
@@ -407,19 +554,35 @@ fn migrate_edits_an_edited_profile_manifest_in_place() {
     let t = v1_project("mig-profile-yaml");
     let rel = "specs/specdev/profile.yaml";
     let edited = format!("{}\n# local note: keep me\n", t.read(rel));
-    assert!(edited.contains("cargo_toml:") && edited.contains("scope:"), "fixture: {edited}");
+    assert!(
+        edited.contains("cargo_toml:") && edited.contains("scope:"),
+        "fixture: {edited}"
+    );
     t.write(rel, &edited);
     migrate(&t, &[]);
     let after = t.read(rel);
     assert!(after.contains("# local note: keep me"), "{after}");
     let v: serde_yaml::Value = serde_yaml::from_str(&after).unwrap();
-    assert_eq!(v.get("contract_version").and_then(|c| c.as_u64()), Some(2), "{after}");
-    for k in ["cargo_toml", "pubspec_yaml", "package_json", "derived_files"] {
+    assert_eq!(
+        v.get("contract_version").and_then(|c| c.as_u64()),
+        Some(2),
+        "{after}"
+    );
+    for k in [
+        "cargo_toml",
+        "pubspec_yaml",
+        "package_json",
+        "derived_files",
+    ] {
         assert!(v.get(k).is_none(), "`{k}` left:\n{after}");
     }
     assert!(!after.contains("scope:"), "{after}");
     let val = t.analyzer(&["validate", "-q"]);
-    assert!(text(&val).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&val));
+    assert!(
+        text(&val).lines().any(|l| l.starts_with("0 error(s)")),
+        "{}",
+        text(&val)
+    );
 }
 
 /// `[project].crate_shape` / `crate_type` fed only the manifest emitter. A
@@ -435,10 +598,21 @@ fn a_1x_tree_with_crate_fields_loads_and_migrate_removes_them() {
     );
     t.write("spec.toml", &spec);
     let v = t.analyzer(&["validate", "-q"]);
-    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "1.x must still load:\n{}", text(&v));
+    assert!(
+        text(&v).lines().any(|l| l.starts_with("0 error(s)")),
+        "1.x must still load:\n{}",
+        text(&v)
+    );
     migrate(&t, &[]);
     let after = t.read("spec.toml");
-    assert!(!after.contains("crate_shape") && !after.contains("crate_type"), "{after}");
+    assert!(
+        !after.contains("crate_shape") && !after.contains("crate_type"),
+        "{after}"
+    );
     let v = t.analyzer(&["validate", "-q"]);
-    assert!(text(&v).lines().any(|l| l.starts_with("0 error(s)")), "{}", text(&v));
+    assert!(
+        text(&v).lines().any(|l| l.starts_with("0 error(s)")),
+        "{}",
+        text(&v)
+    );
 }

@@ -29,15 +29,29 @@ use crate::ci;
 use ci::{fw_module, plugin_with_block, requirement, tree, tree_from, tree_lang, Tree};
 
 fn verified(t: &Tree, id: &str, names: &[&str]) {
-    let list = names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
-    t.write(&format!("specs/requirements/{id}.toml"), &requirement(id, &format!("verified_by = [{list}]\n")));
+    let list = names
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    t.write(
+        &format!("specs/requirements/{id}.toml"),
+        &requirement(id, &format!("verified_by = [{list}]\n")),
+    );
 }
 
 /// A firmware tree with one built module `BuiltOk` that satisfies `reqs`.
 fn built(tag: &str, reqs: &[&str]) -> Tree {
     let t = tree(tag, "firmware-layered", &[]);
-    let sat = reqs.iter().map(|r| format!("\"{r}\"")).collect::<Vec<_>>().join(", ");
-    t.write("specs/modules/BuiltOk.toml", &fw_module("BuiltOk", &format!("satisfies = [{sat}]\n")));
+    let sat = reqs
+        .iter()
+        .map(|r| format!("\"{r}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    t.write(
+        "specs/modules/BuiltOk.toml",
+        &fw_module("BuiltOk", &format!("satisfies = [{sat}]\n")),
+    );
     t
 }
 
@@ -68,12 +82,29 @@ mod props {
 fn rust_test_forms_and_roots_resolve() {
     let t = built("rust-forms", &["REQ-T-001", "REQ-T-002"]);
     t.write("src/built_ok.rs", RUST_TESTS)
-        .write("tests/integration.rs", "#[test]\nfn integration_case() {}\n")
+        .write(
+            "tests/integration.rs",
+            "#[test]\nfn integration_case() {}\n",
+        )
         .write("bench/tests/bench.rs", "#[test]\nfn bench_case() {}\n")
         .write("elsewhere/stray.rs", "#[test]\nfn stray_case() {}\n");
     let spec = t.read("spec.toml");
-    t.write("spec.toml", &spec.replacen("[paths]\n", "[paths]\ntests = [\"bench/tests\"]\n", 1));
-    verified(&t, "REQ-T-001", &["nested_mod_test", "async_case", "param_case", "integration_case", "bench_case", "props"]);
+    t.write(
+        "spec.toml",
+        &spec.replacen("[paths]\n", "[paths]\ntests = [\"bench/tests\"]\n", 1),
+    );
+    verified(
+        &t,
+        "REQ-T-001",
+        &[
+            "nested_mod_test",
+            "async_case",
+            "param_case",
+            "integration_case",
+            "bench_case",
+            "props",
+        ],
+    );
     verified(&t, "REQ-T-002", &["stray_case"]);
     let c = t.check(&[]);
     c.silent("verified_by_resolves", "REQ-T-001")
@@ -87,15 +118,25 @@ fn a_paths_tests_root_is_needed_for_tests_outside_the_defaults() {
     t.write("src/built_ok.rs", "pub fn built() {}\n")
         .write("bench/tests/bench.rs", "#[test]\nfn bench_case() {}\n");
     verified(&t, "REQ-T-003", &["bench_case"]);
-    t.check(&[]).fires("verified_by_resolves", "REQ-T-003", "error");
+    t.check(&[])
+        .fires("verified_by_resolves", "REQ-T-003", "error");
 }
 
 #[test]
 fn rust_test_identity() {
-    let t = built("rust-identity", &["REQ-I-001", "REQ-I-002", "REQ-I-003", "REQ-I-004"]);
+    let t = built(
+        "rust-identity",
+        &["REQ-I-001", "REQ-I-002", "REQ-I-003", "REQ-I-004"],
+    );
     t.write("specs/modules/Other.toml", &fw_module("Other", ""))
-        .write("src/built_ok.rs", "#[cfg(test)]\nmod t {\n    #[test]\n    fn dup() {}\n}\n")
-        .write("src/other.rs", "#[cfg(test)]\nmod t {\n    #[test]\n    fn dup() {}\n}\n")
+        .write(
+            "src/built_ok.rs",
+            "#[cfg(test)]\nmod t {\n    #[test]\n    fn dup() {}\n}\n",
+        )
+        .write(
+            "src/other.rs",
+            "#[cfg(test)]\nmod t {\n    #[test]\n    fn dup() {}\n}\n",
+        )
         .write("tests/a.rs", "#[test]\nfn dup2() {}\n")
         .write("tests/b.rs", "#[test]\nfn dup2() {}\n");
     verified(&t, "REQ-I-001", &["dup"]); // ambiguous bare name
@@ -143,7 +184,13 @@ entities:
 #[test]
 fn verified_by_resolves_on_every_entity_kind() {
     let plugin = plugin_with_block("every-kind", "uitest", UI_SCHEMA, UI_REDUCTION);
-    let t = tree_from("every-kind", &plugin, "firmware-layered", "rust", &["uitest"]);
+    let t = tree_from(
+        "every-kind",
+        &plugin,
+        "firmware-layered",
+        "rust",
+        &["uitest"],
+    );
     t.write(
         "specs/modules/Screen.toml",
         &(fw_module("Screen", "")
@@ -163,7 +210,16 @@ struct Found {
 }
 
 fn discover(t: &Tree, language: &str, root: &str) -> Vec<Found> {
-    let out = t.analyzer(&["report", "tests", "--language", language, "--root", root, "--format", "yaml"]);
+    let out = t.analyzer(&[
+        "report",
+        "tests",
+        "--language",
+        language,
+        "--root",
+        root,
+        "--format",
+        "yaml",
+    ]);
     let v: serde_json::Value = serde_yaml::from_slice(&out.stdout)
         .unwrap_or_else(|_| panic!("`report tests` did not run and report:\n{}", ci::text(&out)));
     v["tests"]
@@ -180,15 +236,23 @@ fn discover(t: &Tree, language: &str, root: &str) -> Vec<Found> {
 #[track_caller]
 fn has(found: &[Found], identity: &str, pending: bool) {
     assert!(
-        found.iter().any(|f| f.identity == identity && f.pending == pending),
+        found
+            .iter()
+            .any(|f| f.identity == identity && f.pending == pending),
         "expected `{identity}` (pending = {pending}); discovered: {:?}",
-        found.iter().map(|f| (&f.identity, f.pending)).collect::<Vec<_>>()
+        found
+            .iter()
+            .map(|f| (&f.identity, f.pending))
+            .collect::<Vec<_>>()
     );
 }
 
 #[track_caller]
 fn lacks(found: &[Found], identity: &str) {
-    assert!(!found.iter().any(|f| f.identity == identity), "`{identity}` must not be discovered");
+    assert!(
+        !found.iter().any(|f| f.identity == identity),
+        "`{identity}` must not be discovered"
+    );
 }
 
 #[test]
@@ -264,14 +328,38 @@ fn rust_discovery_reports_pending() {
 fn internal_edges_scope_and_shared_files() {
     let t = tree("edges-scope", "firmware-layered", &[]);
     t.write("specs/modules/Uses.toml", &fw_module("Uses", ""))
-        .write("src/uses.rs", "use sibling_crate::thing;\nuse core::fmt;\npub fn f() {}\n")
-        .write("specs/modules/Ticker.toml", &fw_module("Ticker", "source_file = \"src/main.rs\"\n"))
-        .write("specs/modules/Blinky.toml", &fw_module("Blinky", "source_file = \"src/main.rs\"\n"))
-        .write("src/main.rs", "mod x { pub fn a() {} }\nuse crate::x::a;\nfn main() { a() }\n")
-        .write("specs/modules/Undeclared.toml", &fw_module("Undeclared", ""))
-        .write("src/undeclared.rs", "use crate::uses::f;\npub fn g() { f() }\n")
-        .write("specs/modules/Root.toml", &fw_module("Root", "source_file = \"src/lib.rs\"\n"))
-        .write("src/lib.rs", "mod uses;\nmod undeclared;\nuse uses::f;\npub fn h() { f() }\n");
+        .write(
+            "src/uses.rs",
+            "use sibling_crate::thing;\nuse core::fmt;\npub fn f() {}\n",
+        )
+        .write(
+            "specs/modules/Ticker.toml",
+            &fw_module("Ticker", "source_file = \"src/main.rs\"\n"),
+        )
+        .write(
+            "specs/modules/Blinky.toml",
+            &fw_module("Blinky", "source_file = \"src/main.rs\"\n"),
+        )
+        .write(
+            "src/main.rs",
+            "mod x { pub fn a() {} }\nuse crate::x::a;\nfn main() { a() }\n",
+        )
+        .write(
+            "specs/modules/Undeclared.toml",
+            &fw_module("Undeclared", ""),
+        )
+        .write(
+            "src/undeclared.rs",
+            "use crate::uses::f;\npub fn g() { f() }\n",
+        )
+        .write(
+            "specs/modules/Root.toml",
+            &fw_module("Root", "source_file = \"src/lib.rs\"\n"),
+        )
+        .write(
+            "src/lib.rs",
+            "mod uses;\nmod undeclared;\nuse uses::f;\npub fn h() { f() }\n",
+        );
     t.check(&[])
         // A sibling workspace crate and `core` are external: the manifest owns them.
         .silent("internal_edges_declared", "Uses")
@@ -290,18 +378,45 @@ fn ts_service(name: &str, file: &str, extra: &str) -> String {
 #[test]
 fn internal_edges_resolve_typescript_aliases_and_barrels() {
     let t = tree_lang("edges-ts", "nextjs-app", "typescript");
-    t.write("specs/modules/App.toml", "name = \"App\"\nrole = \"app\"\ndescription = \"Root.\"\n")
-        .write("app/layout.tsx", "export default function RootLayout() { return null; }\n");
-    t.write("tsconfig.json", "{ \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"src/*\"] } } }\n")
-        .write("src/lib/b.ts", "export const b = 1;\n")
-        .write("src/lib/index.ts", "export * from './b';\n")
-        .write("src/viaalias.ts", "import { b } from '@/lib/b';\nexport const a = b;\n")
-        .write("src/viabarrel.ts", "import { b } from '@/lib';\nexport const c = b;\n")
-        .write("src/declared.ts", "import { b } from '@/lib';\nexport const d = b;\n")
-        .write("specs/modules/B.toml", &ts_service("B", "src/lib/b.ts", ""))
-        .write("specs/modules/ViaAlias.toml", &ts_service("ViaAlias", "src/viaalias.ts", ""))
-        .write("specs/modules/ViaBarrel.toml", &ts_service("ViaBarrel", "src/viabarrel.ts", ""))
-        .write("specs/modules/Declared.toml", &ts_service("Declared", "src/declared.ts", "depends_on = [\"B\"]\n"));
+    t.write(
+        "specs/modules/App.toml",
+        "name = \"App\"\nrole = \"app\"\ndescription = \"Root.\"\n",
+    )
+    .write(
+        "app/layout.tsx",
+        "export default function RootLayout() { return null; }\n",
+    );
+    t.write(
+        "tsconfig.json",
+        "{ \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"src/*\"] } } }\n",
+    )
+    .write("src/lib/b.ts", "export const b = 1;\n")
+    .write("src/lib/index.ts", "export * from './b';\n")
+    .write(
+        "src/viaalias.ts",
+        "import { b } from '@/lib/b';\nexport const a = b;\n",
+    )
+    .write(
+        "src/viabarrel.ts",
+        "import { b } from '@/lib';\nexport const c = b;\n",
+    )
+    .write(
+        "src/declared.ts",
+        "import { b } from '@/lib';\nexport const d = b;\n",
+    )
+    .write("specs/modules/B.toml", &ts_service("B", "src/lib/b.ts", ""))
+    .write(
+        "specs/modules/ViaAlias.toml",
+        &ts_service("ViaAlias", "src/viaalias.ts", ""),
+    )
+    .write(
+        "specs/modules/ViaBarrel.toml",
+        &ts_service("ViaBarrel", "src/viabarrel.ts", ""),
+    )
+    .write(
+        "specs/modules/Declared.toml",
+        &ts_service("Declared", "src/declared.ts", "depends_on = [\"B\"]\n"),
+    );
     t.check(&[])
         .fires("internal_edges_declared", "ViaAlias", "error")
         .fires("internal_edges_declared", "ViaBarrel", "error")
@@ -312,11 +427,20 @@ fn internal_edges_resolve_typescript_aliases_and_barrels() {
 fn internal_edges_follow_rust_super_paths() {
     let t = tree("edges-super", "firmware-layered", &[]);
     t.write("specs/modules/Front.toml", &fw_module("Front", ""))
-        .write("src/front.rs", "use super::back::run;\npub fn go() { run() }\n")
+        .write(
+            "src/front.rs",
+            "use super::back::run;\npub fn go() { run() }\n",
+        )
         .write("specs/modules/Back.toml", &fw_module("Back", ""))
         .write("src/back.rs", "pub fn run() {}\n")
-        .write("specs/modules/Front2.toml", &fw_module("Front2", "depends_on = [\"Back\"]\n"))
-        .write("src/front2.rs", "use super::back::run;\npub fn go() { run() }\n");
+        .write(
+            "specs/modules/Front2.toml",
+            &fw_module("Front2", "depends_on = [\"Back\"]\n"),
+        )
+        .write(
+            "src/front2.rs",
+            "use super::back::run;\npub fn go() { run() }\n",
+        );
     t.check(&[])
         .fires("internal_edges_declared", "Front", "error")
         .silent("internal_edges_declared", "Front2")
@@ -330,11 +454,27 @@ struct Import {
 }
 
 fn imports_report(t: &Tree, language: &str, root: &str) -> Vec<Import> {
-    let out = t.analyzer(&["report", "imports", "--language", language, "--root", root, "--format", "yaml"]);
-    let v: serde_json::Value = serde_yaml::from_slice(&out.stdout)
-        .unwrap_or_else(|_| panic!("`report imports` did not run and report:\n{}", ci::text(&out)));
+    let out = t.analyzer(&[
+        "report",
+        "imports",
+        "--language",
+        language,
+        "--root",
+        root,
+        "--format",
+        "yaml",
+    ]);
+    let v: serde_json::Value = serde_yaml::from_slice(&out.stdout).unwrap_or_else(|_| {
+        panic!(
+            "`report imports` did not run and report:\n{}",
+            ci::text(&out)
+        )
+    });
     let mut found = Vec::new();
-    for f in v["files"].as_array().unwrap_or_else(|| panic!("no `files` array:\n{}", ci::text(&out))) {
+    for f in v["files"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no `files` array:\n{}", ci::text(&out)))
+    {
         for i in f["imports"].as_array().into_iter().flatten() {
             found.push(Import {
                 file: f["file"].as_str().unwrap_or_default().to_string(),
@@ -356,17 +496,36 @@ fn resolves_to(found: &[Import], file: &str, spec: &str, target: Option<&str>) {
 #[test]
 fn c_and_cpp_quoted_includes_resolve_to_project_files() {
     let t = tree("includes", "library-api", &[]);
-    t.write("native/src/ring.c", "#include \"ring.h\"\n#include \"../inc/shared.h\"\n#include <stdio.h>\n")
-        .write("native/src/ring.h", "void ring(void);\n")
-        .write("native/inc/shared.h", "int shared;\n")
-        .write("native/cpp/math.cpp", "#include \"math.hpp\"\n#include <vector>\n")
-        .write("native/cpp/math.hpp", "int add(int, int);\n");
+    t.write(
+        "native/src/ring.c",
+        "#include \"ring.h\"\n#include \"../inc/shared.h\"\n#include <stdio.h>\n",
+    )
+    .write("native/src/ring.h", "void ring(void);\n")
+    .write("native/inc/shared.h", "int shared;\n")
+    .write(
+        "native/cpp/math.cpp",
+        "#include \"math.hpp\"\n#include <vector>\n",
+    )
+    .write("native/cpp/math.hpp", "int add(int, int);\n");
     let c = imports_report(&t, "c", "native/src");
     resolves_to(&c, "native/src/ring.c", "ring.h", Some("native/src/ring.h"));
-    resolves_to(&c, "native/src/ring.c", "../inc/shared.h", Some("native/inc/shared.h"));
-    assert!(!c.iter().any(|i| i.spec.contains("stdio")), "a system include is external");
+    resolves_to(
+        &c,
+        "native/src/ring.c",
+        "../inc/shared.h",
+        Some("native/inc/shared.h"),
+    );
+    assert!(
+        !c.iter().any(|i| i.spec.contains("stdio")),
+        "a system include is external"
+    );
     let cpp = imports_report(&t, "cpp", "native/cpp");
-    resolves_to(&cpp, "native/cpp/math.cpp", "math.hpp", Some("native/cpp/math.hpp"));
+    resolves_to(
+        &cpp,
+        "native/cpp/math.cpp",
+        "math.hpp",
+        Some("native/cpp/math.hpp"),
+    );
 }
 
 #[test]
@@ -379,8 +538,18 @@ fn dart_package_imports_of_the_own_package_resolve_under_lib() {
     .write("lib/store.dart", "class Store {}\n")
     .write("lib/widgets/card.dart", "class Card {}\n");
     let d = imports_report(&t, "dart", "lib");
-    resolves_to(&d, "lib/app.dart", "package:checked_intent_fixture/store.dart", Some("lib/store.dart"));
-    resolves_to(&d, "lib/app.dart", "widgets/card.dart", Some("lib/widgets/card.dart"));
+    resolves_to(
+        &d,
+        "lib/app.dart",
+        "package:checked_intent_fixture/store.dart",
+        Some("lib/store.dart"),
+    );
+    resolves_to(
+        &d,
+        "lib/app.dart",
+        "widgets/card.dart",
+        Some("lib/widgets/card.dart"),
+    );
     resolves_to(&d, "lib/app.dart", "package:other/thing.dart", None);
     resolves_to(&d, "lib/app.dart", "dart:core", None);
 }
@@ -393,7 +562,10 @@ fn open_question_gate_reads_the_workspace_tier() {
     let spec = root.read("spec.toml");
     // The first *uncommented* member table: the template also carries
     // commented-out examples of the same header.
-    let start = spec.find("\n[[workspace.members]]").map(|i| i + 1).expect("template lists a member");
+    let start = spec
+        .find("\n[[workspace.members]]")
+        .map(|i| i + 1)
+        .expect("template lists a member");
     root.write("spec.toml", &format!("{}[[workspace.members]]\nname = \"core\"\npath = \"crates/core\"\n", &spec[..start]))
         .write(
             "specs/open_questions/OQ-WS-001.toml",
@@ -404,10 +576,19 @@ fn open_question_gate_reads_the_workspace_tier() {
     let dest = root.root.join("crates/core");
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
     std::fs::rename(&member.root, &dest).unwrap();
-    let m = Tree { root: dest, plugin: member.plugin };
-    m.write("specs/modules/built.toml", "name = \"built\"\nvisibility = \"crate\"\ndescription = \"Built.\"\n")
-        .write("src/built.rs", "pub(crate) fn f() {}\n")
-        .write("specs/modules/later.toml", "name = \"later\"\nvisibility = \"crate\"\ndescription = \"Later.\"\nplanned = true\n");
+    let m = Tree {
+        root: dest,
+        plugin: member.plugin,
+    };
+    m.write(
+        "specs/modules/built.toml",
+        "name = \"built\"\nvisibility = \"crate\"\ndescription = \"Built.\"\n",
+    )
+    .write("src/built.rs", "pub(crate) fn f() {}\n")
+    .write(
+        "specs/modules/later.toml",
+        "name = \"later\"\nvisibility = \"crate\"\ndescription = \"Later.\"\nplanned = true\n",
+    );
     m.check(&[])
         .fires("implementation_unblocked", "built", "error")
         .silent("implementation_unblocked", "later");
@@ -464,12 +645,18 @@ fn ids_in_document_is_configured_in_domain_toml() {
     // Severity lives in [validation.rules], like every graph check's.
     let domain = t.read("specs/specdev/domain.toml");
     assert!(domain.contains("[validation.rules]\n"), "{domain}");
-    let domain = domain.replacen("[validation.rules]\n", "[validation.rules]\nids_in_document = \"error\"\n", 1);
+    let domain = domain.replacen(
+        "[validation.rules]\n",
+        "[validation.rules]\nids_in_document = \"error\"\n",
+        1,
+    );
     t.write(
         "specs/specdev/domain.toml",
         &format!("{domain}\n[[project.graph_checks]]\nkind = \"ids_in_document\"\nrule = \"ids_in_document\"\nentity_scope = \"Decision\"\ndocument = \"docs/PRD.md\"\n"),
     );
-    t.check(&[])
-        .silent("ids_in_document", "DEC-D-001")
-        .fires("ids_in_document", "DEC-D-002", "error");
+    t.check(&[]).silent("ids_in_document", "DEC-D-001").fires(
+        "ids_in_document",
+        "DEC-D-002",
+        "error",
+    );
 }
