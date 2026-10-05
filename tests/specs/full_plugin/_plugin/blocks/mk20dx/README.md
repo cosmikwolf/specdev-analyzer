@@ -67,11 +67,9 @@ to the concurrency runtime. Neither is a field here.
 
 ## Verification status
 
-The guidance (`guidance.md`) carries the rules for the code. `reference/rust/` is a compiled
-crate against the published `mk20dx-hal`: one module per kind — pins in every mode, a pin-trigger port interrupt with
-its dispatch, an interrupt vector with its flag clear, the clock preset, and each peripheral table in both
-construction forms. It corrected the old prose once: single-channel PWM duty is `set_value` (CnV), while `set_duty`
-exists only on the combine-mode channel pair.
+The guidance (`guidance.md`) carries the rules for the code. They were checked by compiling a test crate against the
+published `mk20dx-hal`, one module per kind, while the block was written. That corrected the old prose once:
+single-channel PWM duty is `set_value` (CnV), while `set_duty` exists only on the combine-mode channel pair.
 
 The block was zero-crate until 2026-08-31: the HAL's own manifest used to
 declare its PAC by a path outside its repository, which made it

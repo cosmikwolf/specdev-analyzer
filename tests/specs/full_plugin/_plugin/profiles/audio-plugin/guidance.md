@@ -20,15 +20,14 @@ does. Framework rules (parameters, editor) live in the guidance of the `nih-plug
   wiring. No user module sits at `host_interface`.
 - The engine stays framework-free: plain setters and fields, no plugin types.
 
-## The `[plugin]` and `[audio]` tables
+## Identity, formats and buses
 
-- The plugin's name, vendor, URL, e-mail and version constants carry the `[plugin]` values. An omitted URL or e-mail
-  is the empty string.
-- `[plugin].category` sets the VST3 category string and the CLAP feature list together; they must agree.
-- Export one format macro per entry in `[plugin].formats`. The standalone format exports from the bin, not the
-  library.
-- The main bus channel count follows `[audio].default_channel_layout`; one aux port per declared aux bus; a
-  non-zero `latency_samples` is reported to the host.
+- The plugin's name, vendor, URL, e-mail and version are constants in the `Plugin` implementation; the version comes
+  from the crate's. An absent URL or e-mail is the empty string.
+- The VST3 category string and the CLAP feature list state one category; they must agree.
+- Export one format macro per format the plugin ships. The standalone format exports from the bin, not the library.
+- The audio IO layouts state the main bus channel count and one port per aux bus; a non-zero latency is reported to
+  the host.
 
 ## Parameter bindings
 
@@ -48,5 +47,5 @@ does. Framework rules (parameters, editor) live in the guidance of the `nih-plug
   the normal status — it never calls `unimplemented!`, `todo!` or `panic!`.
 - Code off the audio thread (`initialize`, `reset`, state save and load) may panic while unfinished: the panic finds
   the gap fastest. An unfinished editor returns no editor; it does not panic.
-- `[runtime].panic_handler = "abort"` is the profile's rule for the release profile. Cargo does not enforce it until
-  the manifest says `panic = "abort"`.
+- A VST3 or CLAP build's release profile sets `panic = "abort"` in `Cargo.toml`: a panic must not unwind through
+  the host's C ABI. Only a standalone-only build may unwind.

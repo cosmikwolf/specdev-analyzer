@@ -93,17 +93,19 @@ fn errors_with_prefix(report: &Report, rule_prefix: &str) -> Vec<Finding> {
 }
 
 // ===========================================================================
-// F-001 — {{project_name}} placeholder is substituted in
-//         architecture.toml.template; schema rejects literal {{...}} leaks.
+// F-001 — {{project_name}} placeholder is substituted at bootstrap. The
+//         audio-plugin architecture template is gone (2.0 removes its
+//         tables), so the name lands in spec.toml only.
 // ===========================================================================
 
 #[test]
-fn audio_plugin_architecture_template_substitutes_project_name() {
+fn audio_plugin_bootstrap_substitutes_project_name() {
     let (target, _) = fresh_audio_plugin("f001-substitute", "my_awesome_synth");
-    let body = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    assert!(!target.join("specs/architecture.toml").exists(), "the profile seeds no architecture.toml");
+    let body = std::fs::read_to_string(target.join("spec.toml")).unwrap();
     assert!(
-        body.contains(r#"name     = "my_awesome_synth""#),
-        "expected substituted [plugin].name; got body:\n{body}"
+        body.contains(r#""my_awesome_synth""#),
+        "expected the substituted project name; got body:\n{body}"
     );
     assert!(
         !body.contains("{{project_name}}"),
@@ -387,18 +389,7 @@ fn bridge_reduce_unresolved_includes_co_residency_hint() {
     inline::run_inline_block(&layout, &full_plugin(), "egui").unwrap();
     inline::run_inline_bridge(&layout, &full_plugin(), "egui+nih-plug").unwrap();
 
-    let arch = r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-category = "instrument"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+    let arch = "";
     std::fs::write(target.join("specs/architecture.toml"), arch).unwrap();
     // Binding references a non-existent region — this triggers
     // REDUCE_UNRESOLVED on the bridge relation.

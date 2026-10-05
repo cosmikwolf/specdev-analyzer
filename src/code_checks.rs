@@ -2,9 +2,10 @@
 //!
 //! A code check names a query (inlined under `specs/specdev/queries/`), the
 //! spec entity kind it is compared with, and its captures: the code key, and
-//! optionally each argument's name and value. The runner runs the query over
-//! every source file under the project's source root in the project's
-//! language, groups the captured arguments by key, and compares them with
+//! optionally each argument's name (a capture, or a fixed `arg_key`) and
+//! value. The runner runs the query over every source file under the
+//! project's source root in the project's language, groups the captured
+//! arguments by key, and compares them with
 //! the spec's entities of that kind. A spec entity's code key is its name
 //! without the owning module's prefix (`Ticker.on_tick` → `on_tick`).
 //!
@@ -172,7 +173,8 @@ fn code_values(
             let rel = file.strip_prefix(&layout.project_root).unwrap_or(file);
             let entry = out.entry(key).or_default();
             entry.sites.insert(format!("{}:{}", rel.display(), key_node.start_position().row + 1));
-            if let (Some(k), Some(v)) = (text(arg_i), text(val_i)) {
+            let arg_name = text(arg_i).or_else(|| check.arg_key.clone());
+            if let (Some(k), Some(v)) = (arg_name, text(val_i)) {
                 entry.args.insert(k, v);
             }
         }

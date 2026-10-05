@@ -11,7 +11,7 @@ use crate::{
     manifest::profile as profile_mod,
     merge, migrate,
     plugin_root::{self, PluginRootInputs},
-    guidance_lint, pack_lint, reduction, reference_lint, resolve, validate,
+    guidance_lint, pack_lint, reduction, resolve, validate,
 };
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -194,9 +194,9 @@ pub enum Command {
         merge: bool,
     },
     /// Plugin-author lint: walk a plugin tree and check structural rules
-    /// (bridge names lex-ordered, block files, profile contracts, reference
-    /// crates, and each unit's `guidance.md`: present, no fenced code, under
-    /// the size cap, no profile named in a block's or bridge's).
+    /// (bridge names lex-ordered, block files, profile contracts, each unit's
+    /// `guidance.md`: present, no fenced code, under the size cap, no profile
+    /// named in a block's or bridge's; and each rule pack).
     PluginLint {
         /// Plugin root directory (must contain `.claude-plugin/plugin.json`).
         #[arg(long)]
@@ -2066,15 +2066,6 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // Reference-crate coverage + arity checks. Opt-in per unit by the presence
-    // of `reference/<lang>/reference_cases.yaml`.
-    let reference_offenders = match reference_lint::lint_reference_crates(&plugin) {
-        Ok(o) => o,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
-    };
     // Every shipped profile must declare the manifest contract it was
     // authored against (`PROFILE-LINT-001`); see #117.
     let profile_offenders = match profile_mod::lint_plugin_profiles(&plugin) {
@@ -2115,10 +2106,6 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
     for o in &block_offenders {
         eprintln!("{o}");
     }
-    // Reference offenders carry their own `REF-*-NNN` code (like block lines).
-    for o in &reference_offenders {
-        eprintln!("{o}");
-    }
     // Profile offenders carry their own `PROFILE-LINT-NNN` code.
     for o in &profile_offenders {
         eprintln!("{o}");
@@ -2134,7 +2121,6 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
 
     let total = bridge_offenders.len()
         + block_offenders.len()
-        + reference_offenders.len()
         + profile_offenders.len()
         + prose_offenders.len()
         + pack_offenders.len();
@@ -2143,10 +2129,9 @@ fn run_plugin_lint(plugin: PathBuf) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         eprintln!(
-            "{total} plugin lint finding(s) ({} bridge, {} block, {} reference, {} profile, {} guidance, {} pack)",
+            "{total} plugin lint finding(s) ({} bridge, {} block, {} profile, {} guidance, {} pack)",
             bridge_offenders.len(),
             block_offenders.len(),
-            reference_offenders.len(),
             profile_offenders.len(),
             prose_offenders.len(),
             pack_offenders.len()

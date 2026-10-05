@@ -101,16 +101,6 @@ the app.
 - **No cross-block reach:** the guidance names no other block; the seam
   stands alone on any profile exposing `Module`.
 
-## Reference pair (CI-only, never inlined)
-
-`reference/rust/` is a real companion crate (sync + async + stream API)
-and `reference/dart/` a real consumer package whose committed bindings
-were produced by the pinned generator. CI gates: `flutter pub get &&
-flutter analyze` on the Dart side; `cargo build` on the Rust side pinned
-to `wasm32-unknown-unknown` (the wasm-purity witness; the host build is
-exercised at authoring time). Regenerating the bindings is part of any
-version-bump change.
-
 ## Companion affinity and deferred items
 
 - Pairs naturally with the `universal_ble` block in device-companion

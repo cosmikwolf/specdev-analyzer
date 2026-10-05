@@ -96,7 +96,15 @@ $defs:
     additionalProperties: false
     required: [language, query, entity_kind, key_capture]
     dependentRequired:
-      attributes: [arg_key_capture, arg_value_capture]
+      attributes: [arg_value_capture]
+    # An argument's name comes from a capture or is fixed, never both; a
+    # mapping needs one of them.
+    not: { required: [arg_key, arg_key_capture] }
+    if: { required: [attributes] }
+    then:
+      anyOf:
+        - required: [arg_key]
+        - required: [arg_key_capture]
     properties:
       language: { $ref: "#/$defs/NonEmpty" }
       query:
@@ -110,6 +118,11 @@ $defs:
         description: The capture holding the code key — the entity's name without its module prefix.
         $ref: "#/$defs/NonEmpty"
       arg_key_capture: { $ref: "#/$defs/NonEmpty" }
+      arg_key:
+        description: >
+          A fixed argument name, for a value capture with no key node (e.g. the
+          `shared` / `local` attribute over a struct is the value of `sharing`).
+        $ref: "#/$defs/NonEmpty"
       arg_value_capture: { $ref: "#/$defs/NonEmpty" }
       attributes:
         description: Source argument name → spec attribute name. Only these are compared.

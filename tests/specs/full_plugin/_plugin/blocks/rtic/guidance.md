@@ -1,8 +1,8 @@
 # rtic — implementation guidance
 
 Rules an agent follows when it writes or edits code for a module with an `[rtic]` table. The rule pack checks each
-task against the code by name: a missing task is `pack_entity_in_code`, a `binds` or `priority` that differs is
-`pack_attribute_matches`. Review checks the rest.
+task and each resource against the code by name: a missing one is `pack_entity_in_code`; a task's `binds` or
+`priority`, or a resource's `sharing`, that differs is `pack_attribute_matches`. Review checks the rest.
 
 ## The application
 
@@ -20,6 +20,8 @@ task against the code by name: a missing task is `pack_entity_in_code`, a `binds
   highest-priority user, a sole user, or same-priority peers.
 - A resource that one task uses is `sharing = "local"`, reached directly. Do not declare it shared and lock it.
 - `init` gives every resource its first value.
+- A resource lives in the struct its `sharing` names, or as an inline local. Give two tasks' inline locals different
+  names: the check cannot tell two of one name apart (`pack_key_ambiguous`).
 - A large local value, or one that needs a `'static` borrow, goes in an inline-initialized local on `init` or on
   the task, so it never sits on the init stack. Never use a `static mut` with a raw-pointer cast instead.
 
