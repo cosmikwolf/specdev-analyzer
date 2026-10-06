@@ -1,4 +1,4 @@
-//! Retired requirements (D117).
+//! Retired requirements.
 //!
 //! A requirement is retired by moving its file to
 //! `specs/requirements/retired/` with `retired_by = "DEC-NNN"`. The folder is
@@ -37,7 +37,7 @@ pub const TESTED: &str = "retired_requirement_tested";
 pub const FIELD: &str = "retired_by";
 
 /// Let a retired requirement's file carry `retired_by` whatever the inlined
-/// schema says (D117, review H1), as `admit_planned` does for `planned`.
+/// schema says, as `admit_planned` does for `planned`.
 pub fn admit_retired_by(schema: &mut Value) {
     if let Some(props) = schema
         .pointer_mut("/$defs/Requirement/properties")

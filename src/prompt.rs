@@ -621,7 +621,7 @@ fn read_requirement_decided_by(
     use std::collections::BTreeMap;
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in store.load(EntryKind::Requirement)? {
-        // A retired requirement (D117) pins nothing for live work.
+        // A retired requirement pins nothing for live work.
         if crate::entries::is_retired_file(&entry.file) {
             continue;
         }

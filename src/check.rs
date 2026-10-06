@@ -310,7 +310,7 @@ fn stale_planned_requirements(
                 .and_then(Value::as_bool)
                 == Some(true)
         };
-        // A retired requirement (D117) is exempt from the stale flags.
+        // A retired requirement is exempt from the stale flags.
         if !flag("planned") || flag("retired") {
             continue;
         }
@@ -416,9 +416,10 @@ fn test_checks(
         let names = string_list(v.get("verified_by"));
         let file = entry.file.display().to_string();
 
-        // D117: a retired requirement is history, exempt from every
+        // A retired requirement is history, exempt from every
         // requirement ↔ test check. A test it still names that exists is
-        // code that exists, so that is reported, not hidden (doc 25 §4.1).
+        // code that exists, so that is reported, not hidden: code that
+        // exists is always checked.
         if crate::entries::is_retired_file(&entry.file) {
             let live: Vec<&str> = names
                 .iter()
@@ -750,7 +751,7 @@ fn flags_of(files: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Flags> {
     out
 }
 
-/// D117 abuse control: each requirement retired since `since`, naming the
+/// The control on retiring: each requirement retired since `since`, naming the
 /// decision and saying when that decision is itself new in the range, and
 /// each requirement id that was deleted rather than retired.
 fn since_retirements(
