@@ -13,9 +13,7 @@ description: >
   The plugin shell is a cdylib whose contract is the host's C ABI
   (exposed via `nih_export_*!` macros) —
   Rust-level re-exports don't reach the host, so no `re_exports[]`
-  field. `feature_gates[]` is included because Cargo features are
-  build-time toggles relevant to plugin authoring (e.g., conditional
-  MIDI handling, SIMD-vs-scalar DSP backends).
+  field.
 
   `bindings` is open in v1; the `egui+nih-plug` canonical bridge
   contributes `bindings."egui+nih-plug".parameter_widgets[]`. Other
@@ -38,31 +36,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
     uniqueItems: true
-  external_deps:
-    description: |
-      External crate dependencies this module needs (CrateReference
-      shape). Each entry becomes a Cargo.toml
-      `[dependencies]` line at gen time; the union with
-      architecture-level `[[external_deps]]` determines the project's
-      full dep set. Use this for module-scoped crates that aren't
-      project-wide infrastructure (e.g., a DSP module pulling in
-      `biquad` for filter primitives).
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-  feature_gates:
-    description: >
-      Cargo features that conditionally include this module. The module
-      compiles only when at least one of the listed features is active
-      (treated as `#[cfg(any(feature = "f1", feature = "f2"))]`). An
-      empty list (or omitted field) means the module is unconditional.
-      `module_feature_gates_resolve` verifies every name is declared in
-      `architecture.toml`'s `[[features]]` table. Typical audio-plugin
-      use: optional MIDI handling, SIMD vs scalar DSP backends,
-      debug-only RTT logging.
-    type: array
-    items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-    uniqueItems: true
   satisfies:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
@@ -78,8 +51,8 @@ properties:
     description: >
       Parameter → engine-write bindings. Co-resident with
       `[nih_plug]` on the plugin_shell module: each row maps one
-      nih-plug parameter to an engine method/field/custom write, driving
-      deterministic `apply_param_changes` emission. Unlike the open
+      nih-plug parameter to an engine method/field/custom write, which
+      the code applies in table order. Unlike the open
       `bindings.*` slot this is a named property because
       `unevaluatedProperties: false` would otherwise reject it. See the
       `parameter_bindings.schema.yaml` fragment for the row shape and
@@ -94,17 +67,22 @@ properties:
       static, re-export, or macro contributing to the module's
       contractual surface. Sparseness rule (enforced by the language
       schema): every item except `kind = "re_export"` must carry
-      `satisfies` (≥1 requirement id). Consumed by `/spec-gen` for
-      symbol emission and by the three-stage agentic sync
+      `satisfies` (≥1 requirement id). Consumed by the three-stage agentic sync
       (`items diff` / `items propose` / `items apply`). Audio-thread
-      methods on the plugin shell take a silence-and-log first-pass
-      body rather than `unimplemented!()` because panicking on the
-      audio thread would abort-crash the host; see the audio-plugin
-      codegen prose's "Audio-thread method bodies" section.
+      methods on the plugin shell write silence and log once while
+      unfinished, rather than panic, because panicking on the audio
+      thread would abort-crash the host; see the profile guidance.
     type: array
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  planned:
+    description: >
+      Not built yet. Suppresses only findings about something missing (no
+      resolvable source, a unit entry not in the code); code that exists is
+      always checked. `/spec-design` writes it on a new module; remove it
+      when the code lands.
+    type: boolean
   source_file:
     description: >
       Explicit source-file override for items[] extraction and sync
@@ -121,13 +99,14 @@ properties:
     minLength: 1
   context_files:
     description: >
-      Per-module list of project-prose files inlined into the codegen
-      prompt. Paths are spec-root-relative (directory containing
-      `spec.toml`). Validate-time checks ensure each file exists, is
-      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
-      `CONTEXT-003`). Order is preserved at prompt-assembly time;
-      files inline in declared order between architecture.toml and the
-      module spec. Globs and section anchors are bounded deferrals.
+      Reference reading for whoever edits this module (a datasheet
+      section, a protocol note); `context --module` lists the paths in
+      declared order. Paths are spec-root-relative (directory
+      containing `spec.toml`). Validate-time checks ensure each file
+      exists, is readable, and is valid UTF-8 (`CONTEXT-001` /
+      `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
+      belongs in a decision or an open question, not here. Globs and
+      section anchors are bounded deferrals.
     type: array
     items:
       type: string
@@ -137,7 +116,7 @@ properties:
     description: >
       Decision ids that inform this module's implementation but aren't
       pinned to any specific requirement (e.g. naming conventions,
-      project-wide build rules). Resolved into the codegen prompt walk
+      project-wide build rules). `report decisions --module` lists them
       alongside the requirement-anchored `decided_by` decisions.
       Validated by graph check `module_guided_by_resolves`.
     type: array

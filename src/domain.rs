@@ -160,6 +160,24 @@ pub struct GraphCheck {
     pub target_attr: Option<String>,
     #[serde(default)]
     pub target_attr_value: Option<String>,
+    /// `ids_in_document`: the file (relative to the project root) every
+    /// in-scope entity's id must appear in.
+    #[serde(default)]
+    pub document: Option<String>,
+    /// `unique` with a composite key: each in-scope entity is keyed on the
+    /// values at these paths together (e.g. `["attrs.port", "attrs.pin"]`).
+    /// An entity missing a part is not keyed — the schema owns presence.
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+    /// `related_attrs_allowed`: the two attributes compared across each
+    /// relation of `relation_scope`, each `relation.<a>`, `from.<a>` or
+    /// `to.<a>`; the pair must be one of `allowed` (`"*"` matches any value).
+    #[serde(default)]
+    pub left: Option<String>,
+    #[serde(default)]
+    pub right: Option<String>,
+    #[serde(default)]
+    pub allowed: Option<Vec<Vec<String>>>,
 }
 
 impl DomainConfig {

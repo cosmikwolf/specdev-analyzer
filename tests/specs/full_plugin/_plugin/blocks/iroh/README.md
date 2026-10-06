@@ -98,7 +98,7 @@ channel   = "events"       # inbound writes INTO a from_runtime channel
 Two entity kinds (`Stream`, `Channel`) and one intra-block relation,
 `stream_on_channel`, from each stream's `channel` field — so a stream
 naming a channel that was never declared is caught at validate time rather
-than at codegen.
+than in the code.
 
 ### Direction coherence — author-checked, not machine-checked
 
@@ -109,11 +109,10 @@ describes a stream reading from the channel that carries data out to the
 caller, which cannot be implemented.
 
 The `stream_on_channel` relation catches an unknown channel name but
-**not** a mismatched direction: a block can declare relations (does the
-target resolve?) but not invariants over the related pair's attributes,
-and no block in this tree declares `graph_checks`. Until that changes,
-this is a review item, and it is an easy one to get wrong — note that the
-two entries above differ only in `direction` and `channel`.
+**not** a mismatched direction. A rule pack could check the pair with
+`related_attrs_allowed` over `stream_on_channel`; this block ships no
+pack yet, so it is a review item, and an easy one to get wrong — note
+that the two entries above differ only in `direction` and `channel`.
 
 Note also that a symmetric peer (`role = "both"`) needs **both**
 directions of every flow it participates in — two stream entries and two
@@ -137,18 +136,18 @@ receive, which is rarely what a symmetric protocol wants.
 
 ## Sharp-test rationale
 
-- **Leg 1 — concreteness.** `iroh` names one specific crate at one pinned
-  version. "Which P2P library?" cannot substitute for the name: the schema
+- **Leg 1 — concreteness.** `iroh` names one specific crate. "Which P2P library?" cannot substitute for the name: the schema
   is shaped around iroh's own concepts (ALPN routing, `EndpointId` as a
   public key, relay-assisted hole punching), which do not transfer to
   libp2p or QUIC-generally.
-- **Leg 2 — codegen-completeness.** Conforming TOML produces a working
-  endpoint: bind, router, handler, stream framing, channel surface,
-  shutdown order. All six emission kinds are compiled in
-  `reference/rust/` against the pin.
+- **Leg 2 — rule-pack completeness.** Every field constrains the code:
+  identity, relay, ALPN and role; each stream's kind, direction, framing
+  and channel; each channel's direction, capacity and overflow policy.
+  The guidance carries the rules no check can verify (frame caps,
+  bounded channels, shutdown order).
 - **Leg 3 — no cross-block reach.** The block names no other block's
   types. The channels are declared in terms of `payload_type` and
-  `capacity`, with no assumption about what drains them. The codegen prose
+  `capacity`, with no assumption about what drains them. The guidance
   mentions no UI toolkit, no executor beyond tokio, and no profile.
 
 ## Companion blocks
@@ -157,13 +156,12 @@ Pairs naturally with any block that owns an application's main loop, which
 drains the `from_runtime` channel each iteration. That wiring is
 deliberately **not** a bridge: the endpoint side is substantial and lives
 here, while the consumer side is a drain-and-react loop of roughly fifteen
-lines. A bridge contributing that little does not earn six files and a
-reference crate.
+lines. A bridge contributing that little does not earn its files.
 
-Note also that a bridge's bindings table must co-reside on a **single
-module** carrying both blocks' tables. A layout that puts the transport in
-one crate and its consumer in another cannot express such a bridge at all —
-another reason the crossing belongs here.
+Note also that a bridge's endpoints resolve within one spec root, so a
+layout that puts the transport in one crate and its consumer in another
+cannot express such a bridge at all — another reason the crossing belongs
+here.
 
 ## Deferred
 
@@ -172,6 +170,6 @@ another reason the crossing belongs here.
   extend rather than replace it.
 - Connection quality in the spec surface. `Connection::rtt` and the direct
   vs relayed path type are readable at runtime but not declared, because
-  nothing about codegen changes based on them.
+  nothing in the code is constrained by them.
 - A `custom` relay option alongside `n0` / `disabled`, once a project runs
   its own relay.

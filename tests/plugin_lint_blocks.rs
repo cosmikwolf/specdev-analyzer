@@ -107,18 +107,6 @@ fn bad_002_missing_reduction() {
 }
 
 // ---------------------------------------------------------------------------
-// 4 — BLOCK-LINT-003: no codegen/<lang>/README.md
-// ---------------------------------------------------------------------------
-#[test]
-fn bad_003_missing_codegen() {
-    let plugin = cloned_with("bad-003", |root| {
-        std::fs::remove_dir_all(root.join("blocks/embassy/codegen")).unwrap();
-    });
-    let offenders = lint_plugin_blocks(&plugin).unwrap();
-    assert_only_finding(&offenders, "BLOCK-LINT-003", "embassy");
-}
-
-// ---------------------------------------------------------------------------
 // 5 — BLOCK-LINT-004: missing top-level README.md
 // ---------------------------------------------------------------------------
 #[test]

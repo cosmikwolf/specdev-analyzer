@@ -9,8 +9,8 @@ description: >
   architectural role, where its route file lives under `app/`, which side
   of the client/server boundary its body runs on, and its npm
   dependencies. Route files (`page.tsx`, `layout.tsx`, `route.ts`, the
-  boundary files) are derived from these fields — two-line shims that
-  re-export the module body — never modules themselves.
+  boundary files) sit where `app_path` says — two-line shims, written by
+  hand, that re-export the module body — never modules themselves.
 type: object
 # `unevaluatedProperties: false` rather than `additionalProperties: false`
 # because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
@@ -54,9 +54,8 @@ properties:
   client_component:
     description: >
       Allowed on `page`, `layout`, `boundary` and `component`; forbidden
-      elsewhere. `true` emits `"use client"` as the first line of the
-      module body (and of the derived route file for the two error
-      kinds). It marks a boundary: every module this one imports joins
+      elsewhere. `true` means `"use client"` is the first line of the
+      module body (and of the route file for the two error kinds). It marks a boundary: every module this one imports joins
       the client graph. A `client_component` `page` or `layout` body must
       export no `metadata` or `generateMetadata` — `next build` fails
       with a `$$typeof` error and nothing earlier catches it. Not allowed
@@ -68,7 +67,7 @@ properties:
     description: >
       Required on `service`, forbidden elsewhere. `server` opens the body
       with `import "server-only"`; `client` opens it with
-      `import "client-only"`; `universal` emits nothing. The guard import
+      `import "client-only"`; `universal` has no guard. The guard import
       is what makes a wrong client/server chain fail `next build` — no
       validate-time rule duplicates it in v1. A `model` carries no
       environment by definition: it holds pure data and domain logic; a
@@ -94,20 +93,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-  external_deps:
-    description: >
-      npm package dependencies this module needs. Each entry becomes a
-      package.json `dependencies` line (`devDependencies` when
-      `test_only = true`); the union across modules, architecture-level
-      `[[external_deps]]`, and block/bridge contributions determines the
-      full dep set `manifest` emits. User-declared versions win on
-      conflict. The NpmReference shape is embedded in the analyzer (the
-      $ref below resolves internally, not to a file on disk); the
-      architecture template's dep comment block documents the accepted
-      shapes readably.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/npm_reference.schema.yaml#/$defs/NpmReference"
   bindings:
     description: >
       Aggregator slot for bridge contributions. Open in v1.
@@ -124,14 +109,19 @@ properties:
       `layout` or `boundary` module's default export is its component and
       is an item named after the module. Sparseness rule (enforced by the
       language schema): every item carries `satisfies` (≥1 requirement
-      id) unless it is a test (`test = true`, which carries `verifies`
-      instead) or a re-export. Consumed by `/spec-gen` for symbol emission
-      and by the three-stage agentic sync (`items diff` / `items propose`
+      id) unless it is a re-export. Consumed by the three-stage agentic sync (`items diff` / `items propose`
       / `items apply`).
     type: array
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  planned:
+    description: >
+      Not built yet. Suppresses only findings about something missing (no
+      resolvable source, a unit entry not in the code); code that exists is
+      always checked. `/spec-design` writes it on a new module; remove it
+      when the code lands.
+    type: boolean
   source_file:
     description: >
       Explicit source-file override for items[] extraction and sync
@@ -147,13 +137,14 @@ properties:
     minLength: 1
   context_files:
     description: >
-      Per-module list of project-prose files inlined into the codegen
-      prompt. Paths are spec-root-relative (directory containing
-      `spec.toml`). Validate-time checks ensure each file exists, is
-      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
-      `CONTEXT-003`). Order is preserved at prompt-assembly time;
-      files inline in declared order between architecture.toml and the
-      module spec. Globs and section anchors are not supported.
+      Reference reading for whoever edits this module (a datasheet
+      section, a protocol note); `context --module` lists the paths in
+      declared order. Paths are spec-root-relative (directory
+      containing `spec.toml`). Validate-time checks ensure each file
+      exists, is readable, and is valid UTF-8 (`CONTEXT-001` /
+      `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
+      belongs in a decision or an open question, not here. Globs and
+      section anchors are not supported.
     type: array
     items:
       type: string
@@ -163,7 +154,7 @@ properties:
     description: >
       Decision ids that inform this module's implementation but aren't
       pinned to any specific requirement (e.g. naming conventions,
-      project-wide build rules). Resolved into the codegen prompt walk
+      project-wide build rules). `report decisions --module` lists them
       alongside the requirement-anchored `decided_by` decisions.
       Validated by graph check `module_guided_by_resolves`.
     type: array
@@ -215,7 +206,7 @@ allOf:
       properties:
         app_path: { const: "/" }
   # 5. The two error kinds are Client Components, stated not implied
-  #    (reduction attrs have no defaults; the emitter reads the attr).
+  #    (reduction attrs have no defaults; checks read the attr).
   - if:
       required: [boundary_kind]
       properties:

@@ -72,13 +72,12 @@ $defs:
           implementation; the `requirements_have_satisfiers` graph
           check warns if no module declares this requirement in its
           `satisfies` array. `architecture` — captured by an
-          architecture-level decision (e.g. `[plugin].formats`,
-          `[audio].default_channel_layout`) and not a module's
-          responsibility. `build` — captured by build configuration
+          architecture-level decision (e.g. the export formats, the
+          main bus layout) and not a module's responsibility. `build` — captured by build configuration
           (Cargo features, target). `test` — captured by a test suite;
-          the `requirements_have_satisfiers` check exempts these, but
-          `test_requirements_have_verifiers` warns instead when no test
-          item's `verifies` names the requirement.
+          the `requirements_have_satisfiers` check exempts these;
+          `requirements_have_tests` asks for a discovered test named in
+          `verified_by`.
         type: string
         enum: [module, architecture, build, test]
         default: module
@@ -105,6 +104,18 @@ $defs:
           number, page, table, clause.
         type: string
         minLength: 1
+      planned:
+        description: >
+          Not built yet. Suppresses only findings about something missing
+          (no satisfying module, no test); code that exists is always
+          checked. `check --since` reports every new flag.
+        type: boolean
+      test_pending:
+        description: >
+          Built, but with no test yet. Exempts only the requirement-to-test
+          checks; "has a place" still applies. `check --since` reports every
+          new flag.
+        type: boolean
       verified_by:
         description: >
           Dotted Module.action identifiers or test names that verify

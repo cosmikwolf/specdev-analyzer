@@ -22,7 +22,7 @@
 ;; fn/const/type is an item named `<Type>::<member>`. The inherent impl
 ;; block itself produces NO item. A TRAIT impl (`impl Trait for Type`)
 ;; stays ONE item: the conformance is the contract; its method bodies are
-;; codegen-derived from the trait, not separate items. The `trait:` field
+;; dictated by the trait, not separate items. The `trait:` field
 ;; (present → trait impl) vs `!trait` (absent → inherent impl) partitions
 ;; the two cases; visibility is captured (`*.vis`) and compared against
 ;; the profile's visibility floor in the extractor (private associated

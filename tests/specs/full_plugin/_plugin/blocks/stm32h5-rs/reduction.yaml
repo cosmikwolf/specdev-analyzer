@@ -12,7 +12,7 @@ metaschema_version: "v1"
 # v1 declares no relations. Cross-peripheral wiring (e.g. "this GPDMA
 # channel serves this UART") could become a relation in v2 if a project
 # needs graph-check coverage; for now, that wiring is implicit in the
-# codegen prose.
+# guidance.
 
 entities:
   - kind: Peripheral

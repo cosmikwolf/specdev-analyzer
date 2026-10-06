@@ -3,6 +3,8 @@
 //! more tests here; doc-only findings (F-008, F-015 part 1) are not
 //! covered (no behavior to assert).
 
+use crate::ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -12,11 +14,12 @@ use specdev_analyzer::{
     validate, Severity,
 };
 
+/// The coverage rule's findings at the 2.0 template severity, error.
 fn warnings_for_rule(report: &Report, rule: &str) -> Vec<Finding> {
     report
         .findings()
         .iter()
-        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Warning))
+        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Error))
         .cloned()
         .collect()
 }
@@ -89,17 +92,22 @@ fn errors_with_prefix(report: &Report, rule_prefix: &str) -> Vec<Finding> {
 }
 
 // ===========================================================================
-// F-001 — {{project_name}} placeholder is substituted in
-//         architecture.toml.template; schema rejects literal {{...}} leaks.
+// F-001 — {{project_name}} placeholder is substituted at bootstrap. The
+//         audio-plugin architecture template is gone (2.0 removes its
+//         tables), so the name lands in spec.toml only.
 // ===========================================================================
 
 #[test]
-fn audio_plugin_architecture_template_substitutes_project_name() {
+fn audio_plugin_bootstrap_substitutes_project_name() {
     let (target, _) = fresh_audio_plugin("f001-substitute", "my_awesome_synth");
-    let body = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
     assert!(
-        body.contains(r#"name     = "my_awesome_synth""#),
-        "expected substituted [plugin].name; got body:\n{body}"
+        !target.join("specs/architecture.toml").exists(),
+        "the profile seeds no architecture.toml"
+    );
+    let body = std::fs::read_to_string(target.join("spec.toml")).unwrap();
+    assert!(
+        body.contains(r#""my_awesome_synth""#),
+        "expected the substituted project name; got body:\n{body}"
     );
     assert!(
         !body.contains("{{project_name}}"),
@@ -115,8 +123,9 @@ fn audio_plugin_architecture_template_substitutes_project_name() {
 #[test]
 fn requirements_have_satisfiers_collapses_on_zero_modules() {
     let (target, _layout) = fresh_library("f003-collapse");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "ZFM-001"
@@ -130,8 +139,7 @@ text = "Second."
 id = "ZFM-003"
 text = "Third."
 "#,
-    )
-    .unwrap();
+    );
     let report = validate::run_project(&target, None).unwrap();
     let warns = warnings_for_rule(&report, "requirements_have_satisfiers");
     assert_eq!(
@@ -151,8 +159,9 @@ text = "Third."
 #[test]
 fn requirements_have_satisfiers_per_line_when_modules_present() {
     let (target, _layout) = fresh_library("f003-perline");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "ZFM-001"
@@ -162,8 +171,7 @@ text = "First."
 id = "ZFM-002"
 text = "Second."
 "#,
-    )
-    .unwrap();
+    );
     // One module that satisfies neither — both requirements still
     // orphan, but the project has Module entities, so we want the
     // per-line shape (not the summary).
@@ -188,191 +196,9 @@ visibility = "pub"
 // F-018 — `gen --strict --module X` writes the assembled prompt to stdout.
 // ===========================================================================
 
-#[test]
-fn gen_strict_module_writes_prompt_to_stdout() {
-    let (target, _layout) = fresh_library("f018-gen-strict");
-    std::fs::write(
-        target.join("specs/modules/Core.toml"),
-        r#"name = "Core"
-visibility = "pub"
-
-[[items]]
-kind = "fn"
-name = "ping"
-description = "echo a string."
-"#,
-    )
-    .unwrap();
-    let bin = env!("CARGO_BIN_EXE_specdev-analyzer");
-
-    // Compare gen --strict --module against prompt --module — they
-    // must produce identical bytes (F-018 collapses the two surfaces).
-    let gen_out = std::process::Command::new(bin)
-        .args(["gen", "--module", "Core", "--project"])
-        .arg(&target)
-        .output()
-        .expect("gen --module");
-    let prompt_out = std::process::Command::new(bin)
-        .args(["prompt", "--module", "Core", "--project"])
-        .arg(&target)
-        .output()
-        .expect("prompt --module");
-    assert!(
-        gen_out.status.success(),
-        "gen --module Core failed: {}",
-        String::from_utf8_lossy(&gen_out.stderr)
-    );
-    assert!(prompt_out.status.success());
-    assert_eq!(
-        gen_out.stdout, prompt_out.stdout,
-        "gen --module must match prompt --module byte-for-byte"
-    );
-    assert!(
-        !gen_out.stdout.is_empty(),
-        "assembled prompt must not be empty"
-    );
-}
-
 // ===========================================================================
 // F-016 — `[[bin]]` standalone row paired with stub `src/bin/standalone.rs`.
 // ===========================================================================
-
-#[test]
-fn audio_plugin_render_emits_standalone_stub_when_format_set() {
-    use specdev_analyzer::cargo_toml as ct;
-
-    let (target, _) = fresh_audio_plugin("f016-emit", "demo_plugin");
-    std::fs::write(
-        target.join("specs/architecture.toml"),
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap", "standalone"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
-    )
-    .unwrap();
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = ct::render(&layout).expect("audio-plugin render");
-
-    assert!(
-        rendered.text.contains("[[bin]]") && rendered.text.contains("src/bin/standalone.rs"),
-        "Cargo.toml must declare the standalone [[bin]] row; got:\n{}",
-        rendered.text
-    );
-    let stub = rendered
-        .extra_files
-        .iter()
-        .find(|(p, _)| p == &std::path::PathBuf::from("src/bin/standalone.rs"))
-        .expect("extra_files must contain the standalone stub");
-    assert!(
-        stub.1.contains("compile_error!"),
-        "stub should carry a compile_error! reminder; got:\n{}",
-        stub.1
-    );
-}
-
-#[test]
-fn audio_plugin_render_no_extra_files_without_standalone() {
-    use specdev_analyzer::cargo_toml as ct;
-
-    let (target, _) = fresh_audio_plugin("f016-noformat", "demo_plugin");
-    std::fs::write(
-        target.join("specs/architecture.toml"),
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
-    )
-    .unwrap();
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = ct::render(&layout).expect("audio-plugin render without standalone");
-    assert!(
-        rendered.extra_files.is_empty(),
-        "no [[bin]] row → no stubs; got: {:?}",
-        rendered.extra_files
-    );
-    assert!(
-        !rendered.text.contains("[[bin]]"),
-        "Cargo.toml should not contain [[bin]] without standalone; got:\n{}",
-        rendered.text
-    );
-}
-
-#[test]
-fn cargo_toml_subcommand_writes_paired_stub() {
-    let (target, _) = fresh_audio_plugin("f016-cli", "demo_plugin");
-    std::fs::write(
-        target.join("specs/architecture.toml"),
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "standalone"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
-    )
-    .unwrap();
-    let bin = env!("CARGO_BIN_EXE_specdev-analyzer");
-    // Paired files (the `[[bin]]` stub included) are written only under
-    // `--write`: `--output <file>` redirects the manifest text alone and
-    // never touches the project root. The original form of this test
-    // passed `--output <project>/Cargo.toml` and relied on the stub
-    // being written anyway — that was the defect, not the contract.
-    let out = std::process::Command::new(bin)
-        .args(["manifest", "--project"])
-        .arg(&target)
-        .arg("--write")
-        .output()
-        .expect("running manifest --write");
-    assert!(
-        out.status.success(),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stub_path = target.join("src/bin/standalone.rs");
-    assert!(
-        stub_path.is_file(),
-        "stub must exist at {} after cargo-toml emit",
-        stub_path.display()
-    );
-
-    // Re-running with a hand-edited stub must NOT clobber.
-    std::fs::write(&stub_path, "// hand-edited\nfn main() {}\n").unwrap();
-    let _ = std::process::Command::new(bin)
-        .args(["manifest", "--project"])
-        .arg(&target)
-        .arg("--write")
-        .output()
-        .expect("re-running manifest --write");
-    let stub_body = std::fs::read_to_string(&stub_path).unwrap();
-    assert!(
-        stub_body.contains("hand-edited"),
-        "hand-edited stub must survive re-emit; got: {stub_body}"
-    );
-}
 
 // ===========================================================================
 // F-014 — coverage report reads `[[requirement]]` (singular per the schema)
@@ -386,8 +212,9 @@ fn coverage_report_populates_matrix_from_singular_requirement_key() {
     use specdev_analyzer::coverage;
 
     let (target, layout) = fresh_library("f014-coverage");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[source]]
 id = "rfc"
@@ -403,8 +230,7 @@ id = "REQ-API-002"
 text = "Errors carry context."
 source = "rfc"
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Core.toml"),
         r#"name = "Core"
@@ -577,19 +403,7 @@ fn bridge_reduce_unresolved_includes_co_residency_hint() {
     inline::run_inline_block(&layout, &full_plugin(), "egui").unwrap();
     inline::run_inline_bridge(&layout, &full_plugin(), "egui+nih-plug").unwrap();
 
-    let arch = r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+    let arch = "";
     std::fs::write(target.join("specs/architecture.toml"), arch).unwrap();
     // Binding references a non-existent region — this triggers
     // REDUCE_UNRESOLVED on the bridge relation.
@@ -650,7 +464,6 @@ fn audio_plugin_plugin_name_schema_rejects_literal_placeholder() {
         r#"[plugin]
 name = "{{project_name}}"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3"]
 

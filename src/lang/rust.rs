@@ -8,8 +8,93 @@ pub struct RustAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/rust/audit.scm");
 const ITEMS_QUERY: &str = include_str!("../embedded/languages/rust/items.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/rust/tests.scm");
+const IMPORTS_QUERY: &str = include_str!("../embedded/languages/rust/imports.scm");
 
 impl LanguageAdapter for RustAdapter {
+    fn manifest_facts(
+        &self,
+        project_root: &std::path::Path,
+    ) -> Option<crate::manifest_facts::ManifestFacts> {
+        crate::manifest_facts::cargo(project_root)
+    }
+
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment")
+            || [
+                "attribute_item",
+                "inner_attribute_item",
+                "use_declaration",
+                "extern_crate_declaration",
+            ]
+            .contains(&kind)
+    }
+
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &["tests"]
+    }
+
+    fn imports_query(&self) -> Option<&'static str> {
+        Some(IMPORTS_QUERY)
+    }
+
+    /// `crate::a::b`, `super::…`, `self::…`, and from a crate-root file a
+    /// bare `a::b` naming a sibling module; brace lists and `as` aliases
+    /// expanded. Any other root (another crate, `std`, `core`) is external.
+    fn resolve_import(
+        &self,
+        spec: &str,
+        from: &std::path::Path,
+        ctx: &super::ImportContext,
+    ) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for path in expand_use(spec) {
+            let mut segs: Vec<&str> = path
+                .split("::")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            while matches!(segs.last(), Some(&"self") | Some(&"*")) {
+                segs.pop();
+            }
+            let Some(first) = segs.first().copied() else {
+                continue;
+            };
+            let (base, rest): (std::path::PathBuf, &[&str]) = match first {
+                "crate" => (ctx.source_root.clone(), &segs[1..]),
+                "self" => (module_dir(from), &segs[1..]),
+                "super" => {
+                    let mut dir = module_dir(from);
+                    let mut i = 0;
+                    while segs.get(i) == Some(&"super") {
+                        dir = dir
+                            .parent()
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_default();
+                        i += 1;
+                    }
+                    (dir, &segs[i..])
+                }
+                _ if is_crate_root(from, &ctx.source_root) => (ctx.source_root.clone(), &segs[..]),
+                _ => continue,
+            };
+            // The longest prefix that is a module file wins.
+            for k in (1..=rest.len()).rev() {
+                let mut dir = base.clone();
+                for s in &rest[..k - 1] {
+                    dir.push(s);
+                }
+                out.push(dir.join(format!("{}.rs", rest[k - 1])));
+                out.push(dir.join(rest[k - 1]).join("mod.rs"));
+            }
+        }
+        out
+    }
+
     fn name(&self) -> &'static str {
         "rust"
     }
@@ -136,6 +221,71 @@ fn visibility_rank(vis: Option<&str>) -> u8 {
         Some(v) if v.starts_with("pub(in") => 1,
         _ => 0,
     }
+}
+
+/// The directory a file's child modules live in: its own directory for a
+/// `mod.rs` / `lib.rs` / `main.rs`, else `<dir>/<stem>/`.
+fn module_dir(file: &std::path::Path) -> std::path::PathBuf {
+    let parent = file
+        .parent()
+        .unwrap_or(std::path::Path::new(""))
+        .to_path_buf();
+    match file.file_name().and_then(|n| n.to_str()) {
+        Some("mod.rs") | Some("lib.rs") | Some("main.rs") => parent,
+        _ => parent.join(file.file_stem().unwrap_or_default()),
+    }
+}
+
+fn is_crate_root(file: &std::path::Path, source_root: &std::path::Path) -> bool {
+    file.parent() == Some(source_root)
+        && matches!(
+            file.file_name().and_then(|n| n.to_str()),
+            Some("lib.rs") | Some("main.rs")
+        )
+}
+
+/// `a::{b, c::{d, e}} as x` → `a::b`, `a::c::d`, `a::c::e`.
+fn expand_use(spec: &str) -> Vec<String> {
+    let spec = spec.trim().trim_end_matches(';');
+    let Some(open) = spec.find('{') else {
+        return vec![spec.split(" as ").next().unwrap_or(spec).trim().to_string()];
+    };
+    let prefix = spec[..open].trim_end_matches("::").trim();
+    let Some(close) = spec.rfind('}') else {
+        return vec![prefix.to_string()];
+    };
+    let inner = &spec[open + 1..close];
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    for (i, c) in inner.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&inner[start..]);
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .flat_map(|p| {
+            expand_use(p)
+                .into_iter()
+                .map(|s| {
+                    if prefix.is_empty() {
+                        s
+                    } else {
+                        format!("{prefix}::{s}")
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 #[cfg(test)]

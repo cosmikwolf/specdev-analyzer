@@ -14,7 +14,7 @@
 //!   domain.toml.template
 //!   schemas/{module,architecture,requirements}.schema.yaml
 //!   reductions/project.yaml
-//!   codegen/<lang>/module.conventions.md
+//!   guidance.md               # → specs/specdev/guidance/profile.md
 //!   README.md                 # author-facing, NOT copied
 //! ```
 //!
@@ -35,10 +35,10 @@ use crate::manifest::{BootstrapStep, Profile};
 pub struct BootstrapInputs {
     /// Profile to scaffold (`firmware-layered`, `library-api`, …).
     pub profile: String,
-    /// Target language for codegen. The `language` enums in
-    /// `spec.schema.yaml` and `profile.schema.yaml` are the source of truth
-    /// and admit `rust`, `c`, `cpp`, `dart` and `typescript`; not every one
-    /// of them has a manifest emitter.
+    /// Project language; must match the profile's `language:`. The
+    /// `language` enums in `spec.schema.yaml` and `profile.schema.yaml` are
+    /// the source of truth and admit `rust`, `c`, `cpp`, `dart` and
+    /// `typescript`.
     pub language: String,
     /// Project name; conventionally lowercase + hyphens.
     pub project_name: String,
@@ -126,14 +126,12 @@ struct ProfileFile {
     substitute: bool,
 }
 
-/// Build the per-language file plan for a profile. The two routing
-/// special cases (`spec.toml.template` → project root,
-/// `domain.toml.template` → `specs/specdev/`) are hard-coded; everything
-/// else under the profile root, `schemas/`, and `codegen/<lang>/` is
-/// dynamically enumerated so a profile can ship arbitrary supporting
-/// schemas (e.g. firmware-layered's `metadata.schema.yaml`), arbitrary
-/// codegen-prose files (e.g. rust-workspace's `workspace.conventions.md`),
-/// and arbitrary `<artifact>.toml.template` files at the profile root
+/// Build the file plan for a profile. The two routing special cases
+/// (`spec.toml.template` → project root, `domain.toml.template` →
+/// `specs/specdev/`) are hard-coded; everything else under the profile
+/// root and `schemas/` is dynamically enumerated so a profile can ship
+/// arbitrary supporting schemas (e.g. firmware-layered's
+/// `metadata.schema.yaml`) and arbitrary `<artifact>.toml.template` files at the profile root
 /// (architecture / requirements / decisions / open_questions / future
 /// additions) without touching this code.
 /// Project-relative paths whose content the profile shares with another
@@ -156,8 +154,18 @@ pub fn profile_file_hash(rel: &str, bytes: &[u8]) -> Result<String> {
     if CO_OWNED_AGGREGATORS.contains(&rel) {
         crate::inline::aggregator_profile_hash(bytes, rel)
     } else {
-        Ok(crate::hash::content_hash(bytes))
+        Ok(crate::hash::recorded_hash(bytes))
     }
+}
+
+/// Whether `recorded` (a `[profile_files]` value) witnesses `bytes`. A
+/// co-owned aggregator compares its profile-owned part; a plain file
+/// accepts the line-ending forms of [`crate::hash::record_matches`].
+pub fn profile_file_matches(rel: &str, bytes: &[u8], recorded: &str) -> Result<bool> {
+    if CO_OWNED_AGGREGATORS.contains(&rel) {
+        return Ok(crate::inline::aggregator_profile_hash(bytes, rel)? == recorded);
+    }
+    Ok(crate::hash::record_matches(recorded, bytes))
 }
 
 /// The exact bytes `bootstrap` writes for each profile-scaffolded file,
@@ -175,7 +183,7 @@ pub fn profile_expected_bytes(
     profile_dir: &Path,
     inputs: &BootstrapInputs,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
-    let plan = profile_plan(profile_dir, &inputs.language)?;
+    let plan = profile_plan(profile_dir)?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for f in &plan {
         let src = profile_dir.join(&f.src_rel);
@@ -202,7 +210,7 @@ pub fn profile_expected_bytes(
     Ok(out)
 }
 
-fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> {
+fn profile_plan(profile_dir: &Path) -> Result<Vec<ProfileFile>> {
     let mut plan: Vec<ProfileFile> = vec![
         ProfileFile {
             src_rel: PathBuf::from("spec.toml.template"),
@@ -269,9 +277,18 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
         });
     }
 
-    // When the profile ships a `templates/` directory (referenced from
-    // profile.yaml's `paired_stub.template_file` and any future
-    // template_file fields), copy each file byte-faithfully to
+    // The profile's implementation guidance inlines next to the units' own
+    // (`specs/specdev/guidance/`), recorded like every profile file.
+    if profile_dir.join(crate::inline::GUIDANCE_FILE).is_file() {
+        plan.push(ProfileFile {
+            src_rel: PathBuf::from(crate::inline::GUIDANCE_FILE),
+            dst_rel: PathBuf::from("specs/specdev/guidance/profile.md"),
+            substitute: false,
+        });
+    }
+
+    // When the profile ships a `templates/` directory (the sources of
+    // profile.yaml's `paired_files`), copy each file byte-faithfully to
     // `<target>/specs/specdev/templates/`. Tokens in the file body are
     // resolved at render time (closed `{key}` grammar); bootstrap-time copy
     // is byte-faithful. Subdirectories are not walked in v1 (no shipped
@@ -293,37 +310,6 @@ fn profile_plan(profile_dir: &Path, language: &str) -> Result<Vec<ProfileFile>> 
             plan.push(ProfileFile {
                 src_rel: PathBuf::from(format!("templates/{file_name}")),
                 dst_rel: PathBuf::from(format!("specs/specdev/templates/{file_name}")),
-                substitute: false,
-            });
-        }
-    }
-
-    // Dynamically enumerate `codegen/<lang>/*.md`. Lex-sorted; copied
-    // verbatim. Profiles ship whatever convention files they need:
-    //   - firmware-layered, library-api: `module.conventions.md`
-    //   - rust-workspace: `workspace.conventions.md`
-    //   - future profiles: any `*.conventions.md` (or other `*.md`)
-    let codegen_lang_dir = profile_dir.join("codegen").join(language);
-    if codegen_lang_dir.is_dir() {
-        let mut codegen_entries: Vec<PathBuf> = std::fs::read_dir(&codegen_lang_dir)
-            .with_context(|| format!("reading {}", codegen_lang_dir.display()))?
-            .filter_map(|r| r.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
-                    && p.file_name()
-                        .and_then(|s| s.to_str())
-                        .is_some_and(|s| s.ends_with(".md"))
-            })
-            .collect();
-        codegen_entries.sort();
-        for entry in codegen_entries {
-            let Some(file_name) = entry.file_name().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            plan.push(ProfileFile {
-                src_rel: PathBuf::from(format!("codegen/{language}/{file_name}")),
-                dst_rel: PathBuf::from(format!("specs/specdev/codegen/{language}/{file_name}")),
                 substitute: false,
             });
         }
@@ -421,6 +407,8 @@ pub fn run_bootstrap_with(
         ));
     }
 
+    check_enclosing_workspace_format(&inputs.target_dir)?;
+
     let profile_dir = plugin_root.join("profiles").join(&inputs.profile);
     if !profile_dir.is_dir() {
         return Err(anyhow!(
@@ -430,32 +418,43 @@ pub fn run_bootstrap_with(
         ));
     }
 
-    // Validate language is supported by the profile by checking that
-    // `codegen/<language>/` exists with at least one `*.conventions.md`
-    // file. Errors here name the language so users see the missing-
-    // codegen issue before any bytes are written. (The convention file
-    // name is no longer hardcoded to `module.conventions.md`; rust-workspace
-    // ships `workspace.conventions.md` instead.)
-    let codegen_lang_dir = profile_dir.join("codegen").join(&inputs.language);
-    let has_conventions = codegen_lang_dir.is_dir()
-        && std::fs::read_dir(&codegen_lang_dir)
-            .map(|it| {
-                it.filter_map(|r| r.ok()).any(|e| {
-                    e.path()
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .is_some_and(|s| s.ends_with(".conventions.md"))
+    // The profile declares the one language it scaffolds (`profile.yaml`
+    // `language:`). Checked before any byte is written, naming both.
+    match profile_language(&profile_dir)? {
+        Some(lang) if lang == inputs.language => {}
+        Some(lang) => {
+            return Err(anyhow!(
+                "[BOOTSTRAP-001] profile {:?} scaffolds language {:?}, not {:?}",
+                inputs.profile,
+                lang,
+                inputs.language,
+            ));
+        }
+        // D51-fallback: a pre-manifest profile (no `profile.yaml`) names its
+        // language by shipping `codegen/<lang>/*.conventions.md`, as before
+        // manifests existed. Removed with the other pre-manifest paths.
+        None => {
+            let lang_dir = profile_dir.join("codegen").join(&inputs.language);
+            let has_conventions = std::fs::read_dir(&lang_dir)
+                .map(|it| {
+                    it.filter_map(|r| r.ok()).any(|e| {
+                        e.file_name()
+                            .to_str()
+                            .is_some_and(|s| s.ends_with(".conventions.md"))
+                    })
                 })
-            })
-            .unwrap_or(false);
-    if !has_conventions {
-        return Err(anyhow!(
-            "[BOOTSTRAP-001] profile {:?} has no codegen for language {:?} \
-             (expected at least one *.conventions.md under {})",
-            inputs.profile,
-            inputs.language,
-            codegen_lang_dir.display(),
-        ));
+                .unwrap_or(false);
+            if !has_conventions {
+                return Err(anyhow!(
+                    "[BOOTSTRAP-001] profile {:?} declares no language {:?}: no profile.yaml \
+                     at {}, and no pre-manifest codegen/{}/ conventions file",
+                    inputs.profile,
+                    inputs.language,
+                    profile_dir.join("profile.yaml").display(),
+                    inputs.language,
+                ));
+            }
+        }
     }
 
     // Schema-check the profile manifest BEFORE any byte is written, and
@@ -465,9 +464,12 @@ pub fn run_bootstrap_with(
     // (they inspect the rendered `spec.toml`), but the *validation* that
     // can fail is front-loaded.
     let bootstrap_steps = manifest_bootstrap_steps(&profile_dir)?;
+    // The profile's one-time config files are checked here too, so a bad
+    // row refuses before any byte is written.
+    crate::paired_files::check_profile_rows(&profile_dir)?;
 
     // Copy files per the plan. Substitute templates; verbatim-copy schema
-    // and codegen content (analyzer never re-emits YAML/Markdown).
+    // content (analyzer never re-emits YAML/Markdown).
     let expected = profile_expected_bytes(&profile_dir, inputs)?;
 
     // Refuse before the first byte if the plan would land on a file that is
@@ -608,14 +610,15 @@ pub fn run_bootstrap_with(
     // `[profile_files]` records the substrate that stamp used to leave
     // unaccounted for (#109).
     //
-    // `[meta].plugin_version` is an AUDIT STAMP WITH NO READER. It is not
+    // `[meta].bootstrapped_with` is an AUDIT STAMP WITH NO READER. It is not
     // a handshake and must not be mistaken for one: nothing compares it,
     // and it does not move when the manifest contract does. The contract
     // handshake is `profile.yaml`'s `contract_version` against
     // `manifest::profile::PROFILE_CONTRACT_VERSION` (#117).
     let lineage = Lineage {
         meta: Some(MetaSection {
-            plugin_version: plugin_version(plugin_root)?,
+            bootstrapped_with: Some(plugin_version(plugin_root)?),
+            plugin_version: None,
             bootstrapped_at: now_iso8601(),
             profile: inputs.profile.clone(),
         }),
@@ -623,6 +626,53 @@ pub fn run_bootstrap_with(
         ..Default::default()
     };
     lineage.save(&specdev_root)?;
+
+    // The profile's one-time config files (`tsconfig.json`, `.gitignore`,
+    // …), written only where nothing exists yet.
+    let layout = crate::layout::LayoutContext::discover(&inputs.target_dir, None)?;
+    crate::paired_files::write_absent(&layout)?;
+    // The script CI runs, and the line that keeps it LF.
+    crate::gates::emit_script(&layout)?;
+    Ok(())
+}
+
+/// A new project inside a workspace becomes one of its members, so it must be
+/// in the workspace's format. The nearest ancestor `spec.toml` with a
+/// `[workspace]` table decides — whether or not it lists the new member yet
+/// (`FORMAT-002`). Nothing is written on a refusal.
+fn check_enclosing_workspace_format(target: &Path) -> Result<()> {
+    let mut cursor = target.parent();
+    while let Some(dir) = cursor {
+        let candidate = dir.join("spec.toml");
+        if let Ok(text) = std::fs::read_to_string(&candidate) {
+            if let Ok(doc) = toml::from_str::<toml::Table>(&text) {
+                if doc.contains_key("workspace") {
+                    let version = doc
+                        .get("spec_version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1.0")
+                        .to_string();
+                    let major: u32 = version
+                        .split('.')
+                        .next()
+                        .and_then(|m| m.parse().ok())
+                        .unwrap_or(1);
+                    if major != crate::config::NEWEST_FORMAT_MAJOR {
+                        return Err(anyhow!(
+                            "[FORMAT-002] {} would be a {}.0 project inside the workspace at {}, which is at \
+                             spec_version {version}. Run `specdev-analyzer migrate` in {} first; nothing was written.",
+                            target.display(),
+                            crate::config::NEWEST_FORMAT_MAJOR,
+                            dir.display(),
+                            dir.display()
+                        ));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        cursor = dir.parent();
+    }
     Ok(())
 }
 
@@ -639,6 +689,24 @@ pub fn run_bootstrap_with(
 /// check — but only the plugin path is a file the *user* did not write.
 /// Called before the copy loop, so a schema failure names the plugin and
 /// leaves no partial tree behind.
+/// The `language:` a profile's `profile.yaml` declares, read without the
+/// full manifest schema check (that runs next and owns its own messages).
+/// `None` when the profile ships no `profile.yaml` or names no language.
+fn profile_language(profile_dir: &Path) -> Result<Option<String>> {
+    let path = profile_dir.join("profile.yaml");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    Ok(value
+        .get("language")
+        .and_then(|v| v.as_str())
+        .map(str::to_string))
+}
+
 fn manifest_bootstrap_steps(profile_dir: &Path) -> Result<Option<Vec<BootstrapStep>>> {
     let manifest_path = profile_dir.join("profile.yaml");
     if !manifest_path.is_file() {

@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use specdev_analyzer::manifest::{BindingLocality, BlockDeps, BridgeContract, Profile, ShapeKind};
+use specdev_analyzer::manifest::{BindingLocality, BridgeContract, Profile};
 
 fn full_plugin() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -101,52 +101,11 @@ fn bridges_in(root: &Path) -> Vec<String> {
     units_in(root, "bridges")
 }
 
-/// `(block, codegen language)` for every `blocks/<n>/codegen/<lang>/deps.yaml`
-/// that exists. Language is part of the row because the deps manifest lives
-/// under it, and a block may in principle ship more than one.
-fn blocks_in(root: &Path) -> Vec<(String, String)> {
-    let mut rows = Vec::new();
-    for name in units_in(root, "blocks") {
-        let codegen = root.join("blocks").join(&name).join("codegen");
-        if !codegen.is_dir() {
-            continue;
-        }
-        let mut langs: Vec<String> = std::fs::read_dir(&codegen)
-            .unwrap_or_else(|e| panic!("read {}: {e}", codegen.display()))
-            .map(|e| e.expect("dir entry"))
-            .filter(|e| e.path().join("deps.yaml").is_file())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        langs.sort();
-        for lang in langs {
-            rows.push((name.clone(), lang));
-        }
-    }
-    assert!(
-        !rows.is_empty(),
-        "discovered zero block deps under {}",
-        root.display()
-    );
-    rows
-}
-
 // Blocks that deliberately contribute NO deps, each with its reason. A block
 // absent from this list must contribute at least one dep in its language's
 // vocabulary — `recommended_external_deps` is suggestion-only and does not
 // count. Both directions are asserted, so adding a dep to a listed block is
 // as loud as dropping one from an unlisted block.
-const ZERO_DEP_BLOCKS: &[(&str, &str)] = &[
-    // Topology-only: the non-embassy STM32H5 HAL has no usable crates.io
-    // release yet, and the production path (`embassy-stm32`) is the
-    // embassy+stm32h5-rs bridge's join-product dep, never the block's.
-    ("stm32h5-rs", "no publishable HAL crate"),
-    // Host-neutral: egui always arrives from a host — `eframe::egui` from the
-    // eframe block, `nih_plug_egui::egui` from the egui+nih-plug bridge.
-    // Contributing a version here would put a second, independently-versioned
-    // egui in the graph alongside the host's, whose types would not unify.
-    ("egui", "the host owns the egui version"),
-];
-
 // ===========================================================================
 // 1 — full_plugin fixture: every manifest loads cleanly
 // ===========================================================================
@@ -162,31 +121,11 @@ fn fixture_profiles_load_cleanly() {
             &m.name, name,
             "manifest .name must match dir name for {name}"
         );
-        // Each profile must declare the manifest-emission section
-        // matching its language.
-        match m.language.as_str() {
-            "rust" => assert!(m.cargo_toml.is_some(), "{name} must declare cargo_toml"),
-            "dart" => assert!(m.pubspec_yaml.is_some(), "{name} must declare pubspec_yaml"),
-            "typescript" => {
-                assert!(m.package_json.is_some(), "{name} must declare package_json")
-            }
-            other => panic!("profile {name} declares unexpected language `{other}`"),
-        }
-    }
-}
-
-#[test]
-fn fixture_block_deps_load_cleanly() {
-    let root = full_plugin();
-    for (name, lang) in &blocks_in(&root) {
-        let p = root
-            .join("blocks")
-            .join(name)
-            .join("codegen")
-            .join(lang)
-            .join("deps.yaml");
-        BlockDeps::load(&p)
-            .unwrap_or_else(|e| panic!("deps for block {name} failed to load: {e:#}"));
+        assert!(
+            ["rust", "dart", "typescript"].contains(&m.language.as_str()),
+            "profile {name} declares unexpected language `{}`",
+            m.language
+        );
     }
 }
 
@@ -220,130 +159,12 @@ fn live_plugin_tree_profiles_load_cleanly() {
 }
 
 #[test]
-fn live_plugin_tree_block_deps_load_cleanly() {
-    let root = live_plugin();
-    for (name, lang) in &blocks_in(&root) {
-        let p = root
-            .join("blocks")
-            .join(name)
-            .join("codegen")
-            .join(lang)
-            .join("deps.yaml");
-        let m =
-            BlockDeps::load(&p).unwrap_or_else(|e| panic!("live deps for {name} failed: {e:#}"));
-
-        // The zero-dep rule is asserted HERE, against the live tree, not
-        // against the fixture. The fixture is a subset — it omits several
-        // shipped blocks — so running this over the fixture silently exempts
-        // exactly the blocks nobody copied in. Measured when this moved: the
-        // fixture holds 10 blocks and the live tree ships 14, so four blocks
-        // were escaping the rule entirely.
-        let contributes = contributes_deps(&m, lang);
-        match ZERO_DEP_BLOCKS.iter().find(|(b, _)| b == name) {
-            Some((_, reason)) => assert!(
-                !contributes,
-                "block {name} declares deps but is listed as contributing none ({reason}); \
-                 either drop the dep or remove it from ZERO_DEP_BLOCKS"
-            ),
-            None => assert!(
-                contributes,
-                "block {name} should declare at least one {lang} dep (recommended_external_deps is suggestion-only)"
-            ),
-        }
-    }
-}
-
-/// Does this block's `deps.yaml` contribute at least one dep in `lang`'s
-/// own vocabulary?
-///
-/// Each language keeps its deps under its OWN key, so the language must
-/// select the key. This was a two-arm match whose `_` fell through to
-/// `crates`, which is a silent wrong answer for every language that is
-/// neither rust nor dart: a typescript block contributing `npm:` entries
-/// read as contributing nothing and failed the rule it satisfied. Nothing
-/// caught it because the tree shipped no typescript block until the first
-/// one arrived — the arm was unreachable, then it was wrong.
-///
-/// The fallback panics by name rather than guessing. A block deps.yaml in
-/// a sixth language cannot be checked against the wrong key and then pass
-/// or fail for the wrong reason.
-fn contributes_deps(m: &BlockDeps, lang: &str) -> bool {
-    match lang {
-        "rust" => !m.crates.is_empty(),
-        "dart" => !m.pub_packages.is_empty(),
-        "typescript" => !m.npm.is_empty(),
-        other => panic!(
-            "no block-deps vocabulary mapping for language `{other}`. A deps.yaml \
-             under blocks/*/codegen/{other}/ keeps its entries under a key this \
-             match does not read, so the zero-dep rule would answer from the \
-             wrong key. Add the arm."
-        ),
-    }
-}
-
-#[test]
-fn contributes_deps_reads_each_language_own_key() {
-    // Each language's entries must be seen through its own key, and must
-    // NOT be seen through another language's. The second half is the one
-    // that was broken: npm entries read through `crates` as "none".
-    let npm_only: BlockDeps =
-        serde_yaml::from_str("npm:\n  - package: \"@prisma/client\"\n    version: \"^7.10.0\"\n")
-            .expect("npm deps parse");
-    assert!(
-        contributes_deps(&npm_only, "typescript"),
-        "an npm-only deps.yaml contributes in typescript"
-    );
-    assert!(
-        !contributes_deps(&npm_only, "rust"),
-        "an npm-only deps.yaml contributes nothing in rust — if this passes, \
-         some arm is reading another language's key"
-    );
-
-    let crates_only: BlockDeps =
-        serde_yaml::from_str("crates:\n  - name: itm\n    version: \"0.9.0-rc.1\"\n")
-            .expect("crate deps parse");
-    assert!(contributes_deps(&crates_only, "rust"));
-    assert!(!contributes_deps(&crates_only, "typescript"));
-
-    let empty: BlockDeps = serde_yaml::from_str("{}\n").expect("empty deps parse");
-    for lang in ["rust", "dart", "typescript"] {
-        assert!(!contributes_deps(&empty, lang), "empty contributes nothing");
-    }
-}
-
-#[test]
-#[should_panic(expected = "no block-deps vocabulary mapping for language `kotlin`")]
-fn contributes_deps_panics_for_an_unmapped_language() {
-    // The guard is the point of the rewrite, so it is asserted rather than
-    // assumed. Without this the fallback is a comment.
-    let empty: BlockDeps = serde_yaml::from_str("{}\n").expect("empty deps parse");
-    let _ = contributes_deps(&empty, "kotlin");
-}
-
-#[test]
 fn live_plugin_tree_bridge_contracts_load_cleanly() {
     let root = live_plugin();
     for name in &bridges_in(&root) {
         let p = root.join("bridges").join(name).join("contract.yaml");
         BridgeContract::load(&p)
             .unwrap_or_else(|e| panic!("live contract for {name} failed: {e:#}"));
-    }
-}
-
-#[test]
-fn live_plugin_tree_bridge_deps_load_cleanly() {
-    // Bridges may ship a codegen/<lang>/deps.yaml for join-product
-    // crates (same manifest shape as block deps). `load` returns the
-    // default for bridges that ship none, so this covers both cases.
-    let root = live_plugin();
-    for name in &bridges_in(&root) {
-        let p = root
-            .join("bridges")
-            .join(name)
-            .join("codegen")
-            .join("rust")
-            .join("deps.yaml");
-        BlockDeps::load(&p).unwrap_or_else(|e| panic!("live bridge deps for {name} failed: {e:#}"));
     }
 }
 
@@ -450,35 +271,9 @@ fn every_fixture_file_matches_the_live_plugin_tree() {
 // ===========================================================================
 
 #[test]
-fn fixture_audio_plugin_paired_stub_template_file_exists() {
-    let root = full_plugin();
-    let manifest = Profile::load(&root.join("profiles/audio-plugin/profile.yaml")).unwrap();
-    let cargo = manifest.cargo_toml.unwrap();
-    let bin = cargo.bin.expect("audio-plugin bin section present");
-    let stub = bin.paired_stub.expect("audio-plugin paired_stub present");
-    let stub_path = root.join("profiles/audio-plugin").join(&stub.template_file);
-    assert!(
-        stub_path.is_file(),
-        "audio-plugin paired_stub.template_file must exist at {}",
-        stub_path.display()
-    );
-    let body = std::fs::read_to_string(&stub_path).unwrap();
-    assert!(
-        body.contains("{project_name}"),
-        "stub must use {{project_name}} token"
-    );
-    assert!(
-        body.contains("compile_error!"),
-        "stub must include the friendly reminder"
-    );
-}
-
-#[test]
-fn fixture_rust_workspace_has_workspace_shape_and_no_module_surface() {
+fn fixture_rust_workspace_has_no_module_surface() {
     let root = full_plugin();
     let manifest = Profile::load(&root.join("profiles/rust-workspace/profile.yaml")).unwrap();
-    let cargo = manifest.cargo_toml.unwrap();
-    assert_eq!(cargo.shape, ShapeKind::Workspace);
     let surf = manifest.surface.unwrap();
     assert!(
         !surf.has_modules,

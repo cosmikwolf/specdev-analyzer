@@ -3,7 +3,7 @@
 #
 # The endpoint pair (egui, nih-plug) is encoded in the directory name and
 # is not restated in the manifest body.
-# Inlined alongside reduction.yaml during `specdev inline-bridge`;
+# Inlined alongside reduction.yaml by `specdev-analyzer inline-bridge`;
 # participates in the bridge's per-unit content_hash.
 
 binding_locality: plugin_shell_unique

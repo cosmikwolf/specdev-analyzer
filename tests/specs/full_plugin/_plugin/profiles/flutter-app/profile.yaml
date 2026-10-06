@@ -4,19 +4,19 @@
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
-contract_version: 1
+contract_version: 2
 
 name: flutter-app
 language: dart
 
-pubspec_yaml:
-  shape: app
-  environment:
-    sdk: "^3.9.0"                 # architecture.toml [environment] overrides key-by-key
-    flutter: ">=3.35.0"
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
 
-# Compile gate, as data: the codegen skill runs each `steps` argv in order
-# in the project root and records one row per module under `label`.
+# Compile gate, as data: the gate script (and CI) runs each `steps` argv
+# in order in the project root; the first non-zero exit fails the gate.
 # `flutter analyze` defaults to `--fatal-infos --fatal-warnings` and would
 # fail on one unused import; errors-only matches `cargo check` and the
 # rule this gate replaces ("no errors; treat analyzer errors like compile
@@ -24,7 +24,6 @@ pubspec_yaml:
 # `analyze` pass with no platform directories.
 gates:
   - label: flutter-analyze
-    scope: module
     steps:
       - [flutter, pub, get]
       - [flutter, analyze, --no-fatal-infos, --no-fatal-warnings]
@@ -33,8 +32,6 @@ bootstrap:
   steps: []                       # standalone app; no workspace machinery
 
 context:
-  module_fields_for_prompt:
-    [items, satisfies, depends_on, context_files, external_deps, platforms, channels]
   context_subcommand_extras:
     - field: role
       from_attr: role

@@ -13,7 +13,7 @@ description: >
   against whichever unit owns the values. Custom drawing (plots,
   visualizers, spectrum analyzers) is declared structurally via
   `purpose = "free_form"` regions and hand-authored Rust inside the
-  codegen scaffold.
+  code.
 
   The block is **host-neutral** and contributes no crates: egui itself
   arrives from the host the project inlines (`eframe::egui` from the
@@ -55,19 +55,19 @@ properties:
       panels:
         description: >
           Panels — each becomes one of egui's panel types
-          (CentralPanel, SidePanel, TopBottomPanel) at codegen time.
+          (CentralPanel, SidePanel, TopBottomPanel) in the code.
           Order is significant: side / top / bottom panels must be
           declared before the central panel, because each removes its
           strip from the available area and the central panel fills
-          what is left. Codegen emits in the order panels are listed.
+          what is left. The code has in the order panels are listed.
         type: array
         items: { $ref: "#/$defs/Panel" }
         minItems: 1
       regions:
         description: >
           Regions inside panels. Each carries a `purpose` that drives
-          the codegen scaffolding pattern (see this block's codegen
-          prose). Cross-cutting binding (value→widget) lives in a
+          the shape of the code (see this block's
+          guidance). Cross-cutting binding (value→widget) lives in a
           bridge against the unit that owns the values, not here.
         type: array
         items: { $ref: "#/$defs/Region" }
@@ -95,16 +95,16 @@ $defs:
           Panel position. `central` is the main panel (one per
           surface; egui requires it last in the paint callback).
           `side_left` / `side_right` are vertical strips on the
-          edges. `top` / `bottom` are horizontal strips. Codegen
-          emits `egui::CentralPanel`, `egui::SidePanel::left/right`,
-          or `egui::TopBottomPanel::top/bottom` accordingly.
+          edges. `top` / `bottom` are horizontal strips. The code uses the
+          matching egui panel type (central, side, top/bottom) in the
+          panel API generation the host's egui has.
         type: string
         enum: [central, side_left, side_right, top, bottom]
       width:
         description: >
           Optional initial width (px) for `side_left` / `side_right`
           panels. Hosts may resize when `[egui].resizable = true`;
-          codegen uses this as the SidePanel's `default_width`. Has
+          the code uses this as the SidePanel's `default_width`. Has
           no effect on `central` / `top` / `bottom` panels (their
           widths are determined by the surface).
         type: integer
@@ -112,7 +112,7 @@ $defs:
       height:
         description: >
           Optional initial height (px) for `top` / `bottom` panels.
-          Codegen uses this as the TopBottomPanel's `default_height`.
+          The code uses this as the TopBottomPanel's `default_height`.
           Has no effect on `central` / `side_left` / `side_right`
           panels.
         type: integer
@@ -121,8 +121,8 @@ $defs:
   Region:
     description: >
       A region inside a panel. Regions group widgets by purpose; the
-      `purpose` enum drives the codegen scaffold pattern (see this
-      block's codegen prose).
+      `purpose` enum drives the shape of the code (see this
+      block's guidance).
     type: object
     additionalProperties: false
     required: [id, panel, purpose]
@@ -138,30 +138,30 @@ $defs:
         $ref: "#/$defs/Identifier"
       purpose:
         description: |
-          Region role. Drives codegen scaffold per the table:
+          Region role. Decides the region body per the table:
 
             parameter_controls — region holds widgets bound to values
                                  a bridge declares (the `egui+nih-plug`
                                  bridge's `parameter_widgets[]` is the
-                                 shipped case). Codegen emits a
+                                 shipped case). The code has a
                                  placeholder marker the bridge fills
                                  in; with no such bridge inlined the
                                  region body is hand-authored.
             metering           — region displays values published from
                                  another thread, typically `Atomic*`
-                                 cells. Codegen emits the read-side
+                                 cells. The code has the read-side
                                  boilerplate; user fills in the
                                  visualization (level meter, LED, etc.).
             preset_selector    — region renders a saved-configuration
                                  picker (combo box + prev/next buttons
-                                 + save/load). Codegen emits the
+                                 + save/load). The code has the
                                  standard pattern.
             free_form          — region body is hand-authored.
-                                 Codegen emits a TODO marker and
+                                 The code has a TODO marker and
                                  leaves the body open.
             label_block        — region renders static text (section
-                                 headers, instructions). Codegen
-                                 emits `ui.label(...)` calls.
+                                 headers, instructions) with
+                                 `ui.label(...)` calls.
         type: string
         enum:
           - parameter_controls
@@ -174,7 +174,7 @@ $defs:
           Optional layout direction inside the region. `grid` arranges
           children in a grid (requires `columns`); `vertical` stacks
           children top-to-bottom; `horizontal` arranges
-          left-to-right. Defaults to `vertical`. Codegen wraps the
+          left-to-right. Defaults to `vertical`. The code wraps the
           region body in `egui::Grid::new(id).num_columns(N)` for
           `grid`, `ui.vertical(|ui| {...})` for vertical, and
           `ui.horizontal(|ui| {...})` for horizontal.
@@ -183,7 +183,7 @@ $defs:
       columns:
         description: >
           Column count when `layout = "grid"`. Required for grid
-          layouts; ignored otherwise (codegen emits a warning if set
+          layouts; ignored otherwise (the code has a warning if set
           on non-grid layouts).
         type: integer
         minimum: 1

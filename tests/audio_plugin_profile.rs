@@ -4,9 +4,9 @@
 //!   * Bootstrap — `--profile audio-plugin` scaffolds the expected
 //!     layout (module + architecture + requirements + enums schemas;
 //!     module.conventions.md; populated templates).
-//!   * Schema validation — required `[plugin]` / `[audio]` / `[runtime]`
-//!     fields, closed-enum coverage (formats, category, channel layout,
-//!     panic_handler), strict SemVer on `[plugin].version`.
+//!   * Schema validation — the architecture holds `project_decisions` only;
+//!     the identity, bus and panic tables of 1.x are refused (2.0 removes
+//!     them: the plugin's code holds those constants).
 //!   * Layer dependency check — upward edges in the four-tier ordering
 //!     (host_interface → plugin_shell → engine → dsp_node) error.
 //!   * Cargo.toml render — `[lib] crate-type = ["cdylib"]` always;
@@ -16,11 +16,12 @@
 //!   * F-006 parity — `requirements_have_satisfiers` fires on
 //!     orphan module-nature requirements.
 
+use crate::ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml::render,
     layout::LayoutContext,
     report::{Finding, Report},
     validate, Severity,
@@ -66,35 +67,8 @@ fn fresh_plugin(tag: &str) -> (PathBuf, LayoutContext) {
     (target, layout)
 }
 
-/// Default architecture.toml that satisfies all required fields. Tests
-/// that need to exercise specific configurations overwrite this.
-const ARCH_DEFAULT: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
-
-const ARCH_WITH_STANDALONE: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap", "standalone"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+/// Default architecture.toml: no key is required.
+const ARCH_DEFAULT: &str = "";
 
 fn write_arch(target: &Path, body: &str) {
     std::fs::write(target.join("specs/architecture.toml"), body).unwrap();
@@ -144,10 +118,10 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
         assert!(p.is_file(), "expected {} after bootstrap", p.display());
     }
 
-    // Codegen prose at codegen/rust/module.conventions.md.
-    assert!(target
+    // Profile codegen conventions are no longer copied.
+    assert!(!target
         .join("specs/specdev/codegen/rust/module.conventions.md")
-        .is_file());
+        .exists());
 
     // Project-level reduction.
     assert!(target
@@ -156,8 +130,10 @@ fn bootstrap_emits_expected_audio_plugin_layout() {
 
     // Templates rendered into project root.
     assert!(target.join("spec.toml").is_file());
-    assert!(target.join("specs/architecture.toml").is_file());
-    assert!(target.join("specs/requirements.toml").is_file());
+    // 2.0: the profile's architecture has no key to seed.
+    assert!(!target.join("specs/architecture.toml").exists());
+    // 2.0: one file per entry, so no combined ledger is scaffolded.
+    assert!(!target.join("specs/requirements.toml").exists());
     assert!(target.join("specs/specdev/domain.toml").is_file());
 
     // languages tier (items.schema.yaml inlined).
@@ -247,49 +223,17 @@ depends_on = ["Shell"]
 }
 
 // ---------------------------------------------------------------------------
-// 5 — Architecture schema: closed-enum `category` rejects unknown values.
+// 5 — Architecture schema: the 1.x identity, bus and panic tables are
+//     refused (a 2.0 tree has them only if `migrate` did not run).
 // ---------------------------------------------------------------------------
 #[test]
-fn architecture_schema_rejects_unknown_category() {
-    let (target, _) = fresh_plugin("bad-category");
+fn architecture_schema_refuses_the_removed_identity_tables() {
+    let (target, _) = fresh_plugin("removed-tables");
     write_arch(
         &target,
         r#"[plugin]
 name = "Demo"
 vendor = "ExampleCo"
-version = "0.1.0"
-category = "unicorn"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#,
-    );
-
-    let report = validate::run_project(&target, None).unwrap();
-    let errs = errors_for(&report, "SCHEMA-ARCH");
-    assert!(
-        !errs.is_empty(),
-        "expected SCHEMA-ARCH error for unknown category; got {report:#?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 6 — Architecture schema: `[plugin].version` enforces strict SemVer.
-//     `0.1.0` validates; `0.1.0-rc1` fails.
-// ---------------------------------------------------------------------------
-#[test]
-fn architecture_schema_rejects_non_strict_semver_version() {
-    let (target, _) = fresh_plugin("bad-version");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0-rc1"
 category = "instrument"
 formats = ["vst3"]
 
@@ -305,101 +249,14 @@ panic_handler = "abort"
     let errs = errors_for(&report, "SCHEMA-ARCH");
     assert!(
         !errs.is_empty(),
-        "expected SCHEMA-ARCH error for non-strict-SemVer version; got {report:#?}"
+        "expected SCHEMA-ARCH error for the removed tables; got {report:#?}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// 7 — Cargo.toml render: cdylib only when standalone is NOT in formats.
+// 6 — Architecture schema: `[plugin].version` enforces strict SemVer.
+//     `0.1.0` validates; `0.1.0-rc1` fails.
 // ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_cdylib_only_when_no_standalone() {
-    let (target, _) = fresh_plugin("cdylib-only");
-    write_arch(&target, ARCH_DEFAULT);
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(
-        t.contains("[lib]\ncrate-type = [\"cdylib\"]\n"),
-        "expected [lib] cdylib block:\n{t}"
-    );
-    assert!(
-        !t.contains("[[bin]]"),
-        "expected no [[bin]] target when formats lacks standalone:\n{t}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 8 — Cargo.toml render: formats includes "standalone" → emit
-//     [[bin]] standalone target with name = "<project>-standalone",
-//     path = src/bin/standalone.rs. cdylib still emits.
-// ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_bin_when_standalone_in_formats() {
-    let (target, _) = fresh_plugin("with-standalone");
-    write_arch(&target, ARCH_WITH_STANDALONE);
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(
-        t.contains("[lib]\ncrate-type = [\"cdylib\"]\n"),
-        "cdylib still required:\n{t}"
-    );
-    assert!(
-        t.contains(
-            "[[bin]]\nname = \"demo_plugin-standalone\"\npath = \"src/bin/standalone.rs\"\n"
-        ),
-        "expected [[bin]] standalone target:\n{t}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 9 — Cargo.toml render: [features] parity with library-api. Architecture-
-//     declared features emit a [features] section with synthetic
-//     `default = [...]` line.
-// ---------------------------------------------------------------------------
-#[test]
-fn cargo_toml_emits_features_section_with_default_synthesis() {
-    let (target, _) = fresh_plugin("features");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "fx"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-
-[[features]]
-name = "midi"
-description = "Optional MIDI handling"
-
-[[features]]
-name = "simd"
-description = "SIMD DSP path"
-default = true
-"#,
-    );
-
-    let layout = LayoutContext::discover(&target, None).unwrap();
-    let rendered = render(&layout).unwrap();
-    let t = &rendered.text;
-
-    assert!(t.contains("[features]\n"), "{t}");
-    assert!(t.contains("default = [\"simd\"]\n"), "{t}");
-    assert!(t.contains("midi = []\n"), "{t}");
-    assert!(t.contains("simd = []\n"), "{t}");
-}
 
 // ---------------------------------------------------------------------------
 // 10 — F-006 parity: requirements_have_satisfiers fires on orphan
@@ -410,8 +267,9 @@ default = true
 fn requirements_have_satisfiers_fires_on_orphan_module_requirement() {
     let (target, _) = fresh_plugin("orphan-req");
     write_arch(&target, ARCH_DEFAULT);
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-AUDIO-001"
 text = "Plugin must not allocate on the audio thread."
@@ -421,8 +279,7 @@ id = "REQ-FORMAT-001"
 text = "Plugin ships as VST3 + CLAP."
 nature = "architecture"
 "#,
-    )
-    .unwrap();
+    );
     write_module(
         &target,
         "MyPlugin",
@@ -432,7 +289,7 @@ layer = "plugin_shell"
     );
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = errors_for(&report, "requirements_have_satisfiers");
     assert_eq!(
         warnings.len(),
         1,
@@ -457,58 +314,6 @@ layer = "plugin_shell"
 //      features before the `module_feature_gates_resolve` graph check
 //      runs — same behavior as library-api).
 // ---------------------------------------------------------------------------
-#[test]
-fn feature_gates_resolve_against_architecture_features() {
-    let (target, _) = fresh_plugin("feature-gates");
-    write_arch(
-        &target,
-        r#"[plugin]
-name = "Demo"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-
-[[features]]
-name = "midi"
-description = "MIDI handling"
-"#,
-    );
-    write_module(
-        &target,
-        "MidiHandler",
-        r#"name = "MidiHandler"
-layer = "engine"
-feature_gates = ["midi"]
-"#,
-    );
-    write_module(
-        &target,
-        "BadGate",
-        r#"name = "BadGate"
-layer = "engine"
-feature_gates = ["nonexistent"]
-"#,
-    );
-
-    let report = validate::run_project(&target, None).unwrap();
-    let errs = errors_for(&report, "REDUCE_UNRESOLVED");
-    let feature_errs: Vec<_> = errs
-        .iter()
-        .filter(|f| f.message.contains("Feature") && f.message.contains("nonexistent"))
-        .collect();
-    assert_eq!(
-        feature_errs.len(),
-        1,
-        "expected one REDUCE_UNRESOLVED error naming Feature/nonexistent; got {errs:#?}"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // N — `parameters_have_bindings` must stay silent on non-Parameter entities
@@ -526,8 +331,9 @@ fn parameters_have_bindings_silent_when_parameter_kind_absent() {
     write_arch(&target, ARCH_DEFAULT);
     // Requirements + sources, no modules, no nih-plug block inlined: the
     // `nih-plug.Parameter` kind never enters the effective kind set.
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[source]]
 id = "user-stories"
 kind = "user"
@@ -542,8 +348,7 @@ source = ["user-stories"]
 id = "ZX7-002"
 text = "SysEx import loads voices."
 "#,
-    )
-    .unwrap();
+    );
 
     let report = validate::run_project(&target, None).unwrap();
     let flood = warnings_for(&report, "parameters_have_bindings");

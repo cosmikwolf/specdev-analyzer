@@ -26,10 +26,16 @@ const SCHEMA_SOURCE: &str = include_str!("../src/embedded/profile.schema.yaml");
 /// Every contract version this binary has ever defined, paired with the
 /// SHA-256 of the schema text at that version. Append a row when you bump
 /// `PROFILE_CONTRACT_VERSION`; never edit an existing row.
-const CONTRACT_HASHES: &[(u64, &str)] = &[(
-    1,
-    "sha256:20dbc5501837573057fb229104875a44e7aa8569323e79552e4c770b7a7c56a5",
-)];
+const CONTRACT_HASHES: &[(u64, &str)] = &[
+    (
+        1,
+        "sha256:20dbc5501837573057fb229104875a44e7aa8569323e79552e4c770b7a7c56a5",
+    ),
+    (
+        2,
+        "sha256:535a048fdc7767668326b44d7d2efcb99f5ff182dab8ea4ac4276b7d726805de",
+    ),
+];
 
 fn tmp_file(tag: &str, body: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -159,5 +165,100 @@ fn contract_pairing_guard() {
          specdev/profiles/*/profile.yaml (plugin-lint enforces this)\n\nIf the change was only \
          prose — a comment or a description — replace this row's hash with:\n  {actual}\n",
         PROFILE_CONTRACT_VERSION + 1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 5. Contract 2: the emitter sections are gone.
+// ---------------------------------------------------------------------------
+
+const RETIRED: [&str; 4] = [
+    "cargo_toml",
+    "pubspec_yaml",
+    "package_json",
+    "derived_files",
+];
+
+fn plugin_profiles() -> Vec<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    for root in [
+        manifest.join("../specdev/profiles"),
+        manifest.join("tests/specs/full_plugin/_plugin/profiles"),
+    ] {
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path().join("profile.yaml");
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn plugin_profiles_are_contract_two_without_emitter_sections() {
+    let profiles = plugin_profiles();
+    assert!(profiles.len() >= 7, "found {profiles:?}");
+    for p in profiles {
+        let v: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(
+            v.get("contract_version").and_then(|c| c.as_u64()),
+            Some(2),
+            "{}",
+            p.display()
+        );
+        for k in RETIRED {
+            assert!(
+                v.get(k).is_none(),
+                "{}: `{k}` is an emitter section",
+                p.display()
+            );
+        }
+        for g in v
+            .get("gates")
+            .and_then(|g| g.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            assert!(
+                g.get("scope").is_none(),
+                "{}: a gate keeps `scope`",
+                p.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_contract_two_manifest_with_an_emitter_section_is_refused() {
+    let p = tmp_file(
+        "two-retired",
+        "name: demo\nlanguage: rust\ncontract_version: 2\ncargo_toml:\n  shape: library\n",
+    );
+    let msg = load_err(&p);
+    assert!(
+        msg.contains("MANIFEST-001") && msg.contains("cargo_toml"),
+        "got {msg}"
+    );
+}
+
+/// The read-both window: a `1.x` tree's inlined manifest still loads.
+#[test]
+fn a_contract_one_manifest_with_emitter_sections_still_loads() {
+    let p = tmp_file(
+        "one-retired",
+        "name: demo\nlanguage: rust\ncontract_version: 1\ncargo_toml:\n  shape: library\n  lib: {}\n\
+         derived_files: []\ngates:\n  - label: cargo-check\n    scope: module\n    steps:\n      - [cargo, check]\n",
+    );
+    let profile = Profile::load(&p).unwrap_or_else(|e| panic!("{e:#}"));
+    assert_eq!(profile.gates.len(), 1);
+    assert_eq!(
+        profile.gates[0].steps,
+        vec![vec!["cargo".to_string(), "check".to_string()]]
     );
 }

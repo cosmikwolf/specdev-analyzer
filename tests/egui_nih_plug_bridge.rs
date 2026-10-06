@@ -47,19 +47,7 @@ fn tmp_workspace(tag: &str) -> PathBuf {
     p
 }
 
-const ARCH_DEFAULT: &str = r#"[plugin]
-name = "Demo Plugin"
-vendor = "ExampleCo"
-version = "0.1.0"
-category = "instrument"
-formats = ["vst3", "clap"]
-
-[audio]
-default_channel_layout = "stereo"
-
-[runtime]
-panic_handler = "abort"
-"#;
+const ARCH_DEFAULT: &str = "";
 
 fn fresh_audio_with_blocks(tag: &str) -> (PathBuf, LayoutContext) {
     let workspace = tmp_workspace(tag);

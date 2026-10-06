@@ -4,7 +4,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 const SCHEMA_YAML: &str = include_str!("../embedded/profile.schema.yaml");
@@ -22,7 +21,7 @@ const SCHEMA_LABEL: &str = "profile.schema.yaml";
 /// when a skill changes, it says nothing about the schema, and
 /// `Profile::load` never reads it. This number describes exactly one
 /// contract and lives next to the schema it describes.
-pub const PROFILE_CONTRACT_VERSION: u64 = 1;
+pub const PROFILE_CONTRACT_VERSION: u64 = 2;
 
 /// A manifest with no `contract_version` predates the field. Every project
 /// bootstrapped before this release is in that state, so the absent value
@@ -34,12 +33,6 @@ pub struct Profile {
     pub name: String,
     pub language: String,
     #[serde(default)]
-    pub cargo_toml: Option<CargoTomlSection>,
-    #[serde(default)]
-    pub pubspec_yaml: Option<PubspecYamlSection>,
-    #[serde(default)]
-    pub package_json: Option<PackageJsonSection>,
-    #[serde(default)]
     pub bootstrap: Option<BootstrapSection>,
     #[serde(default)]
     pub context: Option<ContextSection>,
@@ -49,50 +42,34 @@ pub struct Profile {
     pub items: Option<ItemsSection>,
     #[serde(default)]
     pub reverse: Option<ReverseSection>,
-    /// Config files written once when absent by `manifest
-    /// --write`, then externally owned. Language-neutral; the shared
-    /// manifest runner merges them with the rust arm's `[[bin]]` stub.
+    /// Config files `bootstrap` writes once when absent, then externally
+    /// owned (`tsconfig.json`, `.gitignore`, …).
     #[serde(default)]
     pub paired_files: Vec<PairedFile>,
-    /// Rules for files derived per module by `derive --write` (route
-    /// shims). Declared order is match order; the first match wins.
-    /// Empty for a profile with no derived files.
-    #[serde(default)]
-    pub derived_files: Vec<DerivedRule>,
-    /// The compile-gate registry: every gate the codegen skill runs
-    /// after emission, as data (label, scope, argv steps). Empty for a
-    /// profile that declares none — which `report gen-plan` reports as
-    /// `gates_declared: false` and `gen --tail` refuses.
+    /// The compile-gate registry: every gate the project's gate script
+    /// and CI run, as data (label, argv steps). Empty for a profile that
+    /// declares none.
     #[serde(default)]
     pub gates: Vec<Gate>,
 }
 
-/// One `gates` row. `label` is opaque and is the row key in
-/// `gen-lineage.toml` together with the module; `steps` is a list of
-/// argv lists run in order in the project root (never a shell string).
+/// The top-level sections a contract-1 manifest may still carry: they fed
+/// the manifest emitters, which no longer exist. The loader drops them
+/// from a contract-1 manifest (an inlined copy in a `1.x` tree) before the
+/// schema runs; a contract-2 manifest that names one is refused.
+pub const RETIRED_SECTIONS: [&str; 4] = [
+    "cargo_toml",
+    "pubspec_yaml",
+    "package_json",
+    "derived_files",
+];
+
+/// One `gates` row. `label` is opaque; `steps` is a list of argv lists run
+/// in order in the project root (never a shell string).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Gate {
     pub label: String,
-    pub scope: GateScope,
     pub steps: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GateScope {
-    /// One execution per run, one recorded row per module in the run.
-    Module,
-    /// One execution per run, one recorded row with no module.
-    Batch,
-}
-
-impl GateScope {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            GateScope::Module => "module",
-            GateScope::Batch => "batch",
-        }
-    }
 }
 
 /// One `paired_files` row: a template under the profile's `templates/`
@@ -102,20 +79,6 @@ impl GateScope {
 pub struct PairedFile {
     pub template_file: String,
     pub target: String,
-}
-
-/// One `derived_files` rule. `when` is a set of attribute equalities on
-/// the module document (ANDed; values compare as rendered scalars);
-/// `path` is a template over the module document; `template` is the
-/// body file under the profile's `templates/`; `exclusive` names a
-/// group whose targets may not share a directory.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct DerivedRule {
-    pub when: BTreeMap<String, serde_json::Value>,
-    pub path: String,
-    pub template: String,
-    #[serde(default)]
-    pub exclusive: Option<String>,
 }
 
 /// `items` — extraction policy (#101(b)). The floor is an opaque string
@@ -144,209 +107,6 @@ pub enum ReverseVocabulary {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct CargoTomlSection {
-    pub shape: ShapeKind,
-    #[serde(default)]
-    pub default_edition: Option<String>,
-    #[serde(default)]
-    pub lib: Option<LibSection>,
-    #[serde(default)]
-    pub bin: Option<BinSection>,
-    #[serde(default)]
-    pub features: Option<FeaturesSection>,
-    #[serde(default)]
-    pub architecture_deps: Option<ArchitectureDepsSection>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeKind {
-    Library,
-    Binary,
-    Workspace,
-    Plugin,
-}
-
-/// pubspec.yaml render dispatch — sibling of [`CargoTomlSection`]; the
-/// `manifest` subcommand routes on the project language to whichever
-/// section applies.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct PubspecYamlSection {
-    pub shape: PubShapeKind,
-    /// Default `environment:` constraints, overridable by
-    /// architecture.toml's `[environment]` table.
-    #[serde(default)]
-    pub environment: Option<PubEnvironment>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PubShapeKind {
-    /// An application: emits `publish_to: none`.
-    App,
-    /// A publishable library package.
-    Package,
-    /// Descriptive only — the `[workspace]` table in spec.toml is the
-    /// actual dispatch signal, mirroring the cargo path.
-    Workspace,
-}
-
-/// package.json render dispatch — third sibling of [`CargoTomlSection`]
-/// and [`PubspecYamlSection`].
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct PackageJsonSection {
-    pub shape: PackageJsonShapeKind,
-    /// Default `packageManager` (corepack pin); architecture.toml's
-    /// `[environment] package_manager` overrides it.
-    #[serde(default)]
-    pub package_manager: Option<String>,
-    /// Default `engines` map; architecture.toml's `[environment] node`
-    /// overrides `node`.
-    #[serde(default)]
-    pub engines: Option<NpmEngines>,
-    /// The package.json `type` field; omitted when absent.
-    #[serde(default, rename = "type")]
-    pub module_type: Option<NpmModuleType>,
-    /// Default `scripts`; architecture.toml's `[scripts]` overrides
-    /// key-by-key.
-    #[serde(default)]
-    pub scripts: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PackageJsonShapeKind {
-    /// An application: emits `"private": true`.
-    App,
-    /// A publishable package.
-    Library,
-    /// The pnpm workspace root — the `[workspace]` table in spec.toml is
-    /// the actual dispatch signal, mirroring the cargo and pub paths.
-    Workspace,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
-pub struct NpmEngines {
-    #[serde(default)]
-    pub node: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum NpmModuleType {
-    Module,
-    Commonjs,
-}
-
-impl NpmModuleType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            NpmModuleType::Module => "module",
-            NpmModuleType::Commonjs => "commonjs",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct PubEnvironment {
-    pub sdk: String,
-    #[serde(default)]
-    pub flutter: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct LibSection {
-    #[serde(default)]
-    pub crate_type: Vec<CrateType>,
-    #[serde(default)]
-    pub cdylib_only: bool,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum CrateType {
-    Lib,
-    Rlib,
-    Cdylib,
-    Staticlib,
-    Dylib,
-    ProcMacro,
-}
-
-impl CrateType {
-    /// The literal cargo writes in `[lib] crate-type = [...]`.
-    pub fn as_cargo_str(self) -> &'static str {
-        match self {
-            CrateType::Lib => "lib",
-            CrateType::Rlib => "rlib",
-            CrateType::Cdylib => "cdylib",
-            CrateType::Staticlib => "staticlib",
-            CrateType::Dylib => "dylib",
-            CrateType::ProcMacro => "proc-macro",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct BinSection {
-    pub name_template: String,
-    pub path_template: String,
-    #[serde(default)]
-    pub gate: Option<BinGate>,
-    #[serde(default)]
-    pub paired_stub: Option<PairedStub>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum BinGate {
-    /// Bin only emits when architecture.toml's `<table>.<field>` array
-    /// contains `<value>`.
-    ArchitectureArrayContains {
-        table: String,
-        field: String,
-        value: String,
-    },
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct PairedStub {
-    /// Path under `profiles/<name>/`. Bytes are the stub body; supports
-    /// `{project_name}` substitution at cargo-toml render time.
-    pub template_file: String,
-}
-
-/// `cargo_toml.features` — descriptive only. The cargo-toml renderer
-/// dispatches on `shape` and reads architecture.toml's `[[features]]` by
-/// fixed key; nothing reads these two fields. Kept because inlined
-/// projects carry them; wiring them in is the v1.1 fixed-key cleanup.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct FeaturesSection {
-    #[serde(default)]
-    pub synthesize_default: bool,
-    #[serde(default)]
-    pub drain_from: Vec<String>,
-}
-
-/// `cargo_toml.architecture_deps` — descriptive only. The renderer reads
-/// the slot tables (`platform`, `runtime`, `logger`) and `[[external_deps]]`
-/// by fixed key; nothing reads these two fields. Same v1.1 cleanup as
-/// [`FeaturesSection`].
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ArchitectureDepsSection {
-    #[serde(default)]
-    pub typed_slots: Vec<TypedSlot>,
-    #[serde(default)]
-    pub open_arrays: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct TypedSlot {
-    pub table: String,
-    pub keys: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct BootstrapSection {
     #[serde(default)]
     pub steps: Vec<BootstrapStep>,
@@ -362,8 +122,6 @@ pub enum BootstrapStep {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ContextSection {
-    #[serde(default)]
-    pub module_fields_for_prompt: Vec<String>,
     #[serde(default)]
     pub context_subcommand_extras: Vec<ContextExtra>,
 }
@@ -410,21 +168,6 @@ impl Profile {
         Self::load(&path).map(Some)
     }
 
-    /// The declared module-scope gates, in declared order. `verified`
-    /// for a module means a pass row at the current key from every one
-    /// of these; an empty list means `verified` cannot be computed.
-    pub fn module_gates(&self) -> impl Iterator<Item = &Gate> {
-        self.gates.iter().filter(|g| g.scope == GateScope::Module)
-    }
-
-    /// True when at least one module-scope gate is declared — the
-    /// precondition for `verified` to mean anything. A registry with
-    /// only batch gates is as good as none here: "every declared
-    /// module-scope gate passed" would hold over zero gates forever.
-    pub fn gates_declared(&self) -> bool {
-        self.module_gates().next().is_some()
-    }
-
     /// The profile-declared visibility floor, if any (`items.visibility_floor`).
     pub fn visibility_floor(&self) -> Option<&str> {
         self.items
@@ -432,12 +175,29 @@ impl Profile {
             .and_then(|i| i.visibility_floor.as_deref())
     }
 
+    /// Validate `profile.yaml` text without a file: the checks [`Self::load`]
+    /// runs. `path` only names the file in messages.
+    pub fn check_text(text: &str, path: &Path) -> Result<()> {
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
+        let mut value: JsonValue =
+            serde_json::to_value(yaml).with_context(|| format!("converting {}", path.display()))?;
+        check_contract_version(&value, path)?;
+        drop_retired_sections(&mut value);
+        super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
+        let parsed: Profile = serde_json::from_value(value)
+            .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
+        check_gate_labels_unique(&parsed.gates, path)?;
+        Ok(())
+    }
+
     /// Load and validate a `profile.yaml`. Path is the file itself
     /// (typically `specs/specdev/profile.yaml` in the inlined tree, or
     /// `profiles/<name>/profile.yaml` in the plugin tree).
     pub fn load(path: &Path) -> Result<Self> {
-        let value = super::read_yaml(path)?;
+        let mut value = super::read_yaml(path)?;
         check_contract_version(&value, path)?;
+        drop_retired_sections(&mut value);
         super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
         let parsed: Profile = serde_json::from_value(value)
             .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
@@ -534,6 +294,35 @@ fn check_contract_version(value: &JsonValue, path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A contract-1 manifest loses the sections and the gate `scope` key that
+/// only the manifest emitters read; a contract-2 one is left for the schema
+/// to judge.
+fn drop_retired_sections(value: &mut JsonValue) {
+    let declared = value
+        .get("contract_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(IMPLIED_CONTRACT_VERSION);
+    if declared >= 2 {
+        return;
+    }
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    for k in RETIRED_SECTIONS {
+        map.remove(k);
+    }
+    if let Some(gates) = map.get_mut("gates").and_then(|g| g.as_array_mut()) {
+        for g in gates {
+            if let Some(g) = g.as_object_mut() {
+                g.remove("scope");
+            }
+        }
+    }
+    if let Some(ctx) = map.get_mut("context").and_then(|c| c.as_object_mut()) {
+        ctx.remove("module_fields_for_prompt");
+    }
 }
 
 /// Two `gates` rows with one label would write rows under one

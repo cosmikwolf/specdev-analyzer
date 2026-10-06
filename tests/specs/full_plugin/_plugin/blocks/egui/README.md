@@ -41,19 +41,18 @@ deliberately not usable by itself. Two shipped units are hosts:
 | eframe | native desktop application shell | `eframe::egui` | the `eframe` block |
 | nih-plug | audio-plugin editor | `nih_plug_egui::egui` | the `egui+nih-plug` bridge |
 
-Every host emits one line at the crate root:
+Every host re-exports its egui once, at the crate root:
 
 ```rust
 pub use eframe::egui;          // eframe host
 pub use nih_plug_egui::egui;   // nih-plug host
 ```
 
-and this block's emitted code refers to **`crate::egui`**. Two
+and code for this block refers to **`crate::egui`**. Two
 consequences worth understanding, because both are the point:
 
-1. **Emission does not vary by host.** The panel and region code this
-   block produces is identical whichever host is in play, so the block
-   never has to ask which one it is.
+1. **The code does not vary by host** (apart from the panel API
+   generation, below), so the block never has to ask which one it is.
 2. **Two hosts in one crate fail loudly.** They collide at that single
    `pub use` line with a duplicate-definition error, rather than
    resolving two semver-incompatible egui versions whose `Context` and
@@ -68,12 +67,8 @@ as a tools overlay, `bevy_egui`, `egui-baseview` without nih-plug, or
 headless use in tests. The block works there — topology is topology —
 but nothing supplies the crate.
 
-Then the project declares `egui` itself under `architecture.toml`
-`[[external_deps]]`, which makes it a **direct** dependency, and
-emitted code uses plain **`egui::`** with no alias. It must *not*
-hand-add a crate-root `pub use`: with no unit owning that line it
-would sit in a spec-generated, lineage-recorded crate root and the next
-`/spec-gen` would delete it.
+Then the project depends on `egui` directly in `Cargo.toml`, and the
+code uses plain **`egui::`** with no alias and no crate-root re-export.
 
 Worth knowing when picking an integration: **not every one re-exports
 egui.** `eframe`, `nih_plug_egui`, `egui-winit` and `bevy_egui` do;
@@ -88,14 +83,13 @@ side of it: `nih_plug_egui` supplies egui 0.31 (`SidePanel` /
 `TopBottomPanel`, `show` taking a `&Context`), while `eframe` 0.36
 supplies egui 0.36 (unified `Panel`, `show` taking a `&mut Ui`).
 
-The codegen prose carries **both forms** and says how to tell which
-applies. Both are compiled in this block's reference crate, so neither
-is written from memory. Nothing a spec author writes changes — the
+The guidance says to find which form the host's egui has, by its types,
+before writing a panel. Nothing a spec author writes changes — the
 `[egui]` table, the entities and the relation are identical either
-way; only the emitted calls differ.
+way; only the calls in the code differ.
 
 This is why the block is not split in two: the divergence is in the
-emission, not in the spec surface.
+code, not in the spec surface.
 
 ## Why topology only (EGUI-TOPOLOGY-ONLY)
 
@@ -115,8 +109,7 @@ bridge. Three reasons:
 3. **`free_form` regions accommodate custom drawing** without forcing
    it into the spec. Oscilloscopes / plots / spectrum analyzers / XY
    pads / graph views are declared structurally — "this region exists,
-   content is hand-authored" — but Claude can still emit a coherent
-   scaffold around them.
+   content is hand-authored".
 
 ## What this block contributes
 
@@ -167,10 +160,9 @@ Reduction relation (intra-block):
   `REDUCE_UNRESOLVED` machinery surfaces missing-panel references
   at validate time without needing a new graph-check primitive.
 
-Codegen prose (`codegen/rust/README.md`) describes how each shape
-maps to Rust: panels become `egui::CentralPanel` / `SidePanel` /
-`TopBottomPanel` constructors inside whatever paint callback the host
-supplies; per-region scaffolding follows a `purpose`-driven pattern.
+The implementation guidance (`guidance.md`) carries the rules for the
+code: panel ordering, the panel API generation, and what each region
+`purpose` means for its body.
 
 ## What this block does NOT contribute
 
@@ -184,31 +176,26 @@ supplies; per-region scaffolding follows a `purpose`-driven pattern.
 - **Concreteness:** ✓ — names a specific UI toolkit (`egui`). Doesn't
   try to abstract over "any UI library"; the vocabulary is egui's own
   (panels, regions, immediate-mode layout closures).
-- **Codegen-completeness:** ✓ with one stated condition — given a
-  conforming TOML, the codegen prose produces working Rust source:
-  panels in correct ordering, per-region scaffolds the user fills in.
-  The condition is `EGUI-API-GENERATION`: panel emission has two forms
-  and the prose branches on which egui the host supplies. That is
-  **determinate, not underspecified** — a project has exactly one host,
-  the host fixes the egui version, and the prose states a feature check
-  that decides it. Both branches are compiled. Everything else, the
-  `crate::egui` alias included, is host-independent.
-- **No cross-block reach:** ✓ — the codegen prose names no host's
-  types and no other block's schema. It defers value-bound widget
-  rendering to a bridge without naming specific values or widgets.
+- **Rule-pack completeness:** ✓ — every field constrains the code:
+  panel kinds and sizes, region placement (`region_in_panel` resolves),
+  layouts and purposes; the guidance carries the rules no check can
+  verify, including `EGUI-API-GENERATION`, which is **determinate** — a
+  project has exactly one host, and the host fixes the egui version.
+- **No cross-block reach:** ✓ — the guidance names no host's types and
+  no other block's schema. It defers value-bound widgets to a bridge.
 
 ## Deferred (each carries a revisit trigger)
 
 - **More region purposes** — `list`, `log`, `plot`, `form` alongside
-  the five shipped. Each needs its own scaffold, and `free_form`
+  the five shipped. Each needs its own guidance rules, and `free_form`
   covers all of them adequately today. Promote when a project reports
   the five are inadequate for its interface.
 - **Themed styling** — `[egui.style]` for color palettes, font
   choices, widget skins. Promote when a real project shows a need
   beyond hand-authored egui style code.
 - **Conditional regions** — region visibility based on state (e.g. a
-  mode selection determines which regions show). v1 emits all regions
-  unconditionally; conditional emission would require a `visible_when`
+  mode selection determines which regions show). v1 states all regions
+  unconditionally; conditional regions would need a `visible_when`
   predicate field.
 - **Multi-section regions** — a region containing nested regions
   (collapse / expand groups). v1 keeps regions flat; nesting could
@@ -217,6 +204,6 @@ supplies; per-region scaffolding follows a `purpose`-driven pattern.
   the host's root surface. A host that declares child windows (an
   `[eframe]` viewport does) would need a Panel → child-window relation,
   which is cross-unit wiring and therefore a bridge, not a field here.
-- **Per-region `text` field for `label_block`** — v1 leaves label
-  text TODO-stubbed; promoting to a `text: [string]` field could
-  remove the TODO. Bounded follow-up.
+- **Per-region `text` field for `label_block`** — label text lives in
+  the code today; a `text: [string]` field would state it in the spec.
+  Bounded follow-up.

@@ -214,3 +214,147 @@ fn nothing() {}
         "expected exit 0 (doc-string filter must drop hits); got non-zero.\nstdout:\n{stdout}"
     );
 }
+
+/// A synthetic plugin tree that carries one file with `body`, plus an empty
+/// analyzer `src/` so the name and planning checks have nothing to report.
+fn removed_term_fixture(tag: &str, rel: &str, body: &str) -> (PathBuf, PathBuf) {
+    let workdir = tmp_dir(tag);
+    let plugin = workdir.join("plugin");
+    let synth_src = workdir.join("src");
+    write_minimal_plugin_tree(&plugin);
+    write_synth_src(&plugin, &[(rel, body)]);
+    std::fs::create_dir_all(&synth_src).unwrap();
+    (plugin, synth_src)
+}
+
+/// Test 5: a removed command named in shipped plugin text fails the lint,
+/// and the report names the file and the line.
+#[test]
+fn removed_term_in_plugin_tree_fails_lint() {
+    let (plugin, src) = removed_term_fixture(
+        "removed-term",
+        "skills/spec-design/SKILL.md",
+        "# Design\n\nWhen the spec is done, run `/spec-gen` to write the code.\n",
+    );
+    let out = run_lint(&plugin, Some(&src));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit for a removed term in the plugin tree; got success.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("skills/spec-design/SKILL.md:3:"),
+        "expected the file and line of the hit in stdout; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("removed-term violation"),
+        "expected the removed-term header in stdout; got:\n{stdout}"
+    );
+}
+
+/// Make the synthetic plugin tree a git work tree, so the lint takes its
+/// `git ls-files` path (the one CI and the live tree use) instead of the
+/// directory walk. Untracked files count, so no commit is needed.
+fn as_git_tree(plugin: &Path) {
+    let st = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(plugin)
+        .status()
+        .unwrap();
+    assert!(st.success(), "git init failed");
+}
+
+/// Both scan paths: the directory walk and `git ls-files`.
+const BOTH_PATHS: [bool; 2] = [false, true];
+
+/// Test 5b: the git path also fails on a removed term.
+#[test]
+fn removed_term_in_git_plugin_tree_fails_lint() {
+    let (plugin, src) = removed_term_fixture(
+        "removed-term-git",
+        "skills/spec-design/SKILL.md",
+        "# Design\n\nWhen the spec is done, run `/spec-gen` to write the code.\n",
+    );
+    as_git_tree(&plugin);
+    let out = run_lint(&plugin, Some(&src));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit on the git path.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("skills/spec-design/SKILL.md:3:"),
+        "expected the file and line of the hit in stdout; got:\n{stdout}"
+    );
+}
+
+/// Test 6: the per-line escape silences a removed-term hit — and the same
+/// line without the escape fails, so the pass is not vacuous.
+#[test]
+fn removed_term_escape_silences_hit() {
+    let line = "Older trees name `/spec-gen` in their ledgers.";
+    for git in BOTH_PATHS {
+        let (plugin, src) = removed_term_fixture(
+            if git {
+                "removed-term-ok-git"
+            } else {
+                "removed-term-ok"
+            },
+            "skills/spec-design/SKILL.md",
+            &format!("{line} <!-- REMOVED-TERM-OK: names the old command -->\n"),
+        );
+        if git {
+            as_git_tree(&plugin);
+        }
+        let out = run_lint(&plugin, Some(&src));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "git={git}: expected exit 0 with the escape.\nstdout:\n{stdout}"
+        );
+
+        write_synth_src(
+            &plugin,
+            &[("skills/spec-design/SKILL.md", &format!("{line}\n"))],
+        );
+        let out = run_lint(&plugin, Some(&src));
+        assert!(
+            !out.status.success(),
+            "git={git}: the same line without the escape must fail"
+        );
+    }
+}
+
+/// Test 7: `CHANGELOG.md` records what was removed, so it is not scanned —
+/// and the same line in any other file fails, so the pass is not vacuous.
+#[test]
+fn changelog_is_exempt_from_removed_terms() {
+    let body = "## 0.3.0\n\n- Removed `/spec-gen` and `gen-lineage.toml`.\n";
+    for git in BOTH_PATHS {
+        let (plugin, src) = removed_term_fixture(
+            if git {
+                "removed-term-changelog-git"
+            } else {
+                "removed-term-changelog"
+            },
+            "CHANGELOG.md",
+            body,
+        );
+        if git {
+            as_git_tree(&plugin);
+        }
+        let out = run_lint(&plugin, Some(&src));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "git={git}: expected exit 0, CHANGELOG.md is exempt.\nstdout:\n{stdout}"
+        );
+
+        write_synth_src(&plugin, &[("docs/CHANGELOG-notes.md", body)]);
+        let out = run_lint(&plugin, Some(&src));
+        assert!(
+            !out.status.success(),
+            "git={git}: the same text outside CHANGELOG.md must fail"
+        );
+    }
+}

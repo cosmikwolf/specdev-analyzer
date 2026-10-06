@@ -1,8 +1,12 @@
-;; Dart import queries for tree-sitter.
-;; One capture, `@import.source`: the URI string of every `import` and
-;; `export` directive. The analyzer maps `package:<name>/…` to `<name>`,
-;; drops `dart:` URIs, relative URIs and the package's own name, and
-;; compares the rest with what the project declares in `external_deps`.
+;; Dart import queries for tree-sitter (`check`'s internal edges).
+;; `@import.source`: the URI of every `import` directive; `@import.reexport`:
+;; the URI of every `export` directive (a barrel library is followed through
+;; it). The adapter resolves `package:<own package>/…` and relative URIs;
+;; `dart:` and other packages are external and ignored. The engine strips
+;; the URI's quotes.
 
-(configurable_uri
-  (uri (string_literal) @import.source))
+(library_import
+  (import_specification uri: (configurable_uri (uri (string_literal) @import.source))))
+
+(library_export
+  uri: (configurable_uri (uri (string_literal) @import.reexport)))

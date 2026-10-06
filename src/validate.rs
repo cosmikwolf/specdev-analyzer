@@ -11,7 +11,7 @@
 //!      compiled aggregated schema, and resolves the kind references in
 //!      every `domain.toml` graph-check entry against the effective set.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -22,6 +22,7 @@ use tracing::{info, instrument};
 
 use crate::aggregator;
 use crate::domain::{DomainConfig, GraphCheck, Severity};
+use crate::entries::{EntryKind, EntryLayout, EntryStore};
 use crate::graph as graph_checks;
 use crate::kinds;
 use crate::layout::LayoutContext;
@@ -35,57 +36,6 @@ use crate::resolved::{EffectiveKindSet, ResolvedExtends};
 /// recognizable while we land the rewrite.
 pub type Inputs = LayoutContext;
 
-/// Capability tag carried on each registered check.
-/// Used by `validate --for=<capability>` to scope the checks that fire to
-/// the slice the caller cares about; absent the flag every check runs.
-///
-/// The set is closed: each capability names a downstream consumer of the
-/// validated spec. Adding a new capability is a one-line edit here +
-/// adding the tag to whichever checks gate that consumer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Capability {
-    /// Schema / structural integrity — every check here gates "this spec
-    /// is well-formed". Default-on for every other capability since every
-    /// downstream consumer needs schema-clean inputs.
-    Schema,
-    /// `gen --strict` (Claude-orchestrated codegen) consumes this. Strict
-    /// mode is high-context: a module that omits `context_files` in
-    /// strict mode gets no out-of-band prose, which is usually a friction
-    /// (F-015 from the zfm dogfood).
-    StrictGen,
-    /// `cargo-toml` emission consumes this. Reserved; no checks are
-    /// currently tagged `CargoToml` (the cargo-toml emitter today reads
-    /// architecture.toml directly).
-    #[allow(dead_code)]
-    CargoToml,
-}
-
-impl std::str::FromStr for Capability {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "schema" => Ok(Capability::Schema),
-            "strict-gen" => Ok(Capability::StrictGen),
-            "cargo-toml" => Ok(Capability::CargoToml),
-            other => Err(format!(
-                "unknown capability `{other}`; supported: schema, strict-gen, cargo-toml"
-            )),
-        }
-    }
-}
-
-/// Returns true when `tags` should run under the active `filter`. Absent
-/// filter (None) → run all. Capability::Schema tags always run regardless
-/// of filter — well-formedness is a load-bearing precondition for every
-/// downstream consumer, so suppressing it would lie about the spec's state.
-fn capability_matches(tags: &[Capability], filter: Option<Capability>) -> bool {
-    let Some(want) = filter else { return true };
-    if tags.contains(&Capability::Schema) {
-        return true;
-    }
-    tags.contains(&want)
-}
-
 /// Library-friendly entry point. Discover `spec.toml` from `start` (or from
 /// `explicit_spec_path` if set) and run validation end-to-end.
 pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Report> {
@@ -93,36 +43,29 @@ pub fn run_project(start: &Path, explicit_spec_path: Option<&Path>) -> Result<Re
     run(&layout)
 }
 
-/// Capability-filtered variant: filters which checks fire by `Capability`.
-/// `None` runs every check (= legacy `run_project` behavior). `Some(cap)`
-/// runs only checks tagged with that capability or with `Schema`
-/// (well-formedness is universal).
-pub fn run_project_for(
-    start: &Path,
-    explicit_spec_path: Option<&Path>,
-    filter: Option<Capability>,
-) -> Result<Report> {
-    let layout = LayoutContext::discover(start, explicit_spec_path)?;
-    run_for(&layout, filter)
-}
-
 #[instrument(level = "info", skip(layout), fields(project = %layout.project_root.display()))]
 pub fn run(layout: &LayoutContext) -> Result<Report> {
-    run_for(layout, None)
-}
-
-/// Capability-filtered variant: see [`run_project_for`].
-pub fn run_for(layout: &LayoutContext, filter: Option<Capability>) -> Result<Report> {
     let mut report = Report::default();
+    let major = layout.spec.format_major();
+    if major < crate::config::NEWEST_FORMAT_MAJOR {
+        report.push(Finding::new(
+            "FORMAT-001",
+            Severity::Info,
+            format!(
+                "spec_version {} is an older project format; the newest this analyzer knows is {}.0. \
+                 Run `specdev-analyzer migrate --dry-run` to see the steps, then `specdev-analyzer migrate`",
+                layout.spec.spec_version,
+                crate::config::NEWEST_FORMAT_MAJOR
+            ),
+        ));
+    }
     validate_layout(layout, &mut report)?;
-    validate_modules_for(layout, filter, &mut report)?;
+    validate_modules(layout, &mut report)?;
     validate_architecture(layout, &mut report)?;
-    validate_requirements(layout, &mut report)?;
-    validate_items_present(layout, filter, &mut report);
-    validate_reserved_test_kinds(layout, filter, &mut report);
-    validate_context_files_when_strict(layout, filter, &mut report);
-    validate_profile_layout_match(layout, &mut report);
-    validate_profiles_root_only(layout, &mut report)?;
+    validate_entries(layout, &mut report)?;
+    for f in crate::gates::script_findings(layout) {
+        report.push(f);
+    }
     Ok(report)
 }
 
@@ -137,25 +80,141 @@ pub fn validate_architecture(layout: &LayoutContext, report: &mut Report) -> Res
         &layout.architecture_toml_path,
         "architecture",
         "SCHEMA-ARCH",
-        "LAYOUT-005",
+        Some("LAYOUT-005"),
         report,
     )
 }
 
-/// Schema-validate `specs/requirements.toml` against
-/// `specs/specdev/schemas/requirements.schema.yaml`. Findings emitted via
-/// `SCHEMA-REQ`.
+/// Schema-validate every entry file — decisions, requirements, sources and
+/// open questions — against the profile's schema for its kind, one file at
+/// a time. In the per-entry layout (`spec_version` `2.x`) also check that
+/// each file holds exactly one entry of its kind and that its stem is the
+/// entry's id.
+///
+/// Findings: `SCHEMA-REQ` (requirements and sources), `SCHEMA-DEC`,
+/// `SCHEMA-OQ`, `ENTRY-FILE-001` (shape), `ENTRY-FILE-002` (stem),
+/// `ENTRY-LEGACY-001` (a `1.x` file with content in a `2.x` project);
+/// `LAYOUT-006` (info) when no requirement or source is authored.
 #[instrument(level = "info", skip(layout, report))]
-pub fn validate_requirements(layout: &LayoutContext, report: &mut Report) -> Result<()> {
-    validate_aux_toml(
-        layout,
-        &layout.requirements_schema_path,
-        &layout.requirements_toml_path,
-        "requirements",
-        "SCHEMA-REQ",
-        "LAYOUT-006",
-        report,
-    )
+pub fn validate_entries(layout: &LayoutContext, report: &mut Report) -> Result<()> {
+    let store = EntryStore::for_layout(layout);
+    let per_entry = store.layout() == EntryLayout::PerEntry;
+
+    for path in store.legacy_content() {
+        report.push(
+            Finding::new(
+                "ENTRY-LEGACY-001",
+                Severity::Error,
+                EntryStore::legacy_message(&path),
+            )
+            .with_file(path.display().to_string()),
+        );
+    }
+
+    // Requirements and sources share a schema and, in `1.x`, a file.
+    let mut req_files = store.files(EntryKind::Requirement);
+    for file in store.files(EntryKind::Source) {
+        if !req_files.contains(&file) {
+            req_files.push(file);
+        }
+    }
+    if req_files.is_empty() && layout.requirements_schema_path.is_file() {
+        let expected = store.expected_file(EntryKind::Requirement);
+        report.push(Finding::new(
+            "LAYOUT-006",
+            Severity::Info,
+            if per_entry {
+                format!(
+                    "no requirement or source entries under {} — none authored yet",
+                    expected.display()
+                )
+            } else {
+                format!(
+                    "{} absent at {} — no requirements-level entries authored yet",
+                    file_label(&expected),
+                    expected.display()
+                )
+            },
+        ));
+    }
+    for file in &req_files {
+        validate_aux_toml(
+            layout,
+            &layout.requirements_schema_path,
+            file,
+            "requirements",
+            "SCHEMA-REQ",
+            None,
+            report,
+        )?;
+    }
+
+    for (kind, schema, rule) in [
+        (EntryKind::Decision, "decisions.schema.yaml", "SCHEMA-DEC"),
+        (
+            EntryKind::OpenQuestion,
+            "open_questions.schema.yaml",
+            "SCHEMA-OQ",
+        ),
+    ] {
+        let schema_path = layout.schemas_dir.join(schema);
+        for file in store.files(kind) {
+            validate_aux_toml(layout, &schema_path, &file, schema, rule, None, report)?;
+        }
+    }
+
+    if per_entry {
+        for kind in EntryKind::ALL {
+            for file in store.files(kind) {
+                check_entry_file(&file, kind, report);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `ENTRY-FILE-001` / `ENTRY-FILE-002`: a per-entry file holds exactly one
+/// table of its kind and nothing else, and its stem is that entry's id. A
+/// file that does not parse is left to the schema pass, which reports it.
+fn check_entry_file(file: &Path, kind: EntryKind, report: &mut Report) {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Table>(&text) else {
+        return;
+    };
+    let table = kind.table();
+    let entries = parsed.get(table).and_then(toml::Value::as_array);
+    let only_its_kind = parsed.keys().all(|k| k == table);
+    let Some([entry]) = entries.map(Vec::as_slice).filter(|_| only_its_kind) else {
+        report.push(
+            Finding::new(
+                "ENTRY-FILE-001",
+                Severity::Error,
+                format!(
+                    "{} must hold exactly one [[{table}]] and nothing else — one entry per file",
+                    file.display()
+                ),
+            )
+            .with_file(file.display().to_string()),
+        );
+        return;
+    };
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let id = entry.get("id").and_then(toml::Value::as_str).unwrap_or("");
+    if stem != id {
+        report.push(
+            Finding::new(
+                "ENTRY-FILE-002",
+                Severity::Error,
+                format!(
+                    "{} holds `{id}`; the file name must be `{id}.toml` (the id names the file)",
+                    file.display()
+                ),
+            )
+            .with_file(file.display().to_string()),
+        );
+    }
 }
 
 /// Shared core for `architecture` + `requirements` schema validation.
@@ -169,7 +228,7 @@ fn validate_aux_toml(
     toml_path: &Path,
     label: &str,
     schema_rule: &str,
-    absent_rule: &str,
+    absent_rule: Option<&str>,
     report: &mut Report,
 ) -> Result<()> {
     if !schema_path.is_file() {
@@ -178,14 +237,16 @@ fn validate_aux_toml(
         return Ok(());
     }
     if !toml_path.is_file() {
-        report.push(Finding::new(
-            absent_rule,
-            Severity::Info,
-            format!(
-                "{label}.toml absent at {} — no {label}-level entries authored yet",
-                toml_path.display()
-            ),
-        ));
+        if let Some(absent_rule) = absent_rule {
+            report.push(Finding::new(
+                absent_rule,
+                Severity::Info,
+                format!(
+                    "{label}.toml absent at {} — no {label}-level entries authored yet",
+                    toml_path.display()
+                ),
+            ));
+        }
         return Ok(());
     }
 
@@ -238,7 +299,7 @@ fn validate_aux_toml(
                 Finding::new(
                     schema_rule,
                     Severity::Error,
-                    format!("{label}.toml is not valid TOML: {e}"),
+                    format!("{} is not valid TOML: {e}", file_label(toml_path)),
                 )
                 .with_file(toml_path.display().to_string()),
             );
@@ -252,7 +313,8 @@ fn validate_aux_toml(
                 schema_rule,
                 Severity::Error,
                 format!(
-                    "{label}.toml: {}",
+                    "{}: {}",
+                    file_label(toml_path),
                     crate::diagnostics::format_schema_error(&err)
                 ),
             )
@@ -262,6 +324,14 @@ fn validate_aux_toml(
     }
 
     Ok(())
+}
+
+/// The file name a schema finding leads with (`requirements.toml`,
+/// `DEC-001.toml`).
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Map-backed `Retrieve` for resolving `$ref` between sibling schema
@@ -332,6 +402,17 @@ fn build_aux_retriever_docs(layout: &LayoutContext) -> Result<HashMap<String, Js
     Ok(docs)
 }
 
+/// Layout directories that may be absent: they hold only units the project
+/// inlines and module specs it writes, so a fresh clone has none of them.
+const MAY_BE_EMPTY_DIRS: &[&str] = &[
+    "specs/specdev/schemas/inlined/blocks/",
+    "specs/specdev/schemas/inlined/bridges/",
+    "specs/specdev/reductions/blocks/",
+    "specs/specdev/reductions/bridges/",
+    "specs/specdev/reductions/bridges/local/",
+    "specs/modules/",
+];
+
 /// Layout pass: enumerate `specs/specdev/`, run the aggregator
 /// `$ref` resolver, load reductions, and surface `domain.toml`'s
 /// graph-check entry count. Findings only — does not gate later passes.
@@ -361,9 +442,7 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
     // `MANIFEST-001` finding; the suppression then degrades to the
     // legacy heuristic so we don't double-fire a "missing schema"
     // warning on top of "manifest unloadable" noise. Other validate
-    // passes continue (validate_profile_layout_match also surfaces
-    // MANIFEST-001 for the same file — duplicate-rule emission is
-    // tolerated; deduping is a v1.x cleanup).
+    // passes continue.
     let (suppress_module, suppress_requirements) = compute_surface_suppressions(layout, report);
 
     for entry in &inv.directories {
@@ -377,11 +456,10 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             if suppress_module && entry.label == "specs/modules/" {
                 continue;
             }
-            // Skip the missing-warning for the codegen <lang> directory:
-            // it is profile-driven and the project may not have authored
-            // codegen yet. (Intent originally lived in the file loop, where
-            // it was dead code since codegen/<lang>/ is a directory entry.)
-            if entry.label.starts_with("specs/specdev/codegen/") {
+            // A directory that holds only what the project adds later is
+            // created empty, and git does not store an empty directory, so
+            // every clone lacks it. Absent means "none yet", not missing.
+            if MAY_BE_EMPTY_DIRS.contains(&entry.label.as_str()) {
                 continue;
             }
             report.push(Finding::new(
@@ -425,28 +503,6 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
             ));
         }
     }
-    if layout.codegen_dir.is_dir() {
-        report.push(Finding::new(
-            "LAYOUT-004",
-            Severity::Info,
-            format!(
-                "codegen directory present for language `{}` at {}",
-                layout.spec.project.language,
-                layout.codegen_dir.display()
-            ),
-        ));
-    } else {
-        report.push(Finding::new(
-            "LAYOUT-004",
-            Severity::Warning,
-            format!(
-                "codegen directory absent for language `{}` (expected at {})",
-                layout.spec.project.language,
-                layout.codegen_dir.display()
-            ),
-        ));
-    }
-
     // Aggregator $ref resolver.
     let _agg = aggregator::resolve(layout, report)?;
 
@@ -525,15 +581,6 @@ pub fn validate_layout(layout: &LayoutContext, report: &mut Report) -> Result<()
 ///    canonical (or qualified) kind.
 #[instrument(level = "info", skip(layout, report))]
 pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<()> {
-    validate_modules_for(layout, None, report)
-}
-
-/// Filter-aware variant. See [`Capability`] and [`run_for`].
-pub fn validate_modules_for(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) -> Result<()> {
     let inv = layout.enumerate();
 
     // Stage 1: build effective kind set.
@@ -675,14 +722,49 @@ pub fn validate_modules_for(
 
                 execute_graph_checks(
                     &dom.project.graph_checks,
-                    "project",
+                    "domain.toml [project]",
+                    &BTreeMap::new(),
                     &kindset,
                     &graph,
                     &dom,
                     layout,
-                    filter,
                     report,
                 );
+                // Each inlined rule pack's graph checks, with the pack's
+                // default severities under the project's.
+                let (packs, load_findings) = crate::packs::load_inlined(&layout.specdev_root);
+                report.extend(load_findings);
+                for pack in &packs {
+                    report.push(Finding::new(
+                        "PACK-000",
+                        Severity::Info,
+                        format!(
+                            "loaded rule pack {} ({} graph check(s), {} code check(s))",
+                            pack.path.display(),
+                            pack.file.graph_checks.len(),
+                            pack.file.code_checks.len()
+                        ),
+                    ));
+                    let label = format!("rule pack {}", pack.path.display());
+                    resolve_check_kinds(
+                        &pack.file.graph_checks,
+                        &kindset,
+                        &pack.path,
+                        &label,
+                        true,
+                        report,
+                    );
+                    execute_graph_checks(
+                        &pack.file.graph_checks,
+                        &label,
+                        &pack.file.rules,
+                        &kindset,
+                        &graph,
+                        &dom,
+                        layout,
+                        report,
+                    );
+                }
                 // Module-scoped checks are reserved for per-module
                 // execution in a future phase; emit an info instead of
                 // running them at the project level.
@@ -721,7 +803,15 @@ fn validate_context_files(
     module_path: &Path,
     report: &mut Report,
 ) {
-    let context_files = crate::prompt::parse_context_files(parsed);
+    let context_files: Vec<String> = parsed
+        .get("context_files")
+        .and_then(toml::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     for rel in &context_files {
         let abs = layout.project_root.join(rel);
         if !abs.is_file() {
@@ -776,11 +866,11 @@ fn validate_context_files(
 fn execute_graph_checks(
     checks: &[GraphCheck],
     section: &str,
+    pack_rules: &BTreeMap<String, Severity>,
     kindset: &EffectiveKindSet,
     graph: &Graph,
     domain: &DomainConfig,
     layout: &LayoutContext,
-    filter: Option<Capability>,
     report: &mut Report,
 ) {
     let graph_json = match serde_json::to_value(graph) {
@@ -790,24 +880,42 @@ fn execute_graph_checks(
 
     for check in checks {
         let rule = check.rule.as_deref().unwrap_or("?");
-        let severity = domain.severity_of(rule);
+        let severity = crate::packs::severity(&domain.validation.rules, pack_rules, rule);
         let primitive = check.kind.as_str();
-
-        // Skip primitives whose tags don't match the active --for filter.
-        // `Schema`-tagged checks always run (they
-        // gate every downstream consumer).
-        if !capability_matches(primitive_tags(primitive), filter) {
-            continue;
-        }
 
         let view = filter_graph_for_check(&graph_json, check, kindset);
 
         let findings = match primitive {
-            "unique" => check
-                .field
-                .as_deref()
-                .map(|f| graph_checks::unique(&view, f, rule, severity))
-                .unwrap_or_default(),
+            "unique" => match (check.fields.as_deref(), check.field.as_deref()) {
+                (Some(fields), _) => graph_checks::unique_fields(&view, fields, rule, severity),
+                (None, Some(f)) => graph_checks::unique(&view, f, rule, severity),
+                (None, None) => vec![Finding::new(
+                    "DOMAIN-003",
+                    Severity::Error,
+                    format!("{section} graph_check `{rule}` (unique) needs `field` or `fields`; it checked nothing"),
+                )],
+            },
+            "related_attrs_allowed" => {
+                match (
+                    check.relation_scope.as_deref(),
+                    check.left.as_deref(),
+                    check.right.as_deref(),
+                    check.allowed.as_deref(),
+                ) {
+                    (Some(rs), Some(l), Some(r), Some(allowed)) => {
+                        let view = relations_of_kind(&graph_json, rs, kindset);
+                        graph_checks::related_attrs_allowed(&view, l, r, allowed, rule, severity)
+                    }
+                    _ => vec![Finding::new(
+                        "DOMAIN-003",
+                        Severity::Error,
+                        format!(
+                            "{section} graph_check `{rule}` (related_attrs_allowed) needs `relation_scope`, \
+                             `left`, `right` and `allowed`; it checked nothing"
+                        ),
+                    )],
+                }
+            }
             "reference_exists" => {
                 match (check.source_field.as_deref(), check.target_field.as_deref()) {
                     (Some(s), Some(t)) => {
@@ -985,9 +1093,9 @@ fn execute_graph_checks(
             // the other primitives, this one reads filesystem source via
             // the items extraction surface. The warning promotes to error
             // when items[] is the authoritative substrate.
-            "verified_by_resolves" => {
-                verified_by_resolves_dispatch(&graph_json, layout, rule, severity)
-            }
+            // `verified_by` resolves against the test-discovery pass over the
+            // source, so `check` runs it, not the spec-only pass.
+            "verified_by_resolves" => Vec::new(),
             // `decision_supersedes_chain_consistency`: filter
             // relations by `relation_scope`, then for each entity matching
             // the source-side filter, count inbound relations and compare
@@ -1051,26 +1159,145 @@ fn execute_graph_checks(
             // and fires when any reachable OQ has status = open. The
             // gen-side hard refusal lives in `gen.rs`; this primitive
             // mirrors the reachability informational at validate time.
-            "module_reachable_through_open_question" => {
-                graph_checks::module_reachable_through_open_question(&graph_json, rule, severity)
-            }
+            // The open-question gate keys on a module's source existing and
+            // reads workspace-tier questions, so `check` runs it, not the
+            // spec-only pass.
+            "module_reachable_through_open_question" => Vec::new(),
+            "ids_in_document" => ids_in_document(&graph_json, check, kindset, layout, rule, severity),
             other => vec![Finding::new(
                 "DOMAIN-003",
                 Severity::Warning,
                 format!(
-                    "domain.toml [{section}] graph_check (rule `{rule}`): \
-                     unknown primitive `{other}` — supported: \
-                     unique, reference_exists, reachability, acyclic, \
-                     layer_dependency, requirements_have_satisfiers, \
-                     entity_has_inbound_relation, verified_by_resolves, \
-                     entity_attr_inbound_count, entity_attr_target_attr_equals, \
-                     module_reachable_through_open_question"
+                    "{section} graph_check (rule `{rule}`): unknown primitive `{other}` — \
+                     supported: {}",
+                    GRAPH_CHECK_PRIMITIVES.join(", ")
                 ),
             )],
         };
 
         report.extend(findings);
     }
+}
+
+/// The graph-check primitives `execute_graph_checks` dispatches on.
+/// `plugin-lint` refuses a rule pack that names any other.
+pub const GRAPH_CHECK_PRIMITIVES: &[&str] = &[
+    "unique",
+    "reference_exists",
+    "reachability",
+    "acyclic",
+    "layer_dependency",
+    "requirements_have_satisfiers",
+    "entity_has_inbound_relation",
+    "verified_by_resolves",
+    "entity_attr_inbound_count",
+    "entity_count",
+    "entity_attr_target_attr_equals",
+    "module_reachable_through_open_question",
+    "ids_in_document",
+    "related_attrs_allowed",
+];
+
+/// The graph with its relations kept to those whose kind extends `scope`
+/// (all entities kept, so endpoints resolve). An unknown `scope` keeps no
+/// relation: the check fails closed.
+fn relations_of_kind(graph_json: &JsonValue, scope: &str, kindset: &EffectiveKindSet) -> JsonValue {
+    let key = kinds::parse(scope)
+        .map(|p| p.to_string())
+        .unwrap_or_else(|_| scope.to_string());
+    let mut view = graph_json.clone();
+    if let Some(rels) = view.get_mut("relations").and_then(|v| v.as_array_mut()) {
+        rels.retain(|r| {
+            r.get("kind")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| relation_extends_to(kindset, k, &key))
+        });
+    }
+    view
+}
+
+/// IDS_IN_DOCUMENT: every entity in `entity_scope` (optionally only those
+/// whose `entity_attr` equals `entity_attr_value`) has its id appear in
+/// `document`, a file relative to the project root, as a whole token.
+fn ids_in_document(
+    graph_json: &JsonValue,
+    check: &GraphCheck,
+    kindset: &EffectiveKindSet,
+    layout: &LayoutContext,
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let (Some(scope), Some(document)) = (check.entity_scope.as_deref(), check.document.as_deref())
+    else {
+        return vec![Finding::new(
+            "DOMAIN-003",
+            Severity::Warning,
+            format!("graph_check `{rule}` (ids_in_document) needs `entity_scope` and `document`"),
+        )];
+    };
+    let Ok(parsed) = kinds::parse(scope) else {
+        return Vec::new();
+    };
+    let key = parsed.to_string();
+    let path = layout.project_root.join(document);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return vec![Finding::new(
+            rule,
+            severity,
+            format!("`{rule}`: the document {} cannot be read", path.display()),
+        )];
+    };
+    let mut out = Vec::new();
+    for ent in graph_json
+        .get("entities")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let (Some(kind), Some(name)) = (
+            ent.get("kind").and_then(|v| v.as_str()),
+            ent.get("name").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        if !entity_extends_to(kindset, kind, &key) {
+            continue;
+        }
+        if let (Some(attr), Some(want)) = (
+            check.entity_attr.as_deref(),
+            check.entity_attr_value.as_deref(),
+        ) {
+            let have = ent
+                .get("attrs")
+                .and_then(|a| a.get(attr))
+                .and_then(|v| v.as_str());
+            if have != Some(want) {
+                continue;
+            }
+        }
+        if !contains_token(&text, name) {
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!("`{name}` does not appear in {document}"),
+                )
+                .with_entity(name),
+            );
+        }
+    }
+    out
+}
+
+/// `needle` occurs in `hay` with no identifier character (`[A-Za-z0-9_-]`)
+/// directly before or after it, so `DEC-1` does not match inside `DEC-10`.
+fn contains_token(hay: &str, needle: &str) -> bool {
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    hay.match_indices(needle).any(|(i, _)| {
+        let before = hay[..i].chars().next_back();
+        let after = hay[i + needle.len()..].chars().next();
+        !before.is_some_and(is_id) && !after.is_some_and(is_id)
+    })
 }
 
 /// Returns whichever JSON value the layer_dependency dispatch should
@@ -1130,181 +1357,6 @@ fn layer_dependency_dispatch(
     }
 
     Vec::new()
-}
-
-/// `verified_by_resolves` dispatch.
-///
-/// For each `Requirement` entity carrying a `verified_by[]` attr, parse
-/// each entry and attempt resolution against the per-module item
-/// extraction surface (`items::extract`). Two entry shapes:
-///
-/// - `<Module>::<name>` — resolves against the named module's source.
-///   The matching item must be a `fn` with `#[test]` attribute (a test
-///   function), or any top-level item with a matching name (forgiving:
-///   non-test items match too, since the items[] design treats
-///   `verified_by` as resolution against item names rather than a
-///   `#[test]` filter).
-/// - bare `<name>` — resolves against any module's `#[test]`-attributed
-///   `fn` items.
-///
-/// Pre-implementation modules (no source file resolved) are silent: the
-/// per-module item set is empty, but if every named module has no
-/// source, the requirement entry is treated as "no candidates" and no
-/// finding fires (avoids a wall of warnings for greenfield specs).
-///
-/// Severity: warning in v1.0; promotes to error in v1.1 alongside the
-/// items[] surface. Error code: `VERIFIED-BY-RESOLVES-001`.
-fn verified_by_resolves_dispatch(
-    graph_json: &JsonValue,
-    layout: &LayoutContext,
-    rule: &str,
-    severity: Severity,
-) -> Vec<Finding> {
-    use crate::items::{extract as items_extract, source_map, ExtractedItem};
-    use crate::lang;
-
-    let language = &layout.spec.project.language;
-    let Some(adapter) = lang::adapter_for(language) else {
-        // Unsupported language — silently skip (matches the dispatch's
-        // permissive behaviour for unknown shapes).
-        return Vec::new();
-    };
-    let source_root = layout.spec.paths.source.as_str();
-    let project_root = &layout.project_root;
-    // #101(b): profile floor (a malformed manifest is MANIFEST-001's
-    // business elsewhere; here it means "adapter default", matching this
-    // pass's permissive stance).
-    let floor = items_extract::profile_visibility_floor(&layout.specdev_root)
-        .ok()
-        .flatten();
-
-    // Cache of module name → extracted items. Avoid re-parsing.
-    let mut items_by_module: HashMap<String, Vec<ExtractedItem>> = HashMap::new();
-
-    // Helper to lazily fetch items for a module.
-    let mut get_items = |module_name: &str| -> Vec<ExtractedItem> {
-        if let Some(cached) = items_by_module.get(module_name) {
-            return cached.clone();
-        }
-        // #101(a): honour the module spec's `source_file` override.
-        let module_path = layout.modules_dir.join(format!("{module_name}.toml"));
-        let override_path = source_map::load_source_file_override(&module_path);
-        let items = match source_map::resolve_source_path(
-            module_name,
-            override_path.as_deref(),
-            adapter.as_ref(),
-            project_root,
-            source_root,
-        ) {
-            Some(p) => {
-                items_extract::extract_items_from_path(&p, adapter.as_ref(), floor.as_deref())
-                    .unwrap_or_default()
-            }
-            None => Vec::new(),
-        };
-        items_by_module.insert(module_name.to_string(), items.clone());
-        items
-    };
-
-    let entities = match graph_json.get("entities").and_then(|v| v.as_array()) {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-
-    // Collect all module names referenced by Requirement entities so we
-    // can pre-populate the items cache and detect bare-name resolution
-    // candidates across modules.
-    let mut all_module_names: Vec<String> = Vec::new();
-    for ent in entities {
-        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else {
-            continue;
-        };
-        if !kind.ends_with("Module") && kind != "Module" {
-            continue;
-        }
-        if let Some(n) = ent.get("name").and_then(|n| n.as_str()) {
-            all_module_names.push(n.to_string());
-        }
-    }
-
-    let mut findings = Vec::new();
-
-    for ent in entities {
-        let Some(kind) = ent.get("kind").and_then(|k| k.as_str()) else {
-            continue;
-        };
-        if !kind.ends_with("Requirement") && kind != "Requirement" {
-            continue;
-        }
-        let Some(req_id) = ent.get("name").and_then(|n| n.as_str()) else {
-            continue;
-        };
-        let Some(verified_by) = ent
-            .get("attrs")
-            .and_then(|a| a.get("verified_by"))
-            .and_then(|v| v.as_array())
-        else {
-            continue;
-        };
-
-        for entry in verified_by {
-            let Some(s) = entry.as_str() else { continue };
-            let s = s.trim();
-            if s.is_empty() {
-                continue;
-            }
-            // Module::name vs bare name.
-            let resolved = if let Some((module, name)) = s.split_once("::") {
-                let module = module.trim();
-                let name = name.trim();
-                let items = get_items(module);
-                if items.is_empty() {
-                    // Pre-implementation module: skip (silent).
-                    continue;
-                }
-                items.iter().any(|i| i.name == name)
-            } else {
-                // Bare name: search for a test function across all modules
-                // (what counts as one is the adapter's rule — Rust: a fn
-                // carrying a test attribute). If no module has source yet,
-                // skip (silent).
-                let mut any_source = false;
-                let mut found = false;
-                for m in &all_module_names {
-                    let items = get_items(m);
-                    if !items.is_empty() {
-                        any_source = true;
-                    }
-                    if items
-                        .iter()
-                        .any(|i| i.name == s && adapter.is_test_function(i))
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if !any_source {
-                    continue;
-                }
-                found
-            };
-
-            if !resolved {
-                findings.push(Finding::new(
-                    rule,
-                    severity,
-                    format!(
-                        "[VERIFIED-BY-RESOLVES-001] requirement `{req_id}` \
-                         verified_by entry `{s}` does not resolve to any \
-                         extracted top-level item; check spelling, the named \
-                         module's source, or remove the entry"
-                    ),
-                ));
-            }
-        }
-    }
-
-    findings
 }
 
 /// Filter the graph view jointly by `entity_scope` (applies to
@@ -1470,8 +1522,31 @@ fn resolve_graph_check_kinds(
     section: &str,
     report: &mut Report,
 ) {
+    resolve_check_kinds(
+        checks,
+        kindset,
+        domain_toml_path,
+        &format!("domain.toml [{section}]"),
+        false,
+        report,
+    );
+}
+
+/// As [`resolve_graph_check_kinds`], labelled `label`. With `scopes`, the
+/// `entity_scope` and `relation_scope` fields are resolved too: a rule
+/// pack's checks name its own unit's kinds, which are inlined with it, so an
+/// unresolved one there is a typo. (`domain.toml` checks may name a unit
+/// kind before the unit is inlined; those primitives fail closed instead.)
+fn resolve_check_kinds(
+    checks: &[GraphCheck],
+    kindset: &EffectiveKindSet,
+    file: &Path,
+    label: &str,
+    scopes: bool,
+    report: &mut Report,
+) {
     for (idx, check) in checks.iter().enumerate() {
-        let candidates: [&Option<String>; 7] = [
+        let mut candidates: Vec<&Option<String>> = vec![
             &check.scope,
             &check.field,
             &check.source_field,
@@ -1480,6 +1555,9 @@ fn resolve_graph_check_kinds(
             &check.edges_from,
             &check.edges_to,
         ];
+        if scopes {
+            candidates.extend([&check.entity_scope, &check.relation_scope]);
+        }
         for candidate in candidates.iter().copied().flatten() {
             // A field selector like `[*].kind` or `name` is not a kind
             // reference; only strings that parse as a kind path are
@@ -1498,12 +1576,12 @@ fn resolve_graph_check_kinds(
                         "DOMAIN-003",
                         Severity::Error,
                         format!(
-                            "domain.toml [{section}] graph_check #{idx} (rule `{}`): \
+                            "{label} graph_check #{idx} (rule `{}`): \
                              kind reference `{candidate}` is not in the effective kind set",
                             check.rule.as_deref().unwrap_or("?"),
                         ),
                     )
-                    .with_file(domain_toml_path.display().to_string()),
+                    .with_file(file.display().to_string()),
                 );
             }
         }
@@ -1560,7 +1638,9 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
 
     let (requirements, sources) = count_requirements_and_sources(layout);
     let graph_checks = count_graph_checks(layout);
-    let decisions = count_toml_array(&layout.specs_dir.join("decisions.toml"), "decision");
+    let decisions = EntryStore::for_layout(layout)
+        .load_lenient(EntryKind::Decision)
+        .len();
     let (open_questions, open_questions_open) = count_open_questions(layout);
 
     Summary {
@@ -1574,304 +1654,15 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
     }
 }
 
-/// Best-effort count of a top-level array-of-tables in a TOML file.
-/// Missing or unparseable files count as zero, mirroring
-/// [`count_requirements_and_sources`].
-fn count_toml_array(path: &std::path::Path, key: &str) -> usize {
-    if !path.is_file() {
-        return 0;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return 0;
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return 0;
-    };
-    parsed
-        .get(key)
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0)
-}
-
-/// Best-effort (total, open) counts over `specs/open_questions.toml`.
+/// Best-effort (total, open) counts over the open questions. Unreadable
+/// files count as zero.
 fn count_open_questions(layout: &LayoutContext) -> (usize, usize) {
-    let path = layout.specs_dir.join("open_questions.toml");
-    if !path.is_file() {
-        return (0, 0);
-    }
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return (0, 0);
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return (0, 0);
-    };
-    let Some(arr) = parsed.get("open_question").and_then(toml::Value::as_array) else {
-        return (0, 0);
-    };
-    let open = arr
+    let all = EntryStore::for_layout(layout).load_lenient(EntryKind::OpenQuestion);
+    let open = all
         .iter()
-        .filter(|q| q.get("status").and_then(toml::Value::as_str) == Some("open"))
+        .filter(|q| q.value.get("status").and_then(toml::Value::as_str) == Some("open"))
         .count();
-    (arr.len(), open)
-}
-
-/// Capability tags carried by each registered graph-check primitive.
-/// Driven by `validate --for=<capability>`. Tags
-/// are intentionally redundant — every primitive tags `Schema` because
-/// well-formedness gates every downstream consumer; some additionally
-/// tag domain-specific consumers (`Skeleton`, `StrictGen`, etc.).
-///
-/// Adding a new primitive: append a match arm AND a stable test that
-/// verifies its tag set. Adding a new capability: extend the
-/// [`Capability`] enum and tag the primitives that gate it.
-fn primitive_tags(name: &str) -> &'static [Capability] {
-    use Capability::*;
-    match name {
-        "unique" | "reference_exists" | "reachability" | "acyclic" | "entity_count" => &[Schema],
-        "layer_dependency" => &[Schema],
-        // Orphan-requirements is a structural check on the spec graph;
-        // strict-gen consumes the spec, so an unsatisfied requirement
-        // means an orphan story regardless of how codegen runs.
-        "requirements_have_satisfiers" => &[Schema, StrictGen],
-        // Generic orphan check; structural on the spec graph,
-        // and strict-gen consumes the spec, so an orphan entity (e.g. a
-        // parameter with no engine binding) is a gap regardless of how
-        // codegen runs.
-        "entity_has_inbound_relation" => &[Schema, StrictGen],
-        // verified_by_resolves reads source files to validate that
-        // requirement.verified_by[] entries name extant items / tests.
-        // Strict-gen will surface a verification gap.
-        "verified_by_resolves" => &[Schema, StrictGen],
-        // Triad consistency primitives gate codegen via the
-        // companion gate, so tag them Schema (always-on) and StrictGen.
-        "entity_attr_inbound_count"
-        | "entity_attr_target_attr_equals"
-        | "module_reachable_through_open_question" => &[Schema, StrictGen],
-        // Unknown primitives still surface their DOMAIN-003 warning;
-        // tag them as Schema so the typo isn't silenced by --for.
-        _ => &[Schema],
-    }
-}
-
-/// F-013 (zfm dogfood): warns when a module has zero
-/// `items[]` entries. Strict mode has no items[] to anchor codegen to.
-/// Info-level: not every module needs items (a project mid-port may
-/// have empty modules), but every empty module deserves visibility.
-///
-/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
-/// active (cargo-toml emission doesn't consume items).
-pub fn validate_items_present(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let name = parsed
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| {
-                module_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("<unnamed>")
-            });
-        let items_count = parsed
-            .get("items")
-            .and_then(toml::Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0);
-        if items_count == 0 {
-            report.push(
-                Finding::new(
-                    "ITEMS-001",
-                    Severity::Info,
-                    format!(
-                        "module `{name}` has 0 items[] entries — `gen` has nothing to \
-                         anchor codegen to. Add items[] before running codegen. Every \
-                         ordinary item also needs `satisfies = [\"REQ-...\"]` (≥1 id); \
-                         only a test item (`test = true`, which carries `verifies`) or \
-                         a re-export is exempt."
-                    ),
-                )
-                .with_file(module_path.display().to_string()),
-            );
-        }
-    }
-}
-
-/// Warns when a test item declares a `test_kind` whose
-/// emission is reserved-but-not-shipped. The reserved list is language
-/// data, not analyzer code: the language tier's `items.schema.yaml`
-/// declares it as `properties.test_kind.x-specdev-reserved` next to the
-/// `test_kind` enum (the schema accepts the enum slot so later promotion
-/// needs no spec migration, but `gen` emits nothing for it — surfacing
-/// the gap at validate time keeps authors from being surprised at
-/// codegen). A language tier without the annotation reserves nothing;
-/// a project without an inlined items tier has no test items to check
-/// (the module-schema `$ref` would already have failed validation).
-///
-/// Tag: [`Capability::StrictGen`] — the gap only matters when codegen
-/// actually runs.
-pub fn validate_reserved_test_kinds(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let Some((reserved, emittable)) = load_test_kind_vocab(layout) else {
-        return;
-    };
-    if reserved.is_empty() {
-        return;
-    }
-    let advice = emittable
-        .iter()
-        .map(|k| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(" / ");
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let Some(items) = parsed.get("items").and_then(toml::Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            if item.get("test").and_then(toml::Value::as_bool) != Some(true) {
-                continue;
-            }
-            let Some(kind) = item.get("test_kind").and_then(toml::Value::as_str) else {
-                continue;
-            };
-            if reserved.iter().any(|r| r == kind) {
-                let name = item
-                    .get("name")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or("<unnamed>");
-                report.push(
-                    Finding::new(
-                        "TEST-KIND-001",
-                        Severity::Warning,
-                        format!(
-                            "test item `{name}` has test_kind = \"{kind}\", which reserves \
-                             the enum slot but emits no body in v1 — `gen` will skip it. \
-                             Use {advice}, or hand-author the \
-                             {kind} harness until v1.x ships emission."
-                        ),
-                    )
-                    .with_file(module_path.display().to_string()),
-                );
-            }
-        }
-    }
-}
-
-/// Read the language tier's `test_kind` vocabulary from the project's
-/// inlined `languages/<lang>/items.schema.yaml`: the reserved list
-/// (`x-specdev-reserved`, defaulting to empty) and the emittable
-/// remainder of the enum (schema order), for the TEST-KIND-001 advice
-/// text. `None` when the tier file is absent or unparsable — there is
-/// then no test_kind vocabulary to lint against (and a project actually
-/// using items[] surfaces the missing tier through schema resolution).
-fn load_test_kind_vocab(layout: &LayoutContext) -> Option<(Vec<String>, Vec<String>)> {
-    let path = layout
-        .inlined_languages_dir
-        .join(&layout.spec.project.language)
-        .join("items.schema.yaml");
-    let text = std::fs::read_to_string(&path).ok()?;
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-    let test_kind = doc.get("properties")?.get("test_kind")?;
-    let as_strings = |v: Option<&serde_yaml::Value>| -> Vec<String> {
-        v.and_then(|v| v.as_sequence())
-            .map(|seq| {
-                seq.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let reserved = as_strings(test_kind.get("x-specdev-reserved"));
-    let emittable: Vec<String> = as_strings(test_kind.get("enum"))
-        .into_iter()
-        .filter(|k| !reserved.iter().any(|r| r == k))
-        .collect();
-    Some((reserved, emittable))
-}
-
-/// F-015 (zfm dogfood): warns when a module has no `context_files`
-/// entries. The dogfood reported `module.context_files` as
-/// undiscoverable from the `/spec-design` interview; surfacing the gap
-/// at validate time gives the user a structural prompt to add prose
-/// context (or to leave the module shallow enough to need none).
-///
-/// Tag: [`Capability::StrictGen`]. Skipped when `--for=cargo-toml` is
-/// active. Warning-level — not every module needs context files
-/// (mechanical glue modules legitimately don't), but the absence is
-/// worth surfacing for shipped strict-gen runs.
-pub fn validate_context_files_when_strict(
-    layout: &LayoutContext,
-    filter: Option<Capability>,
-    report: &mut Report,
-) {
-    let tags: &[Capability] = &[Capability::StrictGen];
-    if !capability_matches(tags, filter) {
-        return;
-    }
-    let inv = layout.enumerate();
-    for module_path in &inv.modules {
-        let Ok(text) = std::fs::read_to_string(module_path) else {
-            continue;
-        };
-        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
-            continue;
-        };
-        let name = parsed
-            .get("name")
-            .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| {
-                module_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("<unnamed>")
-            });
-        let has_context = parsed
-            .get("context_files")
-            .and_then(toml::Value::as_array)
-            .is_some_and(|a| !a.is_empty());
-        if !has_context {
-            report.push(
-                Finding::new(
-                    "CONTEXT-100",
-                    Severity::Warning,
-                    format!(
-                        "module `{name}` has no `context_files`. Strict codegen has no \
-                         out-of-band prose to anchor on; consider adding \
-                         `context_files = [\"docs/<...>.md\"]`."
-                    ),
-                )
-                .with_file(module_path.display().to_string()),
-            );
-        }
-    }
+    (all.len(), open)
 }
 
 /// Count entities of kind `Module` in the unfiltered graph JSON.
@@ -1890,26 +1681,11 @@ fn count_modules(graph_json: &JsonValue) -> usize {
 }
 
 fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize) {
-    if !layout.requirements_toml_path.is_file() {
-        return (0, 0);
-    }
-    let Ok(text) = std::fs::read_to_string(&layout.requirements_toml_path) else {
-        return (0, 0);
-    };
-    let Ok(parsed): std::result::Result<toml::Value, _> = toml::from_str(&text) else {
-        return (0, 0);
-    };
-    let reqs = parsed
-        .get("requirement")
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let srcs = parsed
-        .get("source")
-        .and_then(toml::Value::as_array)
-        .map(|a| a.len())
-        .unwrap_or(0);
-    (reqs, srcs)
+    let store = EntryStore::for_layout(layout);
+    (
+        store.load_lenient(EntryKind::Requirement).len(),
+        store.load_lenient(EntryKind::Source).len(),
+    )
 }
 
 fn count_graph_checks(layout: &LayoutContext) -> usize {
@@ -1966,126 +1742,4 @@ fn compute_surface_suppressions(layout: &LayoutContext, report: &mut Report) -> 
             (legacy, legacy)
         }
     }
-}
-
-/// Validate-time consistency check between
-/// the inlined `profile.yaml` (`cargo_toml.shape`) and the project's
-/// spec.toml `[workspace]` table presence.
-///
-/// `shape: workspace` is descriptive metadata: a profile claims its
-/// projects are workspace-shaped, but actual workspace dispatch is
-/// layout-driven (the `[workspace]` table in spec.toml is canonical).
-/// When the two disagree, the project is in an unrenderable
-/// state — `cargo-toml render` will eventually error, but surfacing
-/// the mismatch at validate time gives the user a structural prompt
-/// before they hit the render path.
-///
-/// No-op when `profile.yaml` is absent (backward compat) or
-/// has no `cargo_toml` section. Manifest load errors surface as
-/// `MANIFEST-001` findings; cargo-toml render will produce a
-/// matching diagnostic, so consumers see the same root cause from
-/// either path.
-pub fn validate_profile_layout_match(layout: &LayoutContext, report: &mut Report) {
-    use crate::manifest::{Profile, ShapeKind};
-    let manifest_path = layout.specdev_root.join("profile.yaml");
-    if !manifest_path.is_file() {
-        return;
-    }
-    let manifest = match Profile::load(&manifest_path) {
-        Ok(p) => p,
-        Err(e) => {
-            report.push(
-                Finding::new("MANIFEST-001", Severity::Error, format!("{e:#}"))
-                    .with_file(manifest_path.display().to_string()),
-            );
-            return;
-        }
-    };
-    let Some(cargo) = manifest.cargo_toml.as_ref() else {
-        return;
-    };
-    let has_workspace_table = layout.spec.workspace.is_some();
-    let is_workspace_shape = matches!(cargo.shape, ShapeKind::Workspace);
-    match (is_workspace_shape, has_workspace_table) {
-        (true, false) => report.push(
-            Finding::new(
-                "PROFILE-LAYOUT-MISMATCH",
-                Severity::Error,
-                format!(
-                    "profile.yaml declares `cargo_toml.shape: workspace` but \
-                     spec.toml at {} has no [workspace] table; add \
-                     [workspace] with [[workspace.members]] entries or \
-                     change the profile",
-                    layout.spec_toml_path.display(),
-                ),
-            )
-            .with_file(manifest_path.display().to_string()),
-        ),
-        (false, true) => report.push(
-            Finding::new(
-                "PROFILE-LAYOUT-MISMATCH",
-                Severity::Error,
-                format!(
-                    "spec.toml at {} declares a [workspace] table but \
-                     profile.yaml `cargo_toml.shape` is non-workspace; \
-                     workspace projects must use a profile with \
-                     `cargo_toml.shape: workspace`",
-                    layout.spec_toml_path.display(),
-                ),
-            )
-            .with_file(manifest_path.display().to_string()),
-        ),
-        _ => {}
-    }
-}
-
-/// Root-only rule for Cargo build profiles: `architecture.toml`'s
-/// `profiles` table is legal on a workspace root or a standalone crate,
-/// never on a workspace member. Cargo ignores profiles in a member
-/// manifest (with a warning nobody reads), so a member that declares
-/// them carries build configuration that silently does nothing. Finding
-/// `PROFILES-ROOT-ONLY` names the workspace root as the home. The
-/// cargo-toml renderer refuses the same case on the emit path, since
-/// `manifest` does not run `validate`.
-///
-/// Membership is decided by the same walk the renderer uses
-/// (`layout::find_workspace_root_spec`). A parse failure of
-/// architecture.toml is left to the schema pass (`SCHEMA-ARCH`).
-pub fn validate_profiles_root_only(layout: &LayoutContext, report: &mut Report) -> Result<()> {
-    if layout.spec.workspace.is_some() {
-        return Ok(());
-    }
-    if !layout.architecture_toml_path.is_file() {
-        return Ok(());
-    }
-    let text = std::fs::read_to_string(&layout.architecture_toml_path)
-        .with_context(|| format!("reading {}", layout.architecture_toml_path.display()))?;
-    let Ok(value) = toml::from_str::<toml::Value>(&text) else {
-        return Ok(());
-    };
-    let declares = value
-        .get("profiles")
-        .and_then(toml::Value::as_table)
-        .map(|t| !t.is_empty())
-        .unwrap_or(false);
-    if !declares {
-        return Ok(());
-    }
-    let Some(root) = crate::layout::find_workspace_root_spec(layout.project_root.as_path())? else {
-        return Ok(());
-    };
-    report.push(
-        Finding::new(
-            "PROFILES-ROOT-ONLY",
-            Severity::Error,
-            format!(
-                "architecture.toml declares [profiles.*] but this crate is a member of the \
-                 workspace at {}; Cargo ignores profiles in a member manifest — move them to \
-                 that workspace's architecture.toml",
-                root.display(),
-            ),
-        )
-        .with_file(layout.architecture_toml_path.display().to_string()),
-    );
-    Ok(())
 }

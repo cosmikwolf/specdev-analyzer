@@ -10,9 +10,7 @@
 
 use std::path::PathBuf;
 
-use specdev_analyzer::manifest::{
-    BindingLocality, BlockDeps, BootstrapStep, BridgeContract, CrateSource, Profile, ShapeKind,
-};
+use specdev_analyzer::manifest::{BindingLocality, BootstrapStep, BridgeContract, Profile};
 
 fn tmp_path(tag: &str, ext: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
@@ -69,9 +67,6 @@ surface:
     let m = Profile::load(&p).expect("library-api profile loads");
     assert_eq!(m.name, "library-api");
     assert_eq!(m.language, "rust");
-    let cargo = m.cargo_toml.expect("cargo_toml present");
-    assert_eq!(cargo.shape, ShapeKind::Library);
-    assert_eq!(cargo.default_edition.as_deref(), Some("2021"));
     let surf = m.surface.expect("surface present");
     assert!(surf.has_modules && surf.has_requirements && surf.has_architecture);
 }
@@ -117,14 +112,6 @@ surface:
 "#;
     let p = write("profile-firmware-layered", body);
     let m = Profile::load(&p).expect("firmware-layered profile loads");
-    let cargo = m.cargo_toml.unwrap();
-    assert_eq!(cargo.shape, ShapeKind::Binary);
-    let bin = cargo.bin.expect("bin section present");
-    assert_eq!(bin.name_template, "{project_name}");
-    assert_eq!(bin.path_template, "src/main.rs");
-    let arch_deps = cargo.architecture_deps.unwrap();
-    assert_eq!(arch_deps.typed_slots.len(), 3);
-    assert_eq!(arch_deps.typed_slots[0].table, "platform");
     let ctx = m.context.unwrap();
     assert_eq!(ctx.context_subcommand_extras.len(), 2);
     let hw_extra = &ctx.context_subcommand_extras[1];
@@ -179,13 +166,7 @@ surface:
 "#;
     let p = write("profile-audio-plugin", body);
     let m = Profile::load(&p).expect("audio-plugin profile loads");
-    let cargo = m.cargo_toml.unwrap();
-    assert_eq!(cargo.shape, ShapeKind::Plugin);
-    let lib = cargo.lib.expect("lib section present");
-    assert!(lib.cdylib_only);
-    let bin = cargo.bin.expect("bin section present");
-    let stub = bin.paired_stub.expect("paired_stub present");
-    assert_eq!(stub.template_file, "templates/standalone-stub.rs.template");
+    assert_eq!(m.name, "audio-plugin");
 }
 
 #[test]
@@ -214,7 +195,6 @@ surface:
 "#;
     let p = write("profile-rust-workspace", body);
     let m = Profile::load(&p).expect("rust-workspace profile loads");
-    assert_eq!(m.cargo_toml.unwrap().shape, ShapeKind::Workspace);
     let boot = m.bootstrap.unwrap();
     assert_eq!(boot.steps.len(), 3);
     assert_eq!(boot.steps[0], BootstrapStep::EmitWorkspaceRoot);
@@ -229,110 +209,6 @@ surface:
 // ===========================================================================
 // 2 — block deps.yaml round-trip × 4
 // ===========================================================================
-
-#[test]
-fn block_deps_nih_plug_roundtrips() {
-    let body = r#"
-crates:
-  - name: nih_plug
-    version: "0.0"
-    features: []
-    source:
-      git: "https://github.com/robbert-vdh/nih-plug"
-      rev: "abc123"
-recommended_external_deps:
-  - crate: nih_plug
-    purpose: "plugin trait + parameter system"
-"#;
-    let p = write("deps-nih-plug", body);
-    let m = BlockDeps::load(&p).expect("nih-plug deps load");
-    assert_eq!(m.crates.len(), 1);
-    let c = &m.crates[0];
-    assert_eq!(c.name, "nih_plug");
-    assert!(
-        matches!(&c.source, Some(CrateSource::Git { git, rev: Some(_), .. }) if git.contains("nih-plug"))
-    );
-    assert_eq!(m.recommended_external_deps.len(), 1);
-    assert_eq!(m.recommended_external_deps[0].crate_name, "nih_plug");
-}
-
-#[test]
-fn block_deps_egui_roundtrips() {
-    let body = r#"
-crates:
-  - name: nih_plug_egui
-    version: "0.0"
-    features: []
-    source:
-      git: "https://github.com/robbert-vdh/nih-plug"
-      rev: "abc123"
-  - name: egui
-    version: "0.27"
-    source: crates-io
-recommended_external_deps:
-  - crate: egui_extras
-    purpose: "Knob widget when widget_kind is knob"
-"#;
-    let p = write("deps-egui", body);
-    let m = BlockDeps::load(&p).expect("egui deps load");
-    assert_eq!(m.crates.len(), 2);
-    // Second crate is crates-io tagged variant.
-    use specdev_analyzer::manifest::CrateSourceTag;
-    assert!(matches!(
-        &m.crates[1].source,
-        Some(CrateSource::Tagged(CrateSourceTag::CratesIo))
-    ));
-}
-
-#[test]
-fn block_deps_embassy_roundtrips() {
-    let body = r#"
-crates:
-  - name: embassy-executor
-    version: "0.6"
-    features: ["arch-cortex-m", "executor-thread"]
-    source: crates-io
-  - name: embassy-time
-    version: "0.3"
-    source: crates-io
-recommended_external_deps: []
-"#;
-    let p = write("deps-embassy", body);
-    let m = BlockDeps::load(&p).expect("embassy deps load");
-    assert_eq!(m.crates.len(), 2);
-    assert_eq!(
-        m.crates[0].features,
-        vec!["arch-cortex-m", "executor-thread"]
-    );
-    assert!(m.recommended_external_deps.is_empty());
-}
-
-#[test]
-fn block_deps_stm32h5_rs_roundtrips() {
-    let body = r#"
-crates:
-  - name: embassy-stm32
-    version: "0.1"
-    features: ["unstable-pac"]
-    source: crates-io
-recommended_external_deps:
-  - crate: cortex-m
-    purpose: "ARM Cortex-M startup"
-  - crate: cortex-m-rt
-    purpose: "linker + reset handler"
-"#;
-    let p = write("deps-stm32h5", body);
-    let m = BlockDeps::load(&p).expect("stm32h5-rs deps load");
-    assert_eq!(m.recommended_external_deps.len(), 2);
-}
-
-#[test]
-fn block_deps_load_returns_default_when_file_absent() {
-    let p = tmp_path("deps-absent", "yaml");
-    let m = BlockDeps::load(&p).expect("absent deps return default");
-    assert!(m.crates.is_empty());
-    assert!(m.recommended_external_deps.is_empty());
-}
 
 // ===========================================================================
 // 3 — bridge contract.yaml round-trip × 2
@@ -370,19 +246,23 @@ diagnostic_template: |
 // 4 — closed-enum rejection
 // ===========================================================================
 
+/// A contract-2 manifest that still names an emitter section is refused.
 #[test]
-fn profile_rejects_unknown_shape() {
+fn profile_rejects_a_retired_section_at_contract_two() {
     let body = r#"
 name: bogus
 language: rust
+contract_version: 2
 cargo_toml:
-  shape: chimera
+  shape: library
 "#;
-    let p = write("profile-bad-shape", body);
-    let err = Profile::load(&p).expect_err("unknown shape should fail");
+    let p = write("profile-retired", body);
+    let err = Profile::load(&p).expect_err("a retired section should fail");
     let msg = format!("{err:#}");
-    assert!(msg.contains("MANIFEST-001"), "{msg}");
-    assert!(msg.contains("chimera") || msg.contains("shape"), "{msg}");
+    assert!(
+        msg.contains("MANIFEST-001") && msg.contains("cargo_toml"),
+        "{msg}"
+    );
 }
 
 #[test]
@@ -394,19 +274,6 @@ unknown_field: 42
 "#;
     let p = write("profile-bad-top", body);
     let err = Profile::load(&p).expect_err("unknown top-level field should fail");
-    assert!(format!("{err:#}").contains("MANIFEST-001"));
-}
-
-#[test]
-fn block_deps_rejects_empty_purpose() {
-    let body = r#"
-crates: []
-recommended_external_deps:
-  - crate: foo
-    purpose: ""
-"#;
-    let p = write("deps-empty-purpose", body);
-    let err = BlockDeps::load(&p).expect_err("empty purpose should fail");
     assert!(format!("{err:#}").contains("MANIFEST-001"));
 }
 

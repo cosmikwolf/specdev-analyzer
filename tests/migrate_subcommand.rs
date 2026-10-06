@@ -1,7 +1,7 @@
 //! `specdev-analyzer migrate` subcommand.
 //!
 //! Pre-manifest projects (bootstrapped before the manifests shipped) lack
-//! `profile.yaml` / per-block `deps.yaml` / per-bridge `contract.yaml` in
+//! `profile.yaml` / per-bridge `contract.yaml` in
 //! their inlined tree. `migrate` walks the project's lineage, resolves
 //! which units are inlined, and byte-copies the missing manifests from the
 //! plugin tree's HEAD. Lineage `content_hash` updates to the new rolled-up
@@ -11,8 +11,8 @@
 //!   1. Pre-manifest → manifest fixture migration: bootstrap with
 //!      minimal_plugin, inline blocks/bridge with minimal_plugin, then
 //!      point migrate at a synthetic manifest-shaped plugin tree
-//!      (minimal_plugin + manifests). Profile.yaml, per-block deps.yaml,
-//!      and per-bridge contract.yaml all land; lineage hashes advance;
+//!      (minimal_plugin + manifests). Profile.yaml and per-bridge
+//!      contract.yaml land; lineage hashes advance;
 //!      `origin` + `origin_version` + `inlined_at` stay byte-stable.
 //!   2. Already-migrated no-op: bootstrap with full_plugin (manifests
 //!      authored from the start), inline blocks/bridge from full_plugin,
@@ -119,23 +119,16 @@ fn build_synthetic_manifest_plugin(tag: &str) -> PathBuf {
     let plugin = workspace.join("_plugin");
     copy_dir_recursive(&minimal_plugin(), &plugin).unwrap();
 
-    // Profile shell: copy full_plugin firmware-layered manifest (and its
-    // templates/, if any — none for firmware-layered) onto minimal_plugin.
+    // Profile shell: copy full_plugin firmware-layered manifest and the
+    // templates/ its paired_files name onto minimal_plugin.
     let profile_yaml_src = full_plugin().join("profiles/firmware-layered/profile.yaml");
     let profile_yaml_dst = plugin.join("profiles/firmware-layered/profile.yaml");
     std::fs::copy(&profile_yaml_src, &profile_yaml_dst).unwrap();
-
-    // Block: minimal_plugin ships embassy without deps.yaml; overlay
-    // full_plugin's deps.yaml.
-    let deps_src = full_plugin().join("blocks/embassy/codegen/rust/deps.yaml");
-    let deps_dst = plugin.join("blocks/embassy/codegen/rust/deps.yaml");
-    std::fs::copy(&deps_src, &deps_dst).unwrap();
-
-    // Block: lvgl exists only in minimal_plugin — author a minimal deps.yaml
-    // so the migrate plan touches it too. Body matches the deps.yaml schema
-    // (no required fields beyond `crates: []`).
-    let lvgl_deps = plugin.join("blocks/lvgl/codegen/rust/deps.yaml");
-    std::fs::write(&lvgl_deps, b"crates: []\nrecommended_external_deps: []\n").unwrap();
+    copy_dir_recursive(
+        &full_plugin().join("profiles/firmware-layered/templates"),
+        &plugin.join("profiles/firmware-layered/templates"),
+    )
+    .unwrap();
 
     // Bridge: embassy+lvgl exists only in minimal_plugin — author a minimal
     // contract.yaml: bridge_name + diagnostic_template.
@@ -151,12 +144,12 @@ fn build_synthetic_manifest_plugin(tag: &str) -> PathBuf {
 
 // ===========================================================================
 // 1 — Pre-manifest → manifest migration writes profile.yaml + per-block
-//     deps.yaml + per-bridge contract.yaml; lineage hashes advance; meta +
+//     per-bridge contract.yaml; lineage hashes advance; meta +
 //     per-unit origin/inlined_at stay frozen.
 // ===========================================================================
 
 #[test]
-fn pre_manifest_fixture_migrates_profile_block_bridge() {
+fn pre_manifest_fixture_migrates_profile_and_bridge() {
     // Bootstrap + inline against minimal_plugin (no manifests anywhere).
     let (target, layout) = fresh_project(
         "pre-manifest-bootstrap",
@@ -169,9 +162,6 @@ fn pre_manifest_fixture_migrates_profile_block_bridge() {
 
     // Confirm pre-migrate state: no manifests on disk.
     assert!(!target.join("specs/specdev/profile.yaml").exists());
-    assert!(!target
-        .join("specs/specdev/codegen/rust/blocks/embassy/deps.yaml")
-        .exists());
     assert!(!target
         .join("specs/specdev/reductions/bridges/embassy+lvgl.contract.yaml")
         .exists());
@@ -187,12 +177,8 @@ fn pre_manifest_fixture_migrates_profile_block_bridge() {
     let report = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
 
     assert!(target.join("specs/specdev/profile.yaml").is_file());
-    assert!(target
-        .join("specs/specdev/codegen/rust/blocks/embassy/deps.yaml")
-        .is_file());
-    assert!(target
-        .join("specs/specdev/codegen/rust/blocks/lvgl/deps.yaml")
-        .is_file());
+    // Blocks contribute no manifest any more: nothing lands under codegen/.
+    assert!(!target.join("specs/specdev/codegen").exists());
     assert!(target
         .join("specs/specdev/reductions/bridges/embassy+lvgl.contract.yaml")
         .is_file());
@@ -202,8 +188,8 @@ fn pre_manifest_fixture_migrates_profile_block_bridge() {
         "profile shell must report at least one file (profile.yaml)"
     );
     assert!(
-        report.migrated.iter().any(|m| m.name == "embassy"),
-        "embassy block must appear in migrated set"
+        !report.migrated.iter().any(|m| m.name == "embassy"),
+        "a block has no manifest to migrate"
     );
     assert!(
         report.migrated.iter().any(|m| m.name == "embassy+lvgl"),
@@ -216,9 +202,9 @@ fn pre_manifest_fixture_migrates_profile_block_bridge() {
 
     let lineage_after = Lineage::load(&layout.specdev_root).unwrap();
     let embassy_after = &lineage_after.blocks["embassy"];
-    assert_ne!(
+    assert_eq!(
         embassy_after.content_hash, embassy_hash_before,
-        "embassy content_hash must advance (manifest now in file set)"
+        "a block's file set is unchanged by migrate"
     );
     assert_ne!(
         lineage_after.bridges["embassy+lvgl"].content_hash, bridge_hash_before,
@@ -280,6 +266,8 @@ fn dry_run_does_not_touch_disk() {
     let (target, layout) =
         fresh_project("dry-run-bootstrap", &minimal_plugin(), "firmware-layered");
     run_inline_block(&layout, &minimal_plugin(), "embassy").unwrap();
+    run_inline_block(&layout, &minimal_plugin(), "lvgl").unwrap();
+    run_inline_bridge(&layout, &minimal_plugin(), "embassy+lvgl").unwrap();
 
     let synthetic = build_synthetic_manifest_plugin("dry-run-target");
     let lineage_before_bytes = std::fs::read(layout.specdev_root.join("lineage.toml")).unwrap();
@@ -296,7 +284,7 @@ fn dry_run_does_not_touch_disk() {
     // No new files materialized.
     assert!(!target.join("specs/specdev/profile.yaml").exists());
     assert!(!target
-        .join("specs/specdev/codegen/rust/blocks/embassy/deps.yaml")
+        .join("specs/specdev/reductions/bridges/embassy+lvgl.contract.yaml")
         .exists());
 
     // Existing files unchanged.
@@ -473,24 +461,32 @@ fn audio_plugin_templates_copied() {
     let synthetic_pre = tmp_workspace("audio-pre");
     let synthetic_pre_plugin = synthetic_pre.join("_plugin");
     copy_dir_recursive(&full_plugin(), &synthetic_pre_plugin).unwrap();
-    // Strip manifests + templates to simulate a pre-manifest audio-plugin.
-    let _ = std::fs::remove_file(synthetic_pre_plugin.join("profiles/audio-plugin/profile.yaml"));
-    let _ = std::fs::remove_dir_all(synthetic_pre_plugin.join("profiles/audio-plugin/templates"));
+    // Strip manifests + templates to simulate a pre-manifest audio-plugin,
+    // which named its language by a `codegen/<lang>/*.conventions.md` file.
+    let pre = synthetic_pre_plugin.join("profiles/audio-plugin");
+    let _ = std::fs::remove_file(pre.join("profile.yaml"));
+    let _ = std::fs::remove_dir_all(pre.join("templates"));
+    std::fs::create_dir_all(pre.join("codegen/rust")).unwrap();
+    std::fs::write(
+        pre.join("codegen/rust/module.conventions.md"),
+        "# pre-manifest\n",
+    )
+    .unwrap();
 
     let (target, layout) = fresh_project("audio-bootstrap", &synthetic_pre_plugin, "audio-plugin");
     assert!(!target.join("specs/specdev/profile.yaml").exists());
     assert!(!target
-        .join("specs/specdev/templates/standalone-stub.rs.template")
+        .join("specs/specdev/templates/specdev-ci.yml.template")
         .exists());
 
     // Migrate against the real full_plugin tree.
     let report = migrate::run_migrate(&layout, &full_plugin(), false, false).unwrap();
     assert!(report.missing_in_plugin.is_empty());
 
-    let template_dst = target.join("specs/specdev/templates/standalone-stub.rs.template");
+    let template_dst = target.join("specs/specdev/templates/specdev-ci.yml.template");
     assert!(template_dst.is_file(), "template must be copied");
     let template_src =
-        full_plugin().join("profiles/audio-plugin/templates/standalone-stub.rs.template");
+        full_plugin().join("profiles/audio-plugin/templates/specdev-ci.yml.template");
     assert_eq!(
         std::fs::read(&template_src).unwrap(),
         std::fs::read(&template_dst).unwrap(),
@@ -550,26 +546,29 @@ fn migrate_is_idempotent() {
 fn migrate_updates_upstream_snapshot() {
     let (_target, layout) = fresh_project("upstream", &minimal_plugin(), "firmware-layered");
     run_inline_block(&layout, &minimal_plugin(), "embassy").unwrap();
+    run_inline_block(&layout, &minimal_plugin(), "lvgl").unwrap();
+    run_inline_bridge(&layout, &minimal_plugin(), "embassy+lvgl").unwrap();
 
-    // Pre-migrate upstream snapshot has no deps.yaml.
-    let upstream_dir = upstream::upstream_dir(&layout.specdev_root, UnitKind::Block, "embassy");
+    // Pre-migrate upstream snapshot has no contract.yaml.
+    let upstream_dir =
+        upstream::upstream_dir(&layout.specdev_root, UnitKind::Bridge, "embassy+lvgl");
     assert!(upstream_dir.is_dir());
-    assert!(!upstream_dir.join("codegen/rust/deps.yaml").exists());
+    assert!(!upstream_dir.join("contract.yaml").exists());
 
     let synthetic = build_synthetic_manifest_plugin("upstream-target");
     let report: MigrateReport = migrate::run_migrate(&layout, &synthetic, false, false).unwrap();
-    assert!(report.migrated.iter().any(|m| m.name == "embassy"));
+    assert!(report.migrated.iter().any(|m| m.name == "embassy+lvgl"));
 
-    // Post-migrate upstream snapshot includes deps.yaml.
-    let upstream_deps = upstream_dir.join("codegen/rust/deps.yaml");
+    // Post-migrate upstream snapshot includes contract.yaml.
+    let upstream_contract = upstream_dir.join("contract.yaml");
     assert!(
-        upstream_deps.is_file(),
+        upstream_contract.is_file(),
         "upstream snapshot must reflect post-migrate file set"
     );
-    let plugin_deps = synthetic.join("blocks/embassy/codegen/rust/deps.yaml");
+    let plugin_contract = synthetic.join("bridges/embassy+lvgl/contract.yaml");
     assert_eq!(
-        std::fs::read(&plugin_deps).unwrap(),
-        std::fs::read(&upstream_deps).unwrap(),
+        std::fs::read(&plugin_contract).unwrap(),
+        std::fs::read(&upstream_contract).unwrap(),
         "upstream bytes must equal plugin-HEAD bytes"
     );
 }

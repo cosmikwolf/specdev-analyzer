@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Written once by `specdev-analyzer manifest --write` when absent, then
-// externally owned. End-to-end tests live under `e2e/`; async Server
+// Written once by `specdev-analyzer bootstrap` when absent, then owned
+// by the project. End-to-end tests live under `e2e/`; async Server
 // Components have no unit-test seam and are covered here.
 export default defineConfig({
   testDir: "e2e",

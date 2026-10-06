@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 
+use crate::entries::{EntryKind, EntryStore};
 use crate::items::sync::parse_spec_items;
 use crate::layout::LayoutContext;
 
@@ -102,9 +103,7 @@ pub fn render_markdown(report: &CoverageReport) -> String {
     let mut out = String::new();
     out.push_str("# Coverage matrix\n\n");
     if report.matrix.is_empty() {
-        out.push_str(
-            "_No `requirements.toml` found, or it carries no `[[requirement]]` entries._\n",
-        );
+        out.push_str("_No requirements found: no `[[requirement]]` entries are authored._\n");
         return out;
     }
     out.push_str("| Requirement | Satisfied by |\n");
@@ -211,18 +210,11 @@ fn load_modules(layout: &LayoutContext) -> Result<Vec<ModuleView>> {
 /// `requirements.schema.yaml` contract across all profiles. Carried
 /// over verbatim from the retired `skeleton::load_requirement_ids`.
 fn load_requirement_ids(layout: &LayoutContext) -> Result<Vec<String>> {
-    if !layout.requirements_toml_path.is_file() {
-        return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&layout.requirements_toml_path)
-        .with_context(|| format!("reading {}", layout.requirements_toml_path.display()))?;
-    let value: toml::Value = toml::from_str(&text)
-        .with_context(|| format!("parsing {}", layout.requirements_toml_path.display()))?;
-    let arr = value
-        .get("requirement")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let arr: Vec<toml::Value> = EntryStore::for_layout(layout)
+        .load(EntryKind::Requirement)?
+        .into_iter()
+        .map(|e| e.value)
+        .collect();
     // Preserve declaration order; dedup retains the first occurrence
     // (a duplicate id is a separate validate-time error caught upstream).
     let mut ids: Vec<String> = Vec::with_capacity(arr.len());
@@ -274,7 +266,7 @@ mod tests {
             orphans: Vec::new(),
         };
         let md = render_markdown(&report);
-        assert!(md.contains("No `requirements.toml`"));
+        assert!(md.contains("No requirements found"));
     }
 
     #[test]

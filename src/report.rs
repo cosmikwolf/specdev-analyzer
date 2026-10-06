@@ -44,6 +44,10 @@ pub struct Finding {
     pub pointer: String,
     pub line: Option<u32>,
     pub message: String,
+    /// The graph entity the finding is about, as the reducer names it
+    /// (module name, requirement id, `<Module>.<name>` for a unit entry).
+    /// `None` for findings about a file or the project as a whole.
+    pub entity: Option<String>,
 }
 
 impl Finding {
@@ -55,7 +59,13 @@ impl Finding {
             pointer: String::new(),
             line: None,
             message: message.into(),
+            entity: None,
         }
+    }
+
+    pub fn with_entity(mut self, entity: impl Into<String>) -> Self {
+        self.entity = Some(entity.into());
+        self
     }
 
     pub fn with_file(mut self, file: impl Into<String>) -> Self {

@@ -11,7 +11,7 @@ pub mod dart;
 pub mod rust;
 pub mod typescript;
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use tree_sitter::{Language, Node};
 
@@ -110,21 +110,75 @@ pub trait LanguageAdapter: Send + Sync {
         None
     }
 
+    /// The built-in `tests.scm` query source for test discovery, if the
+    /// language tier ships one. Its captures are `@test`, `@test.name`,
+    /// `@test.suite`, `@test.unnamed`, `@test.pending`, `@group` and
+    /// `@group.name` (see [`crate::test_discovery`]); framework names stay in
+    /// the query, never in the analyzer.
+    fn tests_query(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// How a test whose bare name is not unique is named.
+    fn test_identity_style(&self) -> TestIdentityStyle {
+        TestIdentityStyle::ModuleOrFile
+    }
+
+    /// Project-relative directories this language keeps tests in by
+    /// convention, walked in addition to `[paths].source` and
+    /// `[paths].tests`.
+    fn conventional_test_roots(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Whether a file (project-relative, one of this language's extensions)
+    /// holds tests by this language's convention.
+    fn is_test_file(&self, _rel: &Path) -> bool {
+        true
+    }
+
+    /// Whether a top-level syntax node of this kind is not code of its own
+    /// (a comment, an attribute, an import). A source file holds only tests
+    /// when every other top-level node sits inside a test or a test group.
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment")
+    }
+
     /// The built-in `imports.scm` query source, if the language tier ships
-    /// one. Its single `@import.source` capture is the module specifier of
-    /// each import; [`LanguageAdapter::import_package`] maps it to a
-    /// package name. `report imports` compares those names with the
-    /// module's declared `external_deps`.
+    /// one: `@import.source` for each import specifier and `@import.reexport`
+    /// for each re-export (a barrel is followed through it). `check` resolves
+    /// them with [`LanguageAdapter::resolve_import`] to find the internal
+    /// edges between a package's own modules.
     fn imports_query(&self) -> Option<&'static str> {
         None
     }
 
-    /// The external package one captured import specifier names, or
-    /// `None` when it names none: a relative or alias path, the
-    /// language's own standard library, or `self_package` (the project's
-    /// own package name). The specifier arrives exactly as captured.
-    fn import_package(&self, _specifier: &str, _self_package: &str) -> Option<String> {
+    /// Project-relative files one import specifier (as captured, quotes
+    /// stripped) may name, most specific first. The first that exists is the
+    /// import's target. Empty for a specifier outside the package (another
+    /// package, the standard library): external, the manifest's business.
+    fn resolve_import(&self, _spec: &str, _from: &Path, _ctx: &ImportContext) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// Specifier prefix aliases a project declares (TypeScript `tsconfig`
+    /// `paths`): `(pattern, targets)`, both project-relative, `*` the
+    /// wildcard. Read once per run.
+    /// The project's own manifest (`Cargo.toml`, `package.json`, …), read
+    /// for its dependencies and package fields. `None` when the language has
+    /// none or the project has not created it.
+    fn manifest_facts(&self, _project_root: &Path) -> Option<crate::manifest_facts::ManifestFacts> {
         None
+    }
+
+    fn import_aliases(&self, _project_root: &Path) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+
+    /// Files that belong to the same module as its source file (a C header
+    /// twin of a `.c` file), project-relative.
+    fn module_twin_files(&self, _source: &Path) -> Vec<PathBuf> {
+        Vec::new()
     }
 
     /// Comparable identity for joining a spec item against an extracted
@@ -269,6 +323,45 @@ pub trait LanguageAdapter: Send + Sync {
 
 /// Resolve a language name to a boxed adapter. Returns `None` for unknown
 /// languages; callers surface this with their own error context.
+/// What [`LanguageAdapter::resolve_import`] knows about the project.
+#[derive(Debug, Clone)]
+pub struct ImportContext {
+    pub project_root: PathBuf,
+    /// `[paths].source`, project-relative.
+    pub source_root: PathBuf,
+    /// The project's own package name (`[project].name`).
+    pub package_name: String,
+    /// From [`LanguageAdapter::import_aliases`].
+    pub aliases: Vec<(String, Vec<String>)>,
+}
+
+/// `p` with `.` and `..` components folded away, lexically.
+pub fn normalize_rel(p: &Path) -> PathBuf {
+    let mut out: Vec<std::ffi::OsString> = Vec::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(s) => out.push(s.to_os_string()),
+            _ => {}
+        }
+    }
+    out.iter().collect()
+}
+
+/// How a test whose bare name is not unique is named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIdentityStyle {
+    /// `<Module>::<name>` when the test sits in one spec module's source
+    /// file, else `<file path>::<name>`.
+    ModuleOrFile,
+    /// The enclosing group titles and the test title, joined by the
+    /// separator (`cart > empty > adds`).
+    GroupPath(&'static str),
+}
+
 pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
     match language {
         "rust" => Some(Box::new(rust::RustAdapter)),

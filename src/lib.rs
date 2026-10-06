@@ -53,24 +53,39 @@
 //! - `MERGE-001` — `git merge-file` not available on PATH or invocation failed.
 //! - `MERGE-002` — merge produced conflicts; resolve markers and retry.
 //! - `MERGE-003` — `--merge` requested for a unit with no lineage entry.
-//! - `MERGE-FILESET` — file-set changed between upstream and plugin (added or
-//!   removed files); v1 doesn't reconcile, manual intervention needed.
+//! - `MERGE-FILESET` — a changed file set `--merge` will not carry: a file
+//!   the plugin removed that the project edited, or a broken snapshot
+//!   invariant. An added file, and a removed unedited one, are carried.
 //! - `DRIFT-INVARIANT-001` — inlined file present, no upstream entry.
 //! - `DRIFT-INVARIANT-002` — upstream entry present, no inlined file.
 //! - `DRIFT-INVARIANT-003` — lineage entry points at no files at all.
 //!
-//! Architecture / requirements finding codes (in [`Report`] alongside the rest):
+//! Architecture and entry finding codes (in [`Report`] alongside the rest):
 //! - `LAYOUT-005` — `specs/architecture.toml` absent (info; project may
 //!   have no architecture-level wiring yet).
-//! - `LAYOUT-006` — `specs/requirements.toml` absent (info).
+//! - `LAYOUT-006` — no requirement or source authored (info).
 //! - `SCHEMA-ARCH` — `architecture.toml` fails its profile-shipped schema.
-//! - `SCHEMA-REQ` — `requirements.toml` fails its profile-shipped schema.
+//! - `SCHEMA-REQ` — a requirements or sources file fails its schema.
+//! - `SCHEMA-DEC` — a decisions file fails its schema.
+//! - `SCHEMA-OQ` — an open-questions file fails its schema.
+//! - `ENTRY-FILE-001` — a per-entry file (`spec_version` `2.x`) does not
+//!   hold exactly one entry of its kind.
+//! - `ENTRY-FILE-002` — a per-entry file's stem is not its entry's id.
+//! - `ENTRY-LEGACY-001` — a `2.x` project still holds entries in a `1.x`
+//!   file; they are not read until `migrate` moves them.
+//!
+//! Rule-pack finding codes (see [`packs`] and [`code_checks`]):
+//! - `PACK-000` — an inlined rule pack loaded (info).
+//! - `PACK-001` — an inlined rule pack does not parse or fails its schema;
+//!   none of its checks ran.
+//! - `PACK-002` — an inlined query does not compile or lacks a capture.
+//! - `pack_entity_in_code`, `pack_attribute_matches`, `pack_key_ambiguous` —
+//!   the code checks.
 //!
 //! Plugin-lint codes (emitted by `plugin-lint`, not via Report —
 //! these run at plugin-author CI time, before any project context):
 //! - `BLOCK-LINT-001` — block missing required `schema.yaml`.
 //! - `BLOCK-LINT-002` — block missing required `reduction.yaml`.
-//! - `BLOCK-LINT-003` — block has no `codegen/<lang>/README.md` under any language.
 //! - `BLOCK-LINT-004` — block missing required top-level `README.md`.
 //! - `BLOCK-LINT-005` — `schema.yaml` fails standalone JSON Schema compile.
 //! - `BLOCK-LINT-006` — `schema.yaml` `$id` doesn't match the convention
@@ -78,29 +93,34 @@
 //! - `BLOCK-LINT-007` — `reduction.yaml` fails the embedded reduction
 //!   metaschema (missing `extends`, missing relation `from_kind`/`to_kind`/
 //!   `from_spec`/`endpoints`, etc).
+//! - `PACK-LINT-001..005` — a unit's `checks.toml`: fails its schema, a
+//!   query is missing or does not compile, a query lacks a named capture, an
+//!   unknown primitive, a rule name without the unit prefix.
 
 pub mod aggregator;
 pub mod analyzer_version;
 pub mod bootstrap;
 pub mod canonical;
-pub mod cargo_toml;
+pub mod check;
 pub mod cli;
+pub mod code_checks;
 pub mod config;
 pub mod context;
 pub mod coverage;
 pub mod decision_report;
-pub mod derive;
 pub mod diagnostics;
 pub mod domain;
 pub mod drift;
 pub mod embedded_schemas;
-pub mod extract;
+pub mod entries;
+pub mod field_cuts;
+pub mod format_migration;
 pub mod gates;
-pub mod gen_lineage;
 pub mod graph;
 pub mod graph_report;
+pub mod guidance_lint;
 pub mod hash;
-pub mod imports;
+pub mod import_edges;
 pub mod inline;
 pub mod items;
 pub mod kinds;
@@ -108,27 +128,26 @@ pub mod lang;
 pub mod layout;
 pub mod lineage;
 pub mod manifest;
+pub mod manifest_facts;
 pub mod merge;
 pub mod migrate;
-pub mod package_json;
+pub mod pack_lint;
+pub mod packs;
 pub mod paired_files;
 pub mod path;
 pub mod plugin_root;
 pub mod prompt;
-pub mod prose_lint;
-pub mod pubspec_yaml;
 pub mod reduction;
 pub mod reductions;
-pub mod reference_lint;
 pub mod report;
 pub mod resolve;
 pub mod resolved;
 pub mod schema;
+pub mod test_discovery;
 pub mod upstream;
 pub mod validate;
 
 pub use domain::{DomainConfig, Severity};
-pub use extract::ExtractionResult;
 pub use layout::{LayoutContext, LayoutEntry, LayoutInventory, LayoutKind};
 pub use reduction::{Entity, Graph, Relation, SerializedProvenance};
 pub use report::{Finding, Provenance, Report};

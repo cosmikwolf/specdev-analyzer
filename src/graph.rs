@@ -68,6 +68,145 @@ pub fn unique(root: &Value, field: &str, rule: &str, severity: Severity) -> Vec<
     out
 }
 
+/// The scalar at a dotted path under `v` (`attrs.port`), as text. Strings
+/// are taken as they are; numbers and booleans in their JSON form. `None`
+/// for a missing value, `null`, or a non-scalar.
+pub fn scalar_at(v: &Value, path: &str) -> Option<String> {
+    let mut cur = v;
+    for seg in path.split('.') {
+        cur = cur.get(seg)?;
+    }
+    match cur {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The spec file an entity or relation came from.
+fn provenance_file(v: &Value) -> String {
+    v.pointer("/provenance/source_file")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// UNIQUE over a composite key: each entity in `root.entities[]` is keyed on
+/// the values at `fields` together. Two entities with the same key are a
+/// finding on the second, naming the first. An entity missing any key part
+/// is not keyed — presence is the schema's job.
+pub fn unique_fields(
+    root: &Value,
+    fields: &[String],
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let Some(entities) = root.get("entities").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    let mut out = Vec::new();
+    for ent in entities {
+        let Some(name) = ent.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(key) = fields
+            .iter()
+            .map(|f| scalar_at(ent, f))
+            .collect::<Option<Vec<String>>>()
+        else {
+            continue;
+        };
+        if let Some(first) = seen.get(&key) {
+            let parts: Vec<String> = fields
+                .iter()
+                .zip(&key)
+                .map(|(f, v)| format!("{f} = {v}"))
+                .collect();
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!("`{name}` has the same {} as `{first}`", parts.join(", ")),
+                )
+                .with_file(provenance_file(ent))
+                .with_entity(name),
+            );
+        } else {
+            seen.insert(key, name.to_string());
+        }
+    }
+    out
+}
+
+/// RELATED ATTRS ALLOWED: for each relation in `root.relations[]`, read
+/// `left` and `right` (each `relation.<attr>`, `from.<attr>` or
+/// `to.<attr>`, the endpoints looked up in `root.entities[]`); the pair must
+/// be one of `allowed`, where `"*"` matches any value. A relation with an
+/// unresolved endpoint or a missing attribute is skipped — the reduction and
+/// the schema own those. The finding's entity is `<from> -> <to>`.
+pub fn related_attrs_allowed(
+    root: &Value,
+    left: &str,
+    right: &str,
+    allowed: &[Vec<String>],
+    rule: &str,
+    severity: Severity,
+) -> Vec<Finding> {
+    let by_name: HashMap<&str, &Value> = root
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get("name").and_then(Value::as_str).map(|n| (n, e)))
+        .collect();
+    let side = |rel: &Value, spec: &str| -> Option<String> {
+        let (which, attr) = spec.split_once('.')?;
+        let holder = match which {
+            "relation" => rel,
+            "from" | "to" => by_name.get(rel.get(which)?.as_str()?)?,
+            _ => return None,
+        };
+        scalar_at(holder, &format!("attrs.{attr}"))
+    };
+    let fits = |want: &str, have: &str| want == "*" || want == have;
+    let mut out = Vec::new();
+    for rel in root
+        .get("relations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(from), Some(to)) = (
+            rel.get("from").and_then(Value::as_str),
+            rel.get("to").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let (Some(l), Some(r)) = (side(rel, left), side(rel, right)) else {
+            continue;
+        };
+        let ok = allowed
+            .iter()
+            .any(|pair| pair.len() == 2 && fits(&pair[0], &l) && fits(&pair[1], &r));
+        if !ok {
+            out.push(
+                Finding::new(
+                    rule,
+                    severity,
+                    format!(
+                        "`{from}` -> `{to}`: {left} = `{l}` with {right} = `{r}` is not an allowed pair"
+                    ),
+                )
+                .with_file(provenance_file(rel))
+                .with_entity(format!("{from} -> {to}")),
+            );
+        }
+    }
+    out
+}
+
 #[derive(Debug)]
 struct SeenEntry {
     pointer: String,
@@ -369,15 +508,28 @@ pub fn requirements_have_satisfiers(root: &Value, rule: &str, severity: Severity
         if satisfied.contains(name) {
             continue;
         }
-        out.push(Finding::new(
-            rule,
-            severity,
-            format!(
-                "requirement `{name}` (nature = \"module\") has no module satisfier; \
-                 add it to a module's `satisfies = [...]` array, or set `nature = \
-                 \"architecture\" | \"build\" | \"test\"` to exempt"
-            ),
-        ));
+        // `planned = true`: not built yet, so a missing satisfier is expected.
+        if ent
+            .get("attrs")
+            .and_then(|a| a.get("planned"))
+            .and_then(|p| p.as_bool())
+            == Some(true)
+        {
+            continue;
+        }
+        out.push(
+            Finding::new(
+                rule,
+                severity,
+                format!(
+                    "requirement `{name}` (nature = \"module\") has no module satisfier; \
+                     add it to a module's `satisfies = [...]` array, set `planned = true` while \
+                     it is not built, or set `nature = \"architecture\" | \"build\" | \"test\"` \
+                     to exempt"
+                ),
+            )
+            .with_entity(name),
+        );
     }
     out
 }
@@ -765,127 +917,6 @@ pub fn entity_attr_target_attr_equals(
                      expected `\"{target_attr_value}\"`"
                 ),
             ));
-        }
-    }
-    out
-}
-
-/// MODULE_REACHABLE_THROUGH_OPEN_QUESTION (codegen-gate informational
-/// warning): for each Module entity, walk Module.satisfies →
-/// Requirement → OpenQuestion (via open_question_affects_requirement
-/// reversed). If any reachable OQ has `attrs.status == "open"`, fire one
-/// finding per (module, oq) pair. The companion gate in `gen.rs` produces
-/// the hard refusal; this primitive surfaces the same condition at
-/// validate time as a warning.
-///
-/// Operates on the unfiltered graph view because it traverses two
-/// relation kinds and two entity kinds; the call site doesn't pre-filter.
-pub fn module_reachable_through_open_question(
-    root: &Value,
-    rule: &str,
-    severity: Severity,
-) -> Vec<Finding> {
-    let entities = root
-        .get("entities")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let relations = root
-        .get("relations")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Index entities by name for kind + attr lookup.
-    let mut by_name: HashMap<String, Value> = HashMap::new();
-    for ent in &entities {
-        if let Some(n) = ent.get("name").and_then(|v| v.as_str()) {
-            by_name.insert(n.to_string(), ent.clone());
-        }
-    }
-
-    // module_satisfies edges: Module → Requirement.
-    let mut module_to_reqs: HashMap<String, Vec<String>> = HashMap::new();
-    // affects edges (reversed): Requirement → OpenQuestion.
-    let mut req_to_oqs: HashMap<String, Vec<String>> = HashMap::new();
-    for rel in &relations {
-        let Some(kind) = rel.get("kind").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(from) = rel.get("from").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(to) = rel.get("to").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        match kind {
-            "module_satisfies" => {
-                module_to_reqs
-                    .entry(from.to_string())
-                    .or_default()
-                    .push(to.to_string());
-            }
-            "open_question_affects_requirement" => {
-                // Edge is OQ → Requirement; we want Requirement → OQ.
-                req_to_oqs
-                    .entry(to.to_string())
-                    .or_default()
-                    .push(from.to_string());
-            }
-            _ => {}
-        }
-    }
-
-    let mut out = Vec::new();
-    let mut module_names: Vec<&String> = by_name
-        .iter()
-        .filter_map(|(n, e)| {
-            let kind = e.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-            (kind == "Module").then_some(n)
-        })
-        .collect();
-    module_names.sort();
-
-    for module in module_names {
-        let mut emitted: BTreeSet<String> = BTreeSet::new();
-        let Some(reqs) = module_to_reqs.get(module) else {
-            continue;
-        };
-        for req in reqs {
-            let Some(oqs) = req_to_oqs.get(req) else {
-                continue;
-            };
-            for oq in oqs {
-                if emitted.contains(oq) {
-                    continue;
-                }
-                let Some(oq_ent) = by_name.get(oq) else {
-                    continue;
-                };
-                let status = oq_ent
-                    .get("attrs")
-                    .and_then(|a| a.get("status"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if status == "open" {
-                    let title = oq_ent
-                        .get("attrs")
-                        .and_then(|a| a.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    out.push(Finding::new(
-                        rule,
-                        severity,
-                        format!(
-                            "module `{module}` is reachable through open question \
-                             `{oq}` (`{title}`) via requirement `{req}`; codegen will \
-                             refuse to emit until the question is resolved or a default \
-                             is committed"
-                        ),
-                    ));
-                    emitted.insert(oq.clone());
-                }
-            }
         }
     }
     out

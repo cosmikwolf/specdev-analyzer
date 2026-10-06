@@ -37,58 +37,43 @@ pub struct SpecConfig {
     pub workspace: Option<WorkspaceSection>,
 }
 
+/// `[project]` keys a `1.x` `spec.toml` may carry that `2.0` removed: their
+/// only reader was the manifest emitter.
+pub const RETIRED_PROJECT_KEYS: [&str; 7] = [
+    "crate_shape",
+    "crate_type",
+    "version",
+    "edition",
+    "license",
+    "repository",
+    "description",
+];
+
+/// `[workspace]` keys a `1.x` `spec.toml` may carry that `2.0` removed: copies of
+/// the Cargo workspace.
+pub const RETIRED_WORKSPACE_KEYS: [&str; 3] = ["resolver", "default_members", "exclude"];
+
+/// The newest project-format major this analyzer writes. `validate` names
+/// `migrate` once for an older project.
+pub const NEWEST_FORMAT_MAJOR: u32 = 2;
+
+impl SpecConfig {
+    /// The major number of `spec_version` (`"2.0"` → 2). The schema admits
+    /// only `<digit>.<digits>`, so a parsed config always has one.
+    pub fn format_major(&self) -> u32 {
+        self.spec_version
+            .split('.')
+            .next()
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(1)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectSection {
     pub name: String,
     pub profile: String,
     pub language: String,
-    /// The crate's `[package] version`. Optional; emitted literally when
-    /// set. A workspace member that leaves it unset inherits the
-    /// workspace's value when the root declares one.
-    #[serde(default)]
-    pub version: Option<String>,
-    /// Rust edition. Optional; defaults to "2021" at gen time.
-    #[serde(default)]
-    pub edition: Option<String>,
-    /// SPDX license identifier. Optional; libraries use it.
-    #[serde(default)]
-    pub license: Option<String>,
-    /// Project description. Optional; libraries use it.
-    #[serde(default)]
-    pub description: Option<String>,
-    /// Repository URL. Optional; libraries use it. For
-    /// workspace members this is normally omitted in favor of the
-    /// workspace's canonical value.
-    #[serde(default)]
-    pub repository: Option<String>,
-    /// Per-package Cargo crate-target override (F12-22). Absent = the
-    /// profile's own `cargo_toml.shape`. A `binary`-shaped profile
-    /// (firmware-layered) renders `[[bin]]` by default; a workspace member
-    /// that is a driver/HAL-shim *library* sets `crate_shape = "library"` so
-    /// its Cargo.toml gets `[lib]` + `src/lib.rs` instead — keeping all the
-    /// same block/bridge/architecture dependencies.
-    #[serde(default)]
-    pub crate_shape: Option<CrateShape>,
-    /// Per-package `[lib] crate-type` override. Absent = the profile's own
-    /// `cargo_toml.lib.crate_type`.
-    ///
-    /// Linkage is a property of the individual crate, not of the shape it
-    /// shares with its siblings: a library consumed only by Rust wants the
-    /// default rlib, while one linked by a foreign toolchain (an FFI
-    /// companion crate) needs `["cdylib", "staticlib"]`. Putting that on the
-    /// profile would impose the exception on every project using it. Same
-    /// reasoning as `crate_shape` above, one field over.
-    #[serde(default)]
-    pub crate_type: Vec<crate::manifest::profile::CrateType>,
-}
-
-/// Per-package Cargo crate-target override. Generic Cargo concepts, not
-/// profile/block/bridge names — a firmware workspace mixes both.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CrateShape {
-    Binary,
-    Library,
 }
 
 /// `[workspace]` table on a workspace-root `spec.toml`. Presence signals
@@ -97,22 +82,7 @@ pub enum CrateShape {
 /// Cargo.toml.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceSection {
-    /// Cargo resolver version (`"1"` / `"2"` / `"3"`). Defaults to `"2"`
-    /// at emit time when absent.
-    #[serde(default)]
-    pub resolver: Option<String>,
     pub members: Vec<WorkspaceMember>,
-    /// Member *names* (not paths) that `cargo` builds by default at the
-    /// root. Resolved to each member's `path` at emit time; a name that
-    /// matches no member fails validation (the profile's
-    /// `workspace_default_member` relation) and fails the render.
-    /// Empty = Cargo's default (every member).
-    #[serde(default)]
-    pub default_members: Vec<String>,
-    /// Paths Cargo must not treat as members. Emitted verbatim as
-    /// `exclude = [...]`. Empty = nothing excluded.
-    #[serde(default)]
-    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,6 +105,11 @@ pub struct PathsSection {
     /// full resolution chain.
     #[serde(default)]
     pub plugin_root: Option<String>,
+    /// Optional extra test roots (relative to `spec.toml`) that test
+    /// discovery walks besides `source` and the language's conventional
+    /// test locations.
+    #[serde(default)]
+    pub tests: Vec<String>,
 }
 
 impl SpecConfig {
@@ -152,13 +127,35 @@ impl SpecConfig {
         // Pass 1: TOML parse → JSON value (for schema validation) and a typed
         // value (returned to caller). Use `toml::de` directly so we can recover
         // byte spans on error.
-        let raw_json: serde_json::Value = match toml::from_str(text) {
+        let mut raw_json: serde_json::Value = match toml::from_str(text) {
             Ok(v) => v,
             Err(e) => {
                 return Err(anyhow!(LocatedError::from_toml_error(path, text, &e))
                     .context(format!("parsing {}", path.display())));
             }
         };
+
+        // A `1.x` file may still carry keys only the manifest emitters read;
+        // they are dropped, not refused (read-both). `migrate` removes them.
+        let is_1x = raw_json
+            .get("spec_version")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.starts_with("1."));
+        if is_1x {
+            if let Some(project) = raw_json.get_mut("project").and_then(|p| p.as_object_mut()) {
+                for k in RETIRED_PROJECT_KEYS {
+                    project.remove(k);
+                }
+            }
+            if let Some(ws) = raw_json
+                .get_mut("workspace")
+                .and_then(|p| p.as_object_mut())
+            {
+                for k in RETIRED_WORKSPACE_KEYS {
+                    ws.remove(k);
+                }
+            }
+        }
 
         // Pass 2: validate against the embedded JSON Schema.
         let validator = spec_schema_validator();
@@ -390,7 +387,7 @@ name = "demo"
     #[test]
     fn rejects_invalid_spec_version() {
         let bad = r#"
-spec_version = "2.0"
+spec_version = "3.0"
 
 [project]
 name = "demo"

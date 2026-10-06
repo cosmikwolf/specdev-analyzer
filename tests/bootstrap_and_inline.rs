@@ -104,16 +104,17 @@ fn inline_block_writes_files_and_lineage() {
     let (_ws, target) = bootstrap_fresh("inline-populates");
     let layout = discover(&target);
     run_inline_block(&layout, &fixture_plugin(), "embassy").expect("inline embassy");
-    // Schema, reduction, codegen README all written.
+    // Schema and reduction written.
     assert!(target
         .join("specs/specdev/schemas/inlined/blocks/embassy.schema.yaml")
         .is_file());
     assert!(target
         .join("specs/specdev/reductions/blocks/embassy.yaml")
         .is_file());
-    assert!(target
+    // Codegen prose is no longer inlined.
+    assert!(!target
         .join("specs/specdev/codegen/rust/blocks/embassy/README.md")
-        .is_file());
+        .exists());
     // Lineage gained an [blocks.embassy] entry with origin + content_hash.
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
     let entry = lineage
@@ -141,7 +142,6 @@ fn re_inline_after_lineage_reset_is_byte_identical() {
     let dst_files = [
         target.join("specs/specdev/schemas/inlined/blocks/embassy.schema.yaml"),
         target.join("specs/specdev/reductions/blocks/embassy.yaml"),
-        target.join("specs/specdev/codegen/rust/blocks/embassy/README.md"),
     ];
     let bytes_first: Vec<Vec<u8>> = dst_files
         .iter()
@@ -305,7 +305,8 @@ fn snapshot_lineage_after_bootstrap_and_inline() {
     if let Some(m) = &lineage.meta {
         lines.push(format!(
             "meta: profile={}, version={}",
-            m.profile, m.plugin_version
+            m.profile,
+            m.bootstrapped_with()
         ));
     } else {
         lines.push("meta: missing".into());

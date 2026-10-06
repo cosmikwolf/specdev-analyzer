@@ -11,9 +11,8 @@
 # request — not at install, type-check, unit-test or build time.
 #
 # `onlyBuiltDependencies` is the allowlist. pnpm also reads it from
-# package.json's `pnpm` field, but package.json is generated output that
-# `specdev-analyzer manifest --write` overwrites, so this file is the only
-# home the setting survives in.
+# package.json's `pnpm` field; this file keeps it out of the manifest the
+# project edits by hand.
 #
 # Measured on pnpm 10.15.0, with a control:
 #   - This file IS read in a single-app project. The control run, identical

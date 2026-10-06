@@ -12,6 +12,37 @@ and it is `1`.
 
 ## [Unreleased]
 
+**Checked intent: the analyzer no longer generates code; `check` holds the spec against the code.** Pairs with
+specdev 0.3.0. Profile `contract_version` 2; project format `spec_version` 2.0.
+
+### Removed
+
+- The code-generation subcommands and their state: `gen`, `prompt`, `gen-record`, `derive`, `manifest`,
+  `cargo-toml`, `extract`, `report gen-drift`, `report gen-plan`, `gen-lineage.toml`, `deps.yaml` readers and the
+  reference-pin and reference-crate lints.
+
+### Added
+
+- **`check`:** `validate`, then the checks that read the code — the source rule, stale `planned` flags, requirement ↔
+  test on a test-discovery pass (`verified_by_resolves`, `requirements_have_tests`, `stale_test_pending`), internal
+  imports against `depends_on`, the open-question gate (it keys on code existing), and each inlined rule pack's code
+  checks; `--since <ref>` reports every new flag, `hard_gate` flip and default committed without a person.
+- **Rule packs:** `checks.toml` per block or bridge, loaded at `validate` / `check`; primitives `unique` with
+  `fields` and `related_attrs_allowed`; spec ↔ code checks with a query and an attribute mapping
+  (`pack_entity_in_code`, `pack_attribute_matches`, `pack_key_ambiguous`); `plugin-lint` checks packs.
+- **`migrate` to 2.0:** splits the ledgers one file per entry, moves test items to `verified_by`, reports or
+  (`--plan-unresolved`) marks modules with no source, rewrites profile files with a baseline, moves a workspace as one,
+  and refuses before any write when it cannot. `bootstrap` writes 2.0.
+- **`gate`:** runs a declared gate; `--emit` writes `scripts/specdev-gates.sh`. No results are stored.
+- `report tests`; `report imports` now resolves each import to a project file; `context` lists the inlined guidance; `inline` and `migrate` carry guidance and
+  rule packs.
+
+### Changed
+
+- Hashes are over LF bytes, so a Windows checkout no longer reads every file as edited (#219).
+- An absent unit directory or `specs/modules/` is "none yet": a fresh clone of a project no longer warns `LAYOUT-003`.
+- Help texts describe what the code does; the removed-terms lint covers the plugin tree and the CLI help.
+
 ## [0.2.1] — 2026-09-24
 
 ### Added

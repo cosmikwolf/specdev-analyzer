@@ -282,13 +282,10 @@ fn drift_profile(
     let mut files: Vec<ProfileFileDrift> = Vec::new();
     for path in paths {
         let base = lineage.profile_files.get(path).map(|s| s.as_str());
-        let theirs_hash = match theirs.get(path) {
-            Some(b) => Some(bootstrap::profile_file_hash(path, b)?),
-            None => None,
-        };
+        let theirs_bytes = theirs.get(path);
         let abs = layout.project_root.join(path);
-        let ours_hash = match std::fs::read(&abs) {
-            Ok(b) => Some(bootstrap::profile_file_hash(path, &b)?),
+        let ours_bytes = match std::fs::read(&abs) {
+            Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => {
                 return Err(anyhow::Error::new(e).context(format!("reading {}", abs.display())))
@@ -297,7 +294,7 @@ fn drift_profile(
 
         // Recorded, but gone from the project: the same shape as an
         // inlined unit whose file was deleted, so it reuses that code.
-        if base.is_some() && ours_hash.is_none() {
+        if base.is_some() && ours_bytes.is_none() {
             invariants.push(violation(
                 "DRIFT-INVARIANT-002",
                 "profile",
@@ -322,10 +319,17 @@ fn drift_profile(
         }
 
         let base = base.expect("base checked above");
-        let ours_moved = ours_hash.as_deref() != Some(base);
+        // A record matches in any line-ending form of the same bytes (#219).
+        let ours_moved = match &ours_bytes {
+            Some(b) => !bootstrap::profile_file_matches(path, b, base)?,
+            None => true,
+        };
         // A path the plugin no longer produces counts as moved: the
         // plugin side genuinely differs from the base.
-        let theirs_moved = theirs_hash.as_deref() != Some(base);
+        let theirs_moved = match theirs_bytes {
+            Some(b) => !bootstrap::profile_file_matches(path, b, base)?,
+            None => true,
+        };
         let category = match (ours_moved, theirs_moved) {
             (false, false) => FileCategory::Clean,
             (false, true) => FileCategory::PluginMoved,
@@ -502,7 +506,7 @@ fn classify(base: &[u8], ours: &[u8], theirs: &[u8]) -> FileCategory {
 /// Resolve the project-destination path for a unit-relative file. When
 /// the plugin has the file (and therefore a `UnitFile` with `rel_dst`),
 /// use that; otherwise synthesize from the rel_in_unit + unit kind/name.
-fn project_path_for(
+pub(crate) fn project_path_for(
     layout: &LayoutContext,
     kind: UnitKind,
     name: &str,
@@ -512,20 +516,13 @@ fn project_path_for(
     if let Some(f) = plugin_file {
         return layout.specdev_root.join(&f.rel_dst);
     }
-    // Synthesized — best-effort guess for files the plugin no longer has.
-    // Match the pattern collect_*_files would have produced.
+    // The plugin no longer has the file: map it as inline did. A path the
+    // analyzer no longer inlines (`codegen/…`) keeps its old destination.
+    if let Some(dst) = crate::inline::unit_rel_dst(kind, name, rel_in_unit) {
+        return layout.specdev_root.join(dst);
+    }
     let s = rel_in_unit.to_string_lossy();
-    let suffix = if s == "schema.yaml" || s == "bindings.schema.yaml" {
-        match kind {
-            UnitKind::Block => format!("schemas/inlined/blocks/{name}.schema.yaml"),
-            UnitKind::Bridge => format!("schemas/inlined/bridges/{name}.schema.yaml"),
-        }
-    } else if s == "reduction.yaml" {
-        match kind {
-            UnitKind::Block => format!("reductions/blocks/{name}.yaml"),
-            UnitKind::Bridge => format!("reductions/bridges/{name}.yaml"),
-        }
-    } else if let Some(rest) = s.strip_prefix("codegen/") {
+    let suffix = if let Some(rest) = s.strip_prefix("codegen/") {
         let parts: Vec<&str> = rest.splitn(2, '/').collect();
         if parts.len() == 2 && parts[1] == "README.md" {
             let lang = parts[0];

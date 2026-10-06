@@ -32,9 +32,9 @@ properties:
       entities, so an out-of-matrix entry fails at validate time. Declare
       an explicit fence on platform-bound modules (a `platform_channel`
       module almost always needs one — channels have no native side on
-      web). Codegen reads this field: the module's generated doc header
-      states its platform contract, and web-excluded modules get the
-      conditional-export guard idiom.
+      web). The module's doc header states its platform contract, and
+      code that runs on web guards its use of a web-excluded module (the
+      profile guidance gives the idiom).
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/PlatformName" }
     uniqueItems: true
@@ -71,20 +71,6 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-  external_deps:
-    description: >
-      Pub package dependencies this module needs. Each entry becomes a
-      pubspec.yaml `dependencies:` line (`dev_dependencies:` when
-      `test_only = true`); the union across modules, architecture-level
-      `[[external_deps]]`, and block/bridge contributions determines the
-      full dep set `manifest` emits. User-declared versions win on
-      conflict. The PubReference shape is embedded in the analyzer (the
-      $ref below resolves internally, not to a file on disk); the
-      architecture template's dep comment block documents the accepted
-      shapes readably.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/pub_reference.schema.yaml#/$defs/PubReference"
   bindings:
     description: >
       Aggregator slot for bridge contributions. Open in v1.
@@ -99,14 +85,19 @@ properties:
       contributing to the module's contractual surface. Privacy is
       lexical: `_`-prefixed names are never items. Sparseness rule
       (enforced by the language schema): every item carries `satisfies`
-      (≥1 requirement id) unless it is a test (`test = true`, which
-      carries `verifies` instead). Consumed by `/spec-gen` for symbol
-      emission and by the three-stage agentic sync (`items diff` /
+      (≥1 requirement id). Consumed by the three-stage agentic sync (`items diff` /
       `items propose` / `items apply`).
     type: array
     items:
       $ref: "inlined/languages/{{language}}/items.schema.yaml"
     uniqueItems: true
+  planned:
+    description: >
+      Not built yet. Suppresses only findings about something missing (no
+      resolvable source, a unit entry not in the code); code that exists is
+      always checked. `/spec-design` writes it on a new module; remove it
+      when the code lands.
+    type: boolean
   source_file:
     description: >
       Explicit source-file override for items[] extraction and sync
@@ -123,13 +114,14 @@ properties:
     minLength: 1
   context_files:
     description: >
-      Per-module list of project-prose files inlined into the codegen
-      prompt. Paths are spec-root-relative (directory containing
-      `spec.toml`). Validate-time checks ensure each file exists, is
-      readable, and is valid UTF-8 (`CONTEXT-001` / `CONTEXT-002` /
-      `CONTEXT-003`). Order is preserved at prompt-assembly time;
-      files inline in declared order between architecture.toml and the
-      module spec. Globs and section anchors are not supported.
+      Reference reading for whoever edits this module (a datasheet
+      section, a protocol note); `context --module` lists the paths in
+      declared order. Paths are spec-root-relative (directory
+      containing `spec.toml`). Validate-time checks ensure each file
+      exists, is readable, and is valid UTF-8 (`CONTEXT-001` /
+      `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
+      belongs in a decision or an open question, not here. Globs and
+      section anchors are not supported.
     type: array
     items:
       type: string
@@ -139,7 +131,7 @@ properties:
     description: >
       Decision ids that inform this module's implementation but aren't
       pinned to any specific requirement (e.g. naming conventions,
-      project-wide build rules). Resolved into the codegen prompt walk
+      project-wide build rules). `report decisions --module` lists them
       alongside the requirement-anchored `decided_by` decisions.
       Validated by graph check `module_guided_by_resolves`.
     type: array

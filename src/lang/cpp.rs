@@ -7,8 +7,45 @@ use super::{LanguageAdapter, ParsedParameter};
 pub struct CppAdapter;
 
 const QUERY: &str = include_str!("../embedded/languages/cpp/audit.scm");
+const TESTS_QUERY: &str = include_str!("../embedded/languages/cpp/tests.scm");
+const IMPORTS_QUERY: &str = include_str!("../embedded/languages/cpp/imports.scm");
 
 impl LanguageAdapter for CppAdapter {
+    fn is_inert_top_level(&self, kind: &str) -> bool {
+        kind.contains("comment") || ["preproc_include", "using_declaration"].contains(&kind)
+    }
+
+    fn tests_query(&self) -> Option<&'static str> {
+        Some(TESTS_QUERY)
+    }
+
+    fn imports_query(&self) -> Option<&'static str> {
+        Some(IMPORTS_QUERY)
+    }
+
+    /// A quoted include, from the including file's directory, then from the
+    /// source root.
+    fn resolve_import(
+        &self,
+        spec: &str,
+        from: &std::path::Path,
+        ctx: &super::ImportContext,
+    ) -> Vec<std::path::PathBuf> {
+        let dir = from.parent().unwrap_or(std::path::Path::new(""));
+        vec![
+            super::normalize_rel(&dir.join(spec)),
+            super::normalize_rel(&ctx.source_root.join(spec)),
+        ]
+    }
+
+    /// The header beside a source file belongs to its module.
+    fn module_twin_files(&self, source: &std::path::Path) -> Vec<std::path::PathBuf> {
+        ["hpp", "h", "hh"]
+            .iter()
+            .map(|ext| source.with_extension(ext))
+            .collect()
+    }
+
     fn name(&self) -> &'static str {
         "cpp"
     }

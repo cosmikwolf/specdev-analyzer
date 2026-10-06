@@ -15,6 +15,11 @@ license = "MIT"
 # org differs per install, so any single URL here is wrong for someone.
 # See README "Install" for how to resolve the org.
 readme = "README.md"
+# One test program, not one per file: macOS scans each new binary on its first
+# launch (~10 s), and a `src/` change rebuilds them all. Each `tests/*.rs` is a
+# module of `tests/suite.rs`; list a new file there. Run one file with
+# `cargo test --test suite <file>::`.
+autotests = false
 
 [lib]
 name = "specdev_analyzer"
@@ -23,6 +28,16 @@ path = "src/lib.rs"
 [[bin]]
 name = "specdev-analyzer"
 path = "src/main.rs"
+
+[[test]]
+name = "suite"
+path = "tests/suite.rs"
+
+# Its own process: it sets and removes the plugin-root env vars, which would
+# race with the other tests in one process.
+[[test]]
+name = "requirement_id_relaxation"
+path = "tests/requirement_id_relaxation.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
