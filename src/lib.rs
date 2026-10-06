@@ -147,6 +147,7 @@ pub mod retired;
 pub mod schema;
 pub mod source_hint;
 pub mod test_discovery;
+pub mod tiers;
 pub mod upstream;
 pub mod validate;
 
