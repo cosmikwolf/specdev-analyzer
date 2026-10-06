@@ -104,3 +104,78 @@ fn source_resolves_names_the_files_that_define_the_module() {
         .unwrap();
     assert!(!ghost.message.contains("candidates"), "{}", ghost.message);
 }
+
+/// A `rust-workspace` root with two `library-api` members: `good` is clean,
+/// `bad` has a built module whose source does not resolve.
+fn workspace(tag: &str) -> ci::Tree {
+    let root = tree(tag, "rust-workspace", &[]);
+    let spec = root.read("spec.toml");
+    let start = spec
+        .find("\n[[workspace.members]]")
+        .map(|i| i + 1)
+        .expect("template lists a member");
+    root.write(
+        "spec.toml",
+        &format!(
+            "{}[[workspace.members]]\nname = \"good\"\npath = \"crates/good\"\n\n\
+             [[workspace.members]]\nname = \"bad\"\npath = \"crates/bad\"\n",
+            &spec[..start]
+        ),
+    );
+    for (name, module) in [("good", None), ("bad", Some("missing"))] {
+        let member = tree(&format!("{tag}-{name}"), "library-api", &[]);
+        let dest = root.root.join("crates").join(name);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::rename(&member.root, &dest).unwrap();
+        if let Some(m) = module {
+            std::fs::write(
+                dest.join(format!("specs/modules/{m}.toml")),
+                format!("name = \"{m}\"\nvisibility = \"crate\"\ndescription = \"No code.\"\n"),
+            )
+            .unwrap();
+        }
+    }
+    let emit = root.analyzer(&["gate", "--emit"]);
+    assert!(emit.status.success(), "{}", ci::text(&emit));
+    root
+}
+
+/// #230: `check` at a workspace root checked only the root. Its summary now
+/// says what it skipped; `--members` checks every member, reports each, and
+/// exits with the worst result.
+#[test]
+fn check_members_covers_the_workspace() {
+    let t = workspace("members");
+    let root_only = t.analyzer(&["check"]);
+    let stderr = String::from_utf8_lossy(&root_only.stderr);
+    assert_eq!(root_only.status.code(), Some(0), "{}", ci::text(&root_only));
+    assert!(
+        stderr.contains("root only: 2 member(s) not checked (`check --members`)"),
+        "{stderr}"
+    );
+
+    let all = t.analyzer(&["check", "--members"]);
+    let (out, err) = (
+        String::from_utf8_lossy(&all.stdout),
+        String::from_utf8_lossy(&all.stderr),
+    );
+    assert_eq!(all.status.code(), Some(1), "{}", ci::text(&all));
+    assert!(out.contains("member crates/good: 0 error(s)"), "{out}");
+    assert!(out.contains("member crates/bad: 1 error(s)"), "{out}");
+    assert!(
+        out.contains("module `missing` has no resolvable source"),
+        "{out}"
+    );
+    assert!(err.contains("across the root and 2 member(s)"), "{err}");
+
+    let yaml = t.analyzer(&["check", "--members", "--format", "yaml"]);
+    let doc: serde_json::Value = serde_yaml::from_slice(&yaml.stdout).unwrap();
+    let members = doc["members"].as_array().expect("a members list");
+    assert_eq!(members.len(), 2, "{doc}");
+    assert_eq!(members[1]["path"], "crates/bad");
+    assert_eq!(members[1]["counts"]["error"], 1, "{doc}");
+    assert!(
+        doc["findings"].is_array(),
+        "the root keeps its own shape: {doc}"
+    );
+}

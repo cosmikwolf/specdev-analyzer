@@ -784,6 +784,31 @@ fn since_report(
 // ---------------------------------------------------------------------------
 
 /// The `--format yaml` report: `findings` plus `counts`.
+/// [`to_yaml`] for a workspace root checked with its members: the root's
+/// document, plus `members:`, one entry per member with its `path` and its
+/// own `findings` and `counts` (`error: could not run` when it did not).
+pub fn to_yaml_with_members(
+    report: &Report,
+    members: &[(String, Option<Report>)],
+) -> Result<String> {
+    let mut doc: Value = serde_yaml::from_str(&to_yaml(report)?)?;
+    let list: Vec<Value> = members
+        .iter()
+        .map(|(path, r)| -> Result<Value> {
+            Ok(match r {
+                Some(r) => {
+                    let mut m: Value = serde_yaml::from_str(&to_yaml(r)?)?;
+                    m["path"] = Value::String(path.clone());
+                    m
+                }
+                None => serde_json::json!({ "path": path, "error": "could not run" }),
+            })
+        })
+        .collect::<Result<_>>()?;
+    doc["members"] = Value::Array(list);
+    Ok(serde_yaml::to_string(&doc)?)
+}
+
 pub fn to_yaml(report: &Report) -> Result<String> {
     let sev = |s: Severity| match s {
         Severity::Error => "error",
