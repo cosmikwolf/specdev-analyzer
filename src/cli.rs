@@ -1476,6 +1476,13 @@ fn run_migrate(
                 "  module `{m}`: its source file holds only tests; check that it is the right file"
             );
         }
+        if format.removed_values > 0 {
+            println!(
+                "\nThe {} removed value(s) above are listed nowhere else: put this report in the commit message of \
+                 the migration.",
+                format.removed_values
+            );
+        }
         if !format.replaced_unrecorded.is_empty() {
             println!(
                 "\nWARNING: these files had no bootstrap record, so a local edit cannot be detected; {} the \

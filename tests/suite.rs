@@ -41,6 +41,7 @@ mod egui_nih_plug_bridge;
 mod embassy_stm32_blocks;
 mod embedded_language_queries;
 mod field_cuts;
+mod field_feedback_2;
 mod flutter_app_profile;
 mod gate_registry_schema;
 mod gate_run;

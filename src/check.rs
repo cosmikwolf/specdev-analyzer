@@ -59,7 +59,9 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     let modules = module_states(layout)?;
 
     let graph = project_graph(layout)?;
-    source_rule(&modules, &domain, &mut report);
+    let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+    let with_entries = crate::code_checks::modules_with_checked_entries(layout, &graph, &names);
+    source_rule(&modules, &with_entries, &domain, &mut report);
     stale_planned_requirements(&graph, &modules, &domain, &mut report);
     open_question_gate(layout, &modules, &domain, &mut report)?;
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
@@ -140,7 +142,12 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
     Ok(out)
 }
 
-fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &mut Report) {
+fn source_rule(
+    modules: &[ModuleState],
+    with_entries: &BTreeSet<String>,
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) {
     let src_sev = severity(domain, "source_resolves", Severity::Error);
     let stale_sev = severity(domain, "stale_planned", Severity::Warning);
     for m in modules {
@@ -163,9 +170,15 @@ fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &
                     "stale_planned",
                     stale_sev,
                     format!(
-                        "module `{}` is planned, but its source exists ({}); remove `planned`",
+                        "module `{}` is planned, but its source exists ({}); remove `planned`{}",
                         m.name,
-                        src.display()
+                        src.display(),
+                        if with_entries.contains(&m.name) {
+                            "; if some of its entries are not built yet, put `planned = true` on \
+                             those entries instead"
+                        } else {
+                            ""
+                        }
                     ),
                 )
                 .with_file(m.file.display().to_string())
