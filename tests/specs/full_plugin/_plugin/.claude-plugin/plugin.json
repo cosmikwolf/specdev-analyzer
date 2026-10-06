@@ -1,7 +1,7 @@
 {
   "name": "specdev",
   "description": "Spec-driven development plugin. Author TOML specs of your project's intent, validated against JSON Schema, and check them against the code you and the agent write — Rust, Dart, TypeScript, C or C++. Reverse-engineer specs from code you already have. Successor to spec-driven-dev.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": {
     "name": "Tenkai Kariya"
   },
