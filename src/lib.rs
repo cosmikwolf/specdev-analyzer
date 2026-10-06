@@ -141,12 +141,14 @@ pub mod reduction;
 pub mod reductions;
 pub mod report;
 pub mod requirement_size;
+pub mod requirement_tree;
 pub mod resolve;
 pub mod resolved;
 pub mod retired;
 pub mod schema;
 pub mod source_hint;
 pub mod test_discovery;
+pub mod tiers;
 pub mod upstream;
 pub mod validate;
 

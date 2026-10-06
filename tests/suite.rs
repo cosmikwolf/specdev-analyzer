@@ -42,6 +42,7 @@ mod embassy_stm32_blocks;
 mod embedded_language_queries;
 mod field_cuts;
 mod field_feedback_2;
+mod field_feedback_3;
 mod flutter_app_profile;
 mod gate_registry_schema;
 mod gate_run;
