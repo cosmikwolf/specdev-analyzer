@@ -305,6 +305,7 @@ pub struct Finding {
     pub rule: String,
     pub severity: String,
     pub entity: String,
+    pub message: String,
 }
 
 /// One `check` run: its exit code, and its findings when the report parsed.
@@ -326,6 +327,7 @@ impl From<Output> for Check {
                         rule: f["rule"].as_str().unwrap_or_default().to_string(),
                         severity: f["severity"].as_str().unwrap_or_default().to_string(),
                         entity: f["entity"].as_str().unwrap_or_default().to_string(),
+                        message: f["message"].as_str().unwrap_or_default().to_string(),
                     })
                     .collect()
             });
@@ -360,6 +362,18 @@ impl Check {
         assert!(
             hits.iter().any(|f| f.severity == severity),
             "expected {rule} {severity} for `{entity}`; got {hits:?}\n{}",
+            self.raw
+        );
+        self
+    }
+
+    /// `rule` fired for `entity` with a message that contains `part`.
+    #[track_caller]
+    pub fn says(&self, rule: &str, entity: &str, part: &str) -> &Self {
+        let hits = self.matching(rule, entity);
+        assert!(
+            hits.iter().any(|f| f.message.contains(part)),
+            "expected {rule} for `{entity}` to say `{part}`; got {hits:?}\n{}",
             self.raw
         );
         self

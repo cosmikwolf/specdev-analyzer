@@ -50,6 +50,8 @@ struct ModuleState {
     planned: bool,
     source: Option<PathBuf>,
     depends_on: Vec<String>,
+    /// The names the spec gives the module's parts (see [`crate::source_hint`]).
+    names: Vec<String>,
 }
 
 /// Run `validate` plus every check against the code.
@@ -59,7 +61,9 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     let modules = module_states(layout)?;
 
     let graph = project_graph(layout)?;
-    source_rule(&modules, &domain, &mut report);
+    let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+    let with_entries = crate::code_checks::modules_with_checked_entries(layout, &graph, &names);
+    source_rule(layout, &modules, &with_entries, &domain, &mut report);
     stale_planned_requirements(&graph, &modules, &domain, &mut report);
     open_question_gate(layout, &modules, &domain, &mut report)?;
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
@@ -129,20 +133,41 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
             )
         });
         let depends_on = string_list(doc.get("depends_on"));
+        let names = crate::source_hint::module_names(&doc);
         out.push(ModuleState {
             name,
             file,
             planned,
             source,
             depends_on,
+            names,
         });
     }
     Ok(out)
 }
 
-fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &mut Report) {
+fn source_rule(
+    layout: &LayoutContext,
+    modules: &[ModuleState],
+    with_entries: &BTreeSet<String>,
+    domain: &Option<DomainConfig>,
+    report: &mut Report,
+) {
     let src_sev = severity(domain, "source_resolves", Severity::Error);
     let stale_sev = severity(domain, "stale_planned", Severity::Warning);
+    // Indexed only when some module needs it: one parse of each source file.
+    let index = modules
+        .iter()
+        .any(|m| !m.planned && m.source.is_none() && !m.names.is_empty())
+        .then(|| crate::lang::adapter_for(&layout.spec.project.language))
+        .flatten()
+        .map(|a| {
+            crate::source_hint::NameIndex::build(
+                &layout.project_root,
+                &layout.project_root.join(&layout.spec.paths.source),
+                a.as_ref(),
+            )
+        });
     for m in modules {
         match (m.planned, &m.source) {
             (false, None) => report.push(
@@ -151,8 +176,16 @@ fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &
                     src_sev,
                     format!(
                         "module `{}` has no resolvable source: set `source_file`, or `planned = true` \
-                         while it is not built",
-                        m.name
+                         while it is not built{}",
+                        m.name,
+                        index
+                            .as_ref()
+                            .and_then(|i| crate::source_hint::render(
+                                &i.candidates(&m.names),
+                                m.names.len()
+                            ))
+                            .map(|h| format!("; {h}"))
+                            .unwrap_or_default()
                     ),
                 )
                 .with_file(m.file.display().to_string())
@@ -163,9 +196,15 @@ fn source_rule(modules: &[ModuleState], domain: &Option<DomainConfig>, report: &
                     "stale_planned",
                     stale_sev,
                     format!(
-                        "module `{}` is planned, but its source exists ({}); remove `planned`",
+                        "module `{}` is planned, but its source exists ({}); remove `planned`{}",
                         m.name,
-                        src.display()
+                        src.display(),
+                        if with_entries.contains(&m.name) {
+                            "; if some of its entries are not built yet, put `planned = true` on \
+                             those entries instead"
+                        } else {
+                            ""
+                        }
                     ),
                 )
                 .with_file(m.file.display().to_string())
@@ -265,12 +304,14 @@ fn stale_planned_requirements(
         let Some(id) = e.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let planned = e
-            .get("attrs")
-            .and_then(|a| a.get("planned"))
-            .and_then(Value::as_bool)
-            == Some(true);
-        if !planned {
+        let flag = |k: &str| {
+            e.get("attrs")
+                .and_then(|a| a.get(k))
+                .and_then(Value::as_bool)
+                == Some(true)
+        };
+        // A retired requirement is exempt from the stale flags.
+        if !flag("planned") || flag("retired") {
             continue;
         }
         let Some(sats) = satisfiers.get(id) else {
@@ -374,6 +415,33 @@ fn test_checks(
         let pending_flag = v.get("test_pending").and_then(toml::Value::as_bool) == Some(true);
         let names = string_list(v.get("verified_by"));
         let file = entry.file.display().to_string();
+
+        // A retired requirement is history, exempt from every
+        // requirement ↔ test check. A test it still names that exists is
+        // code that exists, so that is reported, not hidden: code that
+        // exists is always checked.
+        if crate::entries::is_retired_file(&entry.file) {
+            let live: Vec<&str> = names
+                .iter()
+                .filter(|n| !disc.resolve(n).is_empty())
+                .map(String::as_str)
+                .collect();
+            if !live.is_empty() {
+                report.push(
+                    Finding::new(
+                        crate::retired::TESTED,
+                        severity(domain, crate::retired::TESTED, Severity::Warning),
+                        format!(
+                            "retired requirement `{id}` still names tests that exist ({}): remove them,                              or drop them from `verified_by`",
+                            live.join(", ")
+                        ),
+                    )
+                    .with_file(&file)
+                    .with_entity(id),
+                );
+            }
+            continue;
+        }
 
         if matches!(nature, "module" | "test") && !planned && !pending_flag && names.is_empty() {
             report.push(
@@ -683,15 +751,101 @@ fn flags_of(files: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Flags> {
     out
 }
 
+/// The control on retiring: each requirement retired since `since`, naming the
+/// decision and saying when that decision is itself new in the range, and
+/// each requirement id that was deleted rather than retired.
+fn since_retirements(
+    before: &BTreeMap<String, toml::Value>,
+    after: &BTreeMap<String, toml::Value>,
+    since: &str,
+    info: &dyn Fn(&str) -> Severity,
+    report: &mut Report,
+) {
+    // id → whether its file is a retired one, and its `retired_by`.
+    let requirements = |files: &BTreeMap<String, toml::Value>| {
+        let mut out: BTreeMap<String, (bool, Option<String>)> = BTreeMap::new();
+        for (path, doc) in files {
+            for e in doc
+                .get("requirement")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(id) = e.get("id").and_then(toml::Value::as_str) {
+                    let by = e
+                        .get(crate::retired::FIELD)
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string);
+                    out.insert(
+                        id.to_string(),
+                        (crate::entries::is_retired_file(Path::new(path)), by),
+                    );
+                }
+            }
+        }
+        out
+    };
+    let decisions_before: BTreeSet<String> = before
+        .values()
+        .flat_map(|doc| {
+            doc.get("decision")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| {
+                    d.get("id")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let (was, now) = (requirements(before), requirements(after));
+    for (id, (retired, by)) in &now {
+        if *retired && !was.get(id).is_some_and(|(r, _)| *r) {
+            let by = by.as_deref().unwrap_or("nothing");
+            let new = if decisions_before.contains(by) {
+                ""
+            } else {
+                " (a decision new in this range)"
+            };
+            report.push(
+                Finding::new(
+                    "since_retired",
+                    info("since_retired"),
+                    format!("`{id}`: retired by {by}{new} since {since}"),
+                )
+                .with_entity(id),
+            );
+        }
+    }
+    for id in was.keys().filter(|id| !now.contains_key(*id)) {
+        report.push(
+            Finding::new(
+                "since_deleted_requirement",
+                info("since_deleted_requirement"),
+                format!(
+                    "`{id}`: requirement deleted since {since}; to end a requirement, retire it \
+                     (`specs/requirements/retired/` with `retired_by`) so its id stays taken"
+                ),
+            )
+            .with_entity(id),
+        );
+    }
+}
+
 fn since_report(
     layout: &LayoutContext,
     since: &str,
     domain: &Option<DomainConfig>,
     report: &mut Report,
 ) -> Result<()> {
-    let before = flags_of(&spec_files(layout, Some(since))?);
-    let after = flags_of(&spec_files(layout, None)?);
+    let before_files = spec_files(layout, Some(since))?;
+    let after_files = spec_files(layout, None)?;
+    let before = flags_of(&before_files);
+    let after = flags_of(&after_files);
     let info = |rule: &str| severity(domain, rule, Severity::Info);
+    since_retirements(&before_files, &after_files, since, &info, report);
     for (key, now) in &after {
         let was = before.get(key).cloned().unwrap_or(Flags {
             hard_gate: true,
@@ -745,6 +899,31 @@ fn since_report(
 // ---------------------------------------------------------------------------
 
 /// The `--format yaml` report: `findings` plus `counts`.
+/// [`to_yaml`] for a workspace root checked with its members: the root's
+/// document, plus `members:`, one entry per member with its `path` and its
+/// own `findings` and `counts` (`error: could not run` when it did not).
+pub fn to_yaml_with_members(
+    report: &Report,
+    members: &[(String, Option<Report>)],
+) -> Result<String> {
+    let mut doc: Value = serde_yaml::from_str(&to_yaml(report)?)?;
+    let list: Vec<Value> = members
+        .iter()
+        .map(|(path, r)| -> Result<Value> {
+            Ok(match r {
+                Some(r) => {
+                    let mut m: Value = serde_yaml::from_str(&to_yaml(r)?)?;
+                    m["path"] = Value::String(path.clone());
+                    m
+                }
+                None => serde_json::json!({ "path": path, "error": "could not run" }),
+            })
+        })
+        .collect::<Result<_>>()?;
+    doc["members"] = Value::Array(list);
+    Ok(serde_yaml::to_string(&doc)?)
+}
+
 pub fn to_yaml(report: &Report) -> Result<String> {
     let sev = |s: Severity| match s {
         Severity::Error => "error",

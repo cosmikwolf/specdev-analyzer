@@ -12,6 +12,36 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Added
+
+- **Retire a requirement** (#229). Move its file to `specs/requirements/retired/` and add `retired_by = "DEC-…"`
+  naming an accepted decision (or one superseded through a chain that ends at an accepted one). The folder is the
+  state: a listing of `specs/requirements/` no longer shows it. The file store and the reducer still read the
+  folder, so its id stays taken and links to it resolve, with no change to the inlined reductions; the schema admits
+  `retired_by` on those files whatever the inlined schema says. New rules: `retired_requirement_consistency`
+  (error: the field in the wrong place, a decision that does not stand, a module or a live requirement building on
+  a retired one), `retired_requirement_tested` (warning: it still names a test that exists),
+  `open_question_affects_only_retired` (info). Retired requirements are exempt from "has a place", "has a test" and
+  the stale flags; `report coverage` lists them under `retired:`; `validate`'s summary counts them apart.
+- **`check --members`** (#230): at a workspace root, check the root and every member in one run, each member under a
+  `member <path>:` heading, one summary line, the worst exit code; `--format yaml` adds a `members:` list. Without
+  the flag the root's summary line says how many members it did not check.
+- **`requirement_size`** (#232): a warning on a requirement whose `text` has more than 120 words (whitespace-separated
+  tokens holding a letter or digit): a requirement states one behaviour.
+- **`check --since` reports each newly retired requirement and each deleted requirement id** (#229), naming the
+  decision and whether it is new in the range.
+
+### Changed
+
+- **`source_resolves` names candidate files** (#228): the source files that define the names the module spec gives
+  its parts (`name` of every top-level array-of-tables entry), at any visibility, ranked, with the evidence ("defines
+  2 of 2 name(s)").
+- **The entry-level `planned` exit is named where it applies** (#231): `pack_entity_in_code` says to add the entry to
+  the code or set `planned = true` on the entry; a planned module's `stale_planned` says to put `planned` on the
+  entries that are not built when the module has pack entries.
+- **`migrate` says to keep its report** (#227): when the format move removed values, its last line says to put the
+  report in the migration's commit message.
+
 ## [0.3.1] — 2026-10-06
 
 ### Fixed

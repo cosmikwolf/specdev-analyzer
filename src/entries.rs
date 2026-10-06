@@ -230,19 +230,11 @@ impl EntryStore {
             }
             EntryLayout::PerEntry => {
                 let dir = self.expected_file(kind);
-                let Ok(read) = std::fs::read_dir(&dir) else {
-                    return Vec::new();
-                };
-                let mut files: Vec<PathBuf> = read
-                    .flatten()
-                    .map(|e| e.path())
-                    .filter(|p| {
-                        p.is_file()
-                            && p.extension()
-                                .is_some_and(|x| x.eq_ignore_ascii_case("toml"))
-                    })
-                    .collect();
-                files.sort();
+                let mut files = toml_files_in(&dir);
+                // Retired requirements stay loaded, from their own folder.
+                if kind == EntryKind::Requirement {
+                    files.extend(toml_files_in(&dir.join(RETIRED_DIR)));
+                }
                 files
             }
         }
@@ -359,9 +351,66 @@ impl EntryStore {
     pub fn location_hint(&self, kind: EntryKind, id: &str) -> String {
         match self.layout {
             EntryLayout::Combined => format!("`specs/{}`", kind.combined_file()),
+            EntryLayout::PerEntry
+                if kind == EntryKind::Requirement
+                    && self
+                        .expected_file(kind)
+                        .join(RETIRED_DIR)
+                        .join(format!("{id}.toml"))
+                        .is_file() =>
+            {
+                format!("`specs/{}/{RETIRED_DIR}/{id}.toml`", kind.entry_dir())
+            }
             EntryLayout::PerEntry => format!("`specs/{}/{id}.toml`", kind.entry_dir()),
         }
     }
+}
+
+/// The folder under the requirements directory that holds retired
+/// requirements. The folder is the state: an agent that lists the
+/// requirements directory does not see them.
+pub const RETIRED_DIR: &str = "retired";
+
+/// Whether `file` is a retired requirement's file: it sits directly in a
+/// `retired/` folder under the requirements directory.
+pub fn is_retired_file(file: &Path) -> bool {
+    let Some(dir) = file.parent() else {
+        return false;
+    };
+    dir.file_name().is_some_and(|n| n == RETIRED_DIR)
+        && dir
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == EntryKind::Requirement.entry_dir())
+}
+
+/// For a reduction `from` / `from_spec` glob that reads the per-entry
+/// requirement files (`<specs>/requirements/*.toml`), the glob of the retired
+/// ones beside it. The reducer reads both, so a retired requirement stays in
+/// the graph with no change to the inlined reductions.
+pub fn retired_glob_for(pattern: &str) -> Option<String> {
+    let dir = EntryKind::Requirement.entry_dir();
+    let tail = format!("{dir}/*.toml");
+    let head = pattern.strip_suffix(&tail)?;
+    (head.is_empty() || head.ends_with('/')).then(|| format!("{head}{dir}/{RETIRED_DIR}/*.toml"))
+}
+
+/// The `.toml` files directly in `dir`, sorted; none when it is absent.
+fn toml_files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = read
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .is_some_and(|x| x.eq_ignore_ascii_case("toml"))
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 /// The first analyzer release that reads the per-entry layout; a

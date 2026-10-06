@@ -621,6 +621,10 @@ fn read_requirement_decided_by(
     use std::collections::BTreeMap;
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in store.load(EntryKind::Requirement)? {
+        // A retired requirement pins nothing for live work.
+        if crate::entries::is_retired_file(&entry.file) {
+            continue;
+        }
         let item = &entry.value;
         let Some(id) = item.get("id").and_then(toml::Value::as_str) else {
             continue;

@@ -84,6 +84,8 @@ pub struct FormatReport {
     pub folded: bool,
     /// Unrecorded files replaced with the plugin's bytes (no baseline).
     pub replaced_unrecorded: Vec<String>,
+    /// Field values the 2.0 field cuts removed (each is one of `lines`).
+    pub removed_values: usize,
 }
 
 /// Pending file changes, keyed by project-relative path.
@@ -311,6 +313,7 @@ fn finish(
             .map(|m| format!("[{m}] "))
             .unwrap_or_default();
         let moved = plan.lineage.is_some();
+        report.removed_values += plan.report.removed_values;
         report
             .lines
             .extend(plan.report.lines.into_iter().map(|l| format!("{tag}{l}")));
@@ -408,9 +411,11 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
     // The project's own manifest, for the removal report's marks.
     let facts = crate::lang::adapter_for(&layout.spec.project.language)
         .and_then(|a| a.manifest_facts(root));
+    let removed_count = std::cell::Cell::new(0usize);
     let report_removed =
         |file: &Path, removed: Vec<crate::field_cuts::Removed>, lines: &mut Vec<String>| {
             for r in removed {
+                removed_count.set(removed_count.get() + 1);
                 let mark = crate::field_cuts::mark(&r, facts.as_ref());
                 lines.push(
                     crate::field_cuts::ReportLine {
@@ -1014,6 +1019,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
         })?;
     }
 
+    report.removed_values = removed_count.get();
     Ok(Plan {
         ov,
         lineage: Some(lineage),
