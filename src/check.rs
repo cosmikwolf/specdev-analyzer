@@ -50,6 +50,8 @@ struct ModuleState {
     planned: bool,
     source: Option<PathBuf>,
     depends_on: Vec<String>,
+    /// The names the spec gives the module's parts (see [`crate::source_hint`]).
+    names: Vec<String>,
 }
 
 /// Run `validate` plus every check against the code.
@@ -61,7 +63,7 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     let graph = project_graph(layout)?;
     let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
     let with_entries = crate::code_checks::modules_with_checked_entries(layout, &graph, &names);
-    source_rule(&modules, &with_entries, &domain, &mut report);
+    source_rule(layout, &modules, &with_entries, &domain, &mut report);
     stale_planned_requirements(&graph, &modules, &domain, &mut report);
     open_question_gate(layout, &modules, &domain, &mut report)?;
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
@@ -131,18 +133,21 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
             )
         });
         let depends_on = string_list(doc.get("depends_on"));
+        let names = crate::source_hint::module_names(&doc);
         out.push(ModuleState {
             name,
             file,
             planned,
             source,
             depends_on,
+            names,
         });
     }
     Ok(out)
 }
 
 fn source_rule(
+    layout: &LayoutContext,
     modules: &[ModuleState],
     with_entries: &BTreeSet<String>,
     domain: &Option<DomainConfig>,
@@ -150,6 +155,19 @@ fn source_rule(
 ) {
     let src_sev = severity(domain, "source_resolves", Severity::Error);
     let stale_sev = severity(domain, "stale_planned", Severity::Warning);
+    // Indexed only when some module needs it: one parse of each source file.
+    let index = modules
+        .iter()
+        .any(|m| !m.planned && m.source.is_none() && !m.names.is_empty())
+        .then(|| crate::lang::adapter_for(&layout.spec.project.language))
+        .flatten()
+        .map(|a| {
+            crate::source_hint::NameIndex::build(
+                &layout.project_root,
+                &layout.project_root.join(&layout.spec.paths.source),
+                a.as_ref(),
+            )
+        });
     for m in modules {
         match (m.planned, &m.source) {
             (false, None) => report.push(
@@ -158,8 +176,16 @@ fn source_rule(
                     src_sev,
                     format!(
                         "module `{}` has no resolvable source: set `source_file`, or `planned = true` \
-                         while it is not built",
-                        m.name
+                         while it is not built{}",
+                        m.name,
+                        index
+                            .as_ref()
+                            .and_then(|i| crate::source_hint::render(
+                                &i.candidates(&m.names),
+                                m.names.len()
+                            ))
+                            .map(|h| format!("; {h}"))
+                            .unwrap_or_default()
                     ),
                 )
                 .with_file(m.file.display().to_string())

@@ -64,3 +64,43 @@ fn the_planned_exits_are_named_where_they_apply() {
         .unwrap();
     assert!(!plain.message.contains("entries"), "{}", plain.message);
 }
+
+/// #228: a module whose code lives at another path. The finding ranks the
+/// files that define the module's names (at any visibility: task functions
+/// are `pub(crate)`), and stays as it was when no file defines any.
+#[test]
+fn source_resolves_names_the_files_that_define_the_module() {
+    let t = tree("source-hint", "firmware-layered", &[]);
+    t.write(
+        "specs/modules/FlashTask.toml",
+        &(fw_module("FlashTask", "")
+            + "[[actions]]\nname = \"flash_task\"\n\n[[actions]]\nname = \"init_buffer\"\n"),
+    )
+    .write(
+        "specs/modules/Ghost.toml",
+        &(fw_module("Ghost", "") + "[[actions]]\nname = \"never_written\"\n"),
+    )
+    .write(
+        "src/tasks/flash.rs",
+        "pub(crate) async fn flash_task() {}\nfn init_buffer() {}\n",
+    )
+    .write(
+        "src/tasks/mod.rs",
+        "pub(crate) mod flash;\npub fn init_buffer() {}\n",
+    );
+    let c = t.check(&[]);
+    c.fires("source_resolves", "FlashTask", "error")
+        .says(
+            "source_resolves",
+            "FlashTask",
+            "candidates: `src/tasks/flash.rs` defines 2 of 2 name(s) (`flash_task`, `init_buffer`); \
+             `src/tasks/mod.rs` defines 1 of 2 name(s) (`init_buffer`)",
+        )
+        .fires("source_resolves", "Ghost", "error");
+    let ghost = c
+        .ran()
+        .iter()
+        .find(|f| f.rule == "source_resolves" && f.entity == "Ghost")
+        .unwrap();
+    assert!(!ghost.message.contains("candidates"), "{}", ghost.message);
+}
