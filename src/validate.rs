@@ -737,6 +737,8 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                 crate::requirement_size::check(layout, &dom.validation.rules, report);
                 crate::tiers::member_checks(layout, &dom.validation.rules, report);
                 crate::tiers::root_checks(layout, &dom.validation.rules, report);
+                crate::requirement_tree::Tree::for_layout(layout)
+                    .findings(&dom.validation.rules, report);
                 // Each inlined rule pack's graph checks, with the pack's
                 // default severities under the project's.
                 let (packs, load_findings) = crate::packs::load_inlined(&layout.specdev_root);
@@ -1023,6 +1025,9 @@ fn execute_graph_checks(
                         let view = filter_for_layer_dependency(&graph_json, es, rs, kindset);
                         let mut findings =
                             graph_checks::requirements_have_satisfiers(&view, rule, severity);
+                        // A parent is covered by its children.
+                        let exempt = crate::requirement_tree::Tree::for_layout(layout).exempt();
+                        findings.retain(|f| f.entity.as_ref().is_none_or(|e| !exempt.contains(e)));
                         if findings.len() > 1 && count_modules(&graph_json) == 0 {
                             let count = findings.len();
                             findings = vec![Finding::new(

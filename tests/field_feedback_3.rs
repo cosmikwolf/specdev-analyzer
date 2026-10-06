@@ -131,3 +131,137 @@ fn workspace_affects_must_name_one_members_requirement() {
         .silent("workspace_affects_ambiguous", "OQ-WS-003")
         .silent("workspace_affects_nothing", "OQ-WS-003");
 }
+
+// ---- Requirement trees: a parent is covered by its children.
+
+/// A built module `Built` that satisfies `REQ-LEAF-001`, which names its test.
+fn tree_project(tag: &str) -> ci::Tree {
+    let t = tree(tag, "firmware-layered", &[]);
+    t.write(
+        "specs/modules/Built.toml",
+        &ci::fw_module(
+            "Built",
+            "satisfies = [\"REQ-LEAF-001\", \"REQ-LEAF-002\"]\n",
+        ),
+    )
+    .write(
+        "src/built.rs",
+        "pub fn built() {}\n#[test]\nfn built_works() {}\n",
+    )
+    .write(
+        "specs/requirements/REQ-TOP-001.toml",
+        &ci::requirement("REQ-TOP-001", ""),
+    )
+    .write(
+        "specs/requirements/REQ-LEAF-001.toml",
+        &ci::requirement(
+            "REQ-LEAF-001",
+            "satisfies = [\"REQ-TOP-001\"]\nverified_by = [\"built_works\"]\n",
+        ),
+    )
+    // A second parent with a child that has no test.
+    .write(
+        "specs/requirements/REQ-TOP-002.toml",
+        &ci::requirement("REQ-TOP-002", ""),
+    )
+    .write(
+        "specs/requirements/REQ-LEAF-002.toml",
+        &ci::requirement(
+            "REQ-LEAF-002",
+            "satisfies = [\"REQ-TOP-002\", \"REQ-TOP-001\"]\n",
+        ),
+    );
+    t
+}
+
+#[test]
+fn a_parent_is_covered_by_its_children() {
+    let t = tree_project("rollup");
+    let c = t.check(&[]);
+    c.silent("requirements_have_satisfiers", "REQ-TOP-001")
+        .silent("requirements_have_tests", "REQ-TOP-001")
+        .silent("requirements_have_satisfiers", "REQ-TOP-002")
+        .silent("requirements_have_tests", "REQ-TOP-002")
+        // The defect is reported once, on the child.
+        .fires("requirements_have_tests", "REQ-LEAF-002", "error");
+    let cov = t.analyzer(&["report", "coverage"]);
+    let doc: serde_json::Value = serde_yaml::from_slice(&cov.stdout).unwrap();
+    assert!(!doc["orphans"].to_string().contains("REQ-TOP-"), "{doc}");
+}
+
+#[test]
+fn a_cycle_of_parents_is_an_error_and_exempts_nothing() {
+    let t = tree_project("cycle");
+    t.write(
+        "specs/requirements/REQ-CYC-001.toml",
+        &ci::requirement("REQ-CYC-001", "satisfies = [\"REQ-CYC-002\"]\n"),
+    )
+    .write(
+        "specs/requirements/REQ-CYC-002.toml",
+        &ci::requirement("REQ-CYC-002", "satisfies = [\"REQ-CYC-001\"]\n"),
+    );
+    let c = t.check(&[]);
+    c.fires("requirement_parents_acyclic", "REQ-CYC-001", "error")
+        .fires("requirements_have_satisfiers", "REQ-CYC-001", "error")
+        .fires("requirements_have_satisfiers", "REQ-CYC-002", "error");
+}
+
+#[test]
+fn a_parent_whose_children_are_all_retired_is_a_leaf_again() {
+    let t = tree_project("retired-children");
+    t.write(
+        "specs/decisions/DEC-T-001.toml",
+        &decision("DEC-T-001", "Moot"),
+    )
+    .write(
+        "specs/requirements/REQ-TOP-003.toml",
+        &ci::requirement("REQ-TOP-003", ""),
+    )
+    .write(
+        "specs/requirements/retired/REQ-OLD-003.toml",
+        &ci::requirement(
+            "REQ-OLD-003",
+            "satisfies = [\"REQ-TOP-003\"]\nretired_by = \"DEC-T-001\"\n",
+        ),
+    );
+    t.check(&[])
+        .fires("requirements_have_satisfiers", "REQ-TOP-003", "error")
+        .fires("requirements_have_tests", "REQ-TOP-003", "error");
+}
+
+#[test]
+fn report_requirements_shows_the_tree() {
+    let t = tree_project("report-tree");
+    let out = t.analyzer(&["report", "requirements"]);
+    assert!(out.status.success(), "{}", ci::text(&out));
+    let doc: serde_json::Value = serde_yaml::from_slice(&out.stdout).unwrap();
+    let roots: Vec<&str> = doc["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(roots, ["REQ-TOP-001", "REQ-TOP-002"], "{doc}");
+    let top1 = &doc["requirements"][0];
+    let kids: Vec<&str> = top1["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(kids, ["REQ-LEAF-001", "REQ-LEAF-002"], "{doc}");
+    // A two-parent node is shown under both, and says so.
+    assert_eq!(
+        top1["children"][1]["parents"],
+        serde_json::json!(["REQ-TOP-001", "REQ-TOP-002"]),
+        "{doc}"
+    );
+    assert_eq!(
+        top1["children"][0]["satisfied_by"],
+        serde_json::json!(["Built"]),
+        "{doc}"
+    );
+    let text = t.analyzer(&["report", "requirements", "--format", "text"]);
+    let s = String::from_utf8_lossy(&text.stdout);
+    assert!(s.contains("REQ-TOP-001\n  REQ-LEAF-001"), "{s}");
+}
