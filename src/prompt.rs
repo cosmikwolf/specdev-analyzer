@@ -371,6 +371,10 @@ pub fn decision_context(
         workspace_decisions = read_decisions(&store)?;
         workspace_oqs = read_open_questions(&store)?;
     }
+    // An id in both tiers is an error (`workspace_id_collision`); while it
+    // stands, the member's own entry wins, as it does in the open-question gate.
+    workspace_decisions.retain(|id, _| !local_decisions.contains_key(id));
+    workspace_oqs.retain(|id, _| !local_oqs.contains_key(id));
 
     // Per-project requirements: id → decided_by[].
     let req_decided_by = read_requirement_decided_by(&local_store)?;

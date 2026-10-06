@@ -396,6 +396,8 @@ fn test_checks(
     let requirements = store
         .load(crate::entries::EntryKind::Requirement)
         .unwrap_or_default();
+    // A parent is covered by its children: each child carries "has a test".
+    let parents = crate::requirement_tree::Tree::load(&store).exempt();
     for entry in requirements {
         let v = &entry.value;
         let Some(id) = v.get("id").and_then(toml::Value::as_str) else {
@@ -443,7 +445,12 @@ fn test_checks(
             continue;
         }
 
-        if matches!(nature, "module" | "test") && !planned && !pending_flag && names.is_empty() {
+        if matches!(nature, "module" | "test")
+            && !planned
+            && !pending_flag
+            && names.is_empty()
+            && !parents.contains(id)
+        {
             report.push(
                 Finding::new(
                     &has_test,

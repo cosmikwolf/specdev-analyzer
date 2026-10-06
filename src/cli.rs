@@ -347,6 +347,20 @@ pub enum ReportAction {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// The requirement tree from `satisfies` (a requirement names its
+    /// parent): roots, each with its children, its satisfying modules and
+    /// its `verified_by`; a requirement with two parents appears under both
+    /// and lists them; retired requirements apart. A parent is covered by
+    /// its children in `check`. Default format is YAML; `--format text`
+    /// prints an indented outline.
+    Requirements {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Output format: `yaml` (default) or `text`.
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
     /// Which decisions reach which module, and why. Two YAML views:
     /// `modules` (per module: its decisions and open questions, why each
     /// is there, and which decision prose fields apply — a decision's
@@ -612,6 +626,9 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
                 format,
                 output,
             } => run_report_coverage(project, spec_path.as_deref(), &format, output),
+            ReportAction::Requirements { project, format } => {
+                run_report_requirements(project, spec_path.as_deref(), &format)
+            }
             ReportAction::Decisions {
                 project,
                 module,
@@ -2111,6 +2128,46 @@ fn run_report_graph(
         None => {
             print!("{body}");
             ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_report_requirements(
+    project: PathBuf,
+    spec_path: Option<&std::path::Path>,
+    format: &str,
+) -> ExitCode {
+    if format != "yaml" && format != "text" {
+        eprintln!("error: --format `{format}`: expected `yaml` or `text`");
+        return ExitCode::from(2);
+    }
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let modules = match specdev_analyzer::requirement_tree::modules_by_requirement(&layout) {
+        Ok(m) => m,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    let tree = specdev_analyzer::requirement_tree::Tree::for_layout(&layout);
+    if format == "text" {
+        print!("{}", tree.to_text(&modules));
+        return ExitCode::SUCCESS;
+    }
+    match serde_yaml::to_string(&tree.to_value(&modules)) {
+        Ok(y) => {
+            print!("{y}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&anyhow::anyhow!(e));
+            ExitCode::from(2)
         }
     }
 }

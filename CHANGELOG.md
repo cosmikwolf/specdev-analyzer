@@ -12,6 +12,27 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Added
+
+- **A parent requirement is covered by its children** (#234). A requirement that another live requirement names in
+  `satisfies` is exempt from `requirements_have_satisfiers` and `requirements_have_tests`; each child is checked on
+  its own, so every leaf still needs a module and a test. `report coverage` no longer lists such a parent under
+  `orphans`. New rule `requirement_parents_acyclic` (error): parent links that form a cycle, whose members are then
+  not exempt.
+- **`report requirements`** (#234): the requirement tree from `satisfies` — roots, children, satisfying modules,
+  `verified_by`, flags; a requirement with two parents appears under both and lists them; retired ones apart. YAML,
+  or `--format text` for an outline.
+- **`workspace_id_collision`** (#235, error): a member decision or open question with the id of one at the workspace
+  root. The tiers are merged by id, so one hid the other — for decisions the workspace's won, silently.
+- **`workspace_affects_ambiguous` and `workspace_affects_nothing`** (#236, warnings at the root): a workspace open
+  question whose `affects` names a requirement id that two or more members define (it gates all of them), or that no
+  member defines (it gates nothing).
+
+### Changed
+
+- **The member's own decision wins over a workspace decision with the same id** (#235), as it already did for open
+  questions.
+
 ## [0.3.2] — 2026-10-06
 
 ### Added
