@@ -5,17 +5,14 @@ description: |
   Shape of `specs/architecture.toml` for firmware-layered projects.
 
   The schema captures project-wide infrastructure picks (platform,
-  runtime, logger) AS WELL AS cross-module port connections. Every
-  Cargo dep is captured here or in the modules; Cargo.toml is emitted
-  by `gen` from these fields. The spec is the source of truth, not
-  Cargo.toml.
+  runtime) AS WELL AS cross-module port connections. Dependencies,
+  features and build profiles live in `Cargo.toml`, which is their only
+  source of truth.
 
-  Validation here is structural; codegen-time soft checks (e.g.,
-  `[platform].mcu_part` consistency with the inlined MCU block) live
-  in the block's codegen prose, not in this schema.
+  Validation here is structural.
 type: object
 additionalProperties: false
-required: [platform, runtime, logger]
+required: [platform]
 properties:
   platform:
     description: |
@@ -24,7 +21,7 @@ properties:
       crate (e.g. cortex-m), and a runtime (e.g. cortex-m-rt).
     type: object
     additionalProperties: false
-    required: [target_triple, mcu_core, mcu_runtime]
+    required: [target_triple]
     properties:
       target_triple:
         description: |
@@ -33,116 +30,6 @@ properties:
           linker flags.
         type: string
         pattern: "^[a-z][a-z0-9._-]*$"
-      mcu_part:
-        description: |
-          Specific MCU part identifier (e.g., "stm32h563", "stm32f411").
-          Drives the inlined MCU block's HAL feature flag selection at
-          codegen time. The codegen model performs a soft check that
-          this is consistent with the inlined MCU block (warning
-          comment in main.rs); not analyzer-enforced.
-        type: string
-        pattern: "^[a-z][a-z0-9_]*$"
-      mcu_core:
-        description: |
-          ARM core support crate (`cortex-m` typically). `gen` emits
-          this as a Cargo.toml `[dependencies]` entry.
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-      mcu_runtime:
-        description: |
-          Cortex-M runtime crate (`cortex-m-rt` typically). Provides
-          startup + reset vector. `gen` emits as `[dependencies]`.
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-
-  runtime:
-    description: |
-      Runtime infrastructure picks. `panic_handler` is required;
-      `allocator` and `critical_section_impl` are optional.
-    type: object
-    additionalProperties: false
-    required: [panic_handler]
-    properties:
-      panic_handler:
-        description: |
-          Panic handler crate (e.g., `panic-probe`, `panic-halt`,
-          `panic-rtt-target`). Every no_std binary needs exactly one.
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-      allocator:
-        description: |
-          Optional allocator crate (e.g., `embedded-alloc`,
-          `linked_list_allocator`). Omit for no-allocator builds
-          (the default no_std behavior).
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-      critical_section_impl:
-        description: |
-          Optional `critical-section` implementor crate. Most
-          cortex-m projects use the implementation provided by
-          `cortex-m` itself; supply this only when overriding.
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-
-  logger:
-    description: |
-      Logging framework. Always present for firmware-layered (defmt
-      is the de-facto standard for embedded Rust); pick a different
-      provider/backend pair if defmt isn't desired.
-    type: object
-    additionalProperties: false
-    required: [provider, backend]
-    properties:
-      provider:
-        description: |
-          Logging framework crate (e.g., `defmt`, `log`, `rtt-target`).
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-      backend:
-        description: |
-          Transport crate (e.g., `defmt-rtt`, `defmt-itm`,
-          `rtt-target`). Pairs with `provider`.
-        $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-      default_level:
-        description: |
-          Default log level when no per-module override applies.
-          `info` is the conventional default for production; `debug`
-          for dev builds.
-        type: string
-        enum: [trace, debug, info, warn, error, off]
-        default: info
-
-  external_deps:
-    description: |
-      Open list for project-author crate additions beyond the typed
-      slots above. Every entry here lands in Cargo.toml
-      `[dependencies]`. Use this for crates that don't fit a typed
-      role (e.g., `heapless`, `bitflags`, `static-cell`).
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-
-  features:
-    description: |
-      Cargo features the binary exposes. Each entry renders one line of
-      Cargo.toml `[features]`; entries marked `default = true` form the
-      synthesized `default = [...]` line. `cargo_deps` carries Cargo's
-      feature-dep strings — `dep:<crate>` enables a dep whose
-      CrateReference carries `optional = true` (an optional panic
-      handler, a debug-only crate); a feature with no deps is a plain
-      cfg switch. Names are unique (`feature_unique_names`); a
-      `depends_on` entry that names no declared feature is a validate
-      error (`feature_depends_on` relation).
-    type: array
-    items: { $ref: "#/$defs/Feature" }
-
-  test_targets:
-    description: |
-      Cargo `[[test]]` targets this crate declares explicitly. Cargo
-      auto-discovers `tests/<name>.rs` on its own, so an entry is needed
-      only when a target needs a non-default setting — above all
-      `harness = false` for a target that supplies its own `main`
-      (`embedded-test`, `defmt-test`). Each entry renders one `[[test]]`
-      row: `name`, `path` when given, `harness = false` only when false.
-      Distinct from test *items* (`[[items]]` with `test = true` on a
-      module), which are functions; a target is the binary that hosts
-      them.
-    type: array
-    items: { $ref: "#/$defs/TestTarget" }
 
   connections:
     description: |
@@ -154,16 +41,6 @@ properties:
     type: array
     items: { $ref: "#/$defs/Connection" }
 
-  profiles:
-    description: |
-      Cargo build profiles (`[profile.<name>]`) — a closed subset: the
-      nine knobs projects set, plus per-package overrides of what Cargo
-      allows in an override. Declare them here only for a STANDALONE
-      crate. In a workspace they belong to the workspace root's
-      architecture.toml — Cargo ignores profiles in a member manifest,
-      so a member that declares them fails validate and the renderer
-      refuses them. Emitted after `[dependencies]`.
-    $ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"
   project_decisions:
     description: >
       Decision ids that shape the project as a whole (platform pick,
@@ -185,72 +62,3 @@ $defs:
       from:      { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       to:        { $ref: "enums.schema.yaml#/$defs/QualifiedPort" }
       flow_type: { type: string }
-
-  TestTarget:
-    type: object
-    additionalProperties: false
-    required: [name]
-    properties:
-      name:
-        description: |
-          Target name in Cargo's target-name grammar (letters, digits,
-          `_`, `-`). With no `path`, Cargo looks for `tests/<name>.rs`.
-        type: string
-        pattern: "^[A-Za-z0-9_-]+$"
-      harness:
-        description: |
-          `false` when the target supplies its own `main` and must not
-          be linked against libtest. Cargo's default is `true`; the
-          emitter writes `harness = false` only when false.
-        type: boolean
-        default: true
-      path:
-        description: |
-          Source path relative to the crate root. Omit to let Cargo
-          infer `tests/<name>.rs`.
-        type: string
-        minLength: 1
-
-  Feature:
-    type: object
-    additionalProperties: false
-    required: [name]
-    properties:
-      name:
-        $ref: "enums.schema.yaml#/$defs/FeatureName"
-      description:
-        type: string
-      depends_on:
-        description: >
-          Other features that must be enabled for this feature to be
-          meaningful. Each entry must name a declared feature — an
-          unknown name is a validate error through the
-          `feature_depends_on` relation.
-        type: array
-        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-        uniqueItems: true
-      cargo_deps:
-        description: >
-          Cargo's open-form feature dep strings — accepts `dep:<crate>`
-          (enable an optional dep without the implicit-feature shadow),
-          `<crate>/<feature>` (enable a feature on a dep), and
-          `<crate>?/<feature>` (weak-dep variant). Emitted into the
-          generated Cargo.toml `[features]` table verbatim, after the
-          `depends_on` entries.
-
-          Use `depends_on` for sibling-feature references (resolved at
-          validate time); use this field for cargo-grammar references
-          that the spec cannot resolve. Cargo rejects a `dep:` that
-          names a crate not marked `optional = true`; the spec does not
-          re-check that.
-        type: array
-        items:
-          type: string
-          pattern: "^(dep:[a-z0-9_-]+|[a-z0-9_-]+\\??/[a-z0-9_-]+)$"
-        uniqueItems: true
-      default:
-        description: >
-          When `true`, this feature is in the crate's `[features]
-          default = [...]` set. Defaults to `false`.
-        type: boolean
-        default: false

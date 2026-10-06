@@ -10,6 +10,9 @@
 //!        graph_checks counts), and `[MODULE-001]` info logs fire on
 //!        each module file load.
 
+#[path = "common/ledger.rs"]
+mod ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
@@ -60,11 +63,15 @@ fn fresh_library(tag: &str) -> (PathBuf, LayoutContext) {
     (target, layout)
 }
 
+/// Errors other than the coverage check: these fixtures hold requirements
+/// and no modules, and only the id grammar is under test.
 fn errors(report: &Report) -> Vec<&Finding> {
     report
         .findings()
         .iter()
-        .filter(|f| matches!(f.severity, Severity::Error))
+        .filter(|f| {
+            matches!(f.severity, Severity::Error) && f.rule != "requirements_have_satisfiers"
+        })
         .collect()
 }
 
@@ -86,8 +93,9 @@ fn rule_codes(report: &Report) -> Vec<String> {
 #[test]
 fn requirement_id_accepts_zfm_prefix() {
     let (target, _layout) = fresh_library("f002-zfm");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "ZFM-001"
@@ -97,8 +105,7 @@ text = "Encoder must accept a stream of MIDI bytes."
 id = "RFC-7-12"
 text = "Voice allocation follows priority rules."
 "#,
-    )
-    .unwrap();
+    );
     let report = validate::run_project(&target, None).unwrap();
     assert!(
         errors(&report).is_empty(),
@@ -110,15 +117,15 @@ text = "Voice allocation follows priority rules."
 #[test]
 fn requirement_id_still_accepts_legacy_req_prefix() {
     let (target, _layout) = fresh_library("f002-req");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "REQ-API-001"
 text = "Public types must implement Debug."
 "#,
-    )
-    .unwrap();
+    );
     let report = validate::run_project(&target, None).unwrap();
     assert!(errors(&report).is_empty(), "{}", report.render_plain());
 }
@@ -126,15 +133,15 @@ text = "Public types must implement Debug."
 #[test]
 fn requirement_id_rejects_lowercase() {
     let (target, _layout) = fresh_library("f002-lower");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "zfm-001"
 text = "Lowercase prefix is malformed."
 "#,
-    )
-    .unwrap();
+    );
     let report = validate::run_project(&target, None).unwrap();
     let codes = rule_codes(&report);
     assert!(
@@ -147,15 +154,15 @@ text = "Lowercase prefix is malformed."
 #[test]
 fn requirement_id_rejects_missing_number() {
     let (target, _layout) = fresh_library("f002-no-number");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[requirement]]
 id = "ZFM-INTRO"
 text = "Trailing numeric segment is required."
 "#,
-    )
-    .unwrap();
+    );
     let report = validate::run_project(&target, None).unwrap();
     let codes = rule_codes(&report);
     assert!(
@@ -237,8 +244,9 @@ visibility = "pub"
 "#,
     )
     .unwrap();
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"
 [[source]]
 id = "rfc-001"
@@ -260,8 +268,7 @@ text = "Decoder produces audio."
 id = "ZFM-003"
 text = "Both round-trip."
 "#,
-    )
-    .unwrap();
+    );
     let s = validate::summarize(&layout);
     assert_eq!(s.modules, 2);
     assert_eq!(s.requirements, 3);

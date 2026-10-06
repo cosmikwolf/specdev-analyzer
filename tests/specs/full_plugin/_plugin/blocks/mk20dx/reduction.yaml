@@ -23,7 +23,7 @@ metaschema_version: "v1"
 # same physical pin" (and its siblings: the same PIT channel, the same DMA
 # channel, the same peripheral instance) — is a uniqueness property over a
 # field pair rather than a relation, and is not expressible as one.
-# Recorded in the README as a deferred check rather than approximated here.
+# The block's checks.toml checks it with a composite-key `unique`.
 
 entities:
   - kind: Pin

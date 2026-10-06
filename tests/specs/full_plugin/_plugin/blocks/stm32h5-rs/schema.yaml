@@ -31,14 +31,14 @@ properties:
       peripherals:
         description: >
           Peripheral instances the module owns. Each becomes a typed
-          handle from stm32h5xx-hal at codegen time.
+          handle from stm32h5xx-hal in the code.
         type: array
         items: { $ref: "#/$defs/Peripheral" }
       pins:
         description: >
           GPIO pin bindings the module owns. Each becomes a typed pin
-          handle (e.g. `gpiob.pb0.into_push_pull_output()`) at codegen
-          time.
+          handle (e.g. `gpiob.pb0.into_push_pull_output()`) in the
+          code.
         type: array
         items: { $ref: "#/$defs/Pin" }
 

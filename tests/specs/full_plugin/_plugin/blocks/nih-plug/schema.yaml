@@ -116,13 +116,13 @@ $defs:
         description: >
           Smoother curve. Defaults to `linear`. `logarithmic` /
           `exponential` map to `FloatRange::Skewed` with appropriate
-          factors at codegen time.
+          factors in the code.
         $ref: "#/$defs/Smoother"
         default: linear
       smoother_ms:
         description: >
           Smoother time constant in milliseconds. Defaults to 50.
-          Codegen attaches via `.with_smoother(SmoothingStyle::*<ms>)`.
+          The code attaches via `.with_smoother(SmoothingStyle::*<ms>)`.
         type: integer
         minimum: 0
         default: 50
@@ -160,8 +160,8 @@ $defs:
   EnumParameter:
     description: >
       Enum parameter. `variants[]` lists the closed set of values
-      surfaced to the host; each maps to a Rust enum variant at codegen
-      time. `default` must be one of the listed variants — codegen-time
+      surfaced to the host; each maps to a Rust enum variant in the
+      code. `default` must be one of the listed variants — code-level
       check (not enforced by the schema's literal pattern, since
       variants are author-provided).
     type: object
@@ -183,7 +183,7 @@ $defs:
   AudioPort:
     description: >
       One audio bus on the plugin. Drives `AudioIOLayout` field
-      population at codegen time.
+      population in the code.
     type: object
     additionalProperties: false
     required: [name, direction, channel_count]
@@ -257,14 +257,14 @@ $defs:
         description: >
           Optional SysEx (system-exclusive) support. Omit when the
           plugin doesn't handle SysEx — the default is
-          `type SysExMessage = ()` (no SysEx). When present, codegen
-          emits a real `SysExMessage` type sized by `max_message_len`
+          `type SysExMessage = ()` (no SysEx). When present, the code
+          has a real `SysExMessage` type sized by `max_message_len`
           and drains `NoteEvent::MidiSysEx` in `process()`. At least one
           of `input_level` / `output_level` must be `basic` or higher
           (SysEx surfaces at `MidiConfig::Basic`) — enforced below.
         $ref: "#/$defs/SysExConfig"
-    # SysEx needs a MIDI direction at `basic` or higher, else codegen
-    # would emit a `SysExMessage` type no event ever reaches. `required`
+    # SysEx needs a MIDI direction at `basic` or higher, else the code
+    # would have a `SysExMessage` type no event ever reaches. `required`
     # in each branch is load-bearing: without it an absent `*_level`
     # makes the `enum` constraint vacuously true (JSON Schema does not
     # apply the `none` default during validation), so both-absent would
@@ -286,10 +286,10 @@ $defs:
       `[nih_plug.midi]`. Presence declares that the plugin sends and/or
       receives raw MIDI SysEx (e.g. synth patch dumps). nih-plug
       delivers/accepts SysEx at the `MidiConfig::Basic` level, so no
-      MIDI level beyond `input`/`output = true` is required. Codegen
-      emits a `SysExMessage`-trait impl whose `type Buffer` is
+      MIDI level beyond `input`/`output = true` is required. The code
+      has a `SysExMessage`-trait impl whose `type Buffer` is
       `[u8; max_message_len]`; the byte-level parsing of the message
-      body is user/engine code, not generated here.
+      body is user/engine code, not described here.
     type: object
     additionalProperties: false
     required: [max_message_len]
@@ -297,17 +297,17 @@ $defs:
       max_message_len:
         description: >
           Maximum SysEx message length in bytes, INCLUDING the `0xF0`
-          start and `0xF7` end bytes. Drives the generated
+          start and `0xF7` end bytes. Sets the
           `type Buffer = [u8; N]` associated type — an array length must
           be a compile-time constant, so the spec carries it rather than
-          leaving a codegen placeholder. Size it to the largest message
+          leaving a placeholder in the code. Size it to the largest message
           the plugin accepts (e.g. a Yamaha DX7 32-voice bank dump is
           4104 bytes).
         type: integer
         minimum: 1
       message_type:
         description: >
-          Optional Rust type name (PascalCase) for the generated SysEx
+          Optional Rust type name (PascalCase) for the SysEx
           message type. Defaults to `<PluginType>SysEx` when omitted.
         $ref: "#/$defs/Identifier"
 
@@ -324,7 +324,7 @@ $defs:
         description: >
           `realtime` = the plugin's `process()` runs on the host's
           audio thread under realtime constraints (no alloc, no lock,
-          no log per the codegen prose). `offline_capable` = the
+          no log per the guidance). `offline_capable` = the
           plugin also supports nih-plug's offline-rendering mode
           (the same `process()` runs without the realtime contract).
         type: string
@@ -333,7 +333,7 @@ $defs:
       block_size_min:
         description: >
           Optional minimum block size hint. Hosts may pass smaller
-          blocks during transport-event boundaries; codegen does NOT
+          blocks during transport-event boundaries; the code does NOT
           assume this floor on the hot path.
         type: integer
         minimum: 1
@@ -341,7 +341,7 @@ $defs:
         description: >
           Optional maximum block size hint. Drives any preallocated
           working buffers (e.g. FFT windows, oversampling buffers).
-          When set, codegen guidance recommends preallocating for
+          When set, the guidance recommends preallocating for
           this size at `initialize()` time.
         type: integer
         minimum: 1

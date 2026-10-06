@@ -15,20 +15,10 @@ entities:
     attrs:
       layer: ".layer"
 
-  # Cargo features from `specs/architecture.toml` (parity with
-  # library-api). Names are unique within the project.
-  - kind: Feature
-    extends: structural
-    from: "specs/architecture.toml"
-    for_each: "features[]"
-    name: "${.name}"
-    attrs:
-      default: ".default"
-
-  # Source documents from `specs/requirements.toml`.
+  # Source documents, one file each in `specs/sources/`.
   - kind: Source
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/sources/*.toml"
     for_each: "source[]"
     name: "${.id}"
     attrs:
@@ -38,7 +28,7 @@ entities:
   # Individual requirements.
   - kind: Requirement
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/requirements/*.toml"
     for_each: "requirement[]"
     name: "${.id}"
     attrs:
@@ -54,12 +44,12 @@ entities:
     from: "specs/architecture.toml"
     name: "architecture"
 
-  # Decisions — the *how & why*. Codegen prompt walk follows only
+  # Decisions — the *how & why*. `report decisions` follows only
   # `accepted` entries; `superseded` entries persist as reasoning
   # trail.
   - kind: Decision
     extends: structural
-    from: "specs/decisions.toml"
+    from: "specs/decisions/*.toml"
     for_each: "decision[]"
     name: "${.id}"
     attrs:
@@ -68,12 +58,12 @@ entities:
       text: ".text"
 
   # Open questions — the *known unknowns*. Three statuses
-  # (open / default_committed / closed) shape the codegen-gate
-  # behavior; the gate check (`codegen_unblocked`) consumes this
+  # (open / default_committed / closed) shape the open-question
+  # gate; the open-question gate (`implementation_unblocked`) consumes this
   # kind alongside the OpenQuestion → Requirement relation.
   - kind: OpenQuestion
     extends: structural
-    from: "specs/open_questions.toml"
+    from: "specs/open_questions/*.toml"
     for_each: "open_question[]"
     name: "${.id}"
     attrs:
@@ -96,37 +86,13 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Module-to-feature edges via feature_gates (drives
-  # module_feature_gates_resolve).
-  - kind: module_feature_gate
-    extends: depends_on
-    from_kind: Module
-    to_kind: Feature
-    from_spec: "specs/modules/*.toml"
-    for_each: "feature_gates[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.}"
-
-  # Feature-to-feature dependency edges (drives
-  # feature_dependencies_resolve).
-  - kind: feature_depends_on
-    extends: depends_on
-    from_kind: Feature
-    to_kind: Feature
-    from_spec: "specs/architecture.toml"
-    for_each: "features[].depends_on[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.}"
-
   # Requirement-to-parent traceability (drives
   # requirement_satisfies_resolves).
   - kind: satisfies
     extends: depends_on
     from_kind: Requirement
     to_kind: Requirement
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].satisfies[]"
     endpoints:
       from: "${parent.id}"
@@ -146,30 +112,13 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Test-item → Requirement: `[[items]]` entries with `test = true`
-  # carry `verifies[]`; reduce into Module → Requirement edges so
-  # `test_requirements_have_verifiers` confirms every `nature = "test"`
-  # requirement has a verifier. `${root.name}` is the declaring module
-  # (the source endpoint). REDUCE_UNRESOLVED catches a `verifies` id that
-  # names no requirement. Items stay un-materialized as entities — only
-  # the reference edge is lifted, mirroring `module_satisfies`.
-  - kind: test_verifies
-    extends: depends_on
-    from_kind: Module
-    to_kind: Requirement
-    from_spec: "specs/modules/*.toml"
-    for_each: "items[].verifies[]"
-    endpoints:
-      from: "${root.name}"
-      to: "${.}"
-
   # Requirement → Decision: pin a requirement's *how*. Drives
   # `requirement_decided_by_resolves`.
   - kind: requirement_decided_by_decision
     extends: depends_on
     from_kind: Requirement
     to_kind: Decision
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].decided_by[]"
     endpoints:
       from: "${parent.id}"
@@ -206,7 +155,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: Decision
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].supersedes[]"
     endpoints:
       from: "${parent.id}"
@@ -218,7 +167,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].closes_questions[]"
     endpoints:
       from: "${parent.id}"
@@ -230,21 +179,21 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].defaults_for[]"
     endpoints:
       from: "${parent.id}"
       to: "${.}"
 
   # OpenQuestion → Requirement: which requirements this question
-  # affects. The codegen gate walks Module.satisfies → Requirement →
+  # affects. The open-question gate walks Module.satisfies → Requirement →
   # OpenQuestion (via this relation reversed) to determine whether any
   # reachable OQ is `open`. Drives `open_question_affects_resolve`.
   - kind: open_question_affects_requirement
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Requirement
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].affects[]"
     endpoints:
       from: "${parent.id}"
@@ -263,7 +212,7 @@ relations:
   # orphan check `parameters_have_bindings` walks the inbound edges
   # this relation contributes. Multi-target is fine — two rows
   # for one parameter materialize two edges to the same Parameter; the
-  # orphan check still passes and codegen emits both arms in order.
+  # orphan check still passes and the code applies both writes in order.
   - kind: parameter_binding
     extends: depends_on
     from_kind: Module
@@ -286,7 +235,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].default_via"
     endpoints:
       from: "${parent.id}"

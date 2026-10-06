@@ -1,0 +1,10 @@
+spec_version = "1.0"
+
+[project]
+name = "fixture"
+profile = "firmware-layered"
+language = "rust"
+
+[paths]
+specs = "specs"
+source = "src"

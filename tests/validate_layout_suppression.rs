@@ -10,8 +10,12 @@
 //! Coverage:
 //!   1. rust-workspace manifest path: `specs/modules/` absent → no
 //!      LAYOUT-003 (suppressed via has_modules: false).
-//!   2. library-api manifest path: `specs/modules/` absent → LAYOUT-003
-//!      WARNs (has_modules: true).
+//!   2. library-api manifest path: `specs/modules/` absent → no LAYOUT-003
+//!      either. This test used to require the warning; it changed when an
+//!      absent directory that holds only project-added files came to mean
+//!      "none yet": git stores no empty directory, so every clone of a
+//!      project with no module specs lacks it. `has_modules` still gates the
+//!      module schema FILE warning.
 
 use std::path::{Path, PathBuf};
 
@@ -102,7 +106,7 @@ fn rust_workspace_manifest_suppresses_specs_modules_directory() {
 }
 
 #[test]
-fn library_api_manifest_warns_when_specs_modules_directory_missing() {
+fn library_api_manifest_does_not_warn_when_specs_modules_directory_missing() {
     let target = bootstrap_at(&full_plugin(), "library-api", "lib-modules-dir");
     let manifest = std::fs::read_to_string(target.join("specs/specdev/profile.yaml")).unwrap();
     assert!(manifest.contains("has_modules: true"));
@@ -116,8 +120,13 @@ fn library_api_manifest_warns_when_specs_modules_directory_missing() {
     );
     let report = run_validate(&target);
     assert!(
-        warns_for_modules_dir(&report),
-        "library-api MUST warn LAYOUT-003 when specs/modules/ is missing.\n{}",
+        report.render_plain().contains("DOMAIN-001"),
+        "validate did not run to the end.\n{}",
+        report.render_plain()
+    );
+    assert!(
+        !warns_for_modules_dir(&report),
+        "an absent specs/modules/ means no module specs yet; LAYOUT-003 must NOT warn.\n{}",
         report.render_plain()
     );
 }

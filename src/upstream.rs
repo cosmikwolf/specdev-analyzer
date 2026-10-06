@@ -24,7 +24,7 @@ pub enum UnitKind {
 }
 
 impl UnitKind {
-    fn dir_segment(&self) -> &'static str {
+    pub fn dir_segment(&self) -> &'static str {
         match self {
             UnitKind::Block => "blocks",
             UnitKind::Bridge => "bridges",

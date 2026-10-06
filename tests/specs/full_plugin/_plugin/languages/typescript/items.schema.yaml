@@ -26,8 +26,8 @@ description: >
 
   Sparseness rule: every `Item` carries `satisfies` (≥1 entry) except
   `kind = "re_export"`, where the inherently-contractual nature of an
-  `export { … } from` makes `satisfies` optional, and tests
-  (`test = true`, which carry `verifies` instead). Helper declarations
+  `export { … } from` makes `satisfies` optional. Tests are not items: a
+  requirement names its tests in `verified_by`. Helper declarations
   that don't satisfy a requirement do not appear in `items[]`.
 
   This schema is meant to be `$ref`'d from each profile's
@@ -105,47 +105,13 @@ properties:
       parameters, discriminated unions. Default is to omit; the items
       model is prose-first.
     type: string
-  test:
-    description: >
-      When true, this function is emitted as a test (in the test tree
-      per its `test_kind`) and verifies requirement(s) via `verifies`
-      rather than satisfying them via `satisfies`. Only
-      `kind = "function"` items may be tests. Mutually exclusive with
-      `satisfies`.
-    type: boolean
-    default: false
-  test_kind:
-    description: >
-      Test categorization driving emit location and runner. `unit` → a
-      test case in `tests/<module>.test.ts`; `component` → a rendered
-      component test in `tests/<module>.test.tsx` under a DOM
-      environment; `e2e` → a browser-driven end-to-end test in `e2e/`.
-      Only meaningful when `test = true`; defaults to `unit`.
-    type: string
-    enum: [unit, component, e2e]
-    default: unit
-  verifies:
-    description: >
-      Requirement ids this test verifies (the inverse of `satisfies`).
-      Required with ≥1 entry when `test = true`; forbidden otherwise.
-      Reduced into `test_verifies` edges; the
-      `test_requirements_have_verifiers` graph check walks them to
-      confirm every `nature = "test"` requirement has a verifier.
-    type: array
-    items:
-      type: string
-      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
-    minItems: 1
-    uniqueItems: true
 
-# Three branches: re-exports (satisfies optional, carry target/alias),
-# test functions (verifies instead of satisfies), and every other
-# declaration (satisfies required).
+# Two branches: re-exports (satisfies optional, carry target/alias) and
+# every other declaration (satisfies required).
 oneOf:
   - title: re_export
     properties:
       kind: { const: re_export }
-      test: { const: false }
       target:
         description: >
           What is being re-exported. For `export { a as b } from "./x"`
@@ -159,21 +125,6 @@ oneOf:
           Optional rename. Emitted as `export { <name> as <alias> }`.
         type: string
     required: [target]
-    not:
-      anyOf:
-        - required: [verifies]
-        - required: [test_kind]
-
-  - title: test-function
-    properties:
-      kind: { const: function }
-      test: { const: true }
-    required: [test, verifies]
-    not:
-      anyOf:
-        - required: [satisfies]
-        - required: [target]
-        - required: [alias]
 
   - title: declaration
     properties:
@@ -187,12 +138,9 @@ oneOf:
           - const
           - getter
           - setter
-      test: { const: false }
     required: [satisfies]
     not:
       anyOf:
-        - required: [verifies]
-        - required: [test_kind]
         - required: [target]
         - required: [alias]
 

@@ -6,7 +6,7 @@ metaschema_version: "v1"
 entities:
   # Modules — one per `specs/modules/*.toml`. Carries the architectural
   # role for the `role_dependency` check, and the wiring fields the
-  # derived route files and the codegen prompt read. Attrs whose field
+  # route files and `context` read. Attrs whose field
   # is absent on a module (app_path on a service, environment on a page)
   # are simply absent on the entity.
   - kind: Module
@@ -20,10 +20,10 @@ entities:
       client_component: ".client_component"
       environment: ".environment"
 
-  # Source documents from `specs/requirements.toml`.
+  # Source documents, one file each in `specs/sources/`.
   - kind: Source
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/sources/*.toml"
     for_each: "source[]"
     name: "${.id}"
     attrs:
@@ -33,7 +33,7 @@ entities:
   # Individual requirements.
   - kind: Requirement
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/requirements/*.toml"
     for_each: "requirement[]"
     name: "${.id}"
     attrs:
@@ -50,12 +50,12 @@ entities:
     name: "architecture"
 
   # Decisions — the *how & why*. One per `[[decision]]` entry in
-  # `specs/decisions.toml`. The codegen prompt walk traverses only
+  # `specs/decisions/`. `report decisions` traverses only
   # `accepted` decisions; `superseded` entries persist as reasoning
   # trail.
   - kind: Decision
     extends: structural
-    from: "specs/decisions.toml"
+    from: "specs/decisions/*.toml"
     for_each: "decision[]"
     name: "${.id}"
     attrs:
@@ -65,11 +65,11 @@ entities:
 
   # Open questions — the *known unknowns*. One per `[[open_question]]`.
   # Three statuses (open / default_committed / closed) shape the gate
-  # behavior; the codegen-gate check (`codegen_unblocked`) consumes
+  # behavior; the open-question gate (`implementation_unblocked`) consumes
   # this kind alongside the OpenQuestion → Requirement relation.
   - kind: OpenQuestion
     extends: structural
-    from: "specs/open_questions.toml"
+    from: "specs/open_questions/*.toml"
     for_each: "open_question[]"
     name: "${.id}"
     attrs:
@@ -111,7 +111,7 @@ relations:
     extends: depends_on
     from_kind: Requirement
     to_kind: Requirement
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].satisfies[]"
     endpoints:
       from: "${parent.id}"
@@ -130,34 +130,13 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Test-item → Requirement: each `[[items]]` entry with `test = true`
-  # carries `verifies[]` (the inverse of `satisfies`). Reduce those into
-  # Module → Requirement edges so the `test_requirements_have_verifiers`
-  # orphan check can confirm every `nature = "test"` requirement is
-  # verified by some test item. The nested `items[].verifies[]`
-  # for_each walks each item's verifies array; `${root.name}` is the
-  # declaring module (the source endpoint — NOT `${parent.name}`, which
-  # would be the item, not a Module entity). REDUCE_UNRESOLVED catches a
-  # `verifies` id that names no requirement. Items[] are not materialized
-  # as entities (prose-first) — only these reference edges are lifted,
-  # exactly as module-level `satisfies[]` lifts into `module_satisfies`.
-  - kind: test_verifies
-    extends: depends_on
-    from_kind: Module
-    to_kind: Requirement
-    from_spec: "specs/modules/*.toml"
-    for_each: "items[].verifies[]"
-    endpoints:
-      from: "${root.name}"
-      to: "${.}"
-
   # Requirement → Decision: pin a requirement's *how*. Drives
   # `requirement_decided_by_resolves`.
   - kind: requirement_decided_by_decision
     extends: depends_on
     from_kind: Requirement
     to_kind: Decision
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].decided_by[]"
     endpoints:
       from: "${parent.id}"
@@ -197,7 +176,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: Decision
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].supersedes[]"
     endpoints:
       from: "${parent.id}"
@@ -209,7 +188,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].closes_questions[]"
     endpoints:
       from: "${parent.id}"
@@ -222,14 +201,14 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].defaults_for[]"
     endpoints:
       from: "${parent.id}"
       to: "${.}"
 
   # OpenQuestion → Requirement: which requirements this question
-  # affects. The codegen gate (`codegen_unblocked`) walks
+  # affects. The open-question gate (`implementation_unblocked`) walks
   # Module.satisfies → Requirement and back through this relation to
   # determine whether any reachable OQ is `open`. Drives
   # `open_question_affects_resolve`.
@@ -237,7 +216,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Requirement
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].affects[]"
     endpoints:
       from: "${parent.id}"
@@ -252,7 +231,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].default_via"
     endpoints:
       from: "${parent.id}"

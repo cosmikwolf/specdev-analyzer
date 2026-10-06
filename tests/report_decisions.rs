@@ -5,6 +5,8 @@
 //! load-bearing assertion is agreement: for every module, the decision and
 //! open-question ids in the report are exactly those the prompt carries.
 
+use crate::ledger;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,7 +35,12 @@ fn project(tag: &str) -> PathBuf {
         },
     )
     .unwrap();
+    // Ledgers go through the per-entry helper; module specs are written as is.
     let w = |rel: &str, body: &str| {
+        if let Some(combined) = rel.strip_prefix("specs/").filter(|r| !r.contains('/')) {
+            ledger::write(&t, combined, body);
+            return;
+        }
         let p = t.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, body).unwrap();
@@ -200,37 +207,6 @@ fn per_decision_view_shows_reach_including_none() {
     assert_eq!(row("DEC-004")["status"], "accepted");
     assert!(reach("DEC-003").is_empty());
     assert_eq!(row("DEC-003")["status"], "superseded");
-}
-
-#[test]
-fn the_report_agrees_with_the_prompt() {
-    let t = project("agree");
-    let r = report(&t, &[]);
-    for m in r["modules"].as_sequence().unwrap() {
-        let name = m["module"].as_str().unwrap();
-        let (code, prompt, err) = run(&t, &["prompt", "--module", name]);
-        assert_eq!(code, 0, "{err}");
-        let in_prompt = |prefix: &str| -> Vec<String> {
-            let mut v: Vec<String> = prompt
-                .lines()
-                .filter_map(|l| l.strip_prefix(prefix))
-                .map(|l| l.split([':', ' ']).next().unwrap().to_string())
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        };
-        assert_eq!(
-            ids(m, "decisions"),
-            in_prompt("Decision "),
-            "{name}\n{prompt}"
-        );
-        assert_eq!(
-            ids(m, "open_questions"),
-            in_prompt("Open question "),
-            "{name}\n{prompt}"
-        );
-    }
 }
 
 #[test]

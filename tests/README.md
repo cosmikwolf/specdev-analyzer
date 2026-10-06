@@ -12,7 +12,7 @@ workspace, not in shipped surface — a reader of this repository cannot follow 
 Rules:
 
 - **File name** = the feature under test (`cargo_toml_shape_dispatch.rs`,
-  `egui_nih_plug_bridge.rs`), discovered automatically by `cargo test`.
+  `egui_nih_plug_bridge.rs`).
 - **Helper fns** that return a fixture path are named for the fixture
   (`full_plugin()`, `minimal_plugin()`), not for a phase.
 - **Temp-dir prefixes** use the feature slug (`specdev-cargo-toml-shape-{tag}-…`).
@@ -24,6 +24,18 @@ A CI lint (`.github/scripts/agnosticism-lint.sh`) enforces the absence of phase
 nomenclature and decision-ID references across `src/` and `tests/`. Use a
 trailing `// PLANNING-OK: <reason>` to escape a line that genuinely needs such a
 token (none currently do).
+
+## One test program
+
+Every `tests/*.rs` file is a module of one test program, `tests/suite.rs`
+(`autotests = false` in `Cargo.toml`). macOS scans each new test binary on its
+first launch (about 10 s), and a `src/` change rebuilds every binary, so one
+program per file cost minutes per run. A new test file needs a `mod` line in
+`tests/suite.rs`. Run one file with `cargo test --test suite <file>::`.
+
+`requirement_id_relaxation.rs` stays its own program: it sets and removes the
+plugin-root environment variables, which would race with tests in the same
+process. Insta snapshot files carry the `suite__` prefix of the module path.
 
 ## Shared fixture trees (`tests/specs/`)
 

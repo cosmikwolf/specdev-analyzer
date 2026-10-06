@@ -4,7 +4,7 @@
 //! For each file in the unit, three inputs:
 //!
 //! - `base`   — bytes-as-of-inlining, read from `specs/specdev/upstream/...`
-//! - `ours`   — current project copy, read from `specs/specdev/{schemas,reductions,codegen}/...`
+//! - `ours`   — current project copy, read from `specs/specdev/{schemas,reductions,guidance,checks,queries}/...`
 //! - `theirs` — current plugin bytes, re-fetched via [`crate::inline::collect_block_files`]
 //!
 //! On clean (`git merge-file` exit 0): replace `ours`, advance `upstream`,
@@ -12,9 +12,10 @@
 //! to `ours`, leave `upstream` and lineage unchanged so subsequent retries
 //! merge from the same base.
 //!
-//! Strict v1: the file-set must match across (upstream, current plugin).
-//! Any mismatch errors `MERGE-FILESET` rather than guessing intent —
-//! file-set evolution (added/removed files in a unit) is a future widening.
+//! A changed file set follows `drift`'s classification: a file the plugin
+//! added is written; a file the plugin removed is deleted when the project
+//! copy is unedited. A removed file the project edited, and a broken
+//! snapshot invariant, refuse with `MERGE-FILESET` before any write.
 //!
 //! No `--force`: git owns destructive resets.
 
@@ -129,19 +130,57 @@ fn run_merge_unit(
         UnitKind::Bridge => collect_bridge_files(plugin_root, name)?,
     };
 
-    // File-set match check — strict v1.
-    let upstream_keys: std::collections::BTreeSet<&Path> =
-        upstream_files.keys().map(|p| p.as_path()).collect();
+    // A changed file set follows `drift`'s classification. A file the
+    // plugin added is written; a file the plugin removed is deleted when the
+    // project's copy equals the snapshot, and refuses when the project
+    // edited it (a conflict, not a silent delete). A project file with no
+    // snapshot entry, or a snapshot entry with no project file, is a broken
+    // invariant and refuses. Every refusal happens before any write.
     let plugin_keys: std::collections::BTreeSet<&Path> = plugin_files
         .iter()
         .map(|f| f.rel_src_in_unit.as_path())
         .collect();
-    if upstream_keys != plugin_keys {
-        let only_upstream: Vec<&Path> = upstream_keys.difference(&plugin_keys).copied().collect();
-        let only_plugin: Vec<&Path> = plugin_keys.difference(&upstream_keys).copied().collect();
-        return Err(anyhow!(
-            "[MERGE-FILESET] {kind:?} `{name}`: file set changed since inlining (only in upstream: {only_upstream:?}; only in plugin: {only_plugin:?}). File-set evolution is not supported in v1; intervene manually and re-`inline`.",
-        ));
+    let mut removed: Vec<PathBuf> = Vec::new();
+    for (rel, base) in &upstream_files {
+        if plugin_keys.contains(rel.as_path()) {
+            continue;
+        }
+        let ours_path = crate::drift::project_path_for(layout, kind, name, rel, None);
+        match std::fs::read(&ours_path) {
+            Ok(ours) if crate::hash::to_lf(&ours) == crate::hash::to_lf(base) => {
+                removed.push(ours_path)
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "[MERGE-FILESET] {kind:?} `{name}`: the plugin removed {}, and the project edited its copy at {}; keep or delete the copy by hand, then remove {} from the upstream/ snapshot and rerun --merge.",
+                    rel.display(),
+                    ours_path.display(),
+                    rel.display(),
+                ));
+            }
+            Err(_) => {
+                return Err(anyhow!(
+                    "[MERGE-FILESET] {kind:?} `{name}`: upstream/ records {} but the project has no copy at {}. Run `specdev drift` to inspect.",
+                    rel.display(),
+                    ours_path.display(),
+                ));
+            }
+        }
+    }
+    let mut added: Vec<&UnitFile> = Vec::new();
+    for f in &plugin_files {
+        if upstream_files.contains_key(&f.rel_src_in_unit) {
+            continue;
+        }
+        let ours_path = layout.specdev_root.join(&f.rel_dst);
+        if ours_path.exists() {
+            return Err(anyhow!(
+                "[MERGE-FILESET] {kind:?} `{name}`: the plugin added {}, but {} already exists with no upstream/ entry. Run `specdev drift` to inspect.",
+                f.rel_src_in_unit.display(),
+                ours_path.display(),
+            ));
+        }
+        added.push(f);
     }
 
     // Per-file merge. Collect outcomes; commit only if all clean.
@@ -158,15 +197,9 @@ fn run_merge_unit(
     std::fs::create_dir_all(&tmp_dir).with_context(|| format!("creating {}", tmp_dir.display()))?;
 
     for f in &plugin_files {
-        let base = upstream_files
-            .get(&f.rel_src_in_unit)
-            .ok_or_else(|| {
-                anyhow!(
-                    "[MERGE-FILESET] {kind:?} `{name}`: upstream missing {} (file-set check should have caught this)",
-                    f.rel_src_in_unit.display()
-                )
-            })?
-            .clone();
+        let Some(base) = upstream_files.get(&f.rel_src_in_unit).cloned() else {
+            continue; // added: written on a clean merge
+        };
         let ours_path = layout.specdev_root.join(&f.rel_dst);
         let ours = std::fs::read(&ours_path)
             .with_context(|| format!("reading {}", ours_path.display()))?;
@@ -201,12 +234,23 @@ fn run_merge_unit(
         ));
     }
 
-    // Clean merge: write merged ours, advance upstream, advance lineage.
+    // Clean merge: write merged ours, carry the file-set changes, advance
+    // upstream, advance lineage.
     for (f, bytes, _) in &merged {
         let ours_path = layout.specdev_root.join(&f.rel_dst);
         std::fs::write(&ours_path, bytes)
             .with_context(|| format!("writing {}", ours_path.display()))?;
     }
+    let added_files: Vec<UnitFile> = added.into_iter().cloned().collect();
+    crate::inline::write_unit_files(&layout.specdev_root, &added_files)?;
+    for f in &added_files {
+        merged.push((f.clone(), f.bytes.clone(), true));
+    }
+    for path in &removed {
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+        remove_empty_parents(path, &layout.specdev_root);
+    }
+    upstream::remove_upstream_unit(&layout.specdev_root, kind, name)?;
     let upstream_new: Vec<(PathBuf, Vec<u8>)> = plugin_files
         .iter()
         .map(|f| (f.rel_src_in_unit.clone(), f.bytes.clone()))
@@ -246,8 +290,19 @@ fn run_merge_unit(
     })
 }
 
+/// Remove the now-empty directories above a deleted file, up to `stop`.
+fn remove_empty_parents(path: &Path, stop: &Path) {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if d == stop || !d.starts_with(stop) || std::fs::remove_dir(d).is_err() {
+            break;
+        }
+        dir = d.parent();
+    }
+}
+
 /// Roll up the merged file set's content_hash. Mirrors
-/// [`crate::inline::rollup_hash`] but takes the merged bytes (which may
+/// [`crate::inline::rollup_hash`] (line endings normalized the same way) but takes the merged bytes (which may
 /// differ from theirs/ours for compatible 3-way files). Sort is by
 /// `rel_dst` to match the inline rollup.
 fn rollup_merged(merged: &[(UnitFile, Vec<u8>, bool)]) -> String {
@@ -259,7 +314,7 @@ fn rollup_merged(merged: &[(UnitFile, Vec<u8>, bool)]) -> String {
     let mut summary = String::new();
     for (rel, bytes) in entries {
         let mut h = Sha256::new();
-        h.update(bytes);
+        h.update(&*crate::hash::to_lf(bytes));
         let digest = h.finalize();
         for byte in digest {
             use std::fmt::Write;

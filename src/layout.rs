@@ -53,8 +53,6 @@ pub struct LayoutContext {
     pub reductions_bridges_dir: PathBuf,
     /// `<reductions_dir>/bridges/local/`
     pub reductions_bridges_local_dir: PathBuf,
-    /// `<specdev_root>/codegen/<project.language>/`
-    pub codegen_dir: PathBuf,
     /// `<specdev_root>/domain.toml`
     pub domain_toml_path: PathBuf,
     /// `<specs_dir>/modules/` — user-authored module TOMLs (per profile convention).
@@ -63,8 +61,6 @@ pub struct LayoutContext {
     /// authoring (firmware-layered: connections; library-api: features).
     /// Lives alongside the existing module TOMLs.
     pub architecture_toml_path: PathBuf,
-    /// `<specs_dir>/requirements.toml` — sources + requirements.
-    pub requirements_toml_path: PathBuf,
     /// `<schemas_dir>/architecture.schema.yaml` — schema validating
     /// architecture.toml.
     pub architecture_schema_path: PathBuf,
@@ -91,7 +87,21 @@ impl LayoutContext {
             .to_path_buf();
         let spec = SpecConfig::load(&spec_toml_path)
             .with_context(|| format!("loading {}", spec_toml_path.display()))?;
+        check_member_format(&project_root, &spec)?;
         Ok(Self::from_spec(project_root, spec_toml_path, spec))
+    }
+
+    /// [`Self::discover`] without the workspace-format check: for `migrate`
+    /// at a workspace root, which must load members at another major.
+    pub fn discover_unchecked(project_root: &Path) -> Result<Self> {
+        let spec_toml_path = project_root.join("spec.toml");
+        let spec = SpecConfig::load(&spec_toml_path)
+            .with_context(|| format!("loading {}", spec_toml_path.display()))?;
+        Ok(Self::from_spec(
+            project_root.to_path_buf(),
+            spec_toml_path,
+            spec,
+        ))
     }
 
     /// Build a context from a parsed manifest. Pure path arithmetic; useful
@@ -110,11 +120,9 @@ impl LayoutContext {
         let reductions_blocks_dir = reductions_dir.join("blocks");
         let reductions_bridges_dir = reductions_dir.join("bridges");
         let reductions_bridges_local_dir = reductions_bridges_dir.join("local");
-        let codegen_dir = specdev_root.join("codegen").join(&spec.project.language);
         let domain_toml_path = specdev_root.join("domain.toml");
         let modules_dir = specs_dir.join("modules");
         let architecture_toml_path = specs_dir.join("architecture.toml");
-        let requirements_toml_path = specs_dir.join("requirements.toml");
         let architecture_schema_path = schemas_dir.join("architecture.schema.yaml");
         let requirements_schema_path = schemas_dir.join("requirements.schema.yaml");
 
@@ -135,11 +143,9 @@ impl LayoutContext {
             reductions_blocks_dir,
             reductions_bridges_dir,
             reductions_bridges_local_dir,
-            codegen_dir,
             domain_toml_path,
             modules_dir,
             architecture_toml_path,
-            requirements_toml_path,
             architecture_schema_path,
             requirements_schema_path,
         }
@@ -179,7 +185,6 @@ impl LayoutContext {
                 "specs/specdev/reductions/bridges/local/",
                 &self.reductions_bridges_local_dir,
             ),
-            ("specs/specdev/codegen/<lang>/", &self.codegen_dir),
             ("specs/modules/", &self.modules_dir),
         ];
 
@@ -311,6 +316,43 @@ fn list_files_with_extension(dir: &Path, ext: &str) -> Vec<PathBuf> {
 /// rules that hold only at a workspace root, such as build profiles). A
 /// candidate that does not parse is skipped — flagging it is that
 /// project's own validate run's job, not the member's.
+/// A workspace member reads its root's files, so the two must be in one
+/// project format: a member whose `spec_version` major differs from its
+/// root's is refused (`FORMAT-002`). A directory the root does not list is
+/// a project of its own and is not checked.
+fn check_member_format(project_root: &Path, spec: &SpecConfig) -> Result<()> {
+    let Some(root_spec) = find_workspace_root_spec(project_root)? else {
+        return Ok(());
+    };
+    let text = std::fs::read_to_string(&root_spec)
+        .with_context(|| format!("reading {}", root_spec.display()))?;
+    let root_version = toml::from_str::<toml::Table>(&text)
+        .ok()
+        .and_then(|t| {
+            t.get("spec_version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    let root_major: u32 = root_version
+        .split('.')
+        .next()
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(1);
+    if root_major != spec.format_major() {
+        let root = root_spec.parent().unwrap_or(&root_spec);
+        anyhow::bail!(
+            "[FORMAT-002] {} is at spec_version {}, but its workspace root {} is at {root_version}. A \
+             workspace is in one format; run `specdev-analyzer migrate` in {}.",
+            project_root.display(),
+            spec.spec_version,
+            root.display(),
+            root.display()
+        );
+    }
+    Ok(())
+}
+
 pub fn find_workspace_root_spec(member_dir: &Path) -> Result<Option<PathBuf>> {
     // Start one directory above the member: a workspace's spec.toml is
     // by definition outside the member's tree.
@@ -374,7 +416,6 @@ mod tests {
         std::fs::create_dir_all(root.join("specs/specdev/schemas/inlined/languages")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/blocks")).unwrap();
         std::fs::create_dir_all(root.join("specs/specdev/reductions/bridges/local")).unwrap();
-        std::fs::create_dir_all(root.join("specs/specdev/codegen/rust")).unwrap();
         std::fs::create_dir_all(root.join("specs/modules")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(

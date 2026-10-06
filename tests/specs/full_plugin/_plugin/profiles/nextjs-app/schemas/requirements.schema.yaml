@@ -73,9 +73,9 @@ $defs:
           body. `build` — captured by build configuration (package.json
           scripts and pins, next.config.ts, tsconfig.json).
           `test` — captured by a test suite; the
-          `requirements_have_satisfiers` check exempts these, but
-          `test_requirements_have_verifiers` warns instead when no test
-          item's `verifies` names the requirement.
+          `requirements_have_satisfiers` check exempts these;
+          `requirements_have_tests` asks for a discovered test named in
+          `verified_by`.
         type: string
         enum: [module, architecture, build, test]
         default: module
@@ -97,6 +97,18 @@ $defs:
           number, page, table, clause.
         type: string
         minLength: 1
+      planned:
+        description: >
+          Not built yet. Suppresses only findings about something missing
+          (no satisfying module, no test); code that exists is always
+          checked. `check --since` reports every new flag.
+        type: boolean
+      test_pending:
+        description: >
+          Built, but with no test yet. Exempts only the requirement-to-test
+          checks; "has a place" still applies. `check --since` reports every
+          new flag.
+        type: boolean
       verified_by:
         description: >
           Test names or qualified `Module.function` paths that verify

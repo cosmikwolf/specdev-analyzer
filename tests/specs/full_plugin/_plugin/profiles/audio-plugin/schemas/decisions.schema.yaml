@@ -36,15 +36,15 @@ $defs:
       id:
         $ref: "enums.schema.yaml#/$defs/RequirementId"
       title:
-        description: One-line title; shows in reporting and prompt walks.
+        description: One-line title; shows in reports.
         type: string
         minLength: 1
       status:
         description: >
-          `accepted` decisions drive current behavior — the codegen
-          prompt walk inlines them and graph checks treat their
-          back-references as live. `superseded` decisions persist as
-          reasoning trail; the prompt walk skips them. The successor
+          `accepted` decisions drive current behavior — `report
+          decisions` lists them for the modules they reach, and graph
+          checks treat their back-references as live. `superseded`
+          decisions persist as reasoning trail; the report skips them. The successor
           (status = accepted) lists the older entry in `supersedes[]`;
           superseded entries carry no forward pointer.
         type: string
@@ -66,15 +66,15 @@ $defs:
       alternatives:
         description: >
           Optional. The options considered and rejected, with brief
-          rationale per option. Usually noise for codegen prompts;
-          opt-in via `codegen_include`.
+          rationale per option. Listed for the modules the decision
+          reaches only on opt-in via `codegen_include`.
         type: string
         minLength: 1
       verification:
         description: >
-          Optional. How the decision will be tested or validated. Often
-          useful in codegen prompts when the decision implies a test
-          stub; opt-in via `codegen_include`.
+          Optional. How the decision will be tested or validated.
+          Listed for the modules the decision reaches on opt-in via
+          `codegen_include`.
         type: string
         minLength: 1
       source:
@@ -125,11 +125,12 @@ $defs:
         uniqueItems: true
       codegen_include:
         description: >
-          Opt-in expansion of which prose fields the codegen prompt
-          walk inlines for this decision. Default (when omitted) is
-          `[text, consequences]`. Use this to fold `verification` or
-          `alternatives` into the prompt for decisions that want
-          their full reasoning surface.
+          Which prose fields `report decisions` lists as applying to
+          the modules this decision reaches (the name is historical).
+          Default (when omitted) is `[text, consequences]`. Add
+          `verification` or `alternatives` for decisions that want
+          their full reasoning surface in front of whoever edits the
+          code.
         type: array
         items:
           type: string

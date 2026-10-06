@@ -1,0 +1,12 @@
+---
+source: tests/validate_pipeline.rs
+assertion_line: 163
+expression: render_findings(&report)
+---
+error AGGREGATOR-002
+info DOMAIN-001
+info FORMAT-001
+info LAYOUT-002
+info LAYOUT-005
+info LAYOUT-006
+info REDUCTION-001

@@ -1,13 +1,10 @@
-//! Items extraction surface + reverse pre-flight + `verified_by_resolves`
-//! graph-check primitive.
+//! Items extraction surface + reverse pre-flight.
 //!
 //! Coverage:
 //!   * `extract_items_from_source` API end-to-end on Rust source.
 //!   * `reverse` pre-flight CLI: 0 blocks inlined → REVERSE-002 error;
 //!     2+ blocks inlined → REVERSE-003 ambiguity warning; --into
 //!     references a non-inlined block → REVERSE-001 error.
-//!   * `verified_by_resolves` dispatch wires through validate end-to-end
-//!     when domain.toml opts in.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

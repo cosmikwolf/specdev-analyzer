@@ -41,7 +41,6 @@ struct LayoutSnapshot<'a> {
     reductions_blocks_dir: String,
     reductions_bridges_dir: String,
     reductions_bridges_local_dir: String,
-    codegen_dir: String,
     domain_toml: String,
     modules_dir: String,
 }
@@ -67,7 +66,6 @@ impl<'a> From<&'a LayoutContext> for LayoutSnapshot<'a> {
             reductions_blocks_dir: ctx.reductions_blocks_dir.display().to_string(),
             reductions_bridges_dir: ctx.reductions_bridges_dir.display().to_string(),
             reductions_bridges_local_dir: ctx.reductions_bridges_local_dir.display().to_string(),
-            codegen_dir: ctx.codegen_dir.display().to_string(),
             domain_toml: ctx.domain_toml_path.display().to_string(),
             modules_dir: ctx.modules_dir.display().to_string(),
         }

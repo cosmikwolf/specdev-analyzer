@@ -122,7 +122,6 @@ fn write_audio_plugin_arch(target: &Path) {
     let arch = r#"[plugin]
 name = "Demo"
 vendor = "ExampleCo"
-version = "0.1.0"
 category = "instrument"
 formats = ["vst3"]
 

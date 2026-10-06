@@ -2,48 +2,12 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/library-api/architecture.schema.yaml"
 title: "library-api architecture spec (v1)"
 description: >
-  Shape of `specs/architecture.toml` for library-api projects. Declares
-  the cargo features the library exposes and the dependency graph
-  between them. Modules reference these features via their top-level
-  `feature_gates` array; the `module_feature_gates_resolve` graph check
-  verifies every reference resolves.
+  Shape of `specs/architecture.toml` for library-api projects. Holds the
+  project-wide decisions list only; dependencies and features live in
+  `Cargo.toml`, their only source of truth.
 type: object
 additionalProperties: false
 properties:
-  msrv:
-    description: |
-      Minimum Supported Rust Version. Cargo-style version requirement
-      (e.g., "1.75", "^1.75"). `gen` emits this as Cargo.toml's
-      `rust-version` field. Optional — omit to leave `rust-version`
-      unset.
-    type: string
-    minLength: 1
-  features:
-    type: array
-    items: { $ref: "#/$defs/Feature" }
-  external_deps:
-    description: |
-      Crates the library depends on as a whole, rather than through any
-      one module. Every entry lands in Cargo.toml `[dependencies]` (or
-      `[dev-dependencies]` with `test_only = true`). Use this for
-      crate-wide picks (a serialization framework, an error type, a
-      logging facade) and for workspace-inherited or path dependencies
-      on sibling crates; keep crates that only one module needs in that
-      module's own `external_deps[]` instead, so the dependency stays
-      traceable to what wanted it.
-    type: array
-    items:
-      $ref: "https://specdev.dev/schema/meta/v1/crate_reference.schema.yaml#/$defs/CrateReference"
-  profiles:
-    description: |
-      Cargo build profiles (`[profile.<name>]`) — a closed subset: the
-      nine knobs projects set, plus per-package overrides of what Cargo
-      allows in an override. Declare them here only for a STANDALONE
-      crate. In a workspace they belong to the workspace root's
-      architecture.toml — Cargo ignores profiles in a member manifest,
-      so a member that declares them fails validate and the renderer
-      refuses them. Emitted after `[dependencies]`.
-    $ref: "https://specdev.dev/schema/meta/v1/cargo_profiles.schema.yaml#/$defs/Profiles"
   project_decisions:
     description: >
       Decision ids that shape the project as a whole (workspace shape,
@@ -55,45 +19,3 @@ properties:
     type: array
     items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
     uniqueItems: true
-
-$defs:
-  Feature:
-    type: object
-    additionalProperties: false
-    required: [name]
-    properties:
-      name:
-        $ref: "enums.schema.yaml#/$defs/FeatureName"
-      description:
-        type: string
-      depends_on:
-        description: >
-          Other features that must be enabled for this feature to be
-          meaningful. The `feature_dependencies_resolve` graph check
-          verifies every entry names a declared feature.
-        type: array
-        items: { $ref: "enums.schema.yaml#/$defs/FeatureName" }
-        uniqueItems: true
-      cargo_deps:
-        description: >
-          Cargo's open-form feature dep strings — accepts `dep:<crate>`
-          (enable an optional dep without the implicit-feature shadow),
-          `<crate>/<feature>` (enable a feature on a dep), and
-          `<crate>?/<feature>` (weak-dep variant). Emitted into the
-          generated Cargo.toml `[features]` table verbatim, after the
-          `depends_on` entries.
-
-          Use `depends_on` for sibling-feature references (graph-checked);
-          use this field for cargo-grammar references that the graph
-          check can't resolve.
-        type: array
-        items:
-          type: string
-          pattern: "^(dep:[a-z0-9_-]+|[a-z0-9_-]+\\??/[a-z0-9_-]+)$"
-        uniqueItems: true
-      default:
-        description: >
-          When `true`, this feature is in the crate's `[features]
-          default = [...]` set. Defaults to `false`.
-        type: boolean
-        default: false

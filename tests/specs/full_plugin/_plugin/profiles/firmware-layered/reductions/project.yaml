@@ -38,21 +38,10 @@ entities:
       to: ".to"
       flow_type: ".flow_type"
 
-  # Cargo features from `specs/architecture.toml`. Names are unique
-  # within the project (feature_unique_names check); `depends_on`
-  # entries resolve through the feature_depends_on relation.
-  - kind: Feature
-    extends: structural
-    from: "specs/architecture.toml"
-    for_each: "features[]"
-    name: "${.name}"
-    attrs:
-      default: ".default"
-
-  # Source documents from `specs/requirements.toml`.
+  # Source documents, one file each in `specs/sources/`.
   - kind: Source
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/sources/*.toml"
     for_each: "source[]"
     name: "${.id}"
     attrs:
@@ -62,7 +51,7 @@ entities:
   # Individual requirements.
   - kind: Requirement
     extends: structural
-    from: "specs/requirements.toml"
+    from: "specs/requirements/*.toml"
     for_each: "requirement[]"
     name: "${.id}"
     attrs:
@@ -78,11 +67,11 @@ entities:
     from: "specs/architecture.toml"
     name: "architecture"
 
-  # Decisions — the *how & why*. Codegen prompt walk follows only
+  # Decisions — the *how & why*. `report decisions` follows only
   # `accepted` entries; `superseded` entries persist as reasoning trail.
   - kind: Decision
     extends: structural
-    from: "specs/decisions.toml"
+    from: "specs/decisions/*.toml"
     for_each: "decision[]"
     name: "${.id}"
     attrs:
@@ -91,10 +80,10 @@ entities:
       text: ".text"
 
   # Open questions — the *known unknowns*. Three statuses
-  # (open / default_committed / closed) shape the codegen-gate behavior.
+  # (open / default_committed / closed) shape the open-question gate.
   - kind: OpenQuestion
     extends: structural
-    from: "specs/open_questions.toml"
+    from: "specs/open_questions/*.toml"
     for_each: "open_question[]"
     name: "${.id}"
     attrs:
@@ -116,25 +105,12 @@ relations:
       from: "${parent.name}"
       to: "${.}"
 
-  # Feature-to-feature dependency edges (`features[].depends_on[]`). An
-  # entry that names no declared feature is REDUCE_UNRESOLVED at reduce
-  # time; no domain row is needed for that.
-  - kind: feature_depends_on
-    extends: depends_on
-    from_kind: Feature
-    to_kind: Feature
-    from_spec: "specs/architecture.toml"
-    for_each: "features[].depends_on[]"
-    endpoints:
-      from: "${parent.name}"
-      to: "${.}"
-
   # Requirement-to-parent traceability (drives requirement_satisfies_resolves).
   - kind: satisfies
     extends: depends_on
     from_kind: Requirement
     to_kind: Requirement
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].satisfies[]"
     endpoints:
       from: "${parent.id}"
@@ -159,7 +135,7 @@ relations:
     extends: depends_on
     from_kind: Requirement
     to_kind: Decision
-    from_spec: "specs/requirements.toml"
+    from_spec: "specs/requirements/*.toml"
     for_each: "requirement[].decided_by[]"
     endpoints:
       from: "${parent.id}"
@@ -195,7 +171,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: Decision
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].supersedes[]"
     endpoints:
       from: "${parent.id}"
@@ -207,7 +183,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].closes_questions[]"
     endpoints:
       from: "${parent.id}"
@@ -219,7 +195,7 @@ relations:
     extends: depends_on
     from_kind: Decision
     to_kind: OpenQuestion
-    from_spec: "specs/decisions.toml"
+    from_spec: "specs/decisions/*.toml"
     for_each: "decision[].defaults_for[]"
     endpoints:
       from: "${parent.id}"
@@ -231,7 +207,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Requirement
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].affects[]"
     endpoints:
       from: "${parent.id}"
@@ -245,7 +221,7 @@ relations:
     extends: depends_on
     from_kind: OpenQuestion
     to_kind: Decision
-    from_spec: "specs/open_questions.toml"
+    from_spec: "specs/open_questions/*.toml"
     for_each: "open_question[].default_via"
     endpoints:
       from: "${parent.id}"

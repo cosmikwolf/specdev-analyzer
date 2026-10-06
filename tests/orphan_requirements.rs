@@ -5,10 +5,12 @@
 //! other natures (`architecture`, `build`, `test`) are exempt — they
 //! intentionally don't have a module satisfier.
 //!
-//! Severity is warning by default (set in the per-profile
+//! Severity is error in the 2.0 templates (set in the per-profile
 //! domain.toml.template `[validation.rules]` table); the check itself
 //! is wired in both `firmware-layered` and `library-api` profiles
 //! out of the box.
+
+use crate::ledger;
 
 use std::path::{Path, PathBuf};
 
@@ -59,11 +61,11 @@ fn fresh_library(tag: &str) -> (PathBuf, LayoutContext) {
     (target, layout)
 }
 
-fn warnings_for(report: &Report, rule: &str) -> Vec<Finding> {
+fn orphans(report: &Report, rule: &str) -> Vec<Finding> {
     report
         .findings()
         .iter()
-        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Warning))
+        .filter(|f| f.rule == rule && matches!(f.severity, Severity::Error))
         .cloned()
         .collect()
 }
@@ -75,8 +77,9 @@ fn warnings_for(report: &Report, rule: &str) -> Vec<Finding> {
 #[test]
 fn orphan_module_requirement_fires_warning() {
     let (target, _) = fresh_library("orphan-module");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-API-001"
 text = "Public types must implement Debug."
@@ -85,8 +88,7 @@ text = "Public types must implement Debug."
 id = "REQ-API-002"
 text = "Public types must implement Clone where applicable."
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -97,7 +99,7 @@ satisfies = ["REQ-API-001"]
     .unwrap();
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = orphans(&report, "requirements_have_satisfiers");
     assert_eq!(warnings.len(), 1, "exactly one orphan; got: {warnings:?}");
     let msg = &warnings[0].message;
     assert!(
@@ -117,8 +119,9 @@ satisfies = ["REQ-API-001"]
 #[test]
 fn architecture_build_test_natures_exempt_from_check() {
     let (target, _) = fresh_library("nature-exempt");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-ARCH-001"
 text = "All public types live in pub module exports."
@@ -139,8 +142,7 @@ id = "REQ-API-001"
 text = "Implements Debug."
 nature = "module"
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -151,7 +153,7 @@ satisfies = ["REQ-API-001"]
     .unwrap();
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = orphans(&report, "requirements_have_satisfiers");
     assert!(
         warnings.is_empty(),
         "non-module natures must be exempt; got: {warnings:?}"
@@ -164,8 +166,9 @@ satisfies = ["REQ-API-001"]
 #[test]
 fn multiple_orphans_emit_one_finding_each() {
     let (target, _) = fresh_library("multi-orphan");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-001"
 text = "first orphan"
@@ -178,8 +181,7 @@ text = "second orphan"
 id = "REQ-003"
 text = "third orphan"
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -189,7 +191,7 @@ visibility = "pub"
     .unwrap();
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = orphans(&report, "requirements_have_satisfiers");
     assert_eq!(warnings.len(), 3);
 }
 
@@ -200,15 +202,15 @@ visibility = "pub"
 #[test]
 fn unknown_nature_value_rejected_at_schema_time() {
     let (target, _) = fresh_library("unknown-nature");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-001"
 text = "bad nature"
 nature = "philosophical"
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -238,7 +240,7 @@ visibility = "pub"
 #[test]
 fn empty_requirements_universe_emits_no_warnings() {
     let (target, _) = fresh_library("empty-reqs");
-    std::fs::write(target.join("specs/requirements.toml"), "").unwrap();
+    ledger::write(&target, "requirements.toml", "");
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -248,7 +250,7 @@ visibility = "pub"
     .unwrap();
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = orphans(&report, "requirements_have_satisfiers");
     assert!(
         warnings.is_empty(),
         "empty universe = no warnings; got: {warnings:?}"
@@ -262,8 +264,9 @@ visibility = "pub"
 #[test]
 fn mixed_natures_only_module_orphans_fire() {
     let (target, _) = fresh_library("mixed");
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-COVERED-001"
 text = "covered"
@@ -287,8 +290,7 @@ id = "REQ-BUILD-001"
 text = "exempt"
 nature = "build"
 "#,
-    )
-    .unwrap();
+    );
     std::fs::write(
         target.join("specs/modules/Lib.toml"),
         r#"name = "Lib"
@@ -299,7 +301,7 @@ satisfies = ["REQ-COVERED-001"]
     .unwrap();
 
     let report = validate::run_project(&target, None).unwrap();
-    let warnings = warnings_for(&report, "requirements_have_satisfiers");
+    let warnings = orphans(&report, "requirements_have_satisfiers");
     let names: Vec<&str> = warnings.iter().map(|f| f.message.as_str()).collect();
     assert_eq!(
         warnings.len(),

@@ -35,17 +35,6 @@ fn full_plugin() -> PathBuf {
         .join("_plugin")
 }
 
-/// The LIVE plugin tree at the conventional sibling path, or `None`.
-/// `None` is a real state, not an error: CI checks out this repository
-/// alone, and the plugin lives in a second private repository it cannot
-/// read.
-fn live_plugin_tree() -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()?
-        .join("specdev");
-    p.is_dir().then_some(p)
-}
-
 fn tmp_dir(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!(
         "specdev-ts-items-{tag}-{}-{}",
@@ -207,76 +196,6 @@ export default function Page(): ReactNode {
   return <EventCard title="x"><Badge label="new" /></EventCard>;
 }
 "#;
-
-/// #139's root cause, guarded: a unit's own canonical code shape was
-/// invisible to the tool that audits it. `extract-items` returned `items: []`
-/// for `export const { GET, POST } = handlers;` — the exact line the
-/// `next-auth` block README prints under "Never add a third export" — so every
-/// item on the two auth modules sat in `in_spec_only` drift no source could
-/// clear.
-///
-/// The fixture assertions above cover the grammar. This covers the CONTRACT:
-/// each TypeScript reference package is the unit's certified code, so if a
-/// block starts prescribing a shape the extractor cannot see, this goes red at
-/// the block rather than in a dogfood tree three phases later.
-///
-/// Local-only, like the fixture mirror test: it reads the live plugin tree,
-/// which CI cannot check out from a second private repository. Skips cleanly
-/// when the sibling tree is absent — a skip is invisible in an exit code, so
-/// the reason is printed.
-#[test]
-fn every_typescript_reference_source_yields_items() {
-    let Some(plugin) = live_plugin_tree() else {
-        eprintln!("skip: live plugin tree not present at the sibling path");
-        return;
-    };
-    let mut checked = 0;
-    let mut empty = Vec::new();
-    for unit in ["blocks", "bridges"] {
-        let dir = plugin.join(unit);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let src_dir = entry.path().join("reference/typescript/src");
-            let Ok(files) = std::fs::read_dir(&src_dir) else {
-                continue;
-            };
-            for f in files.flatten() {
-                let path = f.path();
-                let ext = match path.extension().and_then(|e| e.to_str()) {
-                    Some(e @ ("ts" | "tsx")) => e,
-                    _ => continue,
-                };
-                let src = std::fs::read_to_string(&path).expect("read reference source");
-                // A file with no `export` legitimately has no items.
-                if !src.contains("export ") {
-                    continue;
-                }
-                let items = extract_items_from_source(&src, ext, &TypeScriptAdapter, None)
-                    .expect("extract items");
-                checked += 1;
-                if items.is_empty() {
-                    empty.push(path.display().to_string());
-                }
-            }
-        }
-    }
-    assert!(
-        checked > 0,
-        "walked zero TypeScript reference sources — a walk bug reads as a clean pass"
-    );
-    assert!(
-        empty.is_empty(),
-        "{} reference source(s) export something the item extractor cannot see. \
-         That is #139's shape: the unit prescribes a code form the tooling is \
-         blind to, so every item on a module written that way lands in \
-         permanent in_spec_only drift. Teach `languages/typescript/items.scm` \
-         the shape, then widen the schema wording to match:\n  {}",
-        empty.len(),
-        empty.join("\n  ")
-    );
-}
 
 fn pairs(src: &str, ext: &str) -> Vec<(String, String)> {
     extract_items_from_source(src, ext, &TypeScriptAdapter, None)

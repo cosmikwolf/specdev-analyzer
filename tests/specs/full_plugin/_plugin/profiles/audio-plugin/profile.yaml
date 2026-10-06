@@ -4,40 +4,22 @@
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
-contract_version: 1
+contract_version: 2
 
 name: audio-plugin
 language: rust
 
-cargo_toml:
-  shape: plugin
-  default_edition: "2021"
-  lib:
-    crate_type: ["cdylib"]
-    cdylib_only: true
-  bin:
-    name_template: "{project_name}-standalone"
-    path_template: "src/bin/standalone.rs"
-    gate:
-      kind: architecture_array_contains
-      table: "plugin"
-      field: "formats"
-      value: "standalone"
-    paired_stub:
-      template_file: templates/standalone-stub.rs.template
-  features:
-    synthesize_default: true
-    drain_from: ["features"]
-  architecture_deps:
-    typed_slots: []
-    open_arrays: ["external_deps"]
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
 
-# Compile gate, as data: the codegen skill runs each `steps` argv in order
-# in the project root and records one row per module under `label`.
+# Compile gate, as data: the gate script (and CI) runs each `steps` argv
+# in order in the project root; the first non-zero exit fails the gate.
 # Warnings do not fail the gate; `cargo check` errors do.
 gates:
   - label: cargo-check
-    scope: module
     steps:
       - [cargo, check, --quiet]
 
@@ -45,9 +27,6 @@ bootstrap:
   steps: []                       # standalone plugin; no workspace machinery
 
 context:
-  module_fields_for_prompt:
-    [items, satisfies, depends_on, context_files, external_deps, layer,
-     nih_plug, egui]
   context_subcommand_extras:
     - field: layer
       from_attr: layer

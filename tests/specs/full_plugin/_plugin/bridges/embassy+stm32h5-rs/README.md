@@ -3,7 +3,7 @@
 A canonical bridge wiring the `embassy` async runtime block to the
 `stm32h5-rs` HAL block. Inline this bridge when a project's modules
 own both `[embassy.tasks]` and `[stm32h5.peripherals]` and need a
-declared, codegen-emitted handoff between them.
+declared handoff between them.
 
 ## When to use
 
@@ -36,16 +36,17 @@ binding entry, from `stm32h5-rs.Peripheral` to `embassy.Task`. Extends
 canonical `depends_on` so layer-dependency / acyclic / reachability
 graph checks work with zero domain knowledge.
 
-**Codegen prose** (`codegen/rust/README.md`): two patterns —
+**Guidance** (`guidance.md`): two patterns —
 - `handoff = "owned"` — peripheral moves into the spawned task.
 - `handoff = "shared"` — peripheral lives in a `Mutex<RawMutex, T>`
   static; multiple tasks acquire `.lock().await` to use it.
 
 ## What this bridge does NOT contribute
 
-- **No new Cargo deps.** All crates come from the two blocks
-  (`embassy-executor`, `embassy-sync`, `embassy-time`, `stm32h5xx-hal`,
-  `stm32h5xx-pac`). The bridge is purely a wiring discipline.
+- **No join-product crate.** The code uses the crates the two blocks'
+  guidance covers (`embassy-executor`, `embassy-sync`, `embassy-time`,
+  `stm32h5xx-hal`, `stm32h5xx-pac`); the project's `Cargo.toml` declares
+  them. The bridge is purely a wiring discipline.
 - **No interrupt-driven async.** That requires `embassy-stm32`, a
   different HAL. Future variant.
 - **No cross-module bindings.** Both endpoints must be declared on the
@@ -53,13 +54,13 @@ graph checks work with zero domain knowledge.
 
 ## Inline order
 
-`specdev inline-bridge embassy+stm32h5-rs` requires both blocks to be
+`/spec-inline-bridge embassy+stm32h5-rs` requires both blocks to be
 inlined first (`INLINE-003` check). Order:
 
 ```
-specdev inline embassy
-specdev inline stm32h5-rs
-specdev inline-bridge embassy+stm32h5-rs
+/spec-inline embassy
+/spec-inline stm32h5-rs
+/spec-inline-bridge embassy+stm32h5-rs
 ```
 
 Lex order (`embassy < stm32h5-rs`) is enforced (`BRIDGE-LEX-001`); use

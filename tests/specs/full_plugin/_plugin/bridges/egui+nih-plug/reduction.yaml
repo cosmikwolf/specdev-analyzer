@@ -17,12 +17,11 @@ metaschema_version: "v1"
 #     on the same module. Surfaces as `unresolved Region endpoint <id>`.
 #
 # NIH-EGUI-003..009 (region-purpose constraint + per-kind parameter-type
-# constraints) are documented in the bridge's codegen prose as discipline
+# constraints) are documented in the bridge's guidance as discipline
 # rules. Promotion to graph-check primitives is a bounded follow-up
-# (WIDGET-KIND-V1): trigger is the first dogfood that lands a misbinding the codegen
-# prose discipline doesn't catch. Until then, the bridge's emission code
-# rejects mismatched `widget_kind` ↔ `parameter.kind` pairs at codegen
-# time with a clear error.
+# (WIDGET-KIND-V1): trigger is the first dogfood that lands a misbinding the guidance
+# rule doesn't catch. Until then, the bridge's guidance refuses
+# mismatched `widget_kind` ↔ `parameter.kind` pairs.
 #
 # Bridges declare relations only — the metaschema rejects bridge-
 # qualified entity kinds. Both endpoint kinds (egui.Region and nih-plug.

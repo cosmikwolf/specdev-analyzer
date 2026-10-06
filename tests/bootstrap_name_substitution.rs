@@ -1,8 +1,7 @@
 //! Bootstrap-time `{{project_name}}` substitution coverage.
 //!
-//! F-015 (2026-05-08 zfm dogfood): the audio-plugin
-//! `architecture.toml.template` ships with `[plugin] name =
-//! "{{project_name}}"`; the report worried the placeholder would leak
+//! F-015 (2026-05-08 zfm dogfood): a profile template ships with
+//! `"{{project_name}}"`; the report worried the placeholder would leak
 //! through to the bootstrapped tree. The substitution path is wired
 //! (`bootstrap.rs::profile_plan` flags `*.toml.template` files with
 //! `substitute: true`), but until now there was no end-to-end test that
@@ -10,10 +9,8 @@
 //! profile.
 //!
 //! This test bootstraps each full_plugin profile and walks the entire
-//! output tree asserting no `{{` markers remain. The schema guard
-//! (`pattern: "^[^{}]+$"` on `architecture.toml`'s `[plugin].name`) stays
-//! as a separate defense-in-depth layer; this test catches regressions
-//! at the substitution layer itself.
+//! output tree asserting no `{{` markers remain; it catches regressions at
+//! the substitution layer itself.
 
 use std::path::{Path, PathBuf};
 
@@ -108,15 +105,12 @@ fn assert_substituted_outputs_have_no_placeholders(target: &Path, tag: &str) {
 #[test]
 fn audio_plugin_bootstrap_substitutes_project_name() {
     let target = bootstrap_at(&full_plugin(), "audio-plugin", "myplugin", "ap");
-    // Read architecture.toml — F-015's specific call-out.
-    let arch = std::fs::read_to_string(target.join("specs/architecture.toml")).unwrap();
+    // The profile seeds no architecture.toml in 2.0; the name lands in spec.toml.
+    assert!(!target.join("specs/architecture.toml").exists());
+    let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
     assert!(
-        arch.contains("name     = \"myplugin\"") || arch.contains("name = \"myplugin\""),
-        "[plugin].name was not substituted to the --name value:\n{arch}"
-    );
-    assert!(
-        !arch.contains("{{project_name}}"),
-        "{{{{project_name}}}} placeholder leaked through to architecture.toml:\n{arch}"
+        spec.contains("\"myplugin\""),
+        "the project name was not substituted:\n{spec}"
     );
     assert_substituted_outputs_have_no_placeholders(&target, "audio-plugin");
 }

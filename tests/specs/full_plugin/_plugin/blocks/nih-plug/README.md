@@ -25,7 +25,7 @@ Don't use this block if:
 - You're targeting an audio framework other than nih-plug (e.g. a
   direct VST3 SDK port, JUCE, AudioWorklet). Those would land as
   separate blocks (`vst3-sdk-rs`, etc.); the conceptual shape overlaps
-  but the codegen mappings differ.
+  but the framework rules differ.
 
 This block is silent on UI. Pair with a UI block (`egui` ships in v1)
 plus the matching bridge (`egui+nih-plug`) for parameter→widget
@@ -91,50 +91,46 @@ Reduction kinds (after inline):
   (the `[nih_plug.midi]` singleton). Qualified name is
   `<ModuleName>.midi`. Its optional `sysex` subtable is NOT surfaced as
   graph attributes — like `ProcessConfig`, it's a nameless config
-  singleton that only codegen reads.
+  singleton that only the code reads.
 - `ProcessConfig` is intentionally NOT materialized as an entity —
   it carries no name and no graph check needs to reach into it;
-  codegen prose reads it directly from the module's TOML.
+  the code follows it directly.
 
-Codegen prose (`codegen/rust/README.md`) describes how each shape
-maps to Rust: parameters become `#[derive(Params)]` fields with
-`*Param::new(...)` constructors and smoother attachment; audio ports
-populate the plugin's `AUDIO_IO_LAYOUTS` constant; MIDI flags drive
-`MIDI_INPUT` / `MIDI_OUTPUT` constants; process metadata drives
-preallocation patterns in `initialize()`.
+The guidance (`guidance.md`) carries the rules for the code: parameters
+become `#[derive(Params)]` fields whose persisted ids never change, with
+ranges and smoothers that follow the spec; audio ports shape the
+`AUDIO_IO_LAYOUTS` constant; MIDI levels set `MIDI_INPUT` / `MIDI_OUTPUT`;
+process metadata drives preallocation in `initialize()`.
 
 ## Sharp-test rationale
 
 - **Concreteness:** ✓ — names a specific Rust framework (`nih_plug`),
   not the abstract concept of "audio plugin framework."
-- **Codegen-completeness:** ✓ — given a conforming TOML, the codegen
-  prose produces working Rust source: the parameter struct, the
-  plugin impl skeleton with all required constants, the export
-  macros at crate root, an `initialize()` shell. The user fills in
-  `process()` body and any custom state handling. No step requires
-  "depends on which X."
-- **No cross-block reach:** ✓ — codegen prose explicitly excludes
+- **Rule-pack completeness:** ✓ — each parameter, port and MIDI setting
+  constrains the code (ids, ranges, smoothers, channel counts, levels);
+  the guidance carries the rules no check can verify (smoothed reads on
+  the audio thread, SysEx decode off it).
+- **No cross-block reach:** ✓ — the guidance explicitly excludes
   UI crates (egui / iced / vizia) and DSP libraries. UI rendering is
   the job of the `nih-plug+<ui-block>` bridge; DSP code lives in the
   user's engine module(s) (or a sibling `library-api` crate).
 
-## Deferred (revisit triggers per §12)
+## Deferred (each with a revisit trigger)
 
 - **Background tasks.** `type BackgroundTask` is `()` in v1; nih-plug
   supports per-plugin background-thread work for things like preset
   loading. Promote when authoring a plugin with non-trivial deferred
   work. (This is the natural home for decoding a SysEx patch dump off
-  the audio thread — see `[nih_plug.midi.sysex]` below, whose codegen
-  hands the raw frame to the engine but leaves the parse to the user.)
+  the audio thread — see `[nih_plug.midi.sysex]` below: the message type
+  hands the raw frame to the engine and the parse happens there.)
 - **Custom state save/load.** `extra_state` / `load_state` for state
   beyond the parameter set is hand-authored in the plugin shell
   module today. Promote to a typed `[nih_plug.state]` subtable when
   more than two plugins author the same hand-rolled shape.
-- **Per-platform realtime audit.** Schema captures `process.mode`;
-  the `realtime_audit` boolean lives at the architecture level. A
-  future graph-check primitive that statically detects alloc on the
-  audio path is a bounded follow-up, gated on dogfood evidence
-  (`realtime_path_no_alloc`).
+- **Realtime audit.** Schema captures `process.mode`; the no-alloc,
+  no-lock rules for the audio path are guidance. A check that statically
+  detects allocation on the audio path is a bounded follow-up, gated on
+  dogfood evidence (`realtime_path_no_alloc`).
 - **Polyphonic-mod id uniqueness check.** `poly_modulation_id` is a
   CLAP feature that needs project-wide unique ids; v1 doesn't
   graph-check this. Promote when CLAP-poly-mod authoring lands.

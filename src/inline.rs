@@ -12,12 +12,14 @@
 //!   blocks/<name>/
 //!     schema.yaml
 //!     reduction.yaml
-//!     codegen/<lang>/README.md       # zero or more, one per supported language
+//!     guidance.md                     # rules for whoever edits the code
 //!     README.md                       # author-facing, NOT inlined
 //!   bridges/<a>+<b>/
 //!     bindings.schema.yaml
 //!     reduction.yaml
-//!     codegen/<lang>/README.md
+//!     guidance.md
+//!     checks.toml                     # optional rule pack
+//!     languages/<lang>/<file>.scm     # the pack's queries
 //!     README.md
 //! ```
 //!
@@ -25,10 +27,12 @@
 //!
 //! - block schema      → `specs/specdev/schemas/inlined/blocks/<name>.schema.yaml`
 //! - block reduction   → `specs/specdev/reductions/blocks/<name>.yaml`
-//! - block codegen     → `specs/specdev/codegen/<lang>/blocks/<name>/README.md` (per language)
 //! - bridge schema     → `specs/specdev/schemas/inlined/bridges/<a>+<b>.schema.yaml`
 //! - bridge reduction  → `specs/specdev/reductions/bridges/<a>+<b>.yaml`
-//! - bridge codegen    → `specs/specdev/codegen/<lang>/bridges/<a>+<b>/README.md`
+//! - block guidance    → `specs/specdev/guidance/blocks/<name>.md`
+//! - bridge guidance   → `specs/specdev/guidance/bridges/<a>+<b>.md`
+//! - rule pack         → `specs/specdev/checks/{blocks,bridges}/<name>.toml`
+//! - pack query        → `specs/specdev/queries/{blocks,bridges}/<name>/<lang>/<file>.scm`
 //!
 //! After per-unit copies, the unit's schema fragment gets a `$ref` entry
 //! appended to `module.schema.yaml`'s `allOf` array (the aggregator slot).
@@ -111,23 +115,6 @@ fn plugin_version(plugin_root: &Path) -> Result<String> {
     Ok(v.to_string())
 }
 
-/// Enumerate the supported languages a block or bridge ships codegen for, by
-/// walking `<unit_dir>/codegen/`. Returns sorted directory names.
-fn supported_languages(unit_dir: &Path) -> Result<Vec<String>> {
-    let codegen_dir = unit_dir.join("codegen");
-    if !codegen_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut langs: Vec<String> = std::fs::read_dir(&codegen_dir)
-        .with_context(|| format!("reading {}", codegen_dir.display()))?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    langs.sort();
-    Ok(langs)
-}
-
 /// Collect the file set for a block from the plugin tree.
 pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<UnitFile>> {
     let unit_dir = plugin_root.join("blocks").join(name);
@@ -166,30 +153,8 @@ pub(crate) fn collect_block_files(plugin_root: &Path, name: &str) -> Result<Vec<
         bytes: read_file(&reduction_src)?,
     });
 
-    for lang in supported_languages(&unit_dir)? {
-        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
-        if !codegen_src.is_file() {
-            continue; // empty `codegen/<lang>/` is allowed; CI will lint
-        }
-        files.push(UnitFile {
-            rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/README.md")),
-            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
-            bytes: read_file(&codegen_src)?,
-        });
-
-        // Per-language `deps.yaml` manifest joins the block's per-unit file
-        // set when present. Bytes participate in `content_hash` automatically
-        // via the rolled-up hash; blocks without deps.yaml keep their
-        // existing hash.
-        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
-        if deps_src.is_file() {
-            files.push(UnitFile {
-                rel_dst: PathBuf::from(format!("codegen/{lang}/blocks/{name}/deps.yaml")),
-                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
-                bytes: read_file(&deps_src)?,
-            });
-        }
-    }
+    push_guidance(&mut files, &unit_dir, UnitKind::Block, name)?;
+    push_pack(&mut files, &unit_dir, UnitKind::Block, name)?;
 
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
@@ -233,35 +198,6 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
         bytes: read_file(&reduction_src)?,
     });
 
-    for lang in supported_languages(&unit_dir)? {
-        let codegen_src = unit_dir.join("codegen").join(&lang).join("README.md");
-        if !codegen_src.is_file() {
-            continue;
-        }
-        files.push(UnitFile {
-            rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/README.md")),
-            rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/README.md")),
-            bytes: read_file(&codegen_src)?,
-        });
-
-        // Per-language `deps.yaml` manifest joins the bridge's
-        // per-unit file set when present, mirroring the block shape.
-        // Bridges own join-product crates (a dep that exists only
-        // because two blocks are paired — e.g. an async-HAL crate);
-        // neither block may declare those without reaching across the
-        // pairing. Bytes participate in `content_hash` automatically
-        // via the rolled-up hash; bridges without deps.yaml keep their
-        // existing hash.
-        let deps_src = unit_dir.join("codegen").join(&lang).join("deps.yaml");
-        if deps_src.is_file() {
-            files.push(UnitFile {
-                rel_dst: PathBuf::from(format!("codegen/{lang}/bridges/{name}/deps.yaml")),
-                rel_src_in_unit: PathBuf::from(format!("codegen/{lang}/deps.yaml")),
-                bytes: read_file(&deps_src)?,
-            });
-        }
-    }
-
     // Language-neutral `contract.yaml` manifest joins the bridge's per-unit
     // file set when present. It lives at the bridge dir top level (not under
     // codegen/<lang>/) and inlines next to the bridge's reduction file. Bytes
@@ -276,8 +212,162 @@ pub(crate) fn collect_bridge_files(plugin_root: &Path, name: &str) -> Result<Vec
         });
     }
 
+    push_guidance(&mut files, &unit_dir, UnitKind::Bridge, name)?;
+    push_pack(&mut files, &unit_dir, UnitKind::Bridge, name)?;
+
     files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
     Ok(files)
+}
+
+/// The unit's `guidance.md`, when it ships one. `plugin-lint` requires it of
+/// every plugin unit (a stable file set keeps `--merge` working); the copy
+/// path tolerates its absence so a hand-made or older unit still inlines.
+fn push_guidance(
+    files: &mut Vec<UnitFile>,
+    unit_dir: &Path,
+    kind: UnitKind,
+    name: &str,
+) -> Result<()> {
+    let src = unit_dir.join(GUIDANCE_FILE);
+    if src.is_file() {
+        let rel = PathBuf::from(GUIDANCE_FILE);
+        files.push(UnitFile {
+            rel_dst: unit_rel_dst(kind, name, &rel).expect("guidance has a destination"),
+            rel_src_in_unit: rel,
+            bytes: read_file(&src)?,
+        });
+    }
+    Ok(())
+}
+
+/// The guidance file a block, bridge or profile ships at its root.
+pub const GUIDANCE_FILE: &str = "guidance.md";
+
+/// The rule pack a block or bridge may ship at its root.
+pub const CHECKS_FILE: &str = "checks.toml";
+
+/// The unit directory that holds a pack's query files, one subdirectory per
+/// language (`languages/<lang>/<file>.scm`).
+pub const QUERIES_DIR: &str = "languages";
+
+/// The unit's rule pack, when it ships one: `checks.toml` and every query
+/// file under `languages/<lang>/`. All languages are copied, so the file set
+/// does not depend on the project.
+fn push_pack(files: &mut Vec<UnitFile>, unit_dir: &Path, kind: UnitKind, name: &str) -> Result<()> {
+    let mut rels = Vec::new();
+    if unit_dir.join(CHECKS_FILE).is_file() {
+        rels.push(PathBuf::from(CHECKS_FILE));
+    }
+    let langs = unit_dir.join(QUERIES_DIR);
+    if langs.is_dir() {
+        for lang in sorted_entries(&langs)? {
+            if !lang.is_dir() {
+                continue;
+            }
+            for f in sorted_entries(&lang)? {
+                if f.is_file() && f.extension().is_some_and(|x| x == "scm") {
+                    rels.push(
+                        f.strip_prefix(unit_dir)
+                            .expect("under the unit dir")
+                            .to_path_buf(),
+                    );
+                }
+            }
+        }
+    }
+    for rel in rels {
+        let Some(rel_dst) = unit_rel_dst(kind, name, &rel) else {
+            continue;
+        };
+        files.push(UnitFile {
+            rel_dst,
+            bytes: read_file(&unit_dir.join(&rel))?,
+            rel_src_in_unit: rel,
+        });
+    }
+    Ok(())
+}
+
+fn sorted_entries(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+/// Where a unit file inlines, from its path in the unit — the mapping
+/// `collect_block_files` / `collect_bridge_files` use. `None` for a path the
+/// analyzer no longer inlines (e.g. `codegen/…`).
+pub(crate) fn unit_rel_dst(
+    kind: crate::upstream::UnitKind,
+    name: &str,
+    rel_src: &Path,
+) -> Option<PathBuf> {
+    use crate::upstream::UnitKind;
+    let s = rel_src.to_string_lossy().replace('\\', "/");
+    match (kind, s.as_str()) {
+        (UnitKind::Block, "schema.yaml") => Some(PathBuf::from(format!(
+            "schemas/inlined/blocks/{name}.schema.yaml"
+        ))),
+        (UnitKind::Block, "reduction.yaml") => {
+            Some(PathBuf::from(format!("reductions/blocks/{name}.yaml")))
+        }
+        (UnitKind::Bridge, "bindings.schema.yaml") => Some(PathBuf::from(format!(
+            "schemas/inlined/bridges/{name}.schema.yaml"
+        ))),
+        (UnitKind::Bridge, "reduction.yaml") => {
+            Some(PathBuf::from(format!("reductions/bridges/{name}.yaml")))
+        }
+        (UnitKind::Bridge, "contract.yaml") => Some(PathBuf::from(format!(
+            "reductions/bridges/{name}.contract.yaml"
+        ))),
+        (UnitKind::Block, GUIDANCE_FILE) => {
+            Some(PathBuf::from(format!("guidance/blocks/{name}.md")))
+        }
+        (UnitKind::Bridge, GUIDANCE_FILE) => {
+            Some(PathBuf::from(format!("guidance/bridges/{name}.md")))
+        }
+        (_, CHECKS_FILE) => Some(PathBuf::from(format!(
+            "checks/{}/{name}.toml",
+            kind.dir_segment()
+        ))),
+        (_, rel) => {
+            // `languages/<lang>/<file>.scm` → `queries/<kind>/<name>/<lang>/<file>.scm`.
+            let rest = rel.strip_prefix(QUERIES_DIR)?.strip_prefix('/')?;
+            let (lang, file) = rest.split_once('/')?;
+            if lang.is_empty() || file.contains('/') || !file.ends_with(".scm") {
+                return None;
+            }
+            Some(PathBuf::from(format!(
+                "queries/{}/{name}/{lang}/{file}",
+                kind.dir_segment()
+            )))
+        }
+    }
+}
+
+/// The rolled-up hash of a unit's upstream snapshot, over the files the
+/// analyzer inlines (see [`unit_rel_dst`]) — what the unit's record must
+/// hold for the snapshot it witnesses.
+pub(crate) fn snapshot_rollup(
+    kind: crate::upstream::UnitKind,
+    name: &str,
+    snapshot: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+) -> String {
+    let mut files: Vec<UnitFile> = snapshot
+        .iter()
+        .filter_map(|(rel, bytes)| {
+            unit_rel_dst(kind, name, rel).map(|dst| UnitFile {
+                rel_dst: dst,
+                rel_src_in_unit: rel.clone(),
+                bytes: bytes.clone(),
+            })
+        })
+        .collect();
+    files.sort_by(|a, b| a.rel_dst.cmp(&b.rel_dst));
+    rollup_hash(&files)
 }
 
 /// Compute the rolled-up content hash for a unit. Format: per-file lines
@@ -288,7 +378,7 @@ pub(crate) fn rollup_hash(files: &[UnitFile]) -> String {
     let mut summary = String::new();
     for f in files {
         let mut h = Sha256::new();
-        h.update(&f.bytes);
+        h.update(&*crate::hash::to_lf(&f.bytes));
         let digest = h.finalize();
         for byte in digest {
             use std::fmt::Write;
@@ -544,7 +634,6 @@ pub fn run_inline_bridge(layout: &LayoutContext, plugin_root: &Path, name: &str)
 /// Checks per block:
 /// - 001: `schema.yaml` exists.
 /// - 002: `reduction.yaml` exists.
-/// - 003: at least one `codegen/<lang>/README.md` exists under any language.
 /// - 004: top-level `README.md` exists.
 /// - 005: `schema.yaml` parses + compiles as a standalone JSON Schema.
 /// - 006: `schema.yaml` `$id` matches `https://specdev.dev/blocks/<name>.v1`
@@ -594,27 +683,6 @@ pub fn lint_plugin_blocks(plugin_root: &Path) -> Result<Vec<String>> {
             offenders.push(format!(
                 "{block_name}: [BLOCK-LINT-002] missing reduction.yaml at {}",
                 reduction_path.display()
-            ));
-        }
-
-        // Check 003: at least one codegen/<lang>/README.md.
-        let codegen_dir = block_path.join("codegen");
-        let mut has_any_codegen = false;
-        if codegen_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&codegen_dir) {
-                for sub in entries.flatten() {
-                    let lang_dir = sub.path();
-                    if lang_dir.is_dir() && lang_dir.join("README.md").is_file() {
-                        has_any_codegen = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !has_any_codegen {
-            offenders.push(format!(
-                "{block_name}: [BLOCK-LINT-003] no codegen/<lang>/README.md found under {}",
-                codegen_dir.display()
             ));
         }
 
@@ -813,6 +881,48 @@ mod tests {
         let ab = mk(&[("a/x", b"hello"), ("b/y", b"world")]);
         let ba = mk(&[("b/y", b"world"), ("a/x", b"hello")]);
         assert_eq!(rollup_hash(&ab), rollup_hash(&ba));
+    }
+
+    #[test]
+    fn unit_rel_dst_matches_the_collectors() {
+        let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/specs/full_plugin/_plugin");
+        for (kind, dir) in [
+            (crate::upstream::UnitKind::Block, "blocks"),
+            (crate::upstream::UnitKind::Bridge, "bridges"),
+        ] {
+            for e in std::fs::read_dir(plugin.join(dir)).unwrap().flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let files = match kind {
+                    crate::upstream::UnitKind::Block => collect_block_files(&plugin, &name),
+                    crate::upstream::UnitKind::Bridge => collect_bridge_files(&plugin, &name),
+                };
+                let Ok(files) = files else { continue };
+                for f in files {
+                    assert_eq!(
+                        unit_rel_dst(kind, &name, &f.rel_src_in_unit),
+                        Some(f.rel_dst.clone()),
+                        "{name}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rollup_hash_is_the_same_for_a_crlf_checkout() {
+        let file = |b: &[u8]| UnitFile {
+            rel_dst: PathBuf::from("schema.yaml"),
+            rel_src_in_unit: PathBuf::from("schema.yaml"),
+            bytes: b.to_vec(),
+        };
+        assert_eq!(
+            rollup_hash(&[file(b"a: 1\nb: 2\n")]),
+            rollup_hash(&[file(b"a: 1\r\nb: 2\r\n")])
+        );
+        assert_ne!(
+            rollup_hash(&[file(b"a: 1\n")]),
+            rollup_hash(&[file(b"a: 2\n")])
+        );
     }
 
     proptest::proptest! {

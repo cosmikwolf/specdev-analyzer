@@ -13,8 +13,8 @@ description: >
   services and characteristics the app actually consumes — never the
   peripheral's full GATT database, and never scan or connection
   BEHAVIOR (the scan filter, connect flow, and per-characteristic
-  access idioms are codegen-owned emissions derived from this
-  topology; see this block's codegen prose).
+  access idioms are the code's, held to this topology by the
+  guidance; see this block's guidance).
 
   Any module may carry the table; the common case is the service-role
   module that owns the BLE seam, with the rest of the app depending on
@@ -39,7 +39,7 @@ properties:
       services:
         description: >
           GATT services the module consumes, each identified by its
-          UUID. The declared set drives the emitted scan filter
+          UUID. The declared set is the scan filter
           (`ScanFilter(withServices: [...])`) — on the web platform a
           service NOT listed at scan time is inaccessible after
           connecting, so declare every service the module touches.
@@ -53,7 +53,7 @@ properties:
           Characteristics the module reads, writes, or subscribes to.
           Each names its parent service by `id` and lists the GATT
           properties the app relies on — the `properties` set selects
-          WHICH access idioms codegen emits, nothing else. A module
+          WHICH access idioms the code has, nothing else. A module
           that only detects peripheral presence by service UUID may
           omit this table entirely. Characteristic `id`s must be
           unique within the module.
@@ -63,7 +63,7 @@ properties:
 $defs:
   Identifier:
     description: >
-      snake_case identifier; seeds the generated Dart names (constants,
+      snake_case identifier; seeds the Dart names (constants,
       accessors) after snake_case → lowerCamelCase conversion.
     type: string
     pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
@@ -72,7 +72,7 @@ $defs:
     description: >
       A GATT UUID: either the 16-bit short form ("180F") or the full
       128-bit dashed form
-      ("0000180f-0000-1000-8000-00805f9b34fb"), any case. Emitted
+      ("0000180f-0000-1000-8000-00805f9b34fb"), any case. Used
       verbatim — the universal_ble package accepts any format/case and
       normalizes internally to lowercase 128-bit.
     type: string
@@ -82,7 +82,7 @@ $defs:
     description: >
       One GATT service the module consumes. `id` is the service's
       stable spec-level handle (cross-referenced by characteristics
-      and used to derive generated names); `uuid` is its wire-level
+      and used to derive the Dart names); `uuid` is its wire-level
       identity.
     type: object
     additionalProperties: false
@@ -116,8 +116,8 @@ $defs:
       properties:
         description: |
           GATT properties the app consumes on this characteristic.
-          Each value selects one access idiom at codegen time (see the
-          codegen prose per-property table):
+          Each value selects one access idiom in the code (see the
+          guidance per-property table):
 
             read                   — one-shot value read
             write                  — write with response (acknowledged)
@@ -130,8 +130,8 @@ $defs:
           Declare only what the app uses, not everything the
           peripheral offers. The remaining GATT properties (broadcast,
           authenticated signed writes, extended properties) are not
-          modeled: the pinned package exposes no API that consumes
-          them, so a value here could not change emitted code.
+          modeled: the package exposes no API that consumes
+          them, so a value here could not constrain the code.
         type: array
         items:
           type: string

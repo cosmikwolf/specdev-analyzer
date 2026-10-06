@@ -12,8 +12,12 @@ required: [spec_version, project, paths]
 properties:
   spec_version:
     type: string
-    description: Schema version line. v1 accepts only `1.x`; later versions widen.
-    pattern: "^1\\.[0-9]+$"
+    description: |
+      Project format version. `1.x` keeps decisions, requirements, sources
+      and open questions in one file per kind under `specs/`; `2.x` keeps
+      one file per entry (`specs/decisions/<id>.toml`, …). This analyzer
+      reads both; `migrate` moves a `1.x` project to `2.0`.
+    pattern: "^[12]\\.[0-9]+$"
   project:
     type: object
     additionalProperties: false
@@ -24,15 +28,6 @@ properties:
         description: Project name. Lowercase letters, digits, underscores, hyphens; must start with a letter.
         pattern: "^[a-z][a-z0-9_-]*$"
         maxLength: 64
-      version:
-        type: string
-        description: |
-          The crate's `[package] version` (a semver string). Optional.
-          Emitted literally when set; a workspace member that leaves it
-          unset inherits the workspace's `[workspace.package] version`
-          when the root declares one (`version.workspace = true`), and a
-          member that sets it overrides the inherited value.
-        minLength: 1
       profile:
         type: string
         description: Profile owning the project shape (e.g. firmware-layered, library-api).
@@ -40,74 +35,17 @@ properties:
       language:
         type: string
         description: |
-          Target language for codegen. Must stay in lockstep with the
+          Project language. Must stay in lockstep with the
           profile schema's `language` enum — a language is admitted to
           both enums in the same change, alongside its adapter.
         enum: [rust, c, cpp, dart, typescript]
-      edition:
-        type: string
+      max_parallel_agents:
+        type: integer
+        minimum: 1
         description: |
-          Rust edition. Optional; defaults to "2021" if absent. `gen`
-          emits this as Cargo.toml's `[package].edition` for Rust
-          projects. Ignored for non-Rust languages.
-        enum: ["2018", "2021", "2024"]
-        default: "2021"
-      license:
-        type: string
-        description: |
-          SPDX license identifier (or "OR"-joined identifiers). Optional;
-          libraries should set this. `gen` emits it as Cargo.toml's
-          `[package].license`.
-        minLength: 1
-      description:
-        type: string
-        description: |
-          Short project description. Optional; libraries should set this
-          (it appears on crates.io). `gen` emits it as Cargo.toml's
-          `[package].description`.
-        maxLength: 200
-      repository:
-        type: string
-        description: |
-          Repository URL. Optional; libraries that publish
-          to crates.io should set this. For workspace members this
-          field is normally omitted — the workspace owns the canonical
-          value via `[workspace_package].repository` and members emit
-          `repository.workspace = true`.
-        minLength: 1
-      crate_shape:
-        type: string
-        enum: [binary, library]
-        description: |
-          Per-package Cargo crate-target override (F12-22). Optional;
-          absent = the profile's own `cargo_toml.shape`. A `binary`-shaped
-          profile (firmware-layered) renders `[[bin]]`/`src/main.rs` by
-          default; set `crate_shape = "library"` on a workspace member that
-          is a driver/HAL-shim *library* so its Cargo.toml renders
-          `[lib]`/`src/lib.rs` instead — keeping the same block, bridge, and
-          architecture dependencies. Generic Cargo concept, not a profile or
-          block name.
-      crate_type:
-        type: array
-        items:
-          type: string
-          enum: [lib, rlib, cdylib, staticlib, dylib, proc-macro]
-        minItems: 1
-        uniqueItems: true
-        description: |
-          Per-package `[lib] crate-type` override. Optional; absent = the
-          profile's own `cargo_toml.lib.crate_type` (itself usually absent,
-          which renders a default rlib).
-
-          The linkage a crate needs is a property of *that crate*, not of the
-          shape it shares with its siblings: a library consumed only by Rust
-          wants the default, while one linked by a foreign toolchain — an FFI
-          companion crate, a shared object loaded by a host — needs
-          `["cdylib", "staticlib"]`. Setting it on the profile would impose
-          the exception on every project using that profile.
-
-          Order is preserved verbatim into Cargo.toml; cargo treats the list
-          as ordered. Generic Cargo concept, not a profile or block name.
+          How many agents may edit this project at once, each in its own
+          git worktree. `bootstrap` and `migrate` write `1`; a person
+          raises it. Skills read it before they launch parallel work.
   paths:
     type: object
     additionalProperties: false
@@ -130,6 +68,14 @@ properties:
           field. Multi-package workspaces may legitimately set this per-package;
           conflicting values across packages are accepted at CLI time.
         minLength: 1
+      tests:
+        type: array
+        description: |
+          Optional extra test roots, relative to spec.toml, for tests that live outside `source`
+          and outside the language's conventional test locations (for example a bench crate's
+          `tests/`). Test discovery walks `source`, these roots, and the conventional locations.
+        items: { type: string, minLength: 1 }
+        uniqueItems: true
   workspace:
     description: |
       Workspace marker. Presence signals "this spec.toml
@@ -143,12 +89,6 @@ properties:
     additionalProperties: false
     required: [members]
     properties:
-      resolver:
-        description: |
-          Cargo resolver version. Emitted as `[workspace] resolver =
-          "..."`. Defaults to "2" if absent (Cargo's recommended).
-        type: string
-        enum: ["1", "2", "3"]
       members:
         type: array
         minItems: 1
@@ -166,33 +106,3 @@ properties:
               description: Path to the member crate, relative to this spec.toml.
               type: string
               minLength: 1
-      default_members:
-        description: |
-          The members `cargo` builds when invoked at the workspace root
-          with no `-p` / `--workspace` flag. Member NAMES (the `name` of a
-          `[[workspace.members]]` entry), not paths — the emitter resolves
-          each to the member's declared `path` and writes
-          `default-members = [...]` in declaration order. A name that
-          matches no member is a validate error (the profile's
-          `workspace_default_member` relation) and an emit error. Omit to
-          let Cargo default to every member. Use it when a member cannot
-          build for the host (a board crate) and must be opted into by
-          hand.
-        type: array
-        items:
-          type: string
-          pattern: "^[a-z][a-z0-9_-]*$"
-          maxLength: 64
-        uniqueItems: true
-      exclude:
-        description: |
-          Paths, relative to this spec.toml, that Cargo must not treat as
-          workspace members even though they sit under the root — a
-          host-only tool crate, a vendored crate. Emitted verbatim as
-          `exclude = [...]` in declaration order. Omit when nothing is
-          excluded.
-        type: array
-        items:
-          type: string
-          minLength: 1
-        uniqueItems: true

@@ -91,9 +91,10 @@ fn inline_embassy_populates_files_and_lineage() {
     assert!(target
         .join("specs/specdev/reductions/blocks/embassy.yaml")
         .is_file());
-    assert!(target
+    // Codegen prose is no longer inlined.
+    assert!(!target
         .join("specs/specdev/codegen/rust/blocks/embassy/README.md")
-        .is_file());
+        .exists());
 
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
     let entry = lineage.blocks.get("embassy").expect("embassy lineage");
@@ -114,9 +115,10 @@ fn inline_stm32h5_rs_populates_files_and_lineage() {
     assert!(target
         .join("specs/specdev/reductions/blocks/stm32h5-rs.yaml")
         .is_file());
-    assert!(target
+    // Codegen prose is no longer inlined.
+    assert!(!target
         .join("specs/specdev/codegen/rust/blocks/stm32h5-rs/README.md")
-        .is_file());
+        .exists());
 
     let lineage = Lineage::load(&layout.specdev_root).unwrap();
     assert!(lineage.blocks.contains_key("stm32h5-rs"));

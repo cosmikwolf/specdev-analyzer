@@ -5,8 +5,8 @@ BLE central-role access for Flutter apps via the
 (Navideck): one uniform Dart API across android / ios / macos /
 windows / linux / web. A module declares the GATT topology it consumes
 — services and characteristics with the properties the app relies on —
-and codegen emits the scan filter, connect flow, and per-property
-access idioms.
+and the guidance holds the code's scan filter, connect flow, and
+per-property access idioms to it.
 
 ## When to use
 
@@ -26,12 +26,11 @@ the table on two modules.
 - Reduction entities `Service` and `Characteristic` plus the
   `characteristic_in_service` relation — a typo'd service reference is
   a validate-time error, not a runtime surprise on real hardware.
-- Codegen prose covering UUID-constant emission, scan-filter
-  derivation (every declared service, which the web target requires),
+- Implementation guidance covering UUID constants, the scan filter
+  (every declared service, which the web target requires),
   connect/discovery, one access idiom per property, error-handling
-  posture, and the android/ios permission-manifest snippets as user
-  action items.
-- `pub:` dep `universal_ble ^2.1.0`.
+  posture, and the android/ios permission entries as user action items.
+- The project's `pubspec.yaml` depends on `universal_ble`.
 
 ## What this block does NOT contribute
 
@@ -43,9 +42,9 @@ the table on two modules.
 - **Scan filters beyond service UUIDs** (manufacturer data, name
   prefix): app logic for now.
 - **The three unconsumed GATT properties** (`broadcast`,
-  `authenticated_signed_writes`, `extended_properties`): the pinned
-  package exposes no API that reads them, so a spec value could not
-  change emitted code (the dead-flag rule). `broadcast`'s real
+  `authenticated_signed_writes`, `extended_properties`): the package
+  exposes no API that reads them, so a spec value could not constrain
+  the code (the dead-flag rule). `broadcast`'s real
   use-case — beacon-style consumption of advertised data without
   connecting — is scan-level in this package's API, and would enter
   the schema as an advertisement-data surface, not a characteristic
@@ -58,7 +57,7 @@ no Firefox, no iOS browsers). BLE features of a web build simply will
 not run elsewhere — no spec mechanism changes that; plan the product
 accordingly. Additionally, on web the scan filter's service list is
 the access boundary: services not declared in the spec (and therefore
-not in the emitted filter) cannot be reached after connecting.
+not in the scan filter) cannot be reached after connecting.
 
 ## Why universal_ble
 
@@ -71,14 +70,14 @@ not in the emitted filter) cannot be reached after connecting.
 
 ## Sharp-test rationale
 
-- **Concreteness:** names the specific pub.dev package `universal_ble`
-  (pinned `^2.1.0`), not "a BLE block".
-- **Codegen-completeness:** conforming TOML yields working Dart — the
-  reference package compiles every emitted idiom against the real
-  pinned API (`reference/dart/`, gated by `flutter pub get && flutter
-  analyze`).
+- **Concreteness:** names the specific pub.dev package `universal_ble`,
+  not "a BLE block".
+- **Rule-pack completeness:** each service, characteristic and property
+  constrains the code (the scan filter, the allowed access idioms), and
+  `characteristic_in_service` resolves at validate time; the guidance
+  carries the rest.
 - **No cross-block reach:** stands alone. No other block's types
-  appear in the codegen prose.
+  appear in the guidance.
 
 ## Companion blocks
 

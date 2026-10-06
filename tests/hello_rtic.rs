@@ -12,14 +12,14 @@
 //! is not re-tested here; it is stack-independent and covered on the
 //! embassy firmware stack.
 
+use crate::ledger;
+
 use std::path::{Path, PathBuf};
 
 use specdev_analyzer::{
     bootstrap::{self, BootstrapInputs},
-    cargo_toml,
     inline::run_inline_block,
     layout::LayoutContext,
-    prompt::{assemble_module_prompt, check_codegen_gate},
     validate, Severity,
 };
 
@@ -68,8 +68,9 @@ fn hello_rtic_project(tag: &str) -> (PathBuf, LayoutContext) {
     run_inline_block(&layout, &full_plugin(), "rtic").unwrap();
     run_inline_block(&layout, &full_plugin(), "mk20dx").unwrap();
 
-    std::fs::write(
-        target.join("specs/requirements.toml"),
+    ledger::write(
+        &target,
+        "requirements.toml",
         r#"[[requirement]]
 id = "REQ-TICK-001"
 text = "A periodic tick shall increment a counter that a lower-priority task drains."
@@ -78,8 +79,7 @@ text = "A periodic tick shall increment a counter that a lower-priority task dra
 id = "REQ-LED-001"
 text = "The board LED shall toggle as a liveness indicator."
 "#,
-    )
-    .unwrap();
+    );
 
     std::fs::write(
         target.join("specs/modules/Ticker.toml"),
@@ -192,44 +192,4 @@ fn assert_no_errors(target: &Path) {
 fn full_project_validates_clean() {
     let (target, _layout) = hello_rtic_project("validate");
     assert_no_errors(&target);
-}
-
-#[test]
-fn codegen_gate_passes_and_prompts_assemble_for_both_modules() {
-    let (_target, layout) = hello_rtic_project("prompt");
-    for module in ["Ticker", "Blinky"] {
-        let refusal = check_codegen_gate(&layout, module).unwrap();
-        assert!(refusal.is_none(), "unexpected gate refusal for {module}");
-        let prompt = assemble_module_prompt(&layout, module).unwrap();
-        // Both blocks' prose and the module spec itself must be present —
-        // a profile.yaml / deps discovery gap would drop one silently.
-        assert!(prompt.contains("rtic"), "{module}: no rtic prose");
-        assert!(prompt.contains("mk20dx"), "{module}: no mk20dx prose");
-        assert!(
-            prompt.contains(&format!("name = \"{module}\"")),
-            "{module}: module TOML not inlined in prompt"
-        );
-    }
-}
-
-#[test]
-fn cargo_toml_render_carries_both_blocks_deps() {
-    let (_target, layout) = hello_rtic_project("cargo");
-    let rendered = cargo_toml::render(&layout).unwrap();
-    // rtic's deps.yaml (rtic alone — its channel crates are recommended,
-    // not contributed), mk20dx's (mk20dx-hal + fugit),
-    // and the profile-template platform picks must all survive the
-    // manifest-driven dispatch.
-    for dep in ["rtic", "mk20dx-hal", "fugit", "cortex-m-rt"] {
-        assert!(
-            rendered.text.contains(dep),
-            "missing dep {dep}:\n{}",
-            rendered.text
-        );
-    }
-    assert!(
-        rendered.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        rendered.warnings
-    );
 }

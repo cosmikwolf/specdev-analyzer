@@ -40,8 +40,8 @@ properties:
           parameter_widgets:
             description: |
               Parameter ↔ widget bindings. Each entry says "render this
-              parameter as this widget kind inside this region." Drives
-              codegen of the per-frame widget calls inside
+              parameter as this widget kind inside this region." Decides
+              the per-frame widget calls inside
               `purpose = "parameter_controls"` regions (the egui
               block's prose leaves a placeholder; this bridge's prose
               composes the per-binding widget calls).
@@ -72,7 +72,7 @@ $defs:
 
       Per-kind type constraints (validate-time when promoted to
       graph-check primitives; v1 documents them as discipline rules
-      in codegen prose):
+      in guidance):
 
         knob          — kind = float | int (rotary control)
         slider        — kind = float | int (linear slider)
@@ -124,14 +124,14 @@ $defs:
         description: |
           References an `egui.regions[].id` declared on this same
           module. The region's `purpose` SHOULD be
-          `parameter_controls` (codegen prose enforces this as a
+          `parameter_controls` (guidance enforces this as a
           discipline rule; v1.x may promote to a graph-check primitive
           per WIDGET-KIND-V1's bounded follow-up table).
         $ref: "#/$defs/Identifier"
       widget_kind:
         description: |
           Widget kind (WIDGET-KIND-V1). See `WidgetKind` for the per-kind type
-          constraint table. Codegen prose contains the egui call
+          constraint table. The guidance contains the egui call
           mapping (e.g. `knob` → `egui_extras` knob; `slider` →
           `widgets::ParamSlider::for_param`; `button` → `ui.button`
           with momentary `setter.set_parameter` semantics).
@@ -145,6 +145,6 @@ $defs:
       label:
         description: |
           Optional label position. Defaults to `above` for vertical
-          layouts and `left` for grid / horizontal layouts. Codegen
-          emits the corresponding `ui.label` placement.
+          layouts and `left` for grid / horizontal layouts. The code
+          places the `ui.label` accordingly.
         $ref: "#/$defs/LabelPosition"

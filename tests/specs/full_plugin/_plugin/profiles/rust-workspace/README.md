@@ -1,21 +1,19 @@
 # `rust-workspace` profile
 
-A specdev profile for Cargo workspace shells. Owns the workspace root's
-`Cargo.toml` (`[workspace]`, `[workspace.package]`,
-`[workspace.dependencies]`); does NOT own per-member structure (modules,
-requirements, features) — those live in each member's own `specs/` tree.
+A specdev profile for Cargo workspace roots. It lists the members specdev coordinates and holds the workspace-tier
+decisions and open questions; it does NOT own per-member structure (modules, requirements) — those live in each
+member's own `specs/` tree. The root `Cargo.toml` is the project's: `[workspace]`, `[workspace.package]`,
+`[workspace.dependencies]`, `default-members`, `exclude` and the build profiles live there.
 
 ## When to use
 
-Use `rust-workspace` when your project is a multi-crate Cargo workspace
-where two or more members share `[package]` metadata or dependencies.
-For a single-crate library, use `library-api` directly. For a
-single-crate binary firmware project, use `firmware-layered`.
+Use `rust-workspace` when your project is a multi-crate Cargo workspace. For a single-crate library, use
+`library-api` directly. For a single-crate binary firmware project, use `firmware-layered`.
 
 ## Bootstrap flow
 
 ```bash
-# Workspace shell (run at the workspace root):
+# Workspace root (run at the root):
 specdev-analyzer bootstrap \
   --profile rust-workspace \
   --language rust \
@@ -30,50 +28,33 @@ specdev-analyzer bootstrap \
   --name <member-name> \
   .
 
-# Then add the member to the workspace:
-#   1. Edit the workspace's spec.toml: append [[workspace.members]]
-#      with name = "<member-name>", path = "crates/<member-name>"
-#   2. Edit the workspace's specs/architecture.toml: declare any
-#      hoisted candidates under [[workspace_dependencies]] and any
-#      shared package fields under [workspace_package]
+# Then list the member in the root spec.toml:
+#   [[workspace.members]]
+#   name = "<member-name>"
+#   path = "crates/<member-name>"
+# (/spec-add-member does both steps.)
 ```
 
-## Default members and excluded paths
-
-Two optional keys sit beside `[[workspace.members]]` in the workspace's
-`spec.toml`:
-
-- `default_members = ["<member-name>", ...]` — the members `cargo`
-  builds at the root when no `-p` / `--workspace` flag is given. Names,
-  not paths: each must be the `name` of a `[[workspace.members]]` entry,
-  and the emitter writes that member's `path` under `default-members`.
-  An unknown name fails `validate` (`workspace_default_member` relation,
-  `REDUCE_UNRESOLVED`) and fails `manifest`. Use it when a member cannot
-  build for the host — a board crate — so `cargo test` at the root does
-  not try.
-- `exclude = ["<path>", ...]` — paths Cargo must not treat as members
-  even though they sit under the root (a host-only tool crate, a
-  vendored crate). Emitted verbatim.
-
-Both are emitted in declaration order and omitted when empty.
+Every member listed in `spec.toml` is a member in the root `Cargo.toml`. A crate Cargo builds but specdev does not
+coordinate (a tool, a bench) is not listed in the spec.
 
 ## Adopting an existing single-crate project as a member
 
 You have a *validated* single-crate project (`library-api`,
 `firmware-layered`, or `audio-plugin`) and want to make it the first
-member of a new workspace. There is no skill for this yet; the move is
-manual and **ordering-sensitive** — `bootstrap` refuses a target whose
+member of a new workspace. `/spec-add-member` does this; the manual
+recipe below is what it automates. The move is **ordering-sensitive** — `bootstrap` refuses a target whose
 `specs/specdev/` already exists (`BOOTSTRAP-001`), so the single-crate
 baseline must leave the root *before* you bootstrap the workspace shell
 there.
 
 The move is clean because the tree is already partitioned the right
-way: the id-bearing baseline (`spec.toml`, `specs/requirements.toml`,
-`specs/decisions.toml`, `specs/open_questions.toml`,
-`specs/architecture.toml`, `specs/modules/`) and the member's own
-machinery (`specs/specdev/`) all relocate together, and every path
+way: the id-bearing baseline (`spec.toml`, `specs/requirements/`,
+`specs/decisions/`, `specs/open_questions/`, `specs/architecture.toml`,
+`specs/modules/`) and the member's own machinery (`specs/specdev/`) all
+relocate together, and every path
 resolves relative to the member's `spec.toml` — so a moved member
-validates standalone (bidirectional minimality, above). Move the whole
+validates standalone (bidirectional minimality, below). Move the whole
 tree; do not bootstrap the member fresh and clobber it.
 
 ```bash
@@ -95,152 +76,84 @@ specdev-analyzer bootstrap \
 # 3. Wire the member into the workspace (same as a fresh member):
 #    - append [[workspace.members]] { name, path = "crates/<member-name>" }
 #      to the root spec.toml
-#    - declare hoisted deps / shared package fields in
-#      specs/architecture.toml
-#    - (optional) opt the member into inheritance: omit the inherited
-#      [project] fields and set source = "workspace" on shared deps
+#    - move shared package fields and dependencies into the root
+#      Cargo.toml's [workspace.package] / [workspace.dependencies]
 
 # 4. Validate the member tree and the root:
-specdev-analyzer validate --project crates/<member-name>
-specdev-analyzer validate --project .
+specdev-analyzer check --project crates/<member-name>
+specdev-analyzer check --project .
 ```
 
 **Ordering trap:** if step 2 runs while the root still holds a
 single-crate `specs/specdev/`, it fails with `BOOTSTRAP-001`. Move the
-baseline out (step 1) first. If the adopted crate's inlined schemas
-predate the current plugin, run `specdev-analyzer migrate` on the
-member after step 1 to refresh its machinery without disturbing ids.
+baseline out (step 1) first. If the adopted crate is on an older spec
+format, run `specdev-analyzer migrate` at the root once the member is
+listed — a workspace moves to a new format as one.
 
 ## Composition with member profiles
 
-The workspace profile carries no module / requirement / feature surface
-— bidirectional minimality. Each member is a complete spec on its own;
-extracting a member's `specs/specdev/` and bootstrapping it as a
-standalone project must produce a valid library (or firmware) crate.
+The workspace profile carries no module / requirement surface — bidirectional minimality. Each member is a complete
+spec on its own; extracting a member's tree and bootstrapping it standalone must produce a valid crate. A member
+reaches another member as a Cargo path or workspace dependency, never through `depends_on`.
 
-A member opts into workspace inheritance at two layers:
+## Decisions and open questions at the workspace tier
 
-1. **Package fields:** the member omits `[project].version /
-   .license / .repository` etc.; the cargo-toml emitter walks up to
-   the workspace's `[workspace_package]` and emits
-   `<field>.workspace = true`.
-2. **Dependencies:** the member sets `source = "workspace"` on a
-   `CrateReference`; the cargo-toml emitter renders `<dep> =
-   { workspace = true, ... }`.
+The root holds `specs/decisions/` and `specs/open_questions/` (and, rarely, `specs/requirements/`). Workspace
+decisions — the MSRV policy, an error-type convention across members — reach every member: `specdev-analyzer report
+decisions --module <M>` in a member lists them. Member specs reference only their own decision ids, never workspace
+ids, so each member stays self-contained.
 
-Both opt-ins are per-field / per-dep — a member can inherit `edition`
-from the workspace while keeping its own `version`, or inherit a
-registry crate from `[workspace.dependencies]` while keeping a
-local-only dep inline.
+Workspace open questions reach down the same way. At this tier `affects` is optional: a workspace question with no
+`affects` reaches every module in every member, so `check` in each member reports it against every module with code
+(`implementation_unblocked`) until it is resolved or a default is committed. Scope a workspace question narrower by
+listing member requirement ids in `affects`. Use `/spec-question` and `/spec-decide`.
 
-## Triad model: requirements, decisions, open questions
+## Graph checks shipped
 
-Alongside `requirements.toml`, the profile carries two sibling
-artifacts; together the three form the spec's triad:
+- `unique_member_names` — workspace member names are unique
+- `member_paths_unique` — workspace member paths are unique
+- `decision_ids_unique` — decision ids are unique
+- `decision_supersedes_acyclic` — supersession chains have no cycle
+- `decision_supersedes_chain_consistency` — every superseded decision is named by exactly one accepted successor
+- `open_question_closed_by_resolves` — `closed_by` names an existing decision
+- `open_question_status_consistency` — `closed_by` / `default_via` name accepted decisions
 
-1. **`requirements.toml` — the WHAT.** Intent and constraints the
-   workspace must satisfy.
-2. **`decisions.toml` — the HOW & WHY.** Each entry pins one
-   implementation choice with `status = "accepted"` or
-   `"superseded"`. Supersession keeps both bodies: the accepted
-   successor lists `supersedes = ["DEC-M"]`, the superseded entry
-   stays as reasoning trail. A decision may resolve questions via
-   `closes_questions = [...]` (or the question-side `closed_by` /
-   `default_via` — author one direction, not both).
-3. **`open_questions.toml` — the KNOWN UNKNOWNS.** Each entry is
-   `open`, `default_committed` (a decision commits a working
-   default plus a one-line `verify` falsification plan), or
-   `closed`.
+## Gates and CI
 
-Cross-references are typed: a requirement names the decisions that
-pin its implementation via `decided_by = [...]`; decisions that
-shape the workspace as a whole (member layout, MSRV policy, hoisted
-dependency policy) go in `architecture.toml`'s
-`project_decisions = [...]`. The workspace profile is the
-coordinator tier — it has no module surface of its own, so there is
-no `module.guided_by` here; that field lives in each member's spec.
+`specs/specdev/profile.yaml` declares the compile gates; the analyzer renders them into `scripts/specdev-gates.sh`,
+which runs `specdev-analyzer check` first and then each gate. CI runs the script. Bootstrap writes
+`.github/workflows/specdev.yml` once (yours afterwards); it reads the repository variable `SPECDEV_ANALYZER_REPO` and
+the secret `SPECDEV_ANALYZER_TOKEN` to build the private analyzer.
 
-### The codegen gate
+**Toolchain CI installs:** the stable Rust toolchain (cargo), which also builds `specdev-analyzer`, plus whatever each member's gates need (a member's build target, a member's system libraries). Each member's own workflow file is not read by GitHub; add its toolchain steps to the root's.
 
-An open question with `status = "open"` hard-blocks code generation:
-`gen` aborts for any module reachable through the question's
-`affects` list. `default_committed` passes the gate — the codegen
-prompt inlines the committed placeholder plus its `verify` text.
-`closed` passes — the prompt inlines the resolved answer through the
-decision named in `closed_by`. No CLI flag bypasses the gate; the
-in-spec escape is downgrading an open question to
-`default_committed` with a working default. Use `/spec-question` for
-that flow and `/spec-decide` to record decisions.
+CI installs are frozen: commit the lockfile, or the CI install refuses to change it.
 
-### Workspace scope is one-way
-
-Workspace-level decisions implicitly apply to every member crate —
-e.g. pinning the MSRV, or choosing `thiserror` for public error
-types across all members. Member-crate specs reference only their
-own crate-local decision ids, never workspace ids; that keeps each
-member self-contained (extract a member's tree, bootstrap it
-standalone, and its spec still validates).
-
-Workspace open questions reach down the same way: at this tier
-`affects` is optional, and a workspace question with no `affects`
-implicitly affects every module in every member crate — an open
-question about, say, where to split a crate boundary blocks `gen`
-across the whole workspace until it is resolved or defaulted. Scope
-a workspace question narrower by listing specific member requirement
-ids in `affects`.
-
-Workspace-tier decisions are auto-included in member-crate codegen
-prompt walks (a decision's `text` and `consequences` are inlined),
-so workspace decisions directly shape the code generated in members.
-
-### Validation
-
-`validate` checks the triad graph: supersession chains must be
-acyclic and orphan-free (every superseded entry is pointed at by
-exactly one accepted successor's `supersedes[]`), and every
-`decided_by` / `project_decisions` / `closes_questions` /
-`closed_by` / `default_via` reference must resolve. Gate-blocking
-open questions surface as `validate` warnings before `gen` refuses
-on them.
+The root's gate script runs each member's own script in declared order and stops at the first failure; the root
+declares no gate of its own. The workspace moves to a new spec format as one: run `migrate` at the root, never in a
+member.
 
 ## Layout under `specdev/profiles/rust-workspace/`
 
 ```
+profile.yaml                  # dispatch: paired files (the CI workflow); no gates
 spec.toml.template            # workspace marker + members list
-architecture.toml.template    # [workspace_package] + [[workspace_dependencies]]
-domain.toml.template          # member-name uniqueness + path uniqueness
-requirements.toml.template    # rare workspace-level requirements
+domain.toml.template          # member-name and member-path uniqueness, ledger checks
+guidance.md                   # implementation guidance (inlined)
 schemas/
-  architecture.schema.yaml    # validates the workspace architecture.toml
-                              # (spec.toml's [workspace] table is validated
-                              # by the analyzer's embedded spec.schema.yaml;
-                              # the profile ships no copy)
+  architecture.schema.yaml    # the workspace architecture.toml (project decisions)
 reductions/
-  project.yaml                # Member + WorkspaceDependency entities
-codegen/
-  rust/
-    workspace.conventions.md  # cargo-toml emission rules
+  project.yaml                # Member entities + ledger kinds
+templates/
+  specdev-ci.yml.template     # the CI workflow, written once
 README.md                     # this file
 ```
 
-No `module.schema.yaml` / `module.conventions.md` — workspaces have no
-module surface; that's per-member.
+No `module.schema.yaml` — workspaces have no module surface; that's per-member.
 
-## Why bootstrap drops ~240 files into your tree
+## Why bootstrap drops many files into your tree
 
-Each `specdev-analyzer bootstrap` invocation inlines a complete copy of
-the active profile's schemas, reductions, codegen prose, and language
-tier under `specs/specdev/`. For a `rust-workspace` shell, that's
-roughly 230–250 files: profile schemas + project reduction + the rust
-language tier (`items.schema.yaml` + `items.scm`) + per-block schemas
-that get inlined when you later run `specdev inline <block>`.
-
-The workspace root and every member each get their own self-contained
-inlined tree — that's not duplication, it's the "project owns its
-content" invariant. Each member must be extractable and runnable as a
-standalone project; sharing files across the workspace would violate
-that. If you have N members, expect N+1 inlined trees of this size.
-Subsequent `specdev inline` calls add files but won't multiply.
-
-This is intentional and expected; the file count surprised the first
-docs-first adopter (zfm dogfood F-008, 2026-05-04).
+Each `specdev-analyzer bootstrap` inlines a complete copy of the active profile's schemas, reductions, guidance and
+language tier under `specs/specdev/`, and every member gets its own self-contained copy. That is not duplication, it
+is the "project owns its content" invariant: each member must be extractable and runnable as a standalone project.
+With N members, expect N+1 inlined trees.

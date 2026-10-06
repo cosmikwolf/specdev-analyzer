@@ -48,11 +48,19 @@ pub struct ContextFiles {
     pub block_readmes: Vec<String>,
     pub bridge_readmes: Vec<String>,
     pub profile_readme: String,
-    pub module_conventions: String,
+    /// The inlined implementation guidance of the profile and of every
+    /// inlined block and bridge: rules to follow when editing the code.
+    /// Project-relative; only files that exist.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guidance: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub architecture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_module: Option<String>,
+    /// The module's own `context_files`: reference material to read before
+    /// editing it (hardware notes, UI reference data). Project-relative.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub module_context: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -183,11 +191,29 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
     bridge_readmes.sort();
 
     let profile = &layout.spec.project.profile;
-    let language = &layout.spec.project.language;
     let profile_readme = format!("${{CLAUDE_PLUGIN_ROOT}}/profiles/{profile}/README.md");
-    let module_conventions = format!(
-        "${{CLAUDE_PLUGIN_ROOT}}/profiles/{profile}/codegen/{language}/module.conventions.md"
+
+    let guidance_dir = layout.specdev_root.join("guidance");
+    let mut guidance_paths = vec![guidance_dir.join("profile.md")];
+    let mut block_names: Vec<&String> = lineage.blocks.keys().collect();
+    block_names.sort();
+    guidance_paths.extend(
+        block_names
+            .iter()
+            .map(|n| guidance_dir.join("blocks").join(format!("{n}.md"))),
     );
+    let mut bridge_names: Vec<&String> = lineage.bridges.keys().collect();
+    bridge_names.sort();
+    guidance_paths.extend(
+        bridge_names
+            .iter()
+            .map(|n| guidance_dir.join("bridges").join(format!("{n}.md"))),
+    );
+    let guidance: Vec<String> = guidance_paths
+        .iter()
+        .filter(|p| p.is_file())
+        .map(|p| rel(p, &layout.project_root))
+        .collect();
 
     let architecture = if layout.architecture_toml_path.is_file() {
         Some(rel(&layout.architecture_toml_path, &layout.project_root))
@@ -202,14 +228,26 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         None
     };
 
+    let module_context = std::fs::read_to_string(&target_module_path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|doc| doc.get("context_files").and_then(|v| v.as_array()).cloned())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(ContextFiles {
         schema,
         block_readmes,
         bridge_readmes,
         profile_readme,
-        module_conventions,
+        guidance,
         architecture,
         target_module,
+        module_context,
     })
 }
 
@@ -521,7 +559,7 @@ fn compute_profile_specific(
 /// Manifest-driven dispatch for one `ContextExtra`. Closed-set today: a
 /// `from_attr` lookup is the implicit default (no `kind` field); the only
 /// explicit `kind` v1 supports is `collect_local_entities_by_kind`. An
-/// unknown `kind` errors `CONTEXT-002` so a future authoring mistake
+/// unknown `kind` errors `CONTEXT-003` so a future authoring mistake
 /// surfaces as a load-time-class diagnostic instead of silent emission.
 fn apply_context_extra(
     extra: &crate::manifest::ContextExtra,
@@ -548,7 +586,7 @@ fn apply_context_extra(
         }
         Some(other) => {
             return Err(anyhow::anyhow!(
-                "[CONTEXT-002] unknown context_subcommand_extras kind `{other}` \
+                "[CONTEXT-003] unknown context_subcommand_extras kind `{other}` \
                  in profile.yaml; supported v1 kinds: \
                  collect_local_entities_by_kind, or omit `kind` for a \
                  from_attr lookup"
