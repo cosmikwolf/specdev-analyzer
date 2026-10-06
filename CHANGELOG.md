@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-06
+
 ### Fixed
 
 - **Tests made by a local `macro_rules!` macro are discovered** (#223). A macro defined in the file whose rule body
