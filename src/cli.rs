@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::lineage::Lineage;
+use crate::report::Report;
 use crate::{
     bootstrap::{self, BootstrapInputs},
     context as context_mod,
@@ -94,6 +95,11 @@ pub enum Command {
         /// Output format: `text` (default, like `validate`) or `yaml`.
         #[arg(long, default_value = "text")]
         format: String,
+        /// At a workspace root, also check every `[[workspace.members]]`
+        /// root and end with one summary; the exit code is the worst. Without
+        /// it, a workspace root's summary says how many members it skipped.
+        #[arg(long)]
+        members: bool,
     },
     /// Extract structured items (top-level language constructs) from each
     /// module's source file with the language's tree-sitter adapter, and
@@ -538,12 +544,14 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             since,
             format,
+            members,
         } => run_check(
             project,
             spec_path.as_deref(),
             plugin_flag.as_deref(),
             since,
             &format,
+            members,
             no_color,
         ),
         Command::ExtractItems { project, module } => {
@@ -747,8 +755,13 @@ fn run_check(
     plugin_flag: Option<&std::path::Path>,
     since: Option<String>,
     format: &str,
+    members: bool,
     no_color: bool,
 ) -> ExitCode {
+    if format != "text" && format != "yaml" {
+        eprintln!("error: --format `{format}`: expected `text` or `yaml`");
+        return ExitCode::from(2);
+    }
     let layout = match LayoutContext::discover(&project, spec_path) {
         Ok(l) => l,
         Err(e) => {
@@ -757,43 +770,106 @@ fn run_check(
         }
     };
     let opts = specdev_analyzer::check::CheckOptions { since };
-    let mut report = match specdev_analyzer::check::run(&layout, &opts) {
-        Ok(r) => r,
-        Err(e) => {
-            report_error(&e);
-            return ExitCode::from(2);
-        }
+    let Some(report) = check_one(&layout, plugin_flag, &opts) else {
+        return ExitCode::from(2);
     };
-    if let Some(notice) = plugin_ahead_notice(&layout, plugin_flag) {
-        report.push(notice);
+    let member_paths: Vec<String> = layout
+        .spec
+        .workspace
+        .as_ref()
+        .map(|ws| ws.members.iter().map(|m| m.path.clone()).collect())
+        .unwrap_or_default();
+    // Each member: its path and its report, or `None` when it could not run.
+    let mut checked: Vec<(String, Option<Report>)> = Vec::new();
+    if members {
+        for m in &member_paths {
+            let dir = layout.project_root.join(m);
+            let one = match LayoutContext::discover(&dir, None) {
+                Ok(l) => check_one(&l, plugin_flag, &opts),
+                Err(e) => {
+                    report_error(&e);
+                    None
+                }
+            };
+            checked.push((m.clone(), one));
+        }
     }
-    match format {
-        "yaml" => match specdev_analyzer::check::to_yaml(&report) {
+    let failed = checked.iter().any(|(_, r)| r.is_none());
+    let errors = report.has_errors()
+        || checked
+            .iter()
+            .any(|(_, r)| r.as_ref().is_some_and(Report::has_errors));
+    if format == "yaml" {
+        let yaml = if members {
+            specdev_analyzer::check::to_yaml_with_members(&report, &checked)
+        } else {
+            specdev_analyzer::check::to_yaml(&report)
+        };
+        match yaml {
             Ok(y) => print!("{y}"),
             Err(e) => {
                 report_error(&e);
                 return ExitCode::from(2);
             }
-        },
-        "text" => {
-            let (e, w, i) = report.counts();
-            let rendered = if no_color {
-                report.render_plain_filtered(false)
+        }
+    } else {
+        let render = |r: &Report| {
+            if no_color {
+                r.render_plain_filtered(false)
             } else {
-                report.render_colored_filtered(false)
-            };
-            print!("{rendered}");
-            eprintln!("{e} error(s), {w} warning(s), {i} info(s)");
+                r.render_colored_filtered(false)
+            }
+        };
+        print!("{}", render(&report));
+        let (mut e, mut w, mut i) = report.counts();
+        if members {
+            for (path, r) in &checked {
+                match r {
+                    Some(r) => {
+                        let (re, rw, ri) = r.counts();
+                        println!("\nmember {path}: {re} error(s), {rw} warning(s), {ri} info(s)");
+                        print!("{}", render(r));
+                        (e, w, i) = (e + re, w + rw, i + ri);
+                    }
+                    None => println!("\nmember {path}: could not run (see the error above)"),
+                }
+            }
         }
-        other => {
-            eprintln!("error: --format `{other}`: expected `text` or `yaml`");
-            return ExitCode::from(2);
-        }
+        let scope = match (members, member_paths.len()) {
+            (_, 0) if members => " (no members)".to_string(),
+            (_, 0) => String::new(),
+            (true, n) => format!(" across the root and {n} member(s)"),
+            (false, n) => format!("; root only: {n} member(s) not checked (`check --members`)"),
+        };
+        eprintln!("{e} error(s), {w} warning(s), {i} info(s){scope}");
     }
-    if report.has_errors() {
+    if failed {
+        ExitCode::from(2)
+    } else if errors {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `check` on one project root, with the plugin-ahead notice; `None` (error
+/// printed) when it could not run.
+fn check_one(
+    layout: &LayoutContext,
+    plugin_flag: Option<&std::path::Path>,
+    opts: &specdev_analyzer::check::CheckOptions,
+) -> Option<Report> {
+    match specdev_analyzer::check::run(layout, opts) {
+        Ok(mut r) => {
+            if let Some(notice) = plugin_ahead_notice(layout, plugin_flag) {
+                r.push(notice);
+            }
+            Some(r)
+        }
+        Err(e) => {
+            report_error(&e);
+            None
+        }
     }
 }
 
