@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-10-06
+
 ### Added
 
 - **A parent requirement is covered by its children** (#234). A requirement that another live requirement names in
