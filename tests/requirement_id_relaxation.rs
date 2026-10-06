@@ -280,6 +280,7 @@ fn summary_render_format_is_one_line_with_each_count() {
     let s = validate::Summary {
         modules: 7,
         requirements: 12,
+        retired_requirements: 0,
         sources: 3,
         graph_checks: 9,
         decisions: 0,
@@ -300,6 +301,7 @@ fn summary_render_appends_triad_counts_when_present() {
     let s = validate::Summary {
         modules: 7,
         requirements: 12,
+        retired_requirements: 0,
         sources: 3,
         graph_checks: 9,
         decisions: 4,

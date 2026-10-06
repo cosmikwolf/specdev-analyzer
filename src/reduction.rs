@@ -227,6 +227,11 @@ fn materialize_entity(
             if planned_along(&root_value, &iter.pointer) {
                 attrs.insert("planned".to_string(), Value::Bool(true));
             }
+            // An entity read from a retired requirement's file is
+            // retired. Added only when true, like `planned`.
+            if crate::entries::is_retired_file(&file) {
+                attrs.insert("retired".to_string(), Value::Bool(true));
+            }
 
             graph.entities.push(Entity {
                 kind: qualified_path.to_string(),
@@ -835,6 +840,14 @@ fn file_root_name(root: &Value) -> Option<String> {
 /// supports the `*` / `**` patterns the metaschema's `from` / `from_spec`
 /// fields allow. Non-matching globs return an empty list; I/O errors bail.
 fn glob_from_root(project_root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+    let mut out = glob_one(project_root, pattern)?;
+    if let Some(retired) = crate::entries::retired_glob_for(pattern) {
+        out.extend(glob_one(project_root, &retired)?);
+    }
+    Ok(out)
+}
+
+fn glob_one(project_root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     let full = project_root.join(pattern);
     let rendered = full
         .to_str()

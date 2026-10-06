@@ -109,6 +109,49 @@ pub fn run(
     }
 }
 
+/// The modules that own at least one entity a pack code check compares with
+/// the code. Each such entry can carry its own `planned` flag, so a planned
+/// module's stale warning can point at that finer exit.
+pub fn modules_with_checked_entries(
+    layout: &LayoutContext,
+    graph: &Value,
+    modules: &[&str],
+) -> BTreeSet<String> {
+    let language = layout.spec.project.language.as_str();
+    let (packs, _) = crate::packs::load_inlined(&layout.specdev_root);
+    let kinds: BTreeSet<&str> = packs
+        .iter()
+        .flat_map(|p| p.file.code_checks.iter())
+        .filter(|c| c.language == language)
+        .map(|c| c.entity_kind.as_str())
+        .collect();
+    let mut out = BTreeSet::new();
+    for e in graph
+        .get("entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if !e
+            .get("kind")
+            .and_then(Value::as_str)
+            .is_some_and(|k| kinds.contains(k))
+        {
+            continue;
+        }
+        let Some(name) = e.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(m) = modules
+            .iter()
+            .find(|m| name.strip_prefix(**m).is_some_and(|r| r.starts_with('.')))
+        {
+            out.insert(m.to_string());
+        }
+    }
+    out
+}
+
 /// Every file under the source root with one of the language's extensions.
 fn source_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> Vec<PathBuf> {
     let exts = adapter.file_extensions();
@@ -269,7 +312,8 @@ fn compare(
                         ENTITY_IN_CODE,
                         sev(ENTITY_IN_CODE),
                         format!(
-                            "`{name}` ({}) is not in the code: no match for `{key}`",
+                            "`{name}` ({}) is not in the code: no match for `{key}`; add it to the \
+                             code, or set `planned = true` on this entry while it is not built",
                             check.entity_kind
                         ),
                     )

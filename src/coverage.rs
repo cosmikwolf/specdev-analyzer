@@ -32,6 +32,9 @@ pub struct CoverageReport {
     pub matrix: Vec<CoverageRow>,
     /// Requirement ids with no satisfying module.
     pub orphans: Vec<String>,
+    /// Retired requirement ids: never in the matrix or `orphans`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,7 +93,14 @@ pub fn build(layout: &LayoutContext) -> Result<CoverageReport> {
         });
     }
 
-    Ok(CoverageReport { matrix, orphans })
+    let retired = crate::retired::retired_ids(&EntryStore::for_layout(layout))
+        .into_iter()
+        .collect();
+    Ok(CoverageReport {
+        matrix,
+        orphans,
+        retired,
+    })
 }
 
 /// Render to YAML — the default format. Stable key ordering across runs.
@@ -124,6 +134,12 @@ pub fn render_markdown(report: &CoverageReport) -> String {
         out.push_str("\n## Orphans\n\n");
         for o in &report.orphans {
             out.push_str(&format!("- `{o}`\n"));
+        }
+    }
+    if !report.retired.is_empty() {
+        out.push_str("\n## Retired\n\n");
+        for r in &report.retired {
+            out.push_str(&format!("- `{r}`\n"));
         }
     }
     out
@@ -213,6 +229,7 @@ fn load_requirement_ids(layout: &LayoutContext) -> Result<Vec<String>> {
     let arr: Vec<toml::Value> = EntryStore::for_layout(layout)
         .load(EntryKind::Requirement)?
         .into_iter()
+        .filter(|e| !crate::entries::is_retired_file(&e.file))
         .map(|e| e.value)
         .collect();
     // Preserve declaration order; dedup retains the first occurrence
@@ -264,6 +281,7 @@ mod tests {
         let report = CoverageReport {
             matrix: Vec::new(),
             orphans: Vec::new(),
+            retired: vec![],
         };
         let md = render_markdown(&report);
         assert!(md.contains("No requirements found"));
@@ -277,6 +295,7 @@ mod tests {
                 satisfied_by: Vec::new(),
             }],
             orphans: vec!["REQ-001".into()],
+            retired: vec![],
         };
         let md = render_markdown(&report);
         assert!(md.contains("ORPHAN"));
@@ -291,6 +310,7 @@ mod tests {
                 satisfied_by: vec!["alpha".into(), "beta".into()],
             }],
             orphans: Vec::new(),
+            retired: vec![],
         };
         let y = render_yaml(&report).unwrap();
         assert!(y.contains("REQ-001"));

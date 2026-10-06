@@ -503,6 +503,25 @@ fn a_package_with_no_manifest_marks_every_removed_value_spec_only() {
     assert!(l.contains("spec-only"), "{out}");
 }
 
+/// #227: the report of removed values is printed once and kept nowhere, so its
+/// last line says where to keep it — and only when something was removed.
+#[test]
+fn the_report_says_to_keep_it_only_when_values_were_removed() {
+    let keep = "put this report in the commit message of the migration";
+    let t = v1_full("cuts-keep", "library-api");
+    let out = text(&migrate(&t, &["--dry-run"]));
+    assert!(
+        out.contains("removed value(s) above") && out.contains(keep),
+        "{out}"
+    );
+    assert!(migrate(&t, &[]).status.success());
+    let again = text(&migrate(&t, &[]));
+    assert!(
+        !again.contains(keep),
+        "a run that removes nothing says nothing:\n{again}"
+    );
+}
+
 #[test]
 fn a_workspace_dependency_and_a_rename_are_resolved() {
     let t = v1_full("cuts-ws-dep", "library-api");

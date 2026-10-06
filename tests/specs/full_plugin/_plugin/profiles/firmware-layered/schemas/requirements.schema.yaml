@@ -128,3 +128,14 @@ $defs:
         type: array
         items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
         uniqueItems: true
+      retired_by:
+        description: >
+          Only on a requirement whose file is in
+          `specs/requirements/retired/`, where it is required: the
+          id of the accepted decision that retired it (or of one that was
+          superseded by a chain ending at an accepted decision). The
+          folder is the state; this says why. Forbidden on a live
+          requirement. The analyzer admits it on retired files whatever
+          this schema says.
+        type: string
+        minLength: 1
