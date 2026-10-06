@@ -84,6 +84,7 @@ mod report_graph;
 mod rtic_pack;
 mod rule_packs;
 mod shipped_profiles_validate;
+mod test_code_scope;
 mod triad_smoke;
 mod typescript_adapter;
 mod typescript_items;

@@ -28,6 +28,9 @@ pub struct FileImport {
     /// Project-relative target file; `None` when external.
     pub resolved: Option<String>,
     pub reexport: bool,
+    /// Inside code compiled only for tests (`@import.test_scope`): not a
+    /// dependency of the module.
+    pub test_only: bool,
 }
 
 /// One spec module, as the edge check needs it.
@@ -105,31 +108,43 @@ pub fn file_imports(
     };
     let query = Query::new(&lang, query_src)
         .with_context(|| format!("compiling the {} imports.scm query", adapter.name()))?;
-    let (c_src, c_re) = (
+    let (c_src, c_re, c_scope) = (
         query.capture_index_for_name("import.source"),
         query.capture_index_for_name("import.reexport"),
+        query.capture_index_for_name("import.test_scope"),
     );
-    let mut out = Vec::new();
+    let mut found: Vec<(usize, usize, String, bool)> = Vec::new();
+    let mut scopes: Vec<(usize, usize)> = Vec::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(m) = matches.next() {
         for c in m.captures {
+            if Some(c.index) == c_scope {
+                scopes.push((c.node.start_byte(), c.node.end_byte()));
+                continue;
+            }
             let reexport = Some(c.index) == c_re;
             if !(reexport || Some(c.index) == c_src) {
                 continue;
             }
             let spec = strip_quotes(&source[c.node.byte_range()]).to_string();
-            let resolved = adapter
-                .resolve_import(&spec, rel, ctx)
-                .into_iter()
-                .find(|cand| ctx.project_root.join(cand).is_file())
-                .map(|p| slash(&p));
-            out.push(FileImport {
-                spec,
-                resolved,
-                reexport,
-            });
+            found.push((c.node.start_byte(), c.node.end_byte(), spec, reexport));
         }
+    }
+    let mut out = Vec::new();
+    for (start, end, spec, reexport) in found {
+        let resolved = adapter
+            .resolve_import(&spec, rel, ctx)
+            .into_iter()
+            .find(|cand| ctx.project_root.join(cand).is_file())
+            .map(|p| slash(&p));
+        let test_only = scopes.iter().any(|(s, e)| *s <= start && end <= *e);
+        out.push(FileImport {
+            spec,
+            resolved,
+            reexport,
+            test_only,
+        });
     }
     Ok(out)
 }
@@ -253,6 +268,9 @@ pub fn module_edges(layout: &LayoutContext, modules: &[ModuleNode]) -> Result<Ed
         let imports = imports_of(adapter.as_ref(), &ctx, file, &mut cache)?;
         let mut reported: BTreeSet<String> = BTreeSet::new();
         for imp in &imports {
+            if imp.test_only {
+                continue;
+            }
             let Some(target) = &imp.resolved else {
                 continue;
             };
@@ -314,7 +332,7 @@ fn target_modules(
     }
     let mut out = Vec::new();
     for imp in imports_of(adapter, ctx, target, cache)? {
-        if !imp.reexport {
+        if !imp.reexport || imp.test_only {
             continue;
         }
         if let Some(next) = &imp.resolved {
@@ -331,11 +349,17 @@ pub fn to_yaml(files: &[(String, Vec<FileImport>)]) -> Result<String> {
         .map(|(file, imports)| {
             serde_json::json!({
                 "file": file,
-                "imports": imports.iter().map(|i| serde_json::json!({
-                    "spec": i.spec,
-                    "resolved": i.resolved,
-                    "reexport": i.reexport,
-                })).collect::<Vec<_>>(),
+                "imports": imports.iter().map(|i| {
+                    let mut v = serde_json::json!({
+                        "spec": i.spec,
+                        "resolved": i.resolved,
+                        "reexport": i.reexport,
+                    });
+                    if i.test_only {
+                        v["test_only"] = serde_json::json!(true);
+                    }
+                    v
+                }).collect::<Vec<_>>(),
             })
         })
         .collect();

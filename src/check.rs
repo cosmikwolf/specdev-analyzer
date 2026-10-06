@@ -395,15 +395,9 @@ fn test_checks(
             for (n, hits) in &resolved {
                 if hits.is_empty() {
                     report.push(
-                        Finding::new(
-                            &resolves,
-                            sev_res,
-                            format!(
-                                "`{id}`: `verified_by` names `{n}`, which is no discovered test"
-                            ),
-                        )
-                        .with_file(&file)
-                        .with_entity(id),
+                        Finding::new(&resolves, sev_res, disc.unresolved_message(id, n))
+                            .with_file(&file)
+                            .with_entity(id),
                     );
                 }
             }
@@ -467,12 +461,8 @@ fn test_checks(
         for n in names {
             if disc.resolve(n).is_empty() {
                 report.push(
-                    Finding::new(
-                        &resolves,
-                        sev_res,
-                        format!("`{name}`: `verified_by` names `{n}`, which is no discovered test"),
-                    )
-                    .with_entity(name),
+                    Finding::new(&resolves, sev_res, disc.unresolved_message(name, n))
+                        .with_entity(name),
                 );
             }
         }

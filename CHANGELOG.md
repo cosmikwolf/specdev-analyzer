@@ -12,6 +12,17 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tests made by a local `macro_rules!` macro are discovered** (#223). A macro defined in the file whose rule body
+  holds the test attribute makes a test per call, named by the call's first identifier after its attributes; an
+  `ignore` attribute in the call makes it pending. Generic captures `@test_macro` / `@test.macro`; when several
+  patterns name one test, the earliest name wins.
+- **An import inside test-only code is not a dependency** (#224). `@import.test_scope` marks such code;
+  `internal_edges_declared` skips the imports inside it, and `report imports` shows them with `test_only: true`.
+- **An ambiguous `verified_by` name names its candidates** (#225): "more than one test; name one of: …" instead of
+  "no discovered test".
+
 ## [0.3.0] — 2026-10-05
 
 **Checked intent: the analyzer no longer generates code; `check` holds the spec against the code.** Pairs with
