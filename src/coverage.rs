@@ -69,6 +69,8 @@ impl CoverageFormat {
 pub fn build(layout: &LayoutContext) -> Result<CoverageReport> {
     let requirements = load_requirement_ids(layout)?;
     let modules = load_modules(layout)?;
+    // A parent is covered by its children, so it is never an orphan.
+    let parents = crate::requirement_tree::Tree::for_layout(layout).exempt();
 
     let mut matrix: Vec<CoverageRow> = Vec::with_capacity(requirements.len());
     let mut orphans: Vec<String> = Vec::new();
@@ -84,7 +86,7 @@ pub fn build(layout: &LayoutContext) -> Result<CoverageReport> {
         }
         satisfiers.sort();
         satisfiers.dedup();
-        if satisfiers.is_empty() {
+        if satisfiers.is_empty() && !parents.contains(req) {
             orphans.push(req.clone());
         }
         matrix.push(CoverageRow {
