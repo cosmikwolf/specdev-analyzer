@@ -9,7 +9,7 @@
 //!
 //! **Names** are the `name` of each entry of every top-level array of
 //! tables in the module TOML — the TOML's shape, not a field the analyzer
-//! knows (D51/D62). **Defines** means an item of the language's items query
+//! knows (the analyzer holds no profile concept). **Defines** means an item of the language's items query
 //! with that name, at any visibility (the profile's visibility floor hides
 //! `pub(crate)` and private functions, which is exactly what task code
 //! is). Files are not filtered for tests: `LanguageAdapter::is_test_file`

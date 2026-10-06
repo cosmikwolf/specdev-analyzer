@@ -32,7 +32,7 @@ pub struct CoverageReport {
     pub matrix: Vec<CoverageRow>,
     /// Requirement ids with no satisfying module.
     pub orphans: Vec<String>,
-    /// Retired requirement ids (D117): never in the matrix or `orphans`.
+    /// Retired requirement ids: never in the matrix or `orphans`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub retired: Vec<String>,
 }

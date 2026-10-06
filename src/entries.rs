@@ -231,7 +231,7 @@ impl EntryStore {
             EntryLayout::PerEntry => {
                 let dir = self.expected_file(kind);
                 let mut files = toml_files_in(&dir);
-                // D117: retired requirements stay loaded, from their own folder.
+                // Retired requirements stay loaded, from their own folder.
                 if kind == EntryKind::Requirement {
                     files.extend(toml_files_in(&dir.join(RETIRED_DIR)));
                 }
@@ -367,7 +367,7 @@ impl EntryStore {
 }
 
 /// The folder under the requirements directory that holds retired
-/// requirements (D117). The folder is the state: an agent that lists the
+/// requirements. The folder is the state: an agent that lists the
 /// requirements directory does not see them.
 pub const RETIRED_DIR: &str = "retired";
 
@@ -387,7 +387,7 @@ pub fn is_retired_file(file: &Path) -> bool {
 /// For a reduction `from` / `from_spec` glob that reads the per-entry
 /// requirement files (`<specs>/requirements/*.toml`), the glob of the retired
 /// ones beside it. The reducer reads both, so a retired requirement stays in
-/// the graph with no change to the inlined reductions (D117, review B1).
+/// the graph with no change to the inlined reductions.
 pub fn retired_glob_for(pattern: &str) -> Option<String> {
     let dir = EntryKind::Requirement.entry_dir();
     let tail = format!("{dir}/*.toml");

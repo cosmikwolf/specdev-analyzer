@@ -1603,7 +1603,7 @@ fn resolve_check_kinds(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub modules: usize,
-    /// Live requirements; retired ones (D117) are in `retired_requirements`.
+    /// Live requirements; retired ones are in `retired_requirements`.
     pub requirements: usize,
     pub retired_requirements: usize,
     pub sources: usize,
@@ -1694,7 +1694,7 @@ fn count_modules(graph_json: &JsonValue) -> usize {
         .unwrap_or(0)
 }
 
-/// Live requirements, retired requirements (D117), sources.
+/// Live requirements, retired requirements, sources.
 fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize, usize) {
     let store = EntryStore::for_layout(layout);
     let (retired, live): (Vec<_>, Vec<_>) = store

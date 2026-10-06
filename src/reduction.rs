@@ -227,7 +227,7 @@ fn materialize_entity(
             if planned_along(&root_value, &iter.pointer) {
                 attrs.insert("planned".to_string(), Value::Bool(true));
             }
-            // D117: an entity read from a retired requirement's file is
+            // An entity read from a retired requirement's file is
             // retired. Added only when true, like `planned`.
             if crate::entries::is_retired_file(&file) {
                 attrs.insert("retired".to_string(), Value::Bool(true));

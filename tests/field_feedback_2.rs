@@ -1,4 +1,6 @@
-//! Phase 44: the flxs1 session's second round of field feedback (#226–#231).
+//! The second round of field feedback from a firmware workspace: planned
+//! exits, source hints, `check --members`, the hook's version relay,
+//! retired requirements and the size warning.
 //!
 //! Each test was written red first, against the 0.3.1 behaviour.
 
@@ -202,7 +204,7 @@ fn hook(plugin: &std::path::Path, project: &std::path::Path, path: &str) -> Stri
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// #226 / D116: the hook relays the analyzer's own version warning, says when
+/// The hook relays the analyzer's own version warning, says when
 /// the analyzer is missing, prints nothing about versions when they agree, and
 /// still relays when the project's rules copy makes it skip the rules text.
 #[test]
@@ -272,7 +274,7 @@ fn the_session_hook_relays_the_analyzer_version_warning() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-// ---- #229 / D117: retired requirements.
+// ---- Retired requirements.
 
 fn decision(id: &str, status: &str, extra: &str) -> String {
     format!(
@@ -302,7 +304,7 @@ fn retire_tree(tag: &str) -> ci::Tree {
     t
 }
 
-/// D117 review B1: a retired requirement that a closed open question
+/// A retired requirement that a closed open question
 /// `affects` still resolves, with the reductions as the plugin ships them.
 #[test]
 fn a_retired_requirement_stays_resolvable_and_is_exempt() {
@@ -486,7 +488,7 @@ fn since_reports_retirements_and_deletions() {
     .silent("since_deleted_requirement", "REQ-GO-001");
 }
 
-/// D117 point 5: the decision context leaves a retired requirement's
+/// The decision context leaves a retired requirement's
 /// `decided_by` out, and the summary counts retired requirements apart.
 #[test]
 fn retired_requirements_leave_context_and_count_apart() {
