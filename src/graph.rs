@@ -509,12 +509,14 @@ pub fn requirements_have_satisfiers(root: &Value, rule: &str, severity: Severity
             continue;
         }
         // `planned = true`: not built yet, so a missing satisfier is expected.
-        if ent
-            .get("attrs")
-            .and_then(|a| a.get("planned"))
-            .and_then(|p| p.as_bool())
-            == Some(true)
-        {
+        // `retired = true` (D117): it will never be built.
+        let flag = |k: &str| {
+            ent.get("attrs")
+                .and_then(|a| a.get(k))
+                .and_then(|p| p.as_bool())
+                == Some(true)
+        };
+        if flag("planned") || flag("retired") {
             continue;
         }
         out.push(

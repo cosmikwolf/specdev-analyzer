@@ -304,12 +304,14 @@ fn stale_planned_requirements(
         let Some(id) = e.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let planned = e
-            .get("attrs")
-            .and_then(|a| a.get("planned"))
-            .and_then(Value::as_bool)
-            == Some(true);
-        if !planned {
+        let flag = |k: &str| {
+            e.get("attrs")
+                .and_then(|a| a.get(k))
+                .and_then(Value::as_bool)
+                == Some(true)
+        };
+        // A retired requirement (D117) is exempt from the stale flags.
+        if !flag("planned") || flag("retired") {
             continue;
         }
         let Some(sats) = satisfiers.get(id) else {
@@ -413,6 +415,32 @@ fn test_checks(
         let pending_flag = v.get("test_pending").and_then(toml::Value::as_bool) == Some(true);
         let names = string_list(v.get("verified_by"));
         let file = entry.file.display().to_string();
+
+        // D117: a retired requirement is history, exempt from every
+        // requirement ↔ test check. A test it still names that exists is
+        // code that exists, so that is reported, not hidden (doc 25 §4.1).
+        if crate::entries::is_retired_file(&entry.file) {
+            let live: Vec<&str> = names
+                .iter()
+                .filter(|n| !disc.resolve(n).is_empty())
+                .map(String::as_str)
+                .collect();
+            if !live.is_empty() {
+                report.push(
+                    Finding::new(
+                        crate::retired::TESTED,
+                        severity(domain, crate::retired::TESTED, Severity::Warning),
+                        format!(
+                            "retired requirement `{id}` still names tests that exist ({}): remove them,                              or drop them from `verified_by`",
+                            live.join(", ")
+                        ),
+                    )
+                    .with_file(&file)
+                    .with_entity(id),
+                );
+            }
+            continue;
+        }
 
         if matches!(nature, "module" | "test") && !planned && !pending_flag && names.is_empty() {
             report.push(
@@ -722,15 +750,101 @@ fn flags_of(files: &BTreeMap<String, toml::Value>) -> BTreeMap<String, Flags> {
     out
 }
 
+/// D117 abuse control: each requirement retired since `since`, naming the
+/// decision and saying when that decision is itself new in the range, and
+/// each requirement id that was deleted rather than retired.
+fn since_retirements(
+    before: &BTreeMap<String, toml::Value>,
+    after: &BTreeMap<String, toml::Value>,
+    since: &str,
+    info: &dyn Fn(&str) -> Severity,
+    report: &mut Report,
+) {
+    // id → whether its file is a retired one, and its `retired_by`.
+    let requirements = |files: &BTreeMap<String, toml::Value>| {
+        let mut out: BTreeMap<String, (bool, Option<String>)> = BTreeMap::new();
+        for (path, doc) in files {
+            for e in doc
+                .get("requirement")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(id) = e.get("id").and_then(toml::Value::as_str) {
+                    let by = e
+                        .get(crate::retired::FIELD)
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string);
+                    out.insert(
+                        id.to_string(),
+                        (crate::entries::is_retired_file(Path::new(path)), by),
+                    );
+                }
+            }
+        }
+        out
+    };
+    let decisions_before: BTreeSet<String> = before
+        .values()
+        .flat_map(|doc| {
+            doc.get("decision")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| {
+                    d.get("id")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let (was, now) = (requirements(before), requirements(after));
+    for (id, (retired, by)) in &now {
+        if *retired && !was.get(id).is_some_and(|(r, _)| *r) {
+            let by = by.as_deref().unwrap_or("nothing");
+            let new = if decisions_before.contains(by) {
+                ""
+            } else {
+                " (a decision new in this range)"
+            };
+            report.push(
+                Finding::new(
+                    "since_retired",
+                    info("since_retired"),
+                    format!("`{id}`: retired by {by}{new} since {since}"),
+                )
+                .with_entity(id),
+            );
+        }
+    }
+    for id in was.keys().filter(|id| !now.contains_key(*id)) {
+        report.push(
+            Finding::new(
+                "since_deleted_requirement",
+                info("since_deleted_requirement"),
+                format!(
+                    "`{id}`: requirement deleted since {since}; to end a requirement, retire it \
+                     (`specs/requirements/retired/` with `retired_by`) so its id stays taken"
+                ),
+            )
+            .with_entity(id),
+        );
+    }
+}
+
 fn since_report(
     layout: &LayoutContext,
     since: &str,
     domain: &Option<DomainConfig>,
     report: &mut Report,
 ) -> Result<()> {
-    let before = flags_of(&spec_files(layout, Some(since))?);
-    let after = flags_of(&spec_files(layout, None)?);
+    let before_files = spec_files(layout, Some(since))?;
+    let after_files = spec_files(layout, None)?;
+    let before = flags_of(&before_files);
+    let after = flags_of(&after_files);
     let info = |rule: &str| severity(domain, rule, Severity::Info);
+    since_retirements(&before_files, &after_files, since, &info, report);
     for (key, now) in &after {
         let was = before.get(key).cloned().unwrap_or(Flags {
             hard_gate: true,
