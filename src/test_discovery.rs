@@ -14,6 +14,11 @@
 //! * `@group` / `@group.name` — an enclosing container (`mod`, `describe`,
 //!   `group`). A container that holds at least one test is itself a name a
 //!   `verified_by` entry may use.
+//! * `@test_macro` — the name of a macro defined in the file that makes
+//!   tests; `@test.macro` — the macro a `@test` node calls. Such a node is a
+//!   test only when its macro is a `@test_macro` of the same file.
+//!
+//! When several matches name one test, the earliest name in the source wins.
 //!
 //! Identity: the bare name when it is unique among all discovered tests;
 //! otherwise the language's [`TestIdentityStyle`] decides.
@@ -82,6 +87,30 @@ impl Discovery {
                 .collect();
         }
         Vec::new()
+    }
+
+    /// The qualified identities a bare `name` stands for when more than one
+    /// test carries it: the candidates a `verified_by` entry must choose from.
+    pub fn candidates(&self, name: &str) -> Vec<String> {
+        self.tests
+            .iter()
+            .filter(|t| t.base.as_deref() == Some(name))
+            .filter_map(|t| t.identity.clone())
+            .filter(|i| i != name)
+            .collect()
+    }
+
+    /// The finding text for a `verified_by` name that resolves to no test.
+    pub fn unresolved_message(&self, owner: &str, name: &str) -> String {
+        let c = self.candidates(name);
+        if c.is_empty() {
+            format!("`{owner}`: `verified_by` names `{name}`, which is no discovered test")
+        } else {
+            format!(
+                "`{owner}`: `verified_by` names `{name}`, which is more than one test; name one of: {}",
+                c.iter().map(|i| format!("`{i}`")).collect::<Vec<_>>().join(", ")
+            )
+        }
     }
 }
 
@@ -182,6 +211,8 @@ struct RawTest {
     start: usize,
     end: usize,
     name: Option<String>,
+    /// Byte offset of `name`: the earliest name in the source wins.
+    name_at: usize,
     suite: Option<String>,
     named: bool,
     unnamed: bool,
@@ -241,6 +272,10 @@ fn discover(
             idx("group"),
             idx("group.name"),
         );
+        let (c_test_macro, c_macro_call) = (idx("test_macro"), idx("test.macro"));
+        let mut test_macros: BTreeSet<String> = BTreeSet::new();
+        // Calls of a macro, kept apart until the file's test macros are known.
+        let mut calls: BTreeMap<(usize, usize), (String, RawTest)> = BTreeMap::new();
         let text = |n: tree_sitter::Node| strip_quotes(&source[n.byte_range()]).to_string();
         let mut tests: BTreeMap<(usize, usize), RawTest> = BTreeMap::new();
         let mut groups: Vec<(usize, usize, String)> = Vec::new();
@@ -253,20 +288,36 @@ fn discover(
             if let (Some(g), Some(gn)) = (node_of(c_group), node_of(c_group_name)) {
                 groups.push((g.start_byte(), g.end_byte(), text(gn)));
             }
+            if let Some(d) = node_of(c_test_macro) {
+                test_macros.insert(text(d));
+            }
             let Some(t) = node_of(c_test) else { continue };
-            let entry = tests
-                .entry((t.start_byte(), t.end_byte()))
-                .or_insert(RawTest {
-                    start: t.start_byte(),
-                    end: t.end_byte(),
-                    name: None,
-                    suite: None,
-                    named: false,
-                    unnamed: false,
-                    pending: false,
-                });
+            let blank = || RawTest {
+                start: t.start_byte(),
+                end: t.end_byte(),
+                name: None,
+                name_at: usize::MAX,
+                suite: None,
+                named: false,
+                unnamed: false,
+                pending: false,
+            };
+            let entry = match node_of(c_macro_call) {
+                Some(mc) => {
+                    &mut calls
+                        .entry((t.start_byte(), t.end_byte()))
+                        .or_insert_with(|| (text(mc), blank()))
+                        .1
+                }
+                None => tests
+                    .entry((t.start_byte(), t.end_byte()))
+                    .or_insert_with(blank),
+            };
             if let Some(n) = node_of(c_name) {
-                entry.name = Some(text(n));
+                if n.start_byte() < entry.name_at {
+                    entry.name = Some(text(n));
+                    entry.name_at = n.start_byte();
+                }
                 entry.named = true;
             }
             if let Some(s) = node_of(c_suite) {
@@ -277,6 +328,11 @@ fn discover(
             }
             if node_of(c_pending).is_some() {
                 entry.pending = true;
+            }
+        }
+        for (key, (mac, call)) in calls {
+            if test_macros.contains(&mac) && !tests.contains_key(&key) {
+                tests.insert(key, call);
             }
         }
         groups.sort();
@@ -336,22 +392,44 @@ pub fn holds_only_tests(
     };
     let query = Query::new(&lang, query_src)
         .with_context(|| format!("compiling the {} tests.scm query", adapter.name()))?;
-    let (c_test, c_group) = (
+    let (c_test, c_group, c_test_macro, c_macro_call) = (
         query.capture_index_for_name("test"),
         query.capture_index_for_name("group"),
+        query.capture_index_for_name("test_macro"),
+        query.capture_index_for_name("test.macro"),
     );
     let mut spans: Vec<(usize, usize)> = Vec::new();
     let mut tests = 0;
+    let mut test_macros: BTreeSet<String> = BTreeSet::new();
+    let mut calls: BTreeMap<(usize, usize), String> = BTreeMap::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(m) = matches.next() {
+        let call = m.captures.iter().find(|c| Some(c.index) == c_macro_call);
         for c in m.captures {
+            if Some(c.index) == c_test_macro {
+                test_macros.insert(source[c.node.byte_range()].to_string());
+            }
             if Some(c.index) == c_test {
+                if let Some(mc) = call {
+                    // A macro call counts only once its macro is known to make tests.
+                    calls.insert(
+                        (c.node.start_byte(), c.node.end_byte()),
+                        source[mc.node.byte_range()].to_string(),
+                    );
+                    continue;
+                }
                 tests += 1;
             }
             if Some(c.index) == c_test || Some(c.index) == c_group {
                 spans.push((c.node.start_byte(), c.node.end_byte()));
             }
+        }
+    }
+    for ((start, end), mac) in calls {
+        if test_macros.contains(&mac) {
+            tests += 1;
+            spans.push((start, end));
         }
     }
     if tests == 0 {
