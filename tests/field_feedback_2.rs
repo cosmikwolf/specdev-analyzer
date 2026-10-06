@@ -179,3 +179,95 @@ fn check_members_covers_the_workspace() {
         "the root keeps its own shape: {doc}"
     );
 }
+
+/// The sibling plugin checkout, or `None` (a standalone clone).
+fn live_plugin() -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("specdev");
+    p.join("scripts/session-context.sh").is_file().then_some(p)
+}
+
+/// Run the plugin's SessionStart hook in `project` with `path` as `PATH`.
+fn hook(plugin: &std::path::Path, project: &std::path::Path, path: &str) -> String {
+    let out = std::process::Command::new("sh")
+        .arg(plugin.join("scripts/session-context.sh"))
+        .current_dir(project)
+        .env_clear()
+        .env("PATH", path)
+        .env("CLAUDE_PLUGIN_ROOT", plugin)
+        .output()
+        .expect("run the hook");
+    assert_eq!(out.status.code(), Some(0), "the hook always exits 0");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// #226 / D116: the hook relays the analyzer's own version warning, says when
+/// the analyzer is missing, prints nothing about versions when they agree, and
+/// still relays when the project's rules copy makes it skip the rules text.
+#[test]
+fn the_session_hook_relays_the_analyzer_version_warning() {
+    let Some(plugin) = live_plugin() else {
+        eprintln!("skip: no sibling plugin checkout; the hook lives there");
+        return;
+    };
+    let base = std::env::temp_dir().join(format!(
+        "specdev-hook-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let project = base.join("proj");
+    std::fs::create_dir_all(project.join("specs/specdev")).unwrap();
+    std::fs::write(project.join("spec.toml"), "").unwrap();
+    // A stub analyzer that is "older": it prints the warning on stderr only.
+    let stub = base.join("stub");
+    std::fs::create_dir_all(&stub).unwrap();
+    let stub_bin = stub.join("specdev-analyzer");
+    std::fs::write(
+        &stub_bin,
+        "#!/bin/sh\necho 'specdev-analyzer 0.0.1'\n\
+         echo 'warning: [ANALYZER-VERSION-001] specdev-analyzer 0.0.1 is older than the 9.9.9 the specdev plugin needs' >&2\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&stub_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // The real analyzer, whose version equals what the plugin needs.
+    let real = std::path::Path::new(env!("CARGO_BIN_EXE_specdev-analyzer"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let sys = "/usr/bin:/bin";
+
+    let older = hook(&plugin, &project, &format!("{}:{sys}", stub.display()));
+    assert!(
+        older.contains("specdev: warning: [ANALYZER-VERSION-001]"),
+        "{older}"
+    );
+    assert!(older.contains("Tell the user once"), "{older}");
+
+    let same = hook(&plugin, &project, &format!("{}:{sys}", real.display()));
+    assert!(
+        !same.contains("ANALYZER-VERSION") && !same.contains("not on PATH"),
+        "{same}"
+    );
+
+    let missing = hook(&plugin, &project, sys);
+    assert!(
+        missing.contains("specdev-analyzer is not on PATH"),
+        "{missing}"
+    );
+
+    // The project's own rules copy: the rules text is skipped, the warning is not.
+    std::fs::create_dir_all(project.join(".claude/rules")).unwrap();
+    std::fs::write(project.join(".claude/rules/specdev.md"), "rules\n").unwrap();
+    let with_copy = hook(&plugin, &project, &format!("{}:{sys}", stub.display()));
+    assert!(with_copy.contains("ANALYZER-VERSION-001"), "{with_copy}");
+    assert!(
+        !with_copy.contains("## "),
+        "no rules text when the project has its copy: {with_copy}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
