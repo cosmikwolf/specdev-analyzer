@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-06
+
 ### Added
 
 - **Retire a requirement** (#229). Move its file to `specs/requirements/retired/` and add `retired_by = "DEC-…"`
