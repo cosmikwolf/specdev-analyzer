@@ -271,3 +271,257 @@ fn the_session_hook_relays_the_analyzer_version_warning() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ---- #229 / D117: retired requirements.
+
+fn decision(id: &str, status: &str, extra: &str) -> String {
+    format!(
+        "[[decision]]\nid = \"{id}\"\ntitle = \"Decision {id}\"\nstatus = \"{status}\"\ntext = \"Why {id}.\"\n{extra}"
+    )
+}
+
+/// A built module that satisfies `REQ-LIVE-001`; `DEC-R-001` accepted.
+fn retire_tree(tag: &str) -> ci::Tree {
+    let t = tree(tag, "firmware-layered", &[]);
+    t.write(
+        "specs/modules/Built.toml",
+        &fw_module("Built", "satisfies = [\"REQ-LIVE-001\"]\n"),
+    )
+    .write(
+        "src/built.rs",
+        "pub fn built() {}\n#[test]\nfn built_works() {}\n",
+    )
+    .write(
+        "specs/requirements/REQ-LIVE-001.toml",
+        &ci::requirement("REQ-LIVE-001", "verified_by = [\"built_works\"]\n"),
+    )
+    .write(
+        "specs/decisions/DEC-R-001.toml",
+        &decision("DEC-R-001", "accepted", ""),
+    );
+    t
+}
+
+/// D117 review B1: a retired requirement that a closed open question
+/// `affects` still resolves, with the reductions as the plugin ships them.
+#[test]
+fn a_retired_requirement_stays_resolvable_and_is_exempt() {
+    let t = retire_tree("retire-b1");
+    let reduction_before = t.read("specs/specdev/reductions/project.yaml");
+    t.write(
+        "specs/requirements/retired/REQ-OLD-001.toml",
+        &ci::requirement("REQ-OLD-001", "retired_by = \"DEC-R-001\"\n"),
+    )
+    .write(
+        "specs/open_questions/OQ-R-001.toml",
+        "[[open_question]]\nid = \"OQ-R-001\"\ntitle = \"Moot\"\nstatus = \"closed\"\ntext = \"?\"\naffects = [\"REQ-OLD-001\"]\nclosed_by = \"DEC-R-001\"\n",
+    );
+    let c = t.check(&[]);
+    c.nothing_about("REQ-OLD-001")
+        .nothing_about("OQ-R-001")
+        .exit_is(0);
+    assert!(
+        !c.raw.contains("REDUCE_UNRESOLVED"),
+        "the link to a retired id resolves:\n{}",
+        c.raw
+    );
+    assert_eq!(
+        t.read("specs/specdev/reductions/project.yaml"),
+        reduction_before
+    );
+}
+
+#[test]
+fn retired_by_belongs_in_the_retired_folder_only_and_names_a_live_decision() {
+    let t = retire_tree("retire-placement");
+    t.write(
+        "specs/requirements/retired/REQ-NOBY-001.toml",
+        &ci::requirement("REQ-NOBY-001", ""),
+    )
+    .write(
+        "specs/requirements/REQ-BACK-001.toml",
+        &ci::requirement("REQ-BACK-001", "retired_by = \"DEC-R-001\"\n"),
+    )
+    .write(
+        "specs/requirements/retired/REQ-GHOST-001.toml",
+        &ci::requirement("REQ-GHOST-001", "retired_by = \"DEC-NONE-001\"\n"),
+    )
+    // Superseded, with an accepted successor: still valid.
+    .write(
+        "specs/decisions/DEC-R-002.toml",
+        &decision("DEC-R-002", "superseded", ""),
+    )
+    .write(
+        "specs/decisions/DEC-R-003.toml",
+        &decision("DEC-R-003", "accepted", "supersedes = [\"DEC-R-002\"]\n"),
+    )
+    .write(
+        "specs/requirements/retired/REQ-CHAIN-001.toml",
+        &ci::requirement("REQ-CHAIN-001", "retired_by = \"DEC-R-002\"\n"),
+    )
+    // Proposed, not accepted: not valid.
+    .write(
+        "specs/decisions/DEC-R-004.toml",
+        &decision("DEC-R-004", "proposed", ""),
+    )
+    .write(
+        "specs/requirements/retired/REQ-PROP-001.toml",
+        &ci::requirement("REQ-PROP-001", "retired_by = \"DEC-R-004\"\n"),
+    );
+    let c = t.check(&[]);
+    let rule = "retired_requirement_consistency";
+    c.fires(rule, "REQ-NOBY-001", "error")
+        .says(rule, "REQ-NOBY-001", "needs `retired_by`")
+        .fires(rule, "REQ-BACK-001", "error")
+        .says(
+            rule,
+            "REQ-BACK-001",
+            "only in `specs/requirements/retired/`",
+        )
+        .fires(rule, "REQ-GHOST-001", "error")
+        .silent(rule, "REQ-CHAIN-001")
+        .fires(rule, "REQ-PROP-001", "error");
+}
+
+#[test]
+fn nothing_may_build_on_a_retired_requirement() {
+    let t = retire_tree("retire-users");
+    t.write(
+        "specs/requirements/retired/REQ-OLD-001.toml",
+        &ci::requirement("REQ-OLD-001", "retired_by = \"DEC-R-001\"\nverified_by = [\"built_works\"]\n"),
+    )
+    .write(
+        "specs/modules/Claims.toml",
+        &fw_module("Claims", "satisfies = [\"REQ-OLD-001\"]\n"),
+    )
+    .write("src/claims.rs", "pub fn claims() {}\n")
+    .write(
+        "specs/modules/ItemClaims.toml",
+        &fw_module(
+            "ItemClaims",
+            "satisfies = [\"REQ-LIVE-001\"]\n\n[[items]]\nkind = \"fn\"\nname = \"item_claims\"\nsatisfies = [\"REQ-OLD-001\"]\n",
+        ),
+    )
+    .write("src/item_claims.rs", "pub fn item_claims() {}\n")
+    .write(
+        "specs/requirements/REQ-CHILD-001.toml",
+        &ci::requirement("REQ-CHILD-001", "satisfies = [\"REQ-OLD-001\"]\ntest_pending = true\n"),
+    )
+    .write(
+        "specs/open_questions/OQ-R-002.toml",
+        "[[open_question]]\nid = \"OQ-R-002\"\ntitle = \"Stale\"\nstatus = \"open\"\ntext = \"?\"\naffects = [\"REQ-OLD-001\"]\n",
+    );
+    let c = t.check(&[]);
+    let rule = "retired_requirement_consistency";
+    c.fires(rule, "Claims", "error")
+        .fires(rule, "ItemClaims", "error")
+        .fires(rule, "REQ-CHILD-001", "error")
+        .fires("retired_requirement_tested", "REQ-OLD-001", "warning")
+        .fires("open_question_affects_only_retired", "OQ-R-002", "info")
+        .silent("requirements_have_satisfiers", "REQ-OLD-001")
+        .silent("requirements_have_tests", "REQ-OLD-001");
+}
+
+#[test]
+fn a_retired_id_cannot_be_reused_and_reports_list_it_apart() {
+    let t = retire_tree("retire-unique");
+    t.write(
+        "specs/requirements/retired/REQ-OLD-001.toml",
+        &ci::requirement("REQ-OLD-001", "retired_by = \"DEC-R-001\"\n"),
+    );
+    let cov = t.analyzer(&["report", "coverage"]);
+    let doc: serde_json::Value = serde_yaml::from_slice(&cov.stdout).unwrap();
+    let text = serde_json::to_string(&doc).unwrap();
+    assert!(doc["retired"].to_string().contains("REQ-OLD-001"), "{text}");
+    assert!(
+        !doc["orphans"].to_string().contains("REQ-OLD-001"),
+        "{text}"
+    );
+    t.write(
+        "specs/requirements/REQ-OLD-001.toml",
+        &ci::requirement("REQ-OLD-001", "test_pending = true\n"),
+    );
+    let c = t.check(&[]);
+    assert!(
+        c.ran().iter().any(|f| f.rule == "requirement_ids_unique"
+            && f.severity == "error"
+            && f.message.contains("REQ-OLD-001")),
+        "a live file may not reuse a retired id:\n{}",
+        c.raw
+    );
+}
+
+#[test]
+fn since_reports_retirements_and_deletions() {
+    let t = retire_tree("retire-since");
+    t.write(
+        "specs/requirements/REQ-GO-001.toml",
+        &ci::requirement("REQ-GO-001", "test_pending = true\n"),
+    )
+    .write(
+        "specs/requirements/REQ-DEL-001.toml",
+        &ci::requirement("REQ-DEL-001", "test_pending = true\n"),
+    );
+    t.commit_all("base");
+    std::fs::remove_file(t.root.join("specs/requirements/REQ-GO-001.toml")).unwrap();
+    std::fs::remove_file(t.root.join("specs/requirements/REQ-DEL-001.toml")).unwrap();
+    t.write(
+        "specs/requirements/retired/REQ-GO-001.toml",
+        &ci::requirement(
+            "REQ-GO-001",
+            "test_pending = true\nretired_by = \"DEC-R-005\"\n",
+        ),
+    )
+    .write(
+        "specs/decisions/DEC-R-005.toml",
+        &decision("DEC-R-005", "accepted", ""),
+    );
+    let c = t.check(&["--since", "HEAD"]);
+    c.says(
+        "since_retired",
+        "REQ-GO-001",
+        "retired by DEC-R-005 (a decision new in this range)",
+    )
+    .says("since_deleted_requirement", "REQ-DEL-001", "deleted")
+    .silent("since_deleted_requirement", "REQ-GO-001");
+}
+
+/// D117 point 5: the decision context leaves a retired requirement's
+/// `decided_by` out, and the summary counts retired requirements apart.
+#[test]
+fn retired_requirements_leave_context_and_count_apart() {
+    let t = retire_tree("retire-readers");
+    t.write(
+        "specs/decisions/DEC-R-009.toml",
+        &decision("DEC-R-009", "accepted", ""),
+    )
+    .write(
+        "specs/requirements/retired/REQ-OLD-001.toml",
+        &ci::requirement(
+            "REQ-OLD-001",
+            "retired_by = \"DEC-R-001\"\ndecided_by = [\"DEC-R-009\"]\n",
+        ),
+    )
+    .write(
+        "specs/modules/Built.toml",
+        &fw_module("Built", "satisfies = [\"REQ-LIVE-001\", \"REQ-OLD-001\"]\n"),
+    );
+    let out = t.analyzer(&["report", "decisions", "--module", "Built"]);
+    let text = ci::text(&out);
+    assert!(out.status.success(), "{text}");
+    let doc: serde_json::Value = serde_yaml::from_slice(&out.stdout).unwrap();
+    let reaches = doc["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == "DEC-R-009")
+        .map(|d| d["reaches"].clone())
+        .unwrap();
+    assert_eq!(reaches, serde_json::json!([]), "{text}");
+    let v = t.analyzer(&["validate"]);
+    let all = ci::text(&v);
+    assert!(
+        all.contains("1 requirements / ") && all.contains("/ 1 retired requirements"),
+        "{all}"
+    );
+}

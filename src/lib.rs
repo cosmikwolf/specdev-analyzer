@@ -142,6 +142,7 @@ pub mod reductions;
 pub mod report;
 pub mod resolve;
 pub mod resolved;
+pub mod retired;
 pub mod schema;
 pub mod source_hint;
 pub mod test_discovery;

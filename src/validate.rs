@@ -257,7 +257,7 @@ fn validate_aux_toml(
 
     let schema_text = std::fs::read_to_string(schema_path)
         .with_context(|| format!("reading {}", schema_path.display()))?;
-    let schema_value: JsonValue = match serde_yaml::from_str(&schema_text) {
+    let mut schema_value: JsonValue = match serde_yaml::from_str(&schema_text) {
         Ok(v) => v,
         Err(e) => {
             report.push(
@@ -272,6 +272,9 @@ fn validate_aux_toml(
         }
     };
 
+    if crate::entries::is_retired_file(toml_path) {
+        crate::retired::admit_retired_by(&mut schema_value);
+    }
     let validator = match jsonschema::options()
         .with_retriever(retriever)
         .build(&schema_value)
@@ -730,6 +733,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                     layout,
                     report,
                 );
+                crate::retired::spec_checks(layout, &dom.validation.rules, report);
                 // Each inlined rule pack's graph checks, with the pack's
                 // default severities under the project's.
                 let (packs, load_findings) = crate::packs::load_inlined(&layout.specdev_root);
@@ -1598,7 +1602,9 @@ fn resolve_check_kinds(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Summary {
     pub modules: usize,
+    /// Live requirements; retired ones (D117) are in `retired_requirements`.
     pub requirements: usize,
+    pub retired_requirements: usize,
     pub sources: usize,
     pub graph_checks: usize,
     pub decisions: usize,
@@ -1617,6 +1623,12 @@ impl Summary {
             "loaded {} modules / {} requirements / {} sources / {} graph checks",
             self.modules, self.requirements, self.sources, self.graph_checks,
         );
+        if self.retired_requirements > 0 {
+            line.push_str(&format!(
+                " / {} retired requirements",
+                self.retired_requirements
+            ));
+        }
         if self.decisions > 0 || self.open_questions > 0 {
             line.push_str(&format!(
                 " / {} decisions / {} open questions ({} open)",
@@ -1636,7 +1648,7 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
     let inv = layout.enumerate();
     let modules = inv.modules.len();
 
-    let (requirements, sources) = count_requirements_and_sources(layout);
+    let (requirements, retired_requirements, sources) = count_requirements_and_sources(layout);
     let graph_checks = count_graph_checks(layout);
     let decisions = EntryStore::for_layout(layout)
         .load_lenient(EntryKind::Decision)
@@ -1646,6 +1658,7 @@ pub fn summarize(layout: &LayoutContext) -> Summary {
     Summary {
         modules,
         requirements,
+        retired_requirements,
         sources,
         graph_checks,
         decisions,
@@ -1680,10 +1693,16 @@ fn count_modules(graph_json: &JsonValue) -> usize {
         .unwrap_or(0)
 }
 
-fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize) {
+/// Live requirements, retired requirements (D117), sources.
+fn count_requirements_and_sources(layout: &LayoutContext) -> (usize, usize, usize) {
     let store = EntryStore::for_layout(layout);
+    let (retired, live): (Vec<_>, Vec<_>) = store
+        .load_lenient(EntryKind::Requirement)
+        .into_iter()
+        .partition(|e| crate::entries::is_retired_file(&e.file));
     (
-        store.load_lenient(EntryKind::Requirement).len(),
+        live.len(),
+        retired.len(),
         store.load_lenient(EntryKind::Source).len(),
     )
 }
