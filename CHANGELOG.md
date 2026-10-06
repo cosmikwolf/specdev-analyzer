@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-05
+
 **Checked intent: the analyzer no longer generates code; `check` holds the spec against the code.** Pairs with
 specdev 0.3.0. Profile `contract_version` 2; project format `spec_version` 2.0.
 
