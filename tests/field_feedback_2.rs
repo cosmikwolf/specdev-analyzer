@@ -525,3 +525,38 @@ fn retired_requirements_leave_context_and_count_apart() {
         "{all}"
     );
 }
+
+/// A requirement whose `text` is `words` words, plus `dashes` lone dashes.
+fn sized(id: &str, words: usize, dashes: usize, extra: &str) -> String {
+    let mut text: Vec<String> = (0..words).map(|i| format!("w{i}")).collect();
+    text.extend((0..dashes).map(|_| "—".to_string()));
+    format!(
+        "[[requirement]]\nid = \"{id}\"\ntext = \"{}\"\nnature = \"module\"\ntest_pending = true\n{extra}",
+        text.join(" ")
+    )
+}
+
+/// F6: a requirement states one behaviour (ISO 29148 singular, INCOSE R18).
+/// More than 120 words is a warning; words are counted as `rsv-dev-kit`
+/// counts them (a token holding a letter or digit); retired ones are exempt.
+#[test]
+fn a_long_requirement_is_a_warning() {
+    let t = retire_tree("size");
+    t.write(
+        "specs/requirements/REQ-AT-001.toml",
+        &sized("REQ-AT-001", 120, 5, ""),
+    )
+    .write(
+        "specs/requirements/REQ-OVER-001.toml",
+        &sized("REQ-OVER-001", 121, 0, ""),
+    )
+    .write(
+        "specs/requirements/retired/REQ-OLDLONG-001.toml",
+        &sized("REQ-OLDLONG-001", 200, 0, "retired_by = \"DEC-R-001\"\n"),
+    );
+    let c = t.check(&[]);
+    c.silent("requirement_size", "REQ-AT-001")
+        .fires("requirement_size", "REQ-OVER-001", "warning")
+        .says("requirement_size", "REQ-OVER-001", "121 words; at most 120")
+        .silent("requirement_size", "REQ-OLDLONG-001");
+}

@@ -140,6 +140,7 @@ pub mod prompt;
 pub mod reduction;
 pub mod reductions;
 pub mod report;
+pub mod requirement_size;
 pub mod resolve;
 pub mod resolved;
 pub mod retired;

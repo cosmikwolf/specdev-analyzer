@@ -734,6 +734,7 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
                     report,
                 );
                 crate::retired::spec_checks(layout, &dom.validation.rules, report);
+                crate::requirement_size::check(layout, &dom.validation.rules, report);
                 // Each inlined rule pack's graph checks, with the pack's
                 // default severities under the project's.
                 let (packs, load_findings) = crate::packs::load_inlined(&layout.specdev_root);
