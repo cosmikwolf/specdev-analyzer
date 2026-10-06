@@ -143,6 +143,7 @@ pub mod report;
 pub mod resolve;
 pub mod resolved;
 pub mod schema;
+pub mod source_hint;
 pub mod test_discovery;
 pub mod upstream;
 pub mod validate;
