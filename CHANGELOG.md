@@ -12,6 +12,17 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`internal_edges_declared` sees a qualified path with no `use` line** (#238). A `crate::`, `super::` or `self::`
+  path in an expression, a pattern or a type (`crate::led::DEFAULT_BRIGHTNESS`, `&crate::led::Led`) is an import of
+  that module. Before, only `use` lines were, so a missing `depends_on` entry went unreported. A path inside a
+  macro's arguments is still not seen. `report imports` lists each such use; a `use` line stays one import.
+  Expect new errors on upgrade: each is a real `depends_on` gap (flxs1: 14 across 3 members).
+- **`context` lists the schema files that the listed schemas `$ref`** (#237). `files.schema` now holds the closure
+  of local `$ref` targets (`enums.schema.yaml`, `metadata.schema.yaml` for a `firmware-layered` module), each once,
+  after the file that first names it. A reader of the listed files alone missed every `metadata.*` meaning.
+
 ## [0.3.3] — 2026-10-06
 
 ### Added
