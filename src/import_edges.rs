@@ -131,6 +131,10 @@ pub fn file_imports(
             found.push((c.node.start_byte(), c.node.end_byte(), spec, reexport));
         }
     }
+    // Nested captures of one path share its start byte (`crate::a` inside
+    // `crate::a::B`, or a path inside a `use` line): one import, the longest.
+    found.sort_by(|a, b| (a.0, a.3, b.1).cmp(&(b.0, b.3, a.1)));
+    found.dedup_by(|later, kept| later.0 == kept.0 && later.3 == kept.3);
     let mut out = Vec::new();
     for (start, end, spec, reexport) in found {
         let resolved = adapter

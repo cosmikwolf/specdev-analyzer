@@ -438,3 +438,41 @@ fn files_schema_lists_inlined_blocks_and_bridges() {
         .iter()
         .any(|p| p.contains("bridges/embassy+stm32h5-rs/README.md")));
 }
+
+// ---------------------------------------------------------------------------
+// 11 — files.schema follows local `$ref`s (#237): the files that define the
+// listed schemas' fields and values are listed too, once each.
+// ---------------------------------------------------------------------------
+#[test]
+fn files_schema_lists_the_local_ref_closure() {
+    let (target, layout) = fresh_firmware_project("schema-refs");
+    std::fs::write(
+        target.join("specs/modules/Plain.toml"),
+        "name = \"Plain\"\nlayer = \"application\"\n",
+    )
+    .unwrap();
+    let r = run(&layout, "Plain");
+    let sch = &r.files.schema;
+    for want in ["metadata.schema.yaml", "enums.schema.yaml"] {
+        let n = sch.iter().filter(|p| p.ends_with(want)).count();
+        assert_eq!(n, 1, "`{want}` listed {n} times: {sch:?}");
+    }
+    let module = sch
+        .iter()
+        .position(|p| p.ends_with("module.schema.yaml"))
+        .expect("module schema listed");
+    let enums = sch
+        .iter()
+        .position(|p| p.ends_with("enums.schema.yaml"))
+        .unwrap();
+    assert!(
+        module < enums,
+        "a `$ref` target follows its referrer: {sch:?}"
+    );
+    for p in sch {
+        assert!(
+            target.join(p).is_file(),
+            "listed schema is not a project file: {p}"
+        );
+    }
+}

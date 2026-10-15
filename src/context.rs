@@ -173,6 +173,7 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
     for p in &inv.inlined_bridge_schemas {
         schema.push(rel(p, &layout.project_root));
     }
+    let schema = with_ref_closure(schema, &layout.project_root);
 
     let lineage = Lineage::load(&layout.specdev_root).unwrap_or_default();
 
@@ -643,6 +644,78 @@ fn collect_local_entities_by_kind(
 /// v1.x cleanup item.
 fn load_inlined_profile(layout: &LayoutContext) -> Result<Option<crate::manifest::Profile>> {
     crate::manifest::Profile::load_inlined(&layout.specdev_root)
+}
+
+/// `schema` plus every project file its local `$ref`s reach, each once, a
+/// target after the file that first names it. The field meanings and enum
+/// values live in those targets (`enums.schema.yaml`), so a reader of the
+/// listed files alone would miss them. A `$ref` to a URL, to a fragment of the
+/// same file, or to a file outside the project is not followed.
+fn with_ref_closure(schema: Vec<String>, root: &Path) -> Vec<String> {
+    let root = &normalize(root);
+    let mut seen: BTreeSet<String> = schema.iter().cloned().collect();
+    let mut out = Vec::new();
+    let mut stack: Vec<String> = schema.into_iter().rev().collect();
+    while let Some(file) = stack.pop() {
+        let path = normalize(&root.join(&file));
+        out.push(file);
+        let Some(doc) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_yaml::from_str::<serde_yaml::Value>(&t).ok())
+        else {
+            continue;
+        };
+        let mut refs = Vec::new();
+        collect_refs(&doc, &mut refs);
+        let dir = path.parent().unwrap_or(root.as_path());
+        let mut next = Vec::new();
+        for r in refs {
+            let target = r.split('#').next().unwrap_or("");
+            if target.is_empty() || target.contains("://") {
+                continue;
+            }
+            let full = normalize(&dir.join(target));
+            if !full.starts_with(root) || !full.is_file() {
+                continue;
+            }
+            let name = rel(&full, root);
+            if seen.insert(name.clone()) {
+                next.push(name);
+            }
+        }
+        stack.extend(next.into_iter().rev());
+    }
+    out
+}
+
+fn collect_refs(v: &serde_yaml::Value, out: &mut Vec<String>) {
+    match v {
+        serde_yaml::Value::Mapping(m) => {
+            for (k, val) in m {
+                match (k.as_str(), val.as_str()) {
+                    (Some("$ref"), Some(r)) => out.push(r.to_string()),
+                    _ => collect_refs(val, out),
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(s) => s.iter().for_each(|x| collect_refs(x, out)),
+        _ => {}
+    }
+}
+
+/// `a/./b/../c` → `a/c`, without touching the file system.
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn rel(full: &Path, root: &Path) -> String {

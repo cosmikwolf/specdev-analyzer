@@ -447,6 +447,78 @@ fn internal_edges_follow_rust_super_paths() {
         .silent("internal_edges_declared", "Back");
 }
 
+#[test]
+fn internal_edges_follow_rust_qualified_paths_without_use() {
+    // #238: a `crate::` / `super::` / `self::` path in an expression or a
+    // type is a dependency even with no `use` line for it.
+    let t = tree("edges-qualified", "firmware-layered", &[]);
+    t.write("specs/modules/Led.toml", &fw_module("Led", ""))
+        .write(
+            "src/led.rs",
+            "pub const DEFAULT_BRIGHTNESS: u8 = 8;\npub struct Led;\npub fn on() {}\n",
+        )
+        .write("specs/modules/ByValue.toml", &fw_module("ByValue", ""))
+        .write(
+            "src/by_value.rs",
+            "pub fn f() -> u8 { crate::led::DEFAULT_BRIGHTNESS }\n",
+        )
+        .write("specs/modules/ByType.toml", &fw_module("ByType", ""))
+        .write(
+            "src/by_type.rs",
+            "pub fn f(_l: &crate::led::Led) {}\n",
+        )
+        .write("specs/modules/BySuper.toml", &fw_module("BySuper", ""))
+        .write("src/by_super.rs", "pub fn f() { super::led::on() }\n")
+        .write(
+            "specs/modules/Declared.toml",
+            &fw_module("Declared", "depends_on = [\"Led\"]\n"),
+        )
+        .write(
+            "src/declared.rs",
+            "pub fn f() -> u8 { crate::led::DEFAULT_BRIGHTNESS }\n",
+        )
+        .write("specs/modules/TestOnly.toml", &fw_module("TestOnly", ""))
+        .write(
+            "src/test_only.rs",
+            "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { crate::led::on() }\n}\n",
+        )
+        .write("specs/modules/Local.toml", &fw_module("Local", ""))
+        .write(
+            "src/local.rs",
+            "mod inner { pub fn g() {} }\npub fn f() { self::inner::g(); core::mem::drop(0) }\n",
+        );
+    t.check(&[])
+        .fires("internal_edges_declared", "ByValue", "error")
+        .fires("internal_edges_declared", "ByType", "error")
+        .fires("internal_edges_declared", "BySuper", "error")
+        .silent("internal_edges_declared", "Declared")
+        .silent("internal_edges_declared", "TestOnly")
+        .silent("internal_edges_declared", "Local");
+}
+
+#[test]
+fn report_imports_lists_a_use_path_once() {
+    // A `use` line and the paths nested inside it are one import, not one per
+    // path segment.
+    let t = tree("imports-once", "firmware-layered", &[]);
+    t.write("src/led.rs", "pub struct Led;\n").write(
+        "src/menu.rs",
+        "use crate::led::Led;\npub fn f(_l: &crate::led::Led) {}\n",
+    );
+    let found = imports_report(&t, "rust", "src");
+    let menu: Vec<&str> = found
+        .iter()
+        .filter(|i| i.file == "src/menu.rs")
+        .map(|i| i.spec.as_str())
+        .collect();
+    assert_eq!(
+        menu,
+        ["crate::led::Led", "crate::led::Led"],
+        "one per use site"
+    );
+    resolves_to(&found, "src/menu.rs", "crate::led::Led", Some("src/led.rs"));
+}
+
 struct Import {
     file: String,
     spec: String,
