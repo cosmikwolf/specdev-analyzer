@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-10-15
+
 ### Fixed
 
 - **`internal_edges_declared` sees a qualified path with no `use` line** (#238). A `crate::`, `super::` or `self::`
