@@ -40,8 +40,26 @@ pub struct ContextReport {
     pub profile_specific: BTreeMap<String, serde_yaml::Value>,
 }
 
+/// The token that stands for the plugin root in a plugin-side path.
+pub const PLUGIN_ROOT_TOKEN: &str = "${CLAUDE_PLUGIN_ROOT}";
+
+/// Replace the [`PLUGIN_ROOT_TOKEN`] prefix of every plugin-side README
+/// path with `plugin`, so the path opens as printed.
+pub fn expand_plugin_root(report: &mut ContextReport, plugin: &std::path::Path) {
+    let expand = |p: &mut String| {
+        if let Some(rest) = p.strip_prefix(PLUGIN_ROOT_TOKEN) {
+            *p = format!("{}{rest}", plugin.display());
+        }
+    };
+    let files = &mut report.files;
+    files.block_readmes.iter_mut().for_each(expand);
+    files.bridge_readmes.iter_mut().for_each(expand);
+    expand(&mut files.profile_readme);
+}
+
 /// File paths the consumer should read. Project-relative for paths under
-/// the project; `${CLAUDE_PLUGIN_ROOT}/...` for paths under the plugin.
+/// the project; for paths under the plugin, absolute when a plugin root
+/// resolves and `${CLAUDE_PLUGIN_ROOT}/...` when none does.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ContextFiles {
     pub schema: Vec<String>,
