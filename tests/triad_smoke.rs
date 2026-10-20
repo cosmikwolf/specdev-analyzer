@@ -679,7 +679,11 @@ supersedes = ["DEC-002"]
 "#;
     ledger::write(&target, "decisions.toml", bad);
     let report = validate::run_project(&target, None).expect("validate");
-    assert_rule_fires(&report, "decision_supersedes_chain_consistency", "`DEC-006` -> `DEC-002`");
+    assert_rule_fires(
+        &report,
+        "decision_supersedes_chain_consistency",
+        "`DEC-006` -> `DEC-002`",
+    );
 }
 
 #[test]

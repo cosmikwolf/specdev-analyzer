@@ -619,8 +619,8 @@ fn internal_edges(
         }
         report.push(
             Finding::new("internal_edges_declared", sev, message)
-            .with_file(file_of.get(e.from.as_str()).cloned().unwrap_or_default())
-            .with_entity(&e.from),
+                .with_file(file_of.get(e.from.as_str()).cloned().unwrap_or_default())
+                .with_entity(&e.from),
         );
     }
     let sev = severity(domain, "internal_edges_skipped", Severity::Info);
