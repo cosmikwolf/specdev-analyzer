@@ -141,7 +141,7 @@ properties:
       section, a protocol note); `context --module` lists the paths in
       declared order. Paths are spec-root-relative (directory
       containing `spec.toml`). Validate-time checks ensure each file
-      exists, is readable, and is valid UTF-8 (`CONTEXT-001` /
+      exists and is readable; a binary file (an image, a PDF) is allowed (`CONTEXT-001` /
       `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
       belongs in a decision or an open question, not here. Globs and
       section anchors are not supported.

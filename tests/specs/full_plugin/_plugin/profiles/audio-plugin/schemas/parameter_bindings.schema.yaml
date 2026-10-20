@@ -71,14 +71,15 @@ $defs:
           receiver-method (`self.engine.set_op_crs`). For `field`: a
           dotted path on the engine/plugin state (`voice.lfo1.pmd`).
           For `custom`: the name of an author-written fn on the module.
-          Tokens are used verbatim at the call site — the spec does
-          not type-check them; the Rust compiler does.
+          A claim about the code: name the path the code really writes
+          through. No `check` reads it; `/spec-audit` reads it against
+          the code.
         type: string
         minLength: 1
       target_args:
         description: |
-          Argument list for `method` and `custom` targets, used
-          verbatim in order. The literal token `value` carries the
+          Argument list for `method` and `custom` targets, in the
+          order the code passes them. The literal token `value` carries the
           parameter's incoming value *after* `value_transform`. Omit
           for `field` targets (the value is the RHS of the assignment)
           and for zero-arg methods. A `method` target with no

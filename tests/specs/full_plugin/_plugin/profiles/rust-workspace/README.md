@@ -114,7 +114,7 @@ listing member requirement ids in `affects`. Use `/spec-question` and `/spec-dec
 - `member_paths_unique` — workspace member paths are unique
 - `decision_ids_unique` — decision ids are unique
 - `decision_supersedes_acyclic` — supersession chains have no cycle
-- `decision_supersedes_chain_consistency` — every superseded decision is named by exactly one accepted successor
+- `decision_supersedes_chain_consistency` — every superseded decision is named by exactly one successor, and every decision named in `supersedes` is `superseded`
 - `open_question_closed_by_resolves` — `closed_by` names an existing decision
 - `open_question_status_consistency` — `closed_by` / `default_via` name accepted decisions
 

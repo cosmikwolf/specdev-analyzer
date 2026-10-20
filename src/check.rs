@@ -545,6 +545,37 @@ fn test_checks(
     Ok(())
 }
 
+/// The shortest `depends_on` path from `start` to `goal`, both included,
+/// or `None` when `goal` is not reachable.
+fn declared_path(
+    declared: &BTreeMap<&str, &[String]>,
+    start: &str,
+    goal: &str,
+) -> Option<Vec<String>> {
+    let mut parent: BTreeMap<String, String> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([start.to_string()]);
+    let mut seen = std::collections::BTreeSet::from([start.to_string()]);
+    while let Some(node) = queue.pop_front() {
+        if node == goal {
+            let mut path = vec![node.clone()];
+            let mut cur = node;
+            while let Some(p) = parent.get(&cur) {
+                path.push(p.clone());
+                cur = p.clone();
+            }
+            path.reverse();
+            return Some(path);
+        }
+        for next in declared.get(node.as_str()).copied().unwrap_or_default() {
+            if seen.insert(next.clone()) {
+                parent.insert(next.clone(), node.clone());
+                queue.push_back(next.clone());
+            }
+        }
+    }
+    None
+}
+
 /// Internal edges: an import from one module's source to another module
 /// must be in the importing module's `depends_on`. Modules that share one
 /// source file are one node, and each is told its edges are not checked.
@@ -567,19 +598,29 @@ fn internal_edges(
         .map(|m| (m.name.as_str(), m.file.display().to_string()))
         .collect();
     let edges = crate::import_edges::module_edges(layout, &nodes)?;
+    let declared: BTreeMap<&str, &[String]> = modules
+        .iter()
+        .map(|m| (m.name.as_str(), m.depends_on.as_slice()))
+        .collect();
     let sev = severity(domain, "internal_edges_declared", Severity::Error);
     for e in edges.undeclared {
+        let mut message = format!(
+            "module `{}` imports module `{}` (`{}` in {}), which is not in its `depends_on`",
+            e.from, e.to, e.spec, e.file
+        );
+        // #245: when the reverse path is declared, the obvious fix closes
+        // a cycle, so name the path and the exits instead.
+        if let Some(path) = declared_path(&declared, &e.to, &e.from) {
+            message.push_str(&format!(
+                "; adding it closes a cycle with the declared path {}: move the used item into `{}`, or invert the use",
+                path.join(" -> "),
+                e.from
+            ));
+        }
         report.push(
-            Finding::new(
-                "internal_edges_declared",
-                sev,
-                format!(
-                    "module `{}` imports module `{}` (`{}` in {}), which is not in its `depends_on`",
-                    e.from, e.to, e.spec, e.file
-                ),
-            )
-            .with_file(file_of.get(e.from.as_str()).cloned().unwrap_or_default())
-            .with_entity(&e.from),
+            Finding::new("internal_edges_declared", sev, message)
+                .with_file(file_of.get(e.from.as_str()).cloned().unwrap_or_default())
+                .with_entity(&e.from),
         );
     }
     let sev = severity(domain, "internal_edges_skipped", Severity::Info);
