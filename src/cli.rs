@@ -598,7 +598,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             project,
             module,
             output,
-        } => run_context(project, spec_path.as_deref(), module, output),
+        } => run_context(project, spec_path.as_deref(), plugin_flag, module, output),
         Command::Migrate {
             project,
             dry_run,
@@ -1484,6 +1484,7 @@ fn run_inline_bridge(
 fn run_context(
     project: PathBuf,
     spec_path: Option<&std::path::Path>,
+    plugin_flag: Option<PathBuf>,
     module: String,
     output: Option<PathBuf>,
 ) -> ExitCode {
@@ -1494,13 +1495,18 @@ fn run_context(
             return ExitCode::from(2);
         }
     };
-    let report = match context_mod::run_context(&layout, &module) {
+    let mut report = match context_mod::run_context(&layout, &module) {
         Ok(r) => r,
         Err(e) => {
             report_error(&e);
             return ExitCode::from(2);
         }
     };
+    // A plugin root that resolves turns the `${CLAUDE_PLUGIN_ROOT}` token
+    // into a path a reader can open; with none, the token stays (#244).
+    if let Ok(plugin) = resolve_plugin_for_project(&layout, plugin_flag) {
+        context_mod::expand_plugin_root(&mut report, &plugin);
+    }
     if let Err(e) = context_mod::emit(&report, output.as_ref()) {
         report_error(&e);
         return ExitCode::from(2);

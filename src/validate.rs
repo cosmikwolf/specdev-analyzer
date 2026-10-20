@@ -801,11 +801,12 @@ pub fn validate_modules(layout: &LayoutContext, report: &mut Report) -> Result<(
 }
 
 /// Validate `module.context_files`: each declared
-/// path is spec-root-relative, must exist, must be readable, and must be
-/// valid UTF-8. Schema validation upstream guarantees the field shape
-/// (string array, lex-unique). This function adds the per-file
+/// path is spec-root-relative, must exist and must be readable. A binary
+/// file (a figure, a PDF datasheet) is reference reading too, so its
+/// content is not checked. Schema validation upstream guarantees the field
+/// shape (string array, lex-unique). This function adds the per-file
 /// filesystem checks: `CONTEXT-001` for missing files, `CONTEXT-002`
-/// for I/O or UTF-8 failures.
+/// for a file that cannot be opened.
 fn validate_context_files(
     layout: &LayoutContext,
     parsed: &toml::Value,
@@ -838,15 +839,12 @@ fn validate_context_files(
             );
             continue;
         }
-        if let Err(e) = std::fs::read_to_string(&abs) {
+        if let Err(e) = std::fs::File::open(&abs) {
             report.push(
                 Finding::new(
                     "CONTEXT-002",
                     Severity::Error,
-                    format!(
-                        "module.context_files entry `{rel}` could not be read \
-                         as UTF-8: {e}"
-                    ),
+                    format!("module.context_files entry `{rel}` could not be opened: {e}"),
                 )
                 .with_file(module_path.display().to_string()),
             );

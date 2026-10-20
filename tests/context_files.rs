@@ -6,7 +6,7 @@
 //!   * Files inline in **declared order** between architecture.toml and
 //!     the module spec, fenced with the path as language tag.
 //!   * Validate emits `CONTEXT-001` for missing files and `CONTEXT-002`
-//!     for non-UTF-8 / unreadable files.
+//!     for unreadable files; a binary file is accepted.
 //!   * Validate accepts a clean `context_files` list (no findings).
 
 use std::path::{Path, PathBuf};
@@ -105,9 +105,10 @@ context_files = ["docs/never-existed.md"]
 }
 
 #[test]
-fn non_utf8_context_file_emits_context_002() {
-    let (target, _layout) = fresh_library_project("non-utf8");
-    // Non-UTF-8 byte sequence
+fn binary_context_file_is_accepted() {
+    // A figure or a PDF datasheet is reference reading: only existence and
+    // readability are checked, not the content (#243).
+    let (target, _layout) = fresh_library_project("binary-context");
     std::fs::write(
         target.join("docs-binary.bin"),
         [0xff_u8, 0xfe, 0xfd, 0x00, 0x80, 0x81],
@@ -121,15 +122,11 @@ context_files = ["docs-binary.bin"]
 "#,
     )
     .unwrap();
-    let (success, stdout, stderr) = run_validate(&target);
+    let (_success, stdout, stderr) = run_validate(&target);
     let combined = format!("{stdout}\n{stderr}");
     assert!(
-        !success,
-        "validate should fail when context file is non-UTF-8; out:\n{combined}"
-    );
-    assert!(
-        combined.contains("CONTEXT-002"),
-        "expected CONTEXT-002 finding; out:\n{combined}"
+        !combined.contains("CONTEXT-002") && !combined.contains("CONTEXT-001"),
+        "a binary context file must not get a CONTEXT finding; out:\n{combined}"
     );
 }
 
@@ -183,5 +180,47 @@ context_files = [42]
     assert!(
         combined.contains("SCHEMA"),
         "expected SCHEMA finding; out:\n{combined}"
+    );
+}
+
+fn run_context_readme(project: &Path, plugin: Option<&Path>) -> String {
+    let mut cmd = Command::new(analyzer_bin());
+    cmd.env_remove("SPECDEV_PLUGIN_ROOT")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
+        .arg("context")
+        .arg("--project")
+        .arg(project)
+        .arg("--module")
+        .arg("Foo");
+    if let Some(p) = plugin {
+        cmd.env("SPECDEV_PLUGIN_ROOT", p);
+    }
+    let out = cmd.output().expect("invoke context");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    stdout
+        .lines()
+        .find(|l| l.contains("profile_readme:"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn context_expands_the_plugin_root_when_it_resolves() {
+    // #244: with a plugin root, the README path opens as printed; with
+    // none, the token stays so the reader can still resolve it.
+    let (target, _layout) = fresh_library_project("ctx-plugin-root");
+    let plugin = full_plugin();
+    let expanded = run_context_readme(&target, Some(&plugin));
+    assert!(
+        expanded.contains(&format!(
+            "{}/profiles/library-api/README.md",
+            plugin.display()
+        )),
+        "expected an expanded path; got: {expanded}"
+    );
+    let token = run_context_readme(&target, None);
+    assert!(
+        token.contains("${CLAUDE_PLUGIN_ROOT}/profiles/library-api/README.md"),
+        "expected the token without a plugin root; got: {token}"
     );
 }
