@@ -12,6 +12,17 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`context_files` accepts a binary file** (#243). A figure or a PDF datasheet is reference reading; `validate`
+  checks that it exists and opens, not that it is UTF-8. `CONTEXT-002` now means "could not be opened".
+- **`context` prints plugin README paths that open** (#244). When a plugin root resolves (`--plugin-root`,
+  `[paths].plugin_root`, `SPECDEV_PLUGIN_ROOT`, `CLAUDE_PLUGIN_ROOT`), `block_readmes`, `bridge_readmes` and
+  `profile_readme` are absolute; with none, the `${CLAUDE_PLUGIN_ROOT}` token stays.
+- **`internal_edges_declared` names the cycle its fix would close** (#245). When the imported module already
+  depends on the importer, the finding gives the declared path and the two exits (move the item, invert the use)
+  instead of only "add it to `depends_on`".
+
 ## [0.3.4] — 2026-10-15
 
 ### Fixed

@@ -639,6 +639,50 @@ text = "closed_by target."
 }
 
 #[test]
+fn triad_red_decision_supersedes_chain_consistency_still_accepted() {
+    // #246: a decision that an accepted decision supersedes must not stay
+    // `accepted` — two accepted, contradicting decisions otherwise pass.
+    let (target, _) = build_triad_smoke("red-still-accepted");
+    let bad = r#"[[decision]]
+id = "DEC-001"
+title = "Smoke decision"
+status = "accepted"
+text = "We do the thing this way."
+consequences = "Downstream knows X."
+closes_questions = ["OQ-003"]
+
+[[decision]]
+id = "DEC-002"
+title = "Old way, still marked accepted"
+status = "accepted"
+text = "Named in DEC-006's supersedes, but nobody flipped it."
+
+[[decision]]
+id = "DEC-003"
+title = "Default for OQ-001"
+status = "accepted"
+text = "Working default for OQ-001 pending verify."
+defaults_for = ["OQ-001"]
+
+[[decision]]
+id = "DEC-005"
+title = "Plain accepted decision"
+status = "accepted"
+text = "closed_by target."
+
+[[decision]]
+id = "DEC-006"
+title = "New way"
+status = "accepted"
+text = "Replaces DEC-002."
+supersedes = ["DEC-002"]
+"#;
+    ledger::write(&target, "decisions.toml", bad);
+    let report = validate::run_project(&target, None).expect("validate");
+    assert_rule_fires(&report, "decision_supersedes_chain_consistency", "`DEC-006` -> `DEC-002`");
+}
+
+#[test]
 fn triad_red_decision_closes_questions_resolves() {
     let (target, _) = build_triad_smoke("red-closes-questions");
     let bad = r#"[[decision]]

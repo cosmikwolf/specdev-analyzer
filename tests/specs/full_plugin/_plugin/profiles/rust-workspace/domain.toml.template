@@ -78,6 +78,17 @@ entity_attr_value = "superseded"
 relation_scope = "decision_supersedes_decision"
 expected_count = 1
 
+# The other half of the chain: a Decision that an accepted (or itself
+# superseded) Decision names in `supersedes` must be `superseded`, not still
+# `accepted` — two accepted, contradicting decisions otherwise pass.
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_supersedes_chain_consistency"
+relation_scope = "decision_supersedes_decision"
+left = "to.status"
+right = "from.status"
+allowed = [["superseded", "*"]]
+
 # OpenQuestion.closed_by must reference an existing decision.
 [[project.graph_checks]]
 kind = "reference_exists"

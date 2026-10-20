@@ -371,6 +371,28 @@ fn internal_edges_scope_and_shared_files() {
         .fires("internal_edges_declared", "Undeclared", "error");
 }
 
+#[test]
+fn internal_edges_name_the_cycle_the_fix_would_close() {
+    // #245: `Low` already depends on `High`, so adding `High -> Low`
+    // closes a cycle; the finding names the declared path instead of
+    // only "add it to depends_on".
+    let t = tree("edges-cycle", "firmware-layered", &[]);
+    t.write("specs/modules/High.toml", &fw_module("High", ""))
+        .write("src/high.rs", "use crate::low::g;\npub fn f() { g() }\n")
+        .write(
+            "specs/modules/Low.toml",
+            &fw_module("Low", "depends_on = [\"High\"]\n"),
+        )
+        .write("src/low.rs", "pub fn g() {}\n");
+    t.check(&[])
+        .fires("internal_edges_declared", "High", "error")
+        .says(
+            "internal_edges_declared",
+            "High",
+            "closes a cycle with the declared path Low -> High",
+        );
+}
+
 fn ts_service(name: &str, file: &str, extra: &str) -> String {
     format!("name = \"{name}\"\nrole = \"service\"\nenvironment = \"server\"\ndescription = \"Fixture.\"\nsource_file = \"{file}\"\n{extra}")
 }
