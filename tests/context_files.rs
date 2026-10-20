@@ -212,7 +212,10 @@ fn context_expands_the_plugin_root_when_it_resolves() {
     let plugin = full_plugin();
     let expanded = run_context_readme(&target, Some(&plugin));
     assert!(
-        expanded.contains(&format!("{}/profiles/library-api/README.md", plugin.display())),
+        expanded.contains(&format!(
+            "{}/profiles/library-api/README.md",
+            plugin.display()
+        )),
         "expected an expanded path; got: {expanded}"
     );
     let token = run_context_readme(&target, None);
