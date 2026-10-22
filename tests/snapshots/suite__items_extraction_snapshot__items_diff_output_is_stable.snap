@@ -40,14 +40,12 @@ both:
     description: Render the frame.
     satisfies:
     - DEMO-1
-    signature_hint: fn render() -> u32
   source:
     kind: fn
     name: render
     span:
       start_line: 1
       end_line: 1
-  signature_drift: spec.signature_hint = "fn render() -> u32"; source signature = ""
 - spec:
     kind: struct
     name: Widget
@@ -212,16 +210,14 @@ both:
 - spec:
     kind: fn
     name: drifted
-    description: Signature hint diverges from source.
+    description: Matched on both sides; its signature is not compared.
     satisfies:
     - DEMO-1
-    signature_hint: 'fn drifted(x: u8) -> u8'
   source:
     kind: fn
     name: drifted
     span:
       start_line: 7
       end_line: 7
-  signature_drift: 'spec.signature_hint = "fn drifted(x: u8) -> u8"; source signature = ""'
 
 --- stderr ---

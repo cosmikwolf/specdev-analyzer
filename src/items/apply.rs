@@ -18,10 +18,10 @@
 //! - `ITEM-303` approver missing
 //! - `ITEM-304` approved_at missing
 //! - `ITEM-305` an entry's recommendation is still `pending`
-//! - `ITEM-306` add-to-spec / update-spec without `proposed_spec`
+//! - `ITEM-306` add-to-spec without `proposed_spec`
 //! - `ITEM-307` proposed_spec is not a YAML mapping
 //! - `ITEM-308` proposed_spec missing required `kind`/`name`
-//! - `ITEM-309` target [[items]] entry not found for remove/update
+//! - `ITEM-309` target [[items]] entry not found for remove/rename
 //! - `ITEM-310` proposal file read / parse failure
 //! - `ITEM-311` module spec read / parse failure
 //! - `ITEM-312` module spec write failure
@@ -44,7 +44,6 @@ pub struct ApplyReport {
     pub audit_path: PathBuf,
     pub added: Vec<String>,
     pub removed: Vec<String>,
-    pub updated: Vec<String>,
     pub renamed: Vec<String>,
     pub skipped: Vec<String>,
 }
@@ -64,7 +63,6 @@ impl ApplyReport {
         };
         s.push_str(&line("added", &self.added));
         s.push_str(&line("removed", &self.removed));
-        s.push_str(&line("updated", &self.updated));
         s.push_str(&line("renamed", &self.renamed));
         s.push_str(&line("skipped", &self.skipped));
         s
@@ -138,7 +136,7 @@ pub fn apply_proposal(
                     ));
                 }
             }
-            "add-to-spec" | "update-spec" => {
+            "add-to-spec" => {
                 let ps = entry.recommendation.proposed_spec.as_ref().ok_or_else(|| {
                     anyhow!(
                         "[ITEM-306] entry {} has action `{}` but no `proposed_spec`",
@@ -167,14 +165,14 @@ pub fn apply_proposal(
             "pending" => {
                 return Err(anyhow!(
                     "[ITEM-305] entry {} still has action `pending`; resolve it (skip / \
-                     add-to-spec / remove-from-spec / update-spec / rename) before applying",
+                     add-to-spec / remove-from-spec / rename) before applying",
                     entry.id
                 ));
             }
             other => {
                 return Err(anyhow!(
                     "[ITEM-314] entry {}: unknown action `{}` (expected one of \
-                     skip / add-to-spec / remove-from-spec / update-spec / rename)",
+                     skip / add-to-spec / remove-from-spec / rename)",
                     entry.id,
                     other
                 ));
@@ -192,7 +190,6 @@ pub fn apply_proposal(
 
     let mut added: Vec<String> = Vec::new();
     let mut removed: Vec<String> = Vec::new();
-    let mut updated: Vec<String> = Vec::new();
     let mut renamed: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
 
@@ -217,21 +214,6 @@ pub fn apply_proposal(
                 let ps = entry.recommendation.proposed_spec.as_ref().unwrap();
                 add_item(&mut spec_doc, ps)?;
                 added.push(entry.id.clone());
-            }
-            "update-spec" => {
-                let ps = entry.recommendation.proposed_spec.as_ref().unwrap();
-                if update_item(&mut spec_doc, &entry.kind, &entry.name, ps)? {
-                    updated.push(entry.id.clone());
-                } else {
-                    return Err(anyhow!(
-                        "[ITEM-309] entry {}: cannot update (kind={}, name={}) — not present \
-                         in {}",
-                        entry.id,
-                        entry.kind,
-                        entry.name,
-                        module_path.display()
-                    ));
-                }
             }
             "rename" => {
                 // Validated non-empty above.
@@ -270,7 +252,6 @@ pub fn apply_proposal(
         summary: ApplySummary {
             added: added.len(),
             removed: removed.len(),
-            updated: updated.len(),
             renamed: renamed.len(),
             skipped: skipped.len(),
         },
@@ -299,7 +280,6 @@ pub fn apply_proposal(
         audit_path,
         added,
         removed,
-        updated,
         renamed,
         skipped,
     })
@@ -319,7 +299,6 @@ struct AuditDocument<'a> {
 struct ApplySummary {
     added: usize,
     removed: usize,
-    updated: usize,
     renamed: usize,
     skipped: usize,
 }
@@ -377,33 +356,6 @@ fn add_item(doc: &mut toml_edit::DocumentMut, proposed: &serde_yaml::Value) -> R
     Ok(())
 }
 
-fn update_item(
-    doc: &mut toml_edit::DocumentMut,
-    kind: &str,
-    name: &str,
-    proposed: &serde_yaml::Value,
-) -> Result<bool> {
-    let new_table = yaml_to_toml_table(proposed)?;
-    let arr = items_array_mut(doc)?;
-    let pos = arr.iter().position(|t| {
-        t.get("kind").and_then(|v| v.as_str()) == Some(kind)
-            && t.get("name").and_then(|v| v.as_str()) == Some(name)
-    });
-    match pos {
-        Some(idx) => {
-            // Replace the matched table wholesale with the proposed one.
-            // Authors that want to merge fields (vs replace) should hand-
-            // edit the proposal so `proposed_spec` carries the full
-            // intended shape — keeps semantics simple.
-            if let Some(t) = arr.get_mut(idx) {
-                *t = new_table;
-            }
-            Ok(true)
-        }
-        None => Ok(false),
-    }
-}
-
 /// Rename an existing `[[items]]` entry in place: find it by its current
 /// `(kind, name)` and rewrite *only* the `name` value to `new_name`. Every
 /// other key — `satisfies`, `verifies`, `description`, kind-discriminated
@@ -435,7 +387,7 @@ fn rename_item(
 
 /// Convert a YAML mapping (the proposal's `proposed_spec`) into a
 /// `toml_edit::Table` with stable, author-friendly key order: kind →
-/// name → description → satisfies → signature_hint → everything else
+/// name → description → satisfies → everything else
 /// (alphabetical). Matches the convention codegen prose recommends.
 fn yaml_to_toml_table(v: &serde_yaml::Value) -> Result<toml_edit::Table> {
     let map = v
@@ -444,7 +396,7 @@ fn yaml_to_toml_table(v: &serde_yaml::Value) -> Result<toml_edit::Table> {
 
     let mut table = toml_edit::Table::new();
 
-    let pinned = ["kind", "name", "description", "satisfies", "signature_hint"];
+    let pinned = ["kind", "name", "description", "satisfies"];
     for key in pinned {
         if let Some(val) = map.get(serde_yaml::Value::String(key.into())) {
             table.insert(key, yaml_to_toml_item(val)?);

@@ -39,6 +39,16 @@ pub fn format_schema_error(err: &ValidationError<'_>) -> String {
     if let ValidationErrorKind::OneOfNotValid { context } = err.kind() {
         return format_one_of_failure(err, context);
     }
+    // A `not` subschema that carries a `description` states why the value is
+    // refused (a removed field, for example); print that instead of the
+    // subschema's JSON.
+    if let ValidationErrorKind::Not { schema } = err.kind() {
+        if let Some(why) = schema.get("description").and_then(|d| d.as_str()) {
+            let path = err.instance_path().to_string();
+            let key = path.rsplit('/').next().unwrap_or_default();
+            return format!("`{key}` is not allowed: {}", why.trim());
+        }
+    }
     if let ValidationErrorKind::Enum { options } = err.kind() {
         if let Some(arr) = options.as_array() {
             if arr.len() <= ENUM_LIST_ALL_THRESHOLD && !arr.is_empty() {

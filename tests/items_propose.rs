@@ -13,7 +13,6 @@
 //!   * `--clobber` is required to overwrite an existing proposal.
 //!   * In-source-only entries carry the source snippet sliced by span.
 //!   * In-spec-only entries carry the spec_item mapping and no snippet.
-//!   * signature_drift entries carry both.
 //!   * Pre-implementation modules emit only in_spec_only entries.
 //!   * Exit code: 0 when clean, 1 when drift, 2 on hard error.
 
@@ -266,42 +265,6 @@ satisfies = ["DEMO-1", "DEMO-2"]
     assert!(content.contains("- DEMO-2"));
     // No source snippet for in_spec_only.
     assert!(!content.contains("source_snippet"));
-}
-
-#[test]
-fn propose_signature_drift_carries_both_sides() {
-    let target = tmp_dir("drift");
-    bootstrap_lib(&target);
-    std::fs::write(
-        target.join("specs/modules/Foo.toml"),
-        r#"name = "Foo"
-visibility = "pub"
-
-[[items]]
-name = "render"
-kind = "fn"
-description = "Render the frame."
-satisfies = ["DEMO-1"]
-signature_hint = "fn render(x: u64) -> u32"
-"#,
-    )
-    .unwrap();
-    std::fs::create_dir_all(target.join("src")).unwrap();
-    std::fs::write(
-        target.join("src/foo.rs"),
-        "pub fn render(x: u32) -> u32 { x }\n",
-    )
-    .unwrap();
-
-    let r = run_propose(&target, "Foo", &[]);
-    assert_eq!(r.exit_code, Some(1), "drift exit; stderr={}", r.stderr);
-    let content = std::fs::read_to_string(proposal_path(&target, "Foo")).unwrap();
-    assert!(content.contains("category: signature_drift"));
-    assert!(content.contains("source_snippet:"));
-    assert!(content.contains("pub fn render(x: u32)"));
-    assert!(content.contains("spec_item:"));
-    // YAML quotes strings carrying `:` to disambiguate from mappings.
-    assert!(content.contains("signature_hint: 'fn render(x: u64) -> u32'"));
 }
 
 #[test]

@@ -178,7 +178,6 @@ fn build_named(
     Some(ExtractedItem {
         kind: prefix.to_string(),
         name,
-        signature: None,
         attributes,
         span,
     })
@@ -199,7 +198,6 @@ fn build_impl(query: &Query, m: &QueryMatch, source: &str) -> Option<ExtractedIt
     Some(ExtractedItem {
         kind: "impl".to_string(),
         name,
-        signature: None,
         attributes,
         span,
     })
@@ -249,7 +247,6 @@ fn build_member(
     Some(ExtractedItem {
         kind: kind.to_string(),
         name,
-        signature: None,
         attributes,
         span,
     })
@@ -282,7 +279,6 @@ fn build_re_export(
     Some(ExtractedItem {
         kind: "re_export".to_string(),
         name,
-        signature: None,
         attributes,
         span,
     })
@@ -332,7 +328,6 @@ fn build_extern_block(query: &Query, m: &QueryMatch, source: &str) -> Option<Ext
     Some(ExtractedItem {
         kind: "extern_block".to_string(),
         name,
-        signature: None,
         attributes,
         span,
     })

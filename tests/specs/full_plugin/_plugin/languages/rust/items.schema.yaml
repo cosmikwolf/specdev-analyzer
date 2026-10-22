@@ -61,7 +61,7 @@ properties:
       One-or-two-sentence prose summary of the item's contractual
       semantics. Prose-first per the items model commitment — describe
       what the item does, not its signature (signatures live in the
-      source; the optional `signature_hint` is the escape hatch).
+      source).
     type: string
     minLength: 1
   satisfies:
@@ -75,14 +75,11 @@ properties:
       pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
     uniqueItems: true
   signature_hint:
-    description: >
-      Optional signature shape, used as an escape hatch for cases where
-      prose alone is insufficient: trait impls with non-obvious
-      generics, FFI declarations, macro contracts. Default is to omit;
-      the items model is prose-first and signature_hint is reserved for
-      cases where a downstream check or audit step needs structural
-      detail.
-    type: string
+    not:
+      description: >-
+        it was removed; an item carries no signature. Move the text into the
+        item's `description`, in prose; `/spec-audit` reads it against
+        the code.
 
 # Kind-discriminated extras via oneOf. Each branch enforces the kind tag
 # and adds kind-specific required/optional fields. The `re_export` branch

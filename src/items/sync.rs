@@ -13,13 +13,11 @@
 //!   (deleted in code without spec update, OR pre-implementation).
 //! - `in_source_only`— source carries the item but the spec does not
 //!   (helper/contractual ambiguity — `propose` will advise).
-//! - `both` — present on both sides; if the spec carries
-//!   `signature_hint` and it diverges from the source's tree-sitter
-//!   signature, the pair flags `signature_drift`.
+//! - `both` — present on both sides.
 //!
 //! The diff is intentionally syntactic — items are matched by kind +
-//! name. Semantic drift (a function whose body changed but signature
-//! didn't) is out of scope for `items diff`; that's the job of
+//! name. An item carries no signature, so signature and behaviour
+//! changes are out of scope for `items diff`; that's the job of
 //! `verified_by_resolves` and downstream test runs.
 //!
 //! Error codes: `ITEM-101` (module spec missing), `ITEM-102`
@@ -46,8 +44,6 @@ pub struct SpecItem {
     pub description: String,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub satisfies: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature_hint: Option<String>,
     /// Kind-discriminated extras (target/visibility/alias for
     /// re_exports; target_type/trait_ref for impls). Carried verbatim.
     #[serde(skip_serializing_if = "serde_json::Map::is_empty", default)]
@@ -59,11 +55,6 @@ pub struct SpecItem {
 pub struct DiffPair {
     pub spec: SpecItem,
     pub source: ExtractedItem,
-    /// `Some(reason)` when the spec carries `signature_hint` and the
-    /// source's tree-sitter signature diverges. `None` otherwise — both
-    /// "no hint" and "hint matches" produce `None`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature_drift: Option<String>,
 }
 
 /// Top-level diff output for one module.
@@ -79,9 +70,7 @@ pub struct DiffReport {
 impl DiffReport {
     /// `true` when there is no drift between spec and source.
     pub fn is_clean(&self) -> bool {
-        self.in_spec_only.is_empty()
-            && self.in_source_only.is_empty()
-            && self.both.iter().all(|p| p.signature_drift.is_none())
+        self.in_spec_only.is_empty() && self.in_source_only.is_empty()
     }
 }
 
@@ -209,16 +198,11 @@ pub(crate) fn parse_spec_items(
                     .collect()
             })
             .unwrap_or_default();
-        let signature_hint = table
-            .get("signature_hint")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-
         // Capture kind-discriminated extras. Convert the table to JSON
         // and strip the canonical keys; whatever remains rides through
         // verbatim.
         let mut extras = toml_table_to_json_map(table);
-        for k in ["kind", "name", "description", "satisfies", "signature_hint"] {
+        for k in ["kind", "name", "description", "satisfies"] {
             extras.remove(k);
         }
 
@@ -227,7 +211,6 @@ pub(crate) fn parse_spec_items(
             name,
             description,
             satisfies,
-            signature_hint,
             extras,
         });
     }
@@ -268,21 +251,6 @@ fn toml_to_json(v: &toml::Value) -> serde_json::Value {
         toml::Value::Datetime(d) => serde_json::Value::String(d.to_string()),
         toml::Value::Array(arr) => serde_json::Value::Array(arr.iter().map(toml_to_json).collect()),
         toml::Value::Table(t) => serde_json::Value::Object(toml_table_to_json_map(t)),
-    }
-}
-
-/// Compare a spec `signature_hint` against an extracted item's
-/// signature. Whitespace-normalized, otherwise-strict. Returns
-/// `Some(reason)` when they disagree.
-fn signature_drift(hint: &str, source: &ExtractedItem) -> Option<String> {
-    let extracted = source.signature.as_deref().unwrap_or("");
-    let normalize = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalize(hint) == normalize(extracted) {
-        None
-    } else {
-        Some(format!(
-            "spec.signature_hint = {hint:?}; source signature = {extracted:?}"
-        ))
     }
 }
 
@@ -354,15 +322,7 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
         match pos {
             Some(idx) => {
                 let source = source_remaining.remove(idx);
-                let drift = spec
-                    .signature_hint
-                    .as_deref()
-                    .and_then(|h| signature_drift(h, &source));
-                both.push(DiffPair {
-                    spec,
-                    source,
-                    signature_drift: drift,
-                });
+                both.push(DiffPair { spec, source });
             }
             None => in_spec_only.push(spec),
         }
@@ -380,13 +340,6 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn span() -> crate::items::Span {
-        crate::items::Span {
-            start_line: 1,
-            end_line: 1,
-        }
-    }
 
     /// Rust's 12-kind vocabulary, as the runtime loader would produce it
     /// from the language tier — unit tests here exercise the parse logic
@@ -415,33 +368,6 @@ mod tests {
     fn identity_key(kind: &str, name: &str) -> String {
         use crate::lang::LanguageAdapter;
         crate::lang::rust::RustAdapter.item_identity_key(kind, name)
-    }
-
-    #[test]
-    fn signature_drift_normalizes_whitespace() {
-        let item = ExtractedItem {
-            kind: "fn".into(),
-            name: "foo".into(),
-            signature: Some("fn  foo(x:  u32)  ->  u32".into()),
-            attributes: vec![],
-            span: span(),
-        };
-        assert!(signature_drift("fn foo(x: u32) -> u32", &item).is_none());
-        assert!(signature_drift("fn foo(x: u64) -> u32", &item).is_some());
-    }
-
-    #[test]
-    fn signature_drift_empty_extracted_signature_treats_as_drift() {
-        let item = ExtractedItem {
-            kind: "fn".into(),
-            name: "foo".into(),
-            signature: None,
-            attributes: vec![],
-            span: span(),
-        };
-        // Hint vs. nothing → drift.
-        let d = signature_drift("fn foo()", &item);
-        assert!(d.is_some(), "expected drift; got {d:?}");
     }
 
     #[test]
