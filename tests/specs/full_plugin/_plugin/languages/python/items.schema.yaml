@@ -1,0 +1,85 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/languages/python/items.v1"
+title: "Python items schema (v1)"
+description: >
+  Per-language schema fragment defining the `Item` shape for Python source
+  (`.py` and `.pyi`). Each `Item` is a module-level declaration — or a
+  public member of a module-level class — that carries spec significance
+  (typically because it `satisfies` a requirement).
+
+  Privacy is lexical: a name that starts with `_` is private and is never
+  an item, and every member of a private class is private. Dunder methods
+  (`__init__`, `__eq__`) start with `_`, so they are not items either: the
+  class item covers construction and protocol methods. `__all__` is not
+  read in v1.
+
+  v1 covers 4 item kinds (the `kind` enum below). Not items: nested
+  functions, nested classes, declarations inside `if` / `try` blocks,
+  instance attributes, lower-case module variables, and imports
+  (re-exports in `__init__.py`). Each can be admitted later by widening
+  this file plus the sibling `items.scm` — the analyzer takes its
+  vocabulary from here at runtime.
+
+  Sparseness rule: every `Item` carries `satisfies` (≥1 entry). Tests are
+  not items: a requirement names its tests in `verified_by`. Helpers that
+  don't satisfy a requirement do not appear in `items[]`.
+
+  This schema is meant to be `$ref`'d from each profile's
+  `module.schema.yaml` `items[]` field via the `{{language}}` placeholder.
+
+type: object
+required: [name, kind, description]
+properties:
+  name:
+    description: >
+      The item's qualified name. For a module-level declaration this is the
+      Python identifier (`parse`, `Packet`, `MAX_WORDS`). For a member of a
+      module-level class it is `<Class>.<member>` — a method is a function,
+      so `Packet.parse` is a `kind = "fn"` item the same way a module-level
+      function is; a class-level `UPPER_CASE` constant (an enum member) is
+      `Kind.NOTE` with `kind = "const"`. Must be unique within the module's
+      items[] array.
+    type: string
+    minLength: 1
+  kind:
+    description: >
+      `fn` covers `def` and `async def` at module level and as methods
+      (decorated or not: `@property`, `@staticmethod`, `@classmethod`);
+      `class` covers module-level classes (dataclasses, enums, protocols);
+      `const` covers an assignment to an `UPPER_CASE` name, at module level
+      or in a class body; `type` covers `type X = …` and `X: TypeAlias = …`.
+    type: string
+    enum: [fn, class, const, type]
+  description:
+    description: >
+      One-or-two-sentence prose summary of the item's contractual
+      semantics. Prose-first — describe what the item does, not its
+      signature (signatures and type annotations live in the source).
+    type: string
+    minLength: 1
+  satisfies:
+    description: >
+      Requirement ids this item satisfies. Required (with `minItems: 1`).
+    type: array
+    items:
+      type: string
+      pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
+    uniqueItems: true
+  signature_hint:
+    not:
+      description: >-
+        it was removed; an item carries no signature. Move the text into the
+        item's `description`, in prose; `/spec-audit` reads it against
+        the code.
+
+oneOf:
+  - title: declaration
+    properties:
+      kind:
+        enum: [fn, class, const, type]
+    required: [satisfies]
+
+allOf:
+  - properties:
+      satisfies:
+        minItems: 1

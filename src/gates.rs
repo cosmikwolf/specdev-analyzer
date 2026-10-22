@@ -47,23 +47,16 @@ pub struct GateRun {
 pub fn run_gate(layout: &LayoutContext, label: &str) -> Result<GateRun> {
     let profile = Profile::load_inlined(&layout.specdev_root)?
         .ok_or_else(|| anyhow!("gate: no inlined profile.yaml"))?;
-    let gate = profile
-        .gates
-        .iter()
-        .find(|g| g.label == label)
-        .ok_or_else(|| {
-            let declared: Vec<String> = profile
-                .gates
-                .iter()
-                .map(|g| format!("`{}`", g.label))
-                .collect();
-            anyhow!(
-                "gate: `{label}` is not declared in {}. Declared: {}. \
+    let gates = profile.gates_for(layout.spec.project.toolchain.as_deref())?;
+    let gate = gates.iter().find(|g| g.label == label).ok_or_else(|| {
+        let declared: Vec<String> = gates.iter().map(|g| format!("`{}`", g.label)).collect();
+        anyhow!(
+            "gate: `{label}` is not declared in {}. Declared: {}. \
                  The label is the registry's string, verbatim.",
-                layout.specdev_root.join("profile.yaml").display(),
-                declared.join(", ")
-            )
-        })?;
+            layout.specdev_root.join("profile.yaml").display(),
+            declared.join(", ")
+        )
+    })?;
 
     // Resolve every token before running anything.
     let steps = gate_commands(layout, gate)?;
@@ -259,7 +252,7 @@ pub fn render_script(layout: &LayoutContext) -> Result<Option<String>> {
     out.push_str(
         "\necho 'specdev-gates: check' >&2\nrun \"${SPECDEV_ANALYZER:-specdev-analyzer}\" check\n",
     );
-    for gate in &profile.gates {
+    for gate in &profile.gates_for(layout.spec.project.toolchain.as_deref())? {
         out.push_str(&format!(
             "\necho {} >&2\n",
             shell_quote(&format!("specdev-gates: gate {}", gate.label))
@@ -344,7 +337,7 @@ pub fn script_findings(layout: &LayoutContext) -> Vec<crate::report::Finding> {
         || Profile::load_inlined(&layout.specdev_root)
             .ok()
             .flatten()
-            .is_some_and(|p| !p.gates.is_empty());
+            .is_some_and(|p| !p.gates.is_empty() || !p.toolchains.is_empty());
     if !has_gates {
         return Vec::new();
     }

@@ -54,7 +54,7 @@ properties:
       language is admitted to both enums in the same change, alongside
       its adapter.
     type: string
-    enum: [rust, c, cpp, dart, typescript]
+    enum: [rust, c, cpp, dart, typescript, python]
 
   paired_files:
     description: |
@@ -121,6 +121,31 @@ properties:
             items:
               type: string
               minLength: 1
+
+  toolchains:
+    description: |
+      Per-tool gates and lockfiles, for a language with more than one
+      common tool (Python: `uv`, `poetry`, `pip`). The key is the tool name
+      a project declares in `spec.toml` (`[project] toolchain`). That tool's
+      `gates` run after the common `gates` (labels stay unique across
+      both); `lockfiles` are the files it writes, and `check` reports a
+      lockfile of another listed tool. A tool name is data: the analyzer
+      compares it and never branches on it.
+    type: object
+    propertyNames:
+      pattern: "^[a-z][a-z0-9_-]*$"
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      properties:
+        lockfiles:
+          description: Lockfiles this tool writes, project-root-relative.
+          type: array
+          items:
+            type: string
+            minLength: 1
+        gates:
+          $ref: "#/properties/gates"
 
   items:
     description: |

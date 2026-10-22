@@ -163,8 +163,8 @@ pub enum Command {
         /// `profile.yaml` declares; it is written into `spec.toml` and picks
         /// the tree-sitter adapter the checks read the code with. The
         /// `language` enums in `spec.schema.yaml` and `profile.schema.yaml`
-        /// are the source of truth and admit `rust`, `c`, `cpp`, `dart` and
-        /// `typescript`.
+        /// are the source of truth and admit `rust`, `c`, `cpp`, `dart`,
+        /// `typescript` and `python`.
         #[arg(long)]
         language: String,
         /// Project name (lowercase, hyphens). Becomes `[project].name` in
@@ -1901,7 +1901,13 @@ fn run_gate(
     }
     let labels: Vec<String> = if all {
         match specdev_analyzer::manifest::Profile::load_inlined(&layout.specdev_root) {
-            Ok(Some(p)) => p.gates.iter().map(|g| g.label.clone()).collect(),
+            Ok(Some(p)) => match p.gates_for(layout.spec.project.toolchain.as_deref()) {
+                Ok(gates) => gates.iter().map(|g| g.label.clone()).collect(),
+                Err(e) => {
+                    report_error(&e);
+                    return ExitCode::from(2);
+                }
+            },
             Ok(None) => Vec::new(),
             Err(e) => {
                 report_error(&e);

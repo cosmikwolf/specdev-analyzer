@@ -21,7 +21,7 @@ const SCHEMA_LABEL: &str = "profile.schema.yaml";
 /// when a skill changes, it says nothing about the schema, and
 /// `Profile::load` never reads it. This number describes exactly one
 /// contract and lives next to the schema it describes.
-pub const PROFILE_CONTRACT_VERSION: u64 = 2;
+pub const PROFILE_CONTRACT_VERSION: u64 = 3;
 
 /// A manifest with no `contract_version` predates the field. Every project
 /// bootstrapped before this release is in that state, so the absent value
@@ -51,6 +51,52 @@ pub struct Profile {
     /// declares none.
     #[serde(default)]
     pub gates: Vec<Gate>,
+    /// Per-tool gates and lockfiles, for a language with more than one
+    /// tool. The project names its tool in `spec.toml` `[project]
+    /// toolchain`; that tool's gates run after the common `gates`.
+    #[serde(default)]
+    pub toolchains: std::collections::BTreeMap<String, Toolchain>,
+}
+
+/// One `toolchains:` entry.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct Toolchain {
+    /// The lockfiles this tool writes, project-root-relative.
+    #[serde(default)]
+    pub lockfiles: Vec<String>,
+    /// This tool's gates, run after the profile's common `gates`.
+    #[serde(default)]
+    pub gates: Vec<Gate>,
+}
+
+impl Profile {
+    /// The gates a project runs: the common `gates`, then the declared
+    /// tool's. A profile without `toolchains:` ignores `tool`. With them, an
+    /// undeclared or unknown tool is an error that names the choices.
+    pub fn gates_for(&self, tool: Option<&str>) -> Result<Vec<Gate>> {
+        if self.toolchains.is_empty() {
+            return Ok(self.gates.clone());
+        }
+        let known: Vec<&str> = self.toolchains.keys().map(String::as_str).collect();
+        let Some(tool) = tool else {
+            anyhow::bail!(
+                "profile `{}` gives gates per tool ({}): declare one in spec.toml as \
+                 `[project] toolchain = \"<tool>\"`",
+                self.name,
+                known.join(", ")
+            );
+        };
+        let Some(chain) = self.toolchains.get(tool) else {
+            anyhow::bail!(
+                "spec.toml declares `toolchain = \"{tool}\"`, but profile `{}` supports {}",
+                self.name,
+                known.join(", ")
+            );
+        };
+        let mut out = self.gates.clone();
+        out.extend(chain.gates.iter().cloned());
+        Ok(out)
+    }
 }
 
 /// The top-level sections a contract-1 manifest may still carry: they fed
@@ -187,7 +233,7 @@ impl Profile {
         super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
         let parsed: Profile = serde_json::from_value(value)
             .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
-        check_gate_labels_unique(&parsed.gates, path)?;
+        check_gate_labels(&parsed, path)?;
         Ok(())
     }
 
@@ -201,7 +247,7 @@ impl Profile {
         super::validate_against(&value, path, SCHEMA_YAML, SCHEMA_LABEL)?;
         let parsed: Profile = serde_json::from_value(value)
             .with_context(|| format!("deserializing profile.yaml at {}", path.display()))?;
-        check_gate_labels_unique(&parsed.gates, path)?;
+        check_gate_labels(&parsed, path)?;
         Ok(parsed)
     }
 }
@@ -329,6 +375,18 @@ fn drop_retired_sections(value: &mut JsonValue) {
 /// `(module, label)` key and overwrite each other. JSON Schema cannot
 /// express uniqueness across list items, so the loader checks it — the
 /// one site no consumer can bypass.
+/// Labels are unique in the common `gates`, and in the common gates plus
+/// each tool's: one tool's gates never shadow a common one.
+fn check_gate_labels(profile: &Profile, path: &Path) -> Result<()> {
+    check_gate_labels_unique(&profile.gates, path)?;
+    for chain in profile.toolchains.values() {
+        let mut all = profile.gates.clone();
+        all.extend(chain.gates.iter().cloned());
+        check_gate_labels_unique(&all, path)?;
+    }
+    Ok(())
+}
+
 fn check_gate_labels_unique(gates: &[Gate], path: &Path) -> Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for g in gates {
