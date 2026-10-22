@@ -122,7 +122,7 @@ fn fixture_profiles_load_cleanly() {
             "manifest .name must match dir name for {name}"
         );
         assert!(
-            ["rust", "dart", "typescript"].contains(&m.language.as_str()),
+            ["rust", "dart", "typescript", "python"].contains(&m.language.as_str()),
             "profile {name} declares unexpected language `{}`",
             m.language
         );
