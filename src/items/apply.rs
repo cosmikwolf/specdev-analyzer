@@ -276,8 +276,8 @@ pub fn apply_proposal(
 
     Ok(ApplyReport {
         module: module_name.to_string(),
-        module_spec_path: module_path,
-        audit_path,
+        module_spec_path: super::util::relative_to(&layout.project_root, &module_path),
+        audit_path: super::util::relative_to(&layout.project_root, &audit_path),
         added,
         removed,
         renamed,

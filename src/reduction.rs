@@ -357,6 +357,9 @@ fn materialize_relation(
                     "{from_kind_str} `{from_name}` references unknown {to_kind_str} \
                      `{to_name}` (relation `{qualified_path}`)"
                 );
+                if let Some(note) = crate::tiers::cross_tier_note(layout, &to_name) {
+                    msg.push_str(&note);
+                }
                 let hint = render_bridge_hint(
                     qualified_path,
                     &to_name,

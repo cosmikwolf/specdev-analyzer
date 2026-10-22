@@ -64,6 +64,31 @@ pub fn member_checks(
     }
 }
 
+/// In a workspace member: the explanation to add when a reference names
+/// `id` and `id` is not a member entry but is a workspace-tier decision or
+/// open question. Relations resolve inside one tier only; the workspace
+/// tier reaches the member's modules on its own.
+pub fn cross_tier_note(layout: &LayoutContext, id: &str) -> Option<String> {
+    let root = EntryStore::workspace_root_of(layout).ok().flatten()?;
+    let root_dir = crate::layout::find_workspace_root_spec(&layout.project_root)
+        .ok()
+        .flatten()
+        .and_then(|spec| spec.parent().map(std::path::Path::to_path_buf))?;
+    [EntryKind::Decision, EntryKind::OpenQuestion]
+        .into_iter()
+        .flat_map(|kind| root.load_lenient(kind))
+        .find(|e| e.id() == Some(id))
+        .map(|e| {
+            let file = e.file.strip_prefix(&root_dir).unwrap_or(&e.file);
+            format!(
+                "; `{id}` is a workspace-tier entry (workspace root: {}). A member's references \
+                 resolve inside the member only, and a workspace entry already reaches every member \
+                 module (`report decisions --module` lists it), so remove this reference",
+                file.display()
+            )
+        })
+}
+
 /// At a workspace root: each open question (not closed) whose `affects`
 /// names an id that two or more members define, or that no member defines.
 pub fn root_checks(

@@ -343,6 +343,54 @@ satisfies = ["DEMO-1"]
         "no signature field or category expected; stdout=\n{}",
         r.stdout
     );
+    // #252: the path is project-relative, never absolute.
+    assert!(
+        r.stdout.contains("source_file: src/foo.rs"),
+        "expected a relative source_file; stdout=\n{}",
+        r.stdout
+    );
+}
+
+#[test]
+fn items_diff_notes_trait_members_listed_as_items() {
+    // #254: a trait declaration is one item; a spec item for one of its
+    // methods stays in_spec_only, and the note says why.
+    let target = tmp_dir("trait-member");
+    bootstrap_lib(&target);
+    std::fs::write(
+        target.join("specs/modules/Foo.toml"),
+        r#"name = "Foo"
+visibility = "pub"
+
+[[items]]
+name = "Clock"
+kind = "trait"
+description = "A time source."
+satisfies = ["DEMO-1"]
+
+[[items]]
+name = "Clock::now"
+kind = "fn"
+description = "Current time."
+satisfies = ["DEMO-1"]
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(target.join("src")).unwrap();
+    std::fs::write(
+        target.join("src/foo.rs"),
+        "pub trait Clock {\n    fn now(&self) -> u64;\n}\n",
+    )
+    .unwrap();
+
+    let r = run_items_diff(&target, "Foo");
+    assert_eq!(r.exit_code, Some(1), "stdout=\n{}", r.stdout);
+    assert!(
+        r.stdout
+            .contains("Clock::now is a member of a trait declaration"),
+        "expected the trait-member note; stdout=\n{}",
+        r.stdout
+    );
 }
 
 #[test]
@@ -374,8 +422,10 @@ satisfies = ["DEMO-1"]
     );
     assert!(r.stdout.contains("name: render"));
     assert!(r.stdout.contains("in_spec_only:"));
-    // source_file is null when no source file resolves.
+    // source_file is null when no source file resolves, and the note
+    // says why every item is in_spec_only (#253).
     assert!(r.stdout.contains("source_file: null"));
+    assert!(r.stdout.contains("note: no source file resolves"));
 }
 
 #[test]
