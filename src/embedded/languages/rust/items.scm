@@ -4,7 +4,7 @@
 ;; `languages/rust/items.schema.yaml`). Each top-level construct that
 ;; corresponds to a `kind` in the schema gets its own pattern. The
 ;; analyzer's `extract-items` subcommand walks these matches and produces
-;; `ExtractedItem { kind, name, signature?, attributes[], span }` per
+;; `ExtractedItem { kind, name, attributes[], span }` per
 ;; capture.
 ;;
 ;; Conventions:

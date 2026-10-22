@@ -84,8 +84,7 @@ properties:
     description: >
       One-or-two-sentence prose summary of the item's contractual
       semantics. Prose-first — describe what the item does, not its
-      signature (signatures live in the source; the optional
-      `signature_hint` is the escape hatch).
+      signature (signatures live in the source).
     type: string
     minLength: 1
   satisfies:
@@ -99,12 +98,11 @@ properties:
       pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"
     uniqueItems: true
   signature_hint:
-    description: >
-      Optional signature shape, used as an escape hatch for cases where
-      prose alone is insufficient: non-obvious generics, function-typed
-      parameters, discriminated unions. Default is to omit; the items
-      model is prose-first.
-    type: string
+    not:
+      description: >-
+        it was removed; an item carries no signature. Move the text into the
+        item's `description`, in prose; `/spec-audit` reads it against
+        the code.
 
 # Two branches: re-exports (satisfies optional, carry target/alias) and
 # every other declaration (satisfies required).

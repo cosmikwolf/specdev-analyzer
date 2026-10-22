@@ -3,7 +3,7 @@
 ;; Captures exported top-level declarations and public members of exported
 ;; classes per the items[] schema (see `languages/typescript/items.schema.yaml`).
 ;; The analyzer's `extract-items` subcommand walks these matches and
-;; produces `ExtractedItem { kind, name, signature?, attributes[], span }`
+;; produces `ExtractedItem { kind, name, attributes[], span }`
 ;; per capture. One query text serves both grammars the language spans
 ;; (`.ts` → typescript, `.tsx` → tsx); the analyzer compiles it per grammar.
 ;;

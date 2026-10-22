@@ -5,7 +5,7 @@
 //!   * `add-to-spec` appends a new [[items]] entry.
 //!   * `remove-from-spec` removes the matching entry; preserves
 //!     surrounding TOML (comments + non-items keys).
-//!   * `update-spec` replaces the matching entry.
+//!   * `update-spec` (removed) is refused with ITEM-314.
 //!   * `skip` is a no-op.
 //!   * Audit log lands at `<upstream>/items-sync/<module>.applied.yaml`.
 //!   * Proposal file is removed after successful apply.
@@ -439,13 +439,14 @@ satisfies = ["DEMO-1"]
 }
 
 #[test]
-fn apply_update_replaces_matching_items_entry() {
+fn apply_rejects_the_removed_update_spec_action() {
+    // `update-spec` existed only for signature drift; items carry no
+    // signature, so the action is gone and a proposal that names it is
+    // refused before the spec is touched.
     let target = tmp_dir("update");
     bootstrap_lib(&target);
     let module_path = target.join("specs/modules/Foo.toml");
-    std::fs::write(
-        &module_path,
-        r#"name = "Foo"
+    let before = r#"name = "Foo"
 visibility = "pub"
 
 [[items]]
@@ -453,14 +454,12 @@ name = "render"
 kind = "fn"
 description = "Old description."
 satisfies = ["DEMO-1"]
-signature_hint = "fn render(x: u64) -> u32"
-"#,
-    )
-    .unwrap();
+"#;
+    std::fs::write(&module_path, before).unwrap();
     std::fs::create_dir_all(target.join("src")).unwrap();
     std::fs::write(
         target.join("src/foo.rs"),
-        "pub fn render(x: u32) -> u32 { x }\n",
+        "pub fn render(x: u32) -> u32 { x }\npub fn helper() {}\n",
     )
     .unwrap();
 
@@ -468,36 +467,26 @@ signature_hint = "fn render(x: u64) -> u32"
     let path = proposal_path(&target, "Foo");
     let proposed = yaml_map(&[
         ("kind", serde_yaml::Value::String("fn".into())),
-        ("name", serde_yaml::Value::String("render".into())),
-        (
-            "description",
-            serde_yaml::Value::String("Render the frame.".into()),
-        ),
-        (
-            "satisfies",
-            serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("DEMO-1".into())]),
-        ),
-        (
-            "signature_hint",
-            serde_yaml::Value::String("fn render(x: u32) -> u32".into()),
-        ),
+        ("name", serde_yaml::Value::String("helper".into())),
     ]);
     approve_and_set_actions(
         &path,
         &[(
-            "drift-0",
+            "source-only-0",
             "update-spec",
-            Some("Source signature is correct; spec hint was stale."),
+            Some("Old action."),
             Some(proposed),
         )],
     );
 
     let r = run_apply(&target, "Foo");
-    assert!(r.success, "apply failed; stderr={}", r.stderr);
-    let new_text = std::fs::read_to_string(&module_path).unwrap();
-    assert!(new_text.contains("Render the frame."));
-    assert!(!new_text.contains("Old description."));
-    assert!(new_text.contains("fn render(x: u32) -> u32"));
+    assert!(!r.success, "apply must refuse update-spec");
+    assert!(
+        r.stderr.contains("ITEM-314") && r.stderr.contains("update-spec"),
+        "expected ITEM-314 naming the action; stderr={}",
+        r.stderr
+    );
+    assert_eq!(std::fs::read_to_string(&module_path).unwrap(), before);
 }
 
 #[test]

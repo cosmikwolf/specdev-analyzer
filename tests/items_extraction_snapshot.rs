@@ -84,7 +84,6 @@ name = "render"
 kind = "fn"
 description = "Render the frame."
 satisfies = ["DEMO-1"]
-signature_hint = "fn render() -> u32"
 
 [[items]]
 name = "Widget"
@@ -183,9 +182,8 @@ satisfies = ["DEMO-1"]
 [[items]]
 name = "drifted"
 kind = "fn"
-description = "Signature hint diverges from source."
+description = "Matched on both sides; its signature is not compared."
 satisfies = ["DEMO-1"]
-signature_hint = "fn drifted(x: u8) -> u8"
 
 [[items]]
 name = "render_is_idempotent"

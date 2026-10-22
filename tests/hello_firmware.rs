@@ -98,9 +98,8 @@ satisfies = ["REQ-LED-001"]
 [[items]]
 kind = "fn"
 name = "blink"
-description = "Embassy task: toggle led_pin every 500 ms forever."
+description = "Embassy task that owns the LED output: toggle led_pin every 500 ms forever."
 satisfies = ["REQ-LED-001"]
-signature_hint = "async fn blink(led: Output<'static>)"
 
 [[stm32h5.pins]]
 name = "led_pin"
@@ -125,9 +124,8 @@ satisfies = ["REQ-UART-001"]
 [[items]]
 kind = "fn"
 name = "echo"
-description = "Embassy task: read one byte from echo_uart, write it back."
+description = "Embassy task that owns the async UART: read one byte from echo_uart, write it back."
 satisfies = ["REQ-UART-001"]
-signature_hint = "async fn echo(uart: Uart<'static, Async>)"
 
 [[stm32h5.peripherals]]
 name = "echo_uart"

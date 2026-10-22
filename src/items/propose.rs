@@ -14,7 +14,7 @@
 //!   in CI / pre-commit and produce an identical scaffold each time.
 //! - Decide what action to take. Every entry's `recommendation.action`
 //!   ships as `"pending"`; the skill (or a human) sets it to
-//!   `add-to-spec` / `remove-from-spec` / `update-spec` / `skip`.
+//!   `add-to-spec` / `remove-from-spec` / `rename` / `skip`.
 //! - Mutate `specs/modules/<Name>.toml`. That's `items apply` (14-G).
 //!
 //! Re-running `items propose` overwrites the existing proposal file
@@ -68,27 +68,22 @@ pub struct ProposalDocument {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProposalEntry {
     /// Stable id within the proposal: `spec-only-<n>` /
-    /// `source-only-<n>` / `drift-<n>`. Used by `items apply` to look
+    /// `source-only-<n>`. Used by `items apply` to look
     /// up the entry and by skill prose for cross-reference.
     pub id: String,
-    /// `in_spec_only` | `in_source_only` | `signature_drift`.
+    /// `in_spec_only` | `in_source_only`.
     pub category: String,
     pub kind: String,
     pub name: String,
     /// Raw source-file slice (1-based span lines, joined with `\n`).
-    /// Populated for `in_source_only` and `signature_drift` entries.
+    /// Populated for `in_source_only` entries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_snippet: Option<String>,
-    /// Tree-sitter-extracted signature for the source item, if the
-    /// items.scm query surfaced one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_signature: Option<String>,
-    /// Source span (1-based, inclusive) for `in_source_only` and
-    /// `signature_drift`.
+    /// Source span (1-based, inclusive) for `in_source_only`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
     /// Spec-side [[items]] entry as a YAML mapping. Populated for
-    /// `in_spec_only` and `signature_drift`. Carries only the typed
+    /// `in_spec_only`. Carries only the typed
     /// fields the spec author wrote — kind-discriminated extras
     /// (target/visibility for re_exports, target_type/trait_ref for
     /// impls) ride through under `extras`.
@@ -100,13 +95,13 @@ pub struct ProposalEntry {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Recommendation {
     /// `pending` (initial) | `skip` | `add-to-spec` | `remove-from-spec`
-    /// | `update-spec` | `rename`. `items apply` rejects any entry still
+    /// | `rename`. `items apply` rejects any entry still
     /// on `pending` when `approved: true`.
     pub action: String,
     /// Free-form prose from the skill / human. Empty on initial scaffold.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub rationale: String,
-    /// For `add-to-spec` and `update-spec`: the [[items]] table the
+    /// For `add-to-spec`: the [[items]] table the
     /// skill / human wants written into the spec. Required keys:
     /// `kind` + `name`; recommended: `description` + `satisfies`.
     /// Carried as a YAML mapping so the proposal file is hand-editable
@@ -164,7 +159,6 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
             kind: spec.kind.clone(),
             name: spec.name.clone(),
             source_snippet: None,
-            source_signature: None,
             span: None,
             spec_item: Some(spec_item_to_yaml(spec)),
             recommendation: Recommendation {
@@ -183,7 +177,6 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
             kind: src.kind.clone(),
             name: src.name.clone(),
             source_snippet: slice_snippet(&source_lines, src.span),
-            source_signature: src.signature.clone(),
             span: Some(src.span),
             spec_item: None,
             recommendation: Recommendation {
@@ -193,29 +186,6 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
                 rename_to: None,
             },
         });
-    }
-
-    let mut drift_idx = 0usize;
-    for pair in report.both.iter() {
-        if pair.signature_drift.is_some() {
-            entries.push(ProposalEntry {
-                id: format!("drift-{drift_idx}"),
-                category: "signature_drift".into(),
-                kind: pair.spec.kind.clone(),
-                name: pair.spec.name.clone(),
-                source_snippet: slice_snippet(&source_lines, pair.source.span),
-                source_signature: pair.source.signature.clone(),
-                span: Some(pair.source.span),
-                spec_item: Some(spec_item_to_yaml(&pair.spec)),
-                recommendation: Recommendation {
-                    action: "pending".into(),
-                    rationale: String::new(),
-                    proposed_spec: None,
-                    rename_to: None,
-                },
-            });
-            drift_idx += 1;
-        }
     }
 
     let status = if entries.is_empty() {
@@ -292,9 +262,6 @@ fn spec_item_to_yaml(spec: &sync::SpecItem) -> serde_yaml::Value {
             .map(|s| serde_yaml::Value::String(s.clone()))
             .collect();
         map.insert("satisfies".into(), serde_yaml::Value::Sequence(arr));
-    }
-    if let Some(hint) = &spec.signature_hint {
-        map.insert("signature_hint".into(), hint.clone().into());
     }
     for (k, v) in &spec.extras {
         let yaml_v = json_to_yaml(v.clone());
@@ -378,7 +345,6 @@ mod tests {
             name: "Reexp".into(),
             description: "alias".into(),
             satisfies: vec![],
-            signature_hint: None,
             extras,
         };
         let y = spec_item_to_yaml(&spec);
