@@ -14,6 +14,8 @@ and it is `1`.
 
 ### Added
 
+- **`hello-python` smoke test** for the `python-library` profile (fixture mirror under `tests/specs/full_plugin/`).
+
 - **Python adapter** (`tree-sitter-python` 0.25): item extraction, pytest discovery, import edges and the
   `pyproject.toml` (PEP 621) manifest facts; lockfiles `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`. `python`
   joins both language enums.
@@ -23,7 +25,8 @@ and it is `1`.
   submodule, which counts as an import only when it resolves to a project file.
 - **`[project] toolchain` and `toolchains:`**: a profile may give gates and lockfiles per tool; `gate` and
   `gate --emit` run the declared tool's gates after the common ones, and `check` reports an undeclared or unknown
-  tool (`toolchain_declared`) and another tool's lockfile (`toolchain_matches_tree`).
+  tool (`toolchain_declared`) and another tool's lockfile (`toolchain_matches_tree`). A missing lockfile of the
+  declared tool is info: "create it with the tool and commit it".
 
 ### Changed
 

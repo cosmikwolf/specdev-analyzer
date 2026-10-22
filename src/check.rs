@@ -178,7 +178,7 @@ fn toolchain_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report:
                 "toolchain_matches_tree",
                 Severity::Info,
                 format!(
-                    "no {} lockfile yet ({}); the first install writes it — commit it",
+                    "no {} lockfile yet ({}); create it with the tool and commit it",
                     tool,
                     mine.join(", ")
                 ),
