@@ -38,7 +38,15 @@ properties:
           Project language. Must stay in lockstep with the
           profile schema's `language` enum — a language is admitted to
           both enums in the same change, alongside its adapter.
-        enum: [rust, c, cpp, dart, typescript]
+        enum: [rust, c, cpp, dart, typescript, python]
+      toolchain:
+        type: string
+        description: |
+          The project's tool, for a language with more than one (Python:
+          `uv`, `poetry`, `pip`). It must name a toolchain the profile's
+          `toolchains:` lists; the profile gives that tool's gates and
+          lockfiles, and `check` reports a lockfile of another tool.
+        pattern: "^[a-z][a-z0-9_-]*$"
       max_parallel_agents:
         type: integer
         minimum: 1

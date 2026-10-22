@@ -270,6 +270,70 @@ pub fn npm(root: &Path) -> Option<ManifestFacts> {
     Some(facts)
 }
 
+/// `pyproject.toml` at `root`: the PEP 621 `[project]` table, which uv,
+/// poetry (2.0+), pdm and hatch all read. `dependencies` are runtime,
+/// `optional-dependencies` are optional, and PEP 735 `[dependency-groups]`
+/// are dev. A dependency string is PEP 508: the name, then the rest.
+pub fn pyproject(root: &Path) -> Option<ManifestFacts> {
+    let v: toml::Value =
+        toml::from_str(&std::fs::read_to_string(root.join("pyproject.toml")).ok()?).ok()?;
+    let project = v.get("project");
+    let mut facts = ManifestFacts::default();
+    let mut add = |req: &str, optional: bool, dev: bool| {
+        let req = req.trim();
+        let end = req
+            .find(|c: char| !(c.is_ascii_alphanumeric() || "-_.".contains(c)))
+            .unwrap_or(req.len());
+        let (name, rest) = req.split_at(end);
+        if name.is_empty() {
+            return;
+        }
+        let rest = rest.trim();
+        let name = name.to_ascii_lowercase().replace('_', "-");
+        facts.deps.entry(name).or_default().push(ManifestDep {
+            version: (!rest.is_empty()).then(|| rest.to_string()),
+            optional,
+            dev,
+            ..Default::default()
+        });
+    };
+    let strings = |x: Option<&toml::Value>| -> Vec<String> {
+        x.and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for d in strings(project.and_then(|p| p.get("dependencies"))) {
+        add(&d, false, false);
+    }
+    if let Some(t) = project
+        .and_then(|p| p.get("optional-dependencies"))
+        .and_then(|t| t.as_table())
+    {
+        for list in t.values() {
+            for d in strings(Some(list)) {
+                add(&d, true, false);
+            }
+        }
+    }
+    if let Some(t) = v.get("dependency-groups").and_then(|t| t.as_table()) {
+        for list in t.values() {
+            for d in strings(Some(list)) {
+                add(&d, false, true);
+            }
+        }
+    }
+    for field in ["version", "description", "requires-python"] {
+        if let Some(x) = project.and_then(|p| p.get(field)).and_then(|x| x.as_str()) {
+            facts.package.insert(field.to_string(), x.to_string());
+        }
+    }
+    Some(facts)
+}
+
 /// `pubspec.yaml` at `root`.
 pub fn pub_(root: &Path) -> Option<ManifestFacts> {
     let v: serde_yaml::Value =

@@ -35,6 +35,10 @@ const CONTRACT_HASHES: &[(u64, &str)] = &[
         2,
         "sha256:535a048fdc7767668326b44d7d2efcb99f5ff182dab8ea4ac4276b7d726805de",
     ),
+    (
+        3,
+        "sha256:ec6ffd21ea9b079c2294e2c0686e18ef23e4ff20c79c6a1c31bb27093df728e5",
+    ),
 ];
 
 fn tmp_file(tag: &str, body: &str) -> PathBuf {
@@ -200,7 +204,7 @@ fn plugin_profiles() -> Vec<PathBuf> {
 }
 
 #[test]
-fn plugin_profiles_are_contract_two_without_emitter_sections() {
+fn plugin_profiles_are_at_the_binary_contract_without_emitter_sections() {
     let profiles = plugin_profiles();
     assert!(profiles.len() >= 7, "found {profiles:?}");
     for p in profiles {
@@ -208,7 +212,7 @@ fn plugin_profiles_are_contract_two_without_emitter_sections() {
             serde_yaml::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(
             v.get("contract_version").and_then(|c| c.as_u64()),
-            Some(2),
+            Some(PROFILE_CONTRACT_VERSION),
             "{}",
             p.display()
         );

@@ -8,6 +8,7 @@
 pub mod c;
 pub mod cpp;
 pub mod dart;
+pub mod python;
 pub mod rust;
 pub mod typescript;
 
@@ -209,6 +210,14 @@ pub trait LanguageAdapter: Send + Sync {
     /// (Rust `use`) must override before a profile of that language
     /// declares `derived_files` rules. TypeScript overrides to drop the
     /// extension and the `/index` directory-module suffix.
+    /// The module a name imported from `module` would be, when that name is
+    /// a submodule (`from . import stream` → `.stream`). The import pass
+    /// keeps it only when it resolves to a project file. Default: `None`
+    /// (the language has no `@import.member` capture).
+    fn member_import_spec(&self, _module: &str, _member: &str) -> Option<String> {
+        None
+    }
+
     fn import_specifier(&self, from_dir: &Path, to_file: &Path) -> String {
         relative_import_path(from_dir, to_file)
     }
@@ -368,6 +377,9 @@ pub enum TestIdentityStyle {
     /// The enclosing group titles and the test title, joined by the
     /// separator (`cart > empty > adds`).
     GroupPath(&'static str),
+    /// The file, the enclosing group names and the test name, joined by the
+    /// separator (`tests/test_x.py::TestA::test_b`, a pytest node id).
+    FileGroupPath(&'static str),
 }
 
 pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
@@ -377,6 +389,7 @@ pub fn adapter_for(language: &str) -> Option<Box<dyn LanguageAdapter>> {
         "cpp" | "c++" => Some(Box::new(cpp::CppAdapter)),
         "dart" => Some(Box::new(dart::DartAdapter)),
         "typescript" => Some(Box::new(typescript::TypeScriptAdapter)),
+        "python" => Some(Box::new(python::PythonAdapter)),
         _ => None,
     }
 }
