@@ -70,6 +70,7 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     internal_edges(layout, &modules, &domain, &mut report)?;
     pack_code_checks(layout, &graph, &modules, &domain, &mut report);
     unreached_decisions(layout, &domain, &mut report);
+    toolchain_rule(layout, &domain, &mut report);
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -111,6 +112,78 @@ fn unreached_decisions(layout: &LayoutContext, domain: &Option<DomainConfig>, re
                     .to_string(),
             )
             .with_entity(&d.id),
+        );
+    }
+}
+
+/// The spec's `[project] toolchain` against the profile's `toolchains:` and
+/// the tree: the tool must be one the profile lists, and no other listed
+/// tool's lockfile may be present. A missing lockfile of the declared tool
+/// is only info (a fresh tree has none before the first install).
+fn toolchain_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    let Ok(Some(profile)) = crate::manifest::Profile::load_inlined(&layout.specdev_root) else {
+        return;
+    };
+    if profile.toolchains.is_empty() {
+        return;
+    }
+    let spec_file = layout.spec_toml_path.display().to_string();
+    let known: Vec<&str> = profile.toolchains.keys().map(String::as_str).collect();
+    let declared = layout.spec.project.toolchain.as_deref();
+    let Some(tool) = declared.filter(|t| profile.toolchains.contains_key(*t)) else {
+        let (sev, msg) = match declared {
+            None => (
+                severity(domain, "toolchain_declared", Severity::Warning),
+                format!(
+                    "profile `{}` gives gates per tool ({}): declare the project's tool as \
+                     `[project] toolchain = \"<tool>\"`",
+                    profile.name,
+                    known.join(", ")
+                ),
+            ),
+            Some(t) => (
+                Severity::Error,
+                format!(
+                    "`toolchain = \"{t}\"` is not a tool profile `{}` supports ({})",
+                    profile.name,
+                    known.join(", ")
+                ),
+            ),
+        };
+        report.push(Finding::new("toolchain_declared", sev, msg).with_file(spec_file));
+        return;
+    };
+    let mine = &profile.toolchains[tool].lockfiles;
+    let sev = severity(domain, "toolchain_matches_tree", Severity::Warning);
+    for (other, chain) in &profile.toolchains {
+        for lock in &chain.lockfiles {
+            if other != tool && !mine.contains(lock) && layout.project_root.join(lock).is_file() {
+                report.push(
+                    Finding::new(
+                        "toolchain_matches_tree",
+                        sev,
+                        format!(
+                            "`{lock}` is a `{other}` lockfile, but spec.toml declares \
+                             `toolchain = \"{tool}\"`: remove it, or change the declared tool"
+                        ),
+                    )
+                    .with_file(lock.clone()),
+                );
+            }
+        }
+    }
+    if !mine.is_empty() && !mine.iter().any(|l| layout.project_root.join(l).is_file()) {
+        report.push(
+            Finding::new(
+                "toolchain_matches_tree",
+                Severity::Info,
+                format!(
+                    "no {} lockfile yet ({}); the first install writes it — commit it",
+                    tool,
+                    mine.join(", ")
+                ),
+            )
+            .with_file(spec_file),
         );
     }
 }

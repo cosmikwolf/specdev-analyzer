@@ -478,6 +478,12 @@ fn assign_identities(
                     parts.push(base);
                     parts.join(sep)
                 }
+                TestIdentityStyle::FileGroupPath(sep) => {
+                    let mut parts = vec![t.file.clone()];
+                    parts.extend(t.groups.iter().cloned());
+                    parts.push(base);
+                    parts.join(sep)
+                }
                 TestIdentityStyle::ModuleOrFile => match module_of_file.get(&t.file) {
                     Some(m) => format!("{m}::{base}"),
                     None => format!("{}::{base}", t.file),
