@@ -444,7 +444,7 @@ pub enum ItemsAction {
     /// Stage 1 — deterministic detection. Walks `specs/modules/<module>.toml`
     /// items[] and the resolved source file, joins on `(kind, name)`,
     /// and emits a structured drift report (in_spec_only / in_source_only /
-    /// both with optional signature_drift). No AI involvement. YAML to
+    /// both). No AI involvement. YAML to
     /// stdout. Exit 0 when clean, 1 on drift, 2 on hard error.
     Diff {
         /// Project root (directory the analyzer searches from). Defaults to cwd.

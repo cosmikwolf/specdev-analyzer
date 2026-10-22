@@ -6,9 +6,8 @@ satisfies = ["REQ-LED-001"]
 [[items]]
 kind = "fn"
 name = "blink"
-description = "RTIC software task: toggle the LED pin, tracking state in a local."
+description = "Async RTIC software task, taking its `blink::Context`: toggle the LED pin, tracking state in a local."
 satisfies = ["REQ-LED-001"]
-signature_hint = "async fn blink(cx: blink::Context)"
 
 [[mk20dx.pins]]
 name = "status_led"

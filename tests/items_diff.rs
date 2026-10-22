@@ -4,7 +4,7 @@
 //!   * Spec items[] match source items by `(kind, name)`.
 //!   * Items in spec but missing from source surface as `in_spec_only`.
 //!   * Items in source but missing from spec surface as `in_source_only`.
-//!   * `signature_hint` divergence flags signature_drift on the both[] pair.
+//!   * A matched pair is clean: items carry no signature.
 //!   * Module with no source file emits all spec items as `in_spec_only`
 //!     (pre-implementation modules).
 //!   * Exit code: 0 when clean, 1 when drift present, 2 on hard error.
@@ -304,7 +304,9 @@ satisfies = ["DEMO-1"]
 }
 
 #[test]
-fn items_diff_signature_hint_divergence_flags_drift() {
+fn items_diff_has_no_signature_drift() {
+    // Items carry no signature: a matched pair is clean whatever the
+    // source signature is, and the output has no signature category.
     let target = tmp_dir("sig-drift");
     bootstrap_lib(&target);
 
@@ -318,7 +320,6 @@ name = "render"
 kind = "fn"
 description = "Render the frame."
 satisfies = ["DEMO-1"]
-signature_hint = "fn render(x: u64) -> u32"
 "#,
     )
     .unwrap();
@@ -333,13 +334,13 @@ signature_hint = "fn render(x: u64) -> u32"
     let r = run_items_diff(&target, "Foo");
     assert_eq!(
         r.exit_code,
-        Some(1),
-        "expected drift exit; stderr={}",
-        r.stderr
+        Some(0),
+        "expected a clean diff; stdout=\n{}",
+        r.stdout
     );
     assert!(
-        r.stdout.contains("signature_drift"),
-        "expected signature_drift; stdout=\n{}",
+        !r.stdout.contains("signature"),
+        "no signature field or category expected; stdout=\n{}",
         r.stdout
     );
 }

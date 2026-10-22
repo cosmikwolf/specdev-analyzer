@@ -3,8 +3,8 @@
 //! Ships `extract-items` as the surface that items[] sync builds on.
 //! The output shape
 //! (`ExtractedItem`) is the strict subset of the spec-side `Item`
-//! schema: `kind` + `name` + optional `signature` + optional
-//! `attributes[]` + source span. Spec-only fields (`description`,
+//! schema: `kind` + `name` + optional `attributes[]` + source span
+//! (an item carries no signature). Spec-only fields (`description`,
 //! `satisfies`) are out of scope for the analyzer — those are spec
 //! authoring concerns.
 //!
@@ -49,12 +49,6 @@ pub struct ExtractedItem {
     /// qualified as `<Type><sep><member>` with the language's path
     /// separator.
     pub name: String,
-    /// Optional signature shape, populated when the items.scm query
-    /// surfaces it (functions: `fn foo(...) -> Bar`; consts:
-    /// `pub const FOO: u32`). Reserved for future use; v1 may emit
-    /// `None` for most kinds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
     /// Attribute strings as written (e.g. `#[test]`, `#[embassy_executor::task]`,
     /// `#[cfg(feature = "alloc")]`). Empty when no attributes precede
     /// the item.

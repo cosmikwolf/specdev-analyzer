@@ -91,16 +91,14 @@ satisfies = ["REQ-TICK-001"]
 [[items]]
 kind = "fn"
 name = "on_tick"
-description = "RTIC hardware task in PIT0: clear the timer flag, bump the shared counter."
+description = "RTIC hardware task in PIT0, taking its `on_tick::Context`: clear the timer flag, bump the shared counter."
 satisfies = ["REQ-TICK-001"]
-signature_hint = "fn on_tick(cx: on_tick::Context)"
 
 [[items]]
 kind = "fn"
 name = "drain"
-description = "RTIC software task: read and reset the shared counter."
+description = "Async RTIC software task, taking its `drain::Context`: read and reset the shared counter."
 satisfies = ["REQ-TICK-001"]
-signature_hint = "async fn drain(cx: drain::Context)"
 
 [mk20dx.clock]
 speed = "mhz72"
@@ -145,9 +143,8 @@ satisfies = ["REQ-LED-001"]
 [[items]]
 kind = "fn"
 name = "blink"
-description = "RTIC software task: toggle the LED pin, tracking state in a local."
+description = "Async RTIC software task, taking its `blink::Context`: toggle the LED pin, tracking state in a local."
 satisfies = ["REQ-LED-001"]
-signature_hint = "async fn blink(cx: blink::Context)"
 
 [[mk20dx.pins]]
 name = "status_led"

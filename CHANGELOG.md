@@ -12,6 +12,18 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Removed
+
+- **`signature_drift` and `update-spec`** (#247). No language adapter read a source signature
+  (`ExtractedItem.signature` was always empty), so every `signature_hint` reported drift against `""`. `items diff`
+  has no signature category, `items propose` writes no `drift-<n>` entries and no `source_signature`, and
+  `items apply` refuses `update-spec` with `ITEM-314`; its report has no `updated` line.
+
+### Changed
+
+- **A schema `not` that carries a `description` prints that reason.** `validate` reports "`<key>` is not allowed:
+  <description>" instead of the subschema's JSON.
+
 ### Fixed
 
 - **`context_files` accepts a binary file** (#243). A figure or a PDF datasheet is reference reading; `validate`
