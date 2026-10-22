@@ -65,6 +65,10 @@ pub struct DiffReport {
     pub in_spec_only: Vec<SpecItem>,
     pub in_source_only: Vec<ExtractedItem>,
     pub both: Vec<DiffPair>,
+    /// Set when no source file resolves while the spec lists items, so
+    /// every item reads `in_spec_only` for that reason alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl DiffReport {
@@ -254,6 +258,35 @@ fn toml_to_json(v: &toml::Value) -> serde_json::Value {
     }
 }
 
+/// A spec item named `<Trait>::<member>` whose `<Trait>` is a matched
+/// trait item: the members of a trait declaration are not items (the
+/// trait is one item, as a trait impl is), so the spec item stays
+/// `in_spec_only`. Say so once, naming the items.
+fn trait_member_note(in_spec_only: &[SpecItem], both: &[DiffPair]) -> Option<String> {
+    let traits: Vec<&str> = both
+        .iter()
+        .filter(|p| p.source.kind == "trait")
+        .map(|p| p.source.name.as_str())
+        .collect();
+    let members: Vec<&str> = in_spec_only
+        .iter()
+        .filter(|i| {
+            i.name
+                .split_once("::")
+                .is_some_and(|(host, _)| traits.contains(&host))
+        })
+        .map(|i| i.name.as_str())
+        .collect();
+    (!members.is_empty()).then(|| {
+        format!(
+            "{} {} a member of a trait declaration; a trait is one item, so describe its \
+             members in the trait's `description` and remove these items",
+            members.join(", "),
+            if members.len() == 1 { "is" } else { "are each" }
+        )
+    })
+}
+
 /// Run a deterministic diff for `module_name`. The module's spec must
 /// exist under `specs/modules/<module_name>.toml`; missing source files
 /// are treated as `in_spec_only` for every spec item (pre-implementation
@@ -328,12 +361,22 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
         }
     }
 
+    let note = if source_file.is_none() && !in_spec_only.is_empty() {
+        Some(
+            "no source file resolves for this module, so every item is `in_spec_only`; \
+             `specdev-analyzer check` names a candidate file, or set `source_file`"
+                .to_string(),
+        )
+    } else {
+        trait_member_note(&in_spec_only, &both)
+    };
     Ok(DiffReport {
         module: module_name.to_string(),
-        source_file,
+        source_file: source_file.map(|p| super::util::relative_to(&layout.project_root, &p)),
         in_spec_only,
         in_source_only: source_remaining,
         both,
+        note,
     })
 }
 

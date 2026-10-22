@@ -195,9 +195,13 @@ pub fn related_attrs_allowed(
                 Finding::new(
                     rule,
                     severity,
-                    format!(
-                        "`{from}` -> `{to}`: {left} = `{l}` with {right} = `{r}` is not an allowed pair"
-                    ),
+                    if left == right {
+                        format!("`{from}` -> `{to}`: {left} = `{l}` is not allowed")
+                    } else {
+                        format!(
+                            "`{from}` -> `{to}`: {left} = `{l}` with {right} = `{r}` is not an allowed pair"
+                        )
+                    },
                 )
                 .with_file(provenance_file(rel))
                 .with_entity(format!("{from} -> {to}")),

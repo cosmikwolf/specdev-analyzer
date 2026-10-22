@@ -5,7 +5,7 @@ expression: rendered
 exit: Some(1)
 --- stdout ---
 module: Kitchen
-source_file: <root>/src/kitchen.rs
+source_file: src/kitchen.rs
 in_spec_only:
 - kind: extern_block
   name: extern_C_at_40
@@ -29,10 +29,10 @@ in_source_only:
     start_line: 38
     end_line: 38
 - kind: extern_block
-  name: extern_C_at_44
+  name: extern_C_at_45
   span:
-    start_line: 44
-    end_line: 46
+    start_line: 45
+    end_line: 47
 both:
 - spec:
     kind: fn
@@ -204,9 +204,11 @@ both:
   source:
     kind: macro
     name: make_widget
+    attributes:
+    - '#[macro_export]'
     span:
-      start_line: 40
-      end_line: 42
+      start_line: 41
+      end_line: 43
 - spec:
     kind: fn
     name: drifted

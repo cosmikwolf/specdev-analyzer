@@ -131,6 +131,19 @@ impl LanguageAdapter for RustAdapter {
         Some("pub")
     }
 
+    /// A `macro_rules!` is exported by `#[macro_export]`; without it the
+    /// macro is usable only inside its crate, so it ranks as `pub(crate)`
+    /// and drops under the default `pub` floor.
+    fn attribute_visibility(&self, prefix: &str, attributes: &[String]) -> Option<&'static str> {
+        (prefix == "macro").then(|| {
+            if attributes.iter().any(|a| a.contains("macro_export")) {
+                "pub"
+            } else {
+                "pub(crate)"
+            }
+        })
+    }
+
     fn visibility_at_least(&self, captured: Option<&str>, floor: &str) -> bool {
         visibility_rank(captured) >= visibility_rank(Some(floor))
     }

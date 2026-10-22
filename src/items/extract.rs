@@ -175,6 +175,14 @@ fn build_named(
     }
     let span = node_span(def_node);
     let attributes = preceding_attributes(def_node, source);
+    if let (Some(vis), Some(floor)) = (
+        adapter.attribute_visibility(prefix, &attributes),
+        floor.or_else(|| adapter.default_visibility_floor()),
+    ) {
+        if !adapter.visibility_at_least_for(prefix, Some(vis), floor) {
+            return None;
+        }
+    }
     Some(ExtractedItem {
         kind: prefix.to_string(),
         name,
@@ -435,12 +443,18 @@ mod tests {
     }
 
     // `macro_rules!` takes no visibility modifier in the grammar; its
-    // export is `#[macro_export]`. It carries no `.vis` capture, so every
-    // macro extracts — unchanged by #103.
+    // export is `#[macro_export]` (#254). Without it the macro is
+    // crate-local: it drops under the default `pub` floor and stays under
+    // a `pub(crate)` floor.
     #[test]
-    fn macro_rules_has_no_visibility_gate() {
-        let items = extract("macro_rules! m { () => {} }\n");
-        assert_eq!(names(&items, "macro"), vec!["m"]);
+    fn macro_rules_is_public_only_with_macro_export() {
+        let source = "#[macro_export]\nmacro_rules! exported { () => {} }\n\
+                      macro_rules! local { () => {} }\n";
+        assert_eq!(names(&extract(source), "macro"), vec!["exported"]);
+        assert_eq!(
+            names(&extract_with_floor(source, "pub(crate)"), "macro"),
+            vec!["exported", "local"]
+        );
     }
 
     // #101(b): a `pub(crate)` floor admits `pub` and `pub(crate)`, still

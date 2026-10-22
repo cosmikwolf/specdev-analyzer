@@ -263,6 +263,14 @@ pub trait LanguageAdapter: Send + Sync {
         self.visibility_at_least(captured, floor)
     }
 
+    /// The visibility an item takes from its attributes, for a kind whose
+    /// grammar node carries no visibility modifier. The extractor gates it
+    /// against the floor like a captured modifier. Default: `None` (no
+    /// such kind; the item is not gated).
+    fn attribute_visibility(&self, _prefix: &str, _attributes: &[String]) -> Option<&'static str> {
+        None
+    }
+
     /// Map a re-export's captured visibility modifier to the spec-side
     /// `re_export.visibility` enum value, or `None` when the spec cannot
     /// express it (the item then drops). Rust: `pub` → `pub`,

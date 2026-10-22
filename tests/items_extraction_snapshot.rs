@@ -233,6 +233,7 @@ pub use inner::Item as Public;
 
 pub(crate) use inner::Hidden;
 
+#[macro_export]
 macro_rules! make_widget {
     () => {};
 }

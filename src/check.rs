@@ -69,10 +69,50 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     test_checks(layout, &graph, &modules, &domain, &mut report)?;
     internal_edges(layout, &modules, &domain, &mut report)?;
     pack_code_checks(layout, &graph, &modules, &domain, &mut report);
+    unreached_decisions(layout, &domain, &mut report);
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
     Ok(report)
+}
+
+/// An accepted decision of this project that reaches no module guides no
+/// code: the agent that follows `report decisions` never sees it. Reported
+/// as info, with the three ways to link it. A workspace root is skipped:
+/// its decisions reach the members' modules, which its own report does not
+/// follow.
+fn unreached_decisions(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    if layout.spec.workspace.is_some() {
+        return;
+    }
+    let Ok(decisions) = crate::decision_report::build(layout, None, None) else {
+        return;
+    };
+    let sev = severity(domain, "decision_reaches_nothing", Severity::Info);
+    let store = crate::entries::EntryStore::for_layout(layout);
+    for d in decisions.decisions {
+        if d.workspace || d.status != "accepted" || !d.reaches.is_empty() {
+            continue;
+        }
+        report.push(
+            Finding::new(
+                "decision_reaches_nothing",
+                sev,
+                format!(
+                    "decision `{}` is accepted but reaches no module, so it guides no code: name it in a \
+                     module's `guided_by`, or in the `decided_by` of a requirement a module satisfies",
+                    d.id
+                ),
+            )
+            .with_file(
+                store
+                    .location_hint(crate::entries::EntryKind::Decision, &d.id)
+                    .trim_matches('`')
+                    .to_string(),
+            )
+            .with_entity(&d.id),
+        );
+    }
 }
 
 fn load_domain(layout: &LayoutContext) -> Option<DomainConfig> {

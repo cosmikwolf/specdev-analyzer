@@ -710,6 +710,7 @@ fn run_validate(
     if let Some(notice) = plugin_ahead_notice(&layout, plugin_flag) {
         report.push(notice);
     }
+    report.relativize(&layout.project_root);
     let (errors, warnings, infos) = report.counts();
     let rendered = if no_color {
         report.render_plain_filtered(quiet)
@@ -881,6 +882,7 @@ fn check_one(
             if let Some(notice) = plugin_ahead_notice(layout, plugin_flag) {
                 r.push(notice);
             }
+            r.relativize(&layout.project_root);
             Some(r)
         }
         Err(e) => {
@@ -971,7 +973,8 @@ fn run_extract_items(
 
         modules_out.push(ModuleItems {
             module_name: name,
-            source_file,
+            source_file: source_file
+                .map(|p| specdev_analyzer::items::util::relative_to(&project, &p)),
             items,
         });
     }
