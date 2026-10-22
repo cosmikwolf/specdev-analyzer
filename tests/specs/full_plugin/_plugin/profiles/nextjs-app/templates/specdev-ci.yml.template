@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CI: "true"
-      SPECDEV_ANALYZER_TAG: v0.3.4
+      SPECDEV_ANALYZER_TAG: v0.4.0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
