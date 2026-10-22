@@ -1,0 +1,179 @@
+# python-library project graph checks.
+#
+# Each [[project.graph_checks]] runs after validate parses module +
+# architecture + requirements TOMLs and the reduction materializes the
+# universal (entities, relations) graph.
+#
+# Convention: ref-resolution diagnostics for fields that reduce into a
+# typed relation (e.g. `requirement.decided_by[]` → Requirement→Decision
+# edges) live in REDUCE_UNRESOLVED at reduce time, NOT in graph_check.
+# When a target name doesn't resolve, reduction drops the edge and emits
+# REDUCE_UNRESOLVED naming the source entity + the unknown target.
+# graph_check is reserved for non-ref-resolution invariants: uniqueness,
+# acyclicity, attr-shaped reference resolution (e.g. closed_by, which
+# isn't a relation), status-cross-reference consistency, open-question gating.
+
+[domain]
+name = "{{project_name}}"
+
+[validation]
+[validation.rules]
+unique_qualified_names                       = "error"
+modules_acyclic                              = "error"
+requirement_ids_unique                       = "error"
+decision_ids_unique                          = "error"
+requirements_have_satisfiers                 = "error"
+# Triad consistency checks (the *how & why* + *known unknowns*).
+decision_supersedes_acyclic                  = "error"
+decision_supersedes_chain_consistency        = "error"
+decision_reference_superseded                = "warning"
+open_question_closed_by_resolves             = "error"
+open_question_status_consistency             = "error"
+implementation_unblocked                     = "error"
+
+# Module names must be unique across the library.
+[[project.graph_checks]]
+kind = "unique"
+rule = "unique_qualified_names"
+scope = "Module"
+field = "entities[].name"
+
+# Module dependency graph must be acyclic.
+[[project.graph_checks]]
+kind = "acyclic"
+rule = "modules_acyclic"
+entity_scope = "Module"
+relation_scope = "depends_on"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+
+# Requirement ids must be unique.
+[[project.graph_checks]]
+kind = "unique"
+rule = "requirement_ids_unique"
+scope = "Requirement"
+field = "entities[].name"
+
+# Decision ids must be unique. Without this check, two `[[decision]]`
+# entries with one id both reach the graph and validate exits 0.
+[[project.graph_checks]]
+kind = "unique"
+rule = "decision_ids_unique"
+scope = "Decision"
+field = "entities[].name"
+
+# Every Requirement with `nature = "module"` (the default) must be
+# satisfied by at least one module — an orphan requirement is an error (F-006).
+# Set `nature = "architecture" | "build"` to exempt; `nature = "test"`
+# requirements are exempt HERE; `check`'s requirements_have_tests
+# covers them.
+[[project.graph_checks]]
+kind = "requirements_have_satisfiers"
+rule = "requirements_have_satisfiers"
+entity_scope = "Requirement"
+relation_scope = "module_satisfies"
+
+# ---------------------------------------------------------------------------
+# Triad consistency.
+#
+# Per the convention header: typed-relation ref resolution (decided_by,
+# guided_by, project_decisions, supersedes, closes_questions,
+# defaults_for, affects, default_via) is enforced by REDUCE_UNRESOLVED
+# at reduce time. The graph_checks below cover what reduction can't:
+# supersession-chain shape (acyclic + orphan-free + unique-successor),
+# attr-shaped closed_by resolution (closed_by isn't a relation), OQ
+# status invariants against target Decision status, and the
+# open-question gate (`implementation_unblocked`, run by `check`).
+# ---------------------------------------------------------------------------
+
+# Supersession chain must be acyclic.
+[[project.graph_checks]]
+kind = "acyclic"
+rule = "decision_supersedes_acyclic"
+scope = "decision_supersedes_decision"
+edges_from = "relations[].from"
+edges_to = "relations[].to"
+
+# Each superseded Decision must be claimed by exactly one inbound
+# `decision_supersedes_decision` edge (catches orphan-superseded and
+# multi-successor authoring mistakes).
+[[project.graph_checks]]
+kind = "entity_attr_inbound_count"
+rule = "decision_supersedes_chain_consistency"
+entity_scope = "Decision"
+entity_attr = "status"
+entity_attr_value = "superseded"
+relation_scope = "decision_supersedes_decision"
+expected_count = 1
+
+# The other half of the chain: a Decision that an accepted (or itself
+# superseded) Decision names in `supersedes` must be `superseded`, not still
+# `accepted` — two accepted, contradicting decisions otherwise pass.
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_supersedes_chain_consistency"
+relation_scope = "decision_supersedes_decision"
+left = "to.status"
+right = "from.status"
+allowed = [["superseded", "*"]]
+
+# A module's `guided_by` and a requirement's `decided_by` name accepted
+# decisions. A superseded one guides nothing (`report decisions` drops it), so
+# the link is stale: point it at the successor.
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_reference_superseded"
+relation_scope = "module_guided_by_decision"
+left = "to.status"
+right = "to.status"
+allowed = [["accepted", "*"]]
+
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_reference_superseded"
+relation_scope = "requirement_decided_by_decision"
+left = "to.status"
+right = "to.status"
+allowed = [["accepted", "*"]]
+
+# OpenQuestion.closed_by is a singular attr (not a relation) — verify it
+# resolves to an existing decision name. The whole-graph view filters
+# naturally because `entities[].attrs.closed_by` is only populated on
+# OpenQuestion entities.
+[[project.graph_checks]]
+kind = "reference_exists"
+rule = "open_question_closed_by_resolves"
+source_field = "entities[].attrs.closed_by"
+target_field = "entities[].name"
+
+# OQ.status = closed implies closed_by points at an *accepted* Decision.
+[[project.graph_checks]]
+kind = "entity_attr_target_attr_equals"
+rule = "open_question_status_consistency"
+entity_scope = "OpenQuestion"
+entity_attr = "status"
+entity_attr_value = "closed"
+target_attr_field = "closed_by"
+target_entity_kind = "Decision"
+target_attr = "status"
+target_attr_value = "accepted"
+
+# OQ.status = default_committed implies default_via points at an
+# *accepted* Decision.
+[[project.graph_checks]]
+kind = "entity_attr_target_attr_equals"
+rule = "open_question_status_consistency"
+entity_scope = "OpenQuestion"
+entity_attr = "status"
+entity_attr_value = "default_committed"
+target_attr_field = "default_via"
+target_entity_kind = "Decision"
+target_attr = "status"
+target_attr_value = "accepted"
+
+# Open-question gate: any Module reachable through an `open`
+# OpenQuestion (via Module.satisfies → Requirement →
+# OpenQuestion.affects^-1) is blocked. `check` reports it.
+[[project.graph_checks]]
+kind = "module_reachable_through_open_question"
+rule = "implementation_unblocked"
