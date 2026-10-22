@@ -4,7 +4,7 @@
 
 # Contract this manifest is authored against; compared to the
 # analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
-contract_version: 2
+contract_version: 3
 
 name: flutter-app
 language: dart

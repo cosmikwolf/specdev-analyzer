@@ -108,19 +108,37 @@ pub fn file_imports(
     };
     let query = Query::new(&lang, query_src)
         .with_context(|| format!("compiling the {} imports.scm query", adapter.name()))?;
-    let (c_src, c_re, c_scope) = (
+    let (c_src, c_re, c_scope, c_member) = (
         query.capture_index_for_name("import.source"),
         query.capture_index_for_name("import.reexport"),
         query.capture_index_for_name("import.test_scope"),
+        query.capture_index_for_name("import.member"),
     );
-    let mut found: Vec<(usize, usize, String, bool)> = Vec::new();
+    // (start, end, spec, reexport, member): a member import counts only when
+    // it resolves to a project file; otherwise it names a symbol, not a module.
+    let mut found: Vec<(usize, usize, String, bool, bool)> = Vec::new();
     let mut scopes: Vec<(usize, usize)> = Vec::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(m) = matches.next() {
+        let module_of_match = m
+            .captures
+            .iter()
+            .find(|c| Some(c.index) == c_src)
+            .map(|c| strip_quotes(&source[c.node.byte_range()]).to_string());
         for c in m.captures {
             if Some(c.index) == c_scope {
                 scopes.push((c.node.start_byte(), c.node.end_byte()));
+                continue;
+            }
+            if Some(c.index) == c_member {
+                let member = &source[c.node.byte_range()];
+                if let Some(spec) = module_of_match
+                    .as_deref()
+                    .and_then(|m| adapter.member_import_spec(m, member))
+                {
+                    found.push((c.node.start_byte(), c.node.end_byte(), spec, false, true));
+                }
                 continue;
             }
             let reexport = Some(c.index) == c_re;
@@ -128,7 +146,13 @@ pub fn file_imports(
                 continue;
             }
             let spec = strip_quotes(&source[c.node.byte_range()]).to_string();
-            found.push((c.node.start_byte(), c.node.end_byte(), spec, reexport));
+            found.push((
+                c.node.start_byte(),
+                c.node.end_byte(),
+                spec,
+                reexport,
+                false,
+            ));
         }
     }
     // Nested captures of one path share its start byte (`crate::a` inside
@@ -136,12 +160,15 @@ pub fn file_imports(
     found.sort_by(|a, b| (a.0, a.3, b.1).cmp(&(b.0, b.3, a.1)));
     found.dedup_by(|later, kept| later.0 == kept.0 && later.3 == kept.3);
     let mut out = Vec::new();
-    for (start, end, spec, reexport) in found {
+    for (start, end, spec, reexport, member) in found {
         let resolved = adapter
             .resolve_import(&spec, rel, ctx)
             .into_iter()
             .find(|cand| ctx.project_root.join(cand).is_file())
             .map(|p| slash(&p));
+        if member && resolved.is_none() {
+            continue;
+        }
         let test_only = scopes.iter().any(|(s, e)| *s <= start && end <= *e);
         out.push(FileImport {
             spec,

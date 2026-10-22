@@ -74,6 +74,11 @@ pub struct ProjectSection {
     pub name: String,
     pub profile: String,
     pub language: String,
+    /// The project's tool (`uv`, `poetry`, `pip`, …) for a language with
+    /// more than one. The profile's `toolchains:` gives each tool's gates
+    /// and lockfiles; the analyzer compares the name, never branches on it.
+    #[serde(default)]
+    pub toolchain: Option<String>,
 }
 
 /// `[workspace]` table on a workspace-root `spec.toml`. Presence signals

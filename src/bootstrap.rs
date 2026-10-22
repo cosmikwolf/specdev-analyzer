@@ -37,8 +37,8 @@ pub struct BootstrapInputs {
     pub profile: String,
     /// Project language; must match the profile's `language:`. The
     /// `language` enums in `spec.schema.yaml` and `profile.schema.yaml` are
-    /// the source of truth and admit `rust`, `c`, `cpp`, `dart` and
-    /// `typescript`.
+    /// the source of truth and admit `rust`, `c`, `cpp`, `dart`,
+    /// `typescript` and `python`.
     pub language: String,
     /// Project name; conventionally lowercase + hyphens.
     pub project_name: String,
