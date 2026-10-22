@@ -3,7 +3,7 @@
 ;; Captures top-level declarations and public members per the items[]
 ;; schema (see `languages/dart/items.schema.yaml`). The analyzer's
 ;; `extract-items` subcommand walks these matches and produces
-;; `ExtractedItem { kind, name, signature?, attributes[], span }` per
+;; `ExtractedItem { kind, name, attributes[], span }` per
 ;; capture.
 ;;
 ;; Conventions:
