@@ -6,7 +6,7 @@ exit: Some(0)
 --- stdout ---
 modules:
 - module_name: Kitchen
-  source_file: <root>/src/kitchen.rs
+  source_file: src/kitchen.rs
   items:
   - kind: fn
     name: render
@@ -90,13 +90,15 @@ modules:
       end_line: 38
   - kind: macro
     name: make_widget
+    attributes:
+    - '#[macro_export]'
     span:
-      start_line: 40
-      end_line: 42
+      start_line: 41
+      end_line: 43
   - kind: extern_block
-    name: extern_C_at_44
+    name: extern_C_at_45
     span:
-      start_line: 44
-      end_line: 46
+      start_line: 45
+      end_line: 47
 
 --- stderr ---

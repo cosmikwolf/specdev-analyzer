@@ -19,8 +19,25 @@ and it is `1`.
   has no signature category, `items propose` writes no `drift-<n>` entries and no `source_signature`, and
   `items apply` refuses `update-spec` with `ITEM-314`; its report has no `updated` line.
 
+### Added
+
+- **`decision_reaches_nothing` (info) in `check`** (#251): an accepted decision that no module's `guided_by` and no
+  satisfied requirement's `decided_by` names guides no code. Skipped at a workspace root.
+- **`items diff` explains two `in_spec_only` cases** in a `note` (#253, #254): no source file resolves, or the items
+  are members of a trait declaration (a trait is one item).
+
 ### Changed
 
+- **Paths in output are relative to the project** (#252): `validate` and `check` findings, `items diff`,
+  `extract-items` and `items propose` `source_file`, and the `items apply` `spec:` / `audit:` lines and audit file.
+  A committed audit file no longer names one person's home directory.
+- **Source resolution tries more file names** (#253): after `snake_case`, the name with a break after a digit
+  (`Aced2Format` → `aced2_format.rs`, as heck and rustc split it) and the name lowercased (`SysEx7` → `sysex7.rs`).
+- **A `macro_rules!` without `#[macro_export]` is crate-local** (#254): it drops under the default `pub` item floor
+  and stays under `pub(crate)`.
+- **A member reference to a workspace-tier entry says why it does not resolve** (#250): `REDUCE_UNRESOLVED` adds
+  that the id is a workspace entry, that references stay in one tier, and to remove the reference.
+- **`related_attrs_allowed` names one field once** when both sides read the same field.
 - **A schema `not` that carries a `description` prints that reason.** `validate` reports "`<key>` is not allowed:
   <description>" instead of the subschema's JSON.
 

@@ -64,6 +64,7 @@ that closes it or a committed default with a `verify` line. Use `/spec-decide` a
 - `requirement_ids_unique`, `decision_ids_unique` — ids are unique
 - `requirements_have_satisfiers` — every requirement is satisfied by a module (error; a `planned` one is exempt)
 - `decision_supersedes_acyclic`, `decision_supersedes_chain_consistency` — supersession chains are sound
+- `decision_reference_superseded` (warning) — a module's `guided_by` or a requirement's `decided_by` names a superseded decision
 - `open_question_closed_by_resolves`, `open_question_status_consistency` — open-question references resolve
 - `implementation_unblocked` — the open-question gate, run by `check`
 
