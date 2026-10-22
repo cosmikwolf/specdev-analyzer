@@ -14,6 +14,8 @@ and it is `1`.
 
 ### Added
 
+- **`hello-pyo3` test**: a `python-ffi` package and a `library-api` crate with the `pyo3` block (fixture mirrors
+  of both).
 - **`hello-python` smoke test** for the `python-library` profile (fixture mirror under `tests/specs/full_plugin/`).
 
 - **Python adapter** (`tree-sitter-python` 0.25): item extraction, pytest discovery, import edges and the

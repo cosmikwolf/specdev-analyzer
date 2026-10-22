@@ -1,0 +1,15 @@
+spec_version = "2.0"
+
+[project]
+name = "{{project_name}}"
+profile = "{{profile}}"
+language = "{{language}}"
+max_parallel_agents = 1
+# The project's tool: one of the profile's `toolchains` (uv, poetry, pip).
+toolchain = "uv"
+
+[paths]
+specs = "specs"
+# The import package's directory in a `src/` layout. It is the import name:
+# when the project name has a `-`, write `_` here (`my-pkg` → `src/my_pkg`).
+source = "src/{{project_name}}"

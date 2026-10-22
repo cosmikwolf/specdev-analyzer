@@ -1,0 +1,95 @@
+# Manifest — drives analyzer dispatch for python-ffi projects.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+# Contract this manifest is authored against; compared to the
+# analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
+contract_version: 3
+
+name: python-ffi
+language: python
+
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. The CI workflow installs
+# the toolchain the gates need and runs scripts/specdev-gates.sh.
+paired_files:
+  - { template_file: templates/specdev-ci.yml.template, target: .github/workflows/specdev.yml }
+
+# Compile gates, as data, one list per tool. Installing the project builds
+# the Rust extension (maturin, the build backend); `stubs` then checks the
+# `.pyi` stub against the built module, through the `[native] module` name in
+# specs/architecture.toml. The project names its tool in
+# spec.toml (`[project] toolchain`); `gate` and the gate script run that
+# tool's list, and `check` reports a lockfile of another tool. Every list
+# runs the same jobs through the language's own entry point (`python -m
+# <tool>`): the stub check (mypy's stubtest), the tests, the type checker, the
+# linter. They are the project's dev dependencies (pyproject.toml
+# `[dependency-groups] dev`).
+toolchains:
+  uv:
+    lockfiles: [uv.lock]
+    gates:
+      - label: sync
+        steps:
+          - [uv, sync, --locked]
+      - label: stubs
+        steps:
+          - [uv, run, --locked, python, -m, mypy.stubtest, "${root.native.module}"]
+      - label: tests
+        steps:
+          - [uv, run, --locked, python, -m, pytest]
+      - label: types
+        steps:
+          - [uv, run, --locked, python, -m, pyright]
+      - label: lint
+        steps:
+          - [uv, run, --locked, python, -m, ruff, check]
+  poetry:
+    lockfiles: [poetry.lock]
+    gates:
+      - label: sync
+        steps:
+          - [poetry, install]
+      - label: stubs
+        steps:
+          - [poetry, run, python, -m, mypy.stubtest, "${root.native.module}"]
+      - label: tests
+        steps:
+          - [poetry, run, python, -m, pytest]
+      - label: types
+        steps:
+          - [poetry, run, python, -m, pyright]
+      - label: lint
+        steps:
+          - [poetry, run, python, -m, ruff, check]
+  pip:
+    # pip runs in the environment the gate script is started in: create and
+    # activate it first (build.md, "Commands").
+    lockfiles: [pylock.toml]
+    gates:
+      - label: build
+        steps:
+          - [python, -m, pip, install, --no-deps, -e, .]
+      - label: stubs
+        steps:
+          - [python, -m, mypy.stubtest, "${root.native.module}"]
+      - label: tests
+        steps:
+          - [python, -m, pytest]
+      - label: types
+        steps:
+          - [python, -m, pyright]
+      - label: lint
+        steps:
+          - [python, -m, ruff, check]
+
+bootstrap:
+  steps: []                       # standalone package; no workspace machinery
+
+context:
+  context_subcommand_extras: []
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

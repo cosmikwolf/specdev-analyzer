@@ -1,0 +1,11 @@
+# Project architecture for {{project_name}} (python-ffi).
+
+# The compiled extension module the package wraps: its dotted import name,
+# equal to pyproject.toml `[tool.maturin] module-name`. The `stubs` gate
+# checks the package's `.pyi` stub of it against the built module. Write `_`
+# where the project name has a `-`.
+[native]
+module = "{{project_name}}._native"
+
+# Decisions that shape the project as a whole.
+# project_decisions = ["DEC-001"]
