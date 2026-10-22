@@ -1,0 +1,21 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/python-library/architecture.schema.yaml"
+title: "python-library architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for python-library projects. Holds the
+  project-wide decisions list only; dependencies and extras live in
+  `pyproject.toml`, their only source of truth.
+type: object
+additionalProperties: false
+properties:
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (package layout,
+      supported Python versions, public API conventions). Distinct from
+      module-scope `guided_by`: project_decisions describes commitments
+      that span the architecture itself rather than any one module's
+      implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true

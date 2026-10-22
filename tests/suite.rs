@@ -50,6 +50,7 @@ mod gate_script;
 mod global_no_color;
 mod hello_firmware;
 mod hello_plugin_smoke;
+mod hello_python;
 mod hello_rtic;
 mod items_apply;
 mod items_diff;
