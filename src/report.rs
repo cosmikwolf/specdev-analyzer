@@ -109,6 +109,23 @@ impl Report {
         &self.findings
     }
 
+    /// Print paths under `root` relative to it: each finding's file, and
+    /// each `<root>/` inside a message. A committed or shared output then
+    /// names no one's home directory and reads the same on every checkout.
+    pub fn relativize(&mut self, root: &std::path::Path) {
+        let prefix = format!("{}/", root.display());
+        for f in &mut self.findings {
+            if let Some(file) = &mut f.file {
+                if let Some(rest) = file.strip_prefix(&prefix) {
+                    *file = rest.to_string();
+                }
+            }
+            if f.message.contains(&prefix) {
+                f.message = f.message.replace(&prefix, "");
+            }
+        }
+    }
+
     pub fn has_errors(&self) -> bool {
         self.findings.iter().any(|f| f.severity == Severity::Error)
     }
@@ -197,5 +214,28 @@ fn render_loc(file: &Option<String>, pointer: &str, line: Option<u32>) -> String
         (Some(f), ptr, Some(n)) => format!("{f}:{n}{ptr}"),
         (None, ptr, None) => ptr.to_string(),
         (None, ptr, Some(n)) => format!(":{n}{ptr}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relativize_strips_the_root_from_files_and_messages() {
+        // No output names the checkout's absolute path.
+        let mut r = Report::default();
+        r.push(
+            Finding::new(
+                "X",
+                Severity::Error,
+                "missing at /home/a/p/docs/x.md (see /other/y)",
+            )
+            .with_file("/home/a/p/specs/modules/M.toml"),
+        );
+        r.relativize(std::path::Path::new("/home/a/p"));
+        let f = &r.findings()[0];
+        assert_eq!(f.file.as_deref(), Some("specs/modules/M.toml"));
+        assert_eq!(f.message, "missing at docs/x.md (see /other/y)");
     }
 }

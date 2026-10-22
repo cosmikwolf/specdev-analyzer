@@ -92,6 +92,31 @@ fn a_member_id_may_not_repeat_a_workspace_id() {
     );
 }
 
+/// A member reference to a workspace-tier decision does not resolve, and
+/// the finding says why and what to do (#250).
+#[test]
+fn a_member_reference_to_a_workspace_decision_explains_the_tiers() {
+    let (root, one, _) = workspace("tier-ref");
+    root.write(
+        "specs/decisions/DEC-001.toml",
+        &decision("DEC-001", "Root decision"),
+    );
+    let m = member(&one, &root.plugin);
+    m.write(
+        "specs/modules/guided.toml",
+        "name = \"guided\"\nvisibility = \"crate\"\ndescription = \"Guided.\"\nguided_by = [\"DEC-001\"]\n",
+    )
+    .write("src/guided.rs", "pub(crate) fn f() {}\n");
+    let out = m.analyzer(&["validate"]);
+    let text = ci::text(&out);
+    assert!(
+        text.contains("references unknown Decision `DEC-001`")
+            && text.contains("`DEC-001` is a workspace-tier entry (workspace root: specs/decisions/DEC-001.toml)")
+            && text.contains("so remove this reference"),
+        "expected the cross-tier note:\n{text}"
+    );
+}
+
 /// A workspace open question that names an id two members define gates
 /// both; one that names an id no member defines gates nothing. Both warn at
 /// the root.
@@ -264,4 +289,43 @@ fn report_requirements_shows_the_tree() {
     let text = t.analyzer(&["report", "requirements", "--format", "text"]);
     let s = String::from_utf8_lossy(&text.stdout);
     assert!(s.contains("REQ-TOP-001\n  REQ-LEAF-001"), "{s}");
+}
+
+/// #251: an accepted decision that reaches no module is reported as info,
+/// and a `guided_by` that names a superseded decision is a warning.
+#[test]
+fn decisions_that_guide_nothing_are_reported() {
+    let t = tree("dec-reach", "library-api", &[]);
+    t.write(
+        "specs/decisions/DEC-001.toml",
+        &decision("DEC-001", "Linked"),
+    )
+    .write(
+        "specs/decisions/DEC-002.toml",
+        &decision("DEC-002", "Unlinked"),
+    )
+    .write(
+        "specs/decisions/DEC-003.toml",
+        &decision("DEC-003", "Old").replace("\"accepted\"", "\"superseded\""),
+    )
+    .write(
+        "specs/decisions/DEC-004.toml",
+        &format!("{}supersedes = [\"DEC-003\"]\n", decision("DEC-004", "New")),
+    )
+    .write(
+        "specs/modules/guided.toml",
+        "name = \"guided\"\nvisibility = \"crate\"\ndescription = \"Guided.\"\n\
+             guided_by = [\"DEC-001\", \"DEC-003\", \"DEC-004\"]\n",
+    )
+    .write("src/guided.rs", "pub(crate) fn f() {}\n");
+    t.check(&[])
+        .fires("decision_reaches_nothing", "DEC-002", "info")
+        .silent("decision_reaches_nothing", "DEC-001")
+        .silent("decision_reaches_nothing", "DEC-003")
+        .fires(
+            "decision_reference_superseded",
+            "guided -> DEC-003",
+            "warning",
+        )
+        .silent("decision_reference_superseded", "guided -> DEC-001");
 }

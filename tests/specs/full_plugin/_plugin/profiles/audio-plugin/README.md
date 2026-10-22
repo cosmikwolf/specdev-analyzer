@@ -115,6 +115,7 @@ that closes it or a committed default with a `verify` line. Use `/spec-decide` a
 - `parameters_have_bindings` — every nih-plug parameter has a `[[parameter_bindings]]` row (warning)
 - `decision_supersedes_acyclic` — supersession chains have no cycle
 - `decision_supersedes_chain_consistency` — every superseded decision is named by exactly one successor, and every decision named in `supersedes` is `superseded`
+- `decision_reference_superseded` (warning) — a module's `guided_by` or a requirement's `decided_by` names a superseded decision
 - `open_question_closed_by_resolves` — `closed_by` names an existing decision
 - `open_question_status_consistency` — `closed_by` / `default_via` name accepted decisions
 - `implementation_unblocked` — the open-question gate, run by `check`: an `open` question reaches no module that has code

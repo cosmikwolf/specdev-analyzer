@@ -27,6 +27,7 @@ requirements_have_satisfiers                 = "error"
 # Triad consistency checks (the *how & why* + *known unknowns*).
 decision_supersedes_acyclic                  = "error"
 decision_supersedes_chain_consistency        = "error"
+decision_reference_superseded                = "warning"
 open_question_closed_by_resolves             = "error"
 open_question_status_consistency             = "error"
 implementation_unblocked                     = "error"
@@ -129,6 +130,25 @@ relation_scope = "decision_supersedes_decision"
 left = "to.status"
 right = "from.status"
 allowed = [["superseded", "*"]]
+
+# A module's `guided_by` and a requirement's `decided_by` name accepted
+# decisions. A superseded one guides nothing (`report decisions` drops it), so
+# the link is stale: point it at the successor.
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_reference_superseded"
+relation_scope = "module_guided_by_decision"
+left = "to.status"
+right = "to.status"
+allowed = [["accepted", "*"]]
+
+[[project.graph_checks]]
+kind = "related_attrs_allowed"
+rule = "decision_reference_superseded"
+relation_scope = "requirement_decided_by_decision"
+left = "to.status"
+right = "to.status"
+allowed = [["accepted", "*"]]
 
 # OpenQuestion.closed_by is a singular attr (not a relation) — verify it
 # resolves to an existing decision name. The whole-graph view filters

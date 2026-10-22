@@ -5,9 +5,10 @@
 //! 1. The module spec's explicit `source_file` override (project-root-
 //!    relative), when the file exists.
 //! 2. The language adapter's ordered candidate list under
-//!    `<project>/<source_root>/` — `<snake_case(name)>.<ext>` for every
-//!    language, plus whatever the adapter adds (Rust: `<snake>/mod.rs`).
-//!    The first candidate that exists wins.
+//!    `<project>/<source_root>/` — `<snake>.<ext>` for every language,
+//!    plus whatever the adapter adds (Rust: `<snake>/mod.rs`), for each
+//!    stem in [`snake_case_variants`] in order. The first candidate that
+//!    exists wins.
 //! 3. Nothing — a pre-implementation module. `None`, never an error.
 //!
 //! No branch here reads the language *name*: a layout convention is the
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use crate::lang::LanguageAdapter;
 
-use super::util::snake_case;
+use super::util::snake_case_variants;
 
 /// Resolve a spec module name to a source file path. `source_file` is the
 /// module spec's explicit override, if declared. Returns `None` when
@@ -40,11 +41,10 @@ pub fn resolve_source_path(
         // convention candidates are NOT tried — the author named a file.
         return None;
     }
-    let snake = snake_case(module_name);
     let base = project_root.join(source_root);
-    adapter
-        .module_file_candidates(&snake)
-        .into_iter()
+    snake_case_variants(module_name)
+        .iter()
+        .flat_map(|snake| adapter.module_file_candidates(snake))
         .map(|rel| base.join(rel))
         .find(|p| p.is_file())
 }
@@ -74,6 +74,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("src/tasks")).unwrap();
         d
+    }
+
+    #[test]
+    fn digit_names_resolve_both_ways() {
+        // #253: `Aced2Format` lives at `aced2_format.rs` (heck's split),
+        // `SysEx7` at `sysex7.rs` (no break at all).
+        let root = tmp("digits");
+        std::fs::write(root.join("src/aced2_format.rs"), "").unwrap();
+        std::fs::write(root.join("src/sysex7.rs"), "").unwrap();
+        let a = RustAdapter;
+        assert_eq!(
+            resolve_source_path("Aced2Format", None, &a, &root, "src"),
+            Some(root.join("src/aced2_format.rs"))
+        );
+        assert_eq!(
+            resolve_source_path("SysEx7", None, &a, &root, "src"),
+            Some(root.join("src/sysex7.rs"))
+        );
     }
 
     #[test]

@@ -138,9 +138,13 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
     let report = sync::diff_module(layout, module_name)?;
 
     // Read source once; cache lines for span slicing.
-    let source_text = match &report.source_file {
+    let source_text = match report
+        .source_file
+        .as_ref()
+        .map(|p| layout.project_root.join(p))
+    {
         Some(p) => Some(
-            std::fs::read_to_string(p)
+            std::fs::read_to_string(&p)
                 .with_context(|| format!("[ITEM-203] reading source {}", p.display()))?,
         ),
         None => None,
