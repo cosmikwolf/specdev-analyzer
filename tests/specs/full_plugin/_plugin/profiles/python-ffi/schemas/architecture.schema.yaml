@@ -1,0 +1,39 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/python-ffi/architecture.schema.yaml"
+title: "python-ffi architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for python-ffi projects: the native
+  module's import name, which the `stubs` gate reads, and the project-wide
+  decisions. Dependencies, extras and the build backend's settings live in
+  `pyproject.toml`, their only source of truth.
+type: object
+additionalProperties: false
+required: [native]
+properties:
+  native:
+    description: >
+      The compiled extension module the package wraps.
+    type: object
+    additionalProperties: false
+    required: [module]
+    properties:
+      module:
+        description: >
+          Its dotted import name (`my_package._native`): the same name as
+          `pyproject.toml` `[tool.maturin] module-name`, and the Rust
+          `#[pymodule]`'s name as its last segment. The `stubs` gate checks
+          the package's `.pyi` stub of this module against the built module
+          (`python -m mypy.stubtest`).
+        type: string
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (package layout,
+      supported Python versions, public API conventions). Distinct from
+      module-scope `guided_by`: project_decisions describes commitments
+      that span the architecture itself rather than any one module's
+      implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true

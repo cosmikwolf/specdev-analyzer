@@ -1,0 +1,68 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/blocks/pyo3.v1"
+title: "pyo3 block (v1)"
+description: >
+  Schema fragment contributed by the `pyo3` block. Adds a namespaced
+  `[pyo3]` table to `Module`: the Python-visible surface a Rust crate
+  exposes through PyO3 — its extension modules, classes, functions and
+  exception types, each by its Rust name.
+
+  Names only, never signatures: the Rust compiler and the Python package's
+  tests hold the types (a spec states intent, not syntax). Each entry is a
+  promise that the code exposes that name to Python, and the rule pack's
+  code checks report an entry the code does not have. The Python name
+  equals the Rust name (the guidance forbids renames), so one name serves
+  both sides.
+
+  This schema is self-contained: identifier patterns are inlined rather
+  than $ref'd against profile-shipped enums.schema.yaml so the block
+  composes against any profile that exposes `Module`.
+type: object
+properties:
+  pyo3:
+    type: object
+    additionalProperties: false
+    description: >
+      NOTE: if a validation error names this table, fix the inner error
+      first — an error inside any entry below also surfaces as an
+      "unevaluated properties" finding at the module root.
+    properties:
+      modules:
+        description: >
+          Extension modules: each a `#[pymodule]` (a `mod` or a `fn`). Its
+          name is the import name, and it must match the built library's
+          file name, or the import fails.
+        type: array
+        items: { $ref: "#/$defs/Entry" }
+      classes:
+        description: >
+          Python classes: each a `#[pyclass]` struct or enum.
+        type: array
+        items: { $ref: "#/$defs/Entry" }
+      functions:
+        description: >
+          Module-level Python functions: each a `#[pyfunction]`.
+          Methods are not listed here: they belong to their class.
+        type: array
+        items: { $ref: "#/$defs/Entry" }
+      exceptions:
+        description: >
+          Python exception types the library raises: each a
+          `create_exception!` call.
+        type: array
+        items: { $ref: "#/$defs/Entry" }
+
+$defs:
+  Identifier:
+    description: A Rust identifier, which is also the Python name.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+  Entry:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name: { $ref: "#/$defs/Identifier" }
+      description:
+        description: What the entry is for, in prose.
+        type: string
