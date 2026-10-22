@@ -11,7 +11,7 @@ Use `python-library` for projects that:
 - Have a public API worth stating as a contract: public functions, classes, constants, type aliases.
 - Want the tests, the type checker and the linter to run as gates.
 
-A package whose native half is a Rust extension (PyO3, maturin) uses `python-ffi` instead, once it ships.
+A package whose native half is a Rust extension (PyO3, maturin) uses `python-ffi` instead.
 
 ## Profile contents
 

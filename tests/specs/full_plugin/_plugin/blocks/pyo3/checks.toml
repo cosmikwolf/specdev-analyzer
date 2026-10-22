@@ -1,0 +1,32 @@
+# pyo3 rule pack. Inlined to specs/specdev/checks/blocks/pyo3.toml; a project
+# changes a check by editing that copy.
+#
+# Each `[pyo3]` entry is matched to the code by its Rust name: entry `Packet`
+# under `classes` in module `bindings` (entity `bindings.Packet`) is the struct
+# or enum `Packet` under `#[pyclass]`. An entry the code lacks is
+# `pack_entity_in_code`, unless it (or its module) is `planned`. Names only:
+# nothing else is compared.
+
+[[code_checks]]
+language = "rust"
+query = "languages/rust/modules.scm"
+entity_kind = "pyo3.PyModule"
+key_capture = "module.name"
+
+[[code_checks]]
+language = "rust"
+query = "languages/rust/classes.scm"
+entity_kind = "pyo3.Class"
+key_capture = "class.name"
+
+[[code_checks]]
+language = "rust"
+query = "languages/rust/functions.scm"
+entity_kind = "pyo3.Function"
+key_capture = "function.name"
+
+[[code_checks]]
+language = "rust"
+query = "languages/rust/exceptions.scm"
+entity_kind = "pyo3.Exception"
+key_capture = "exception.name"
