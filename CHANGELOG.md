@@ -25,6 +25,10 @@ and it is `1`.
   `<code root>/scripts/compile-gates.sh` (the gates only; it names neither the specs nor specdev) and its
   `.gitattributes` line, and `validate` compares both copies. A workspace root's compile script skips members whose
   code is outside its code root. Without `[paths] code`, the scripts are unchanged.
+- **Code root state**: a missing code root is one `LAYOUT-007` error, and `check` skips the checks that read the
+  code. When the code root is in its own git repository, `check` names the commit it read (`code_root_commit`,
+  info) and warns on local changes (`code_root_clean`) and on a submodule that is not at the commit the spec
+  repository records (`code_root_recorded`).
 
 ### Fixed
 

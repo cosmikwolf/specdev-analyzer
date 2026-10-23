@@ -222,9 +222,8 @@ const COMPILE_HEADER: &str = r#"# Generated from this project's compile-gate lis
 # reported there. CI runs it: `sh scripts/compile-gates.sh`.
 "#;
 
-/// Whether the project's code root is apart from its spec root.
 fn split(layout: &LayoutContext) -> bool {
-    layout.spec.paths.code != "."
+    layout.code_is_split()
 }
 
 /// One gate's lines for a script, `tag` naming the script in its messages.

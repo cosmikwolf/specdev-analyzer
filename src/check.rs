@@ -58,6 +58,18 @@ struct ModuleState {
 pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     let mut report = crate::validate::run(layout)?;
     let domain = load_domain(layout);
+    if layout.code_is_split() && !layout.code_root.is_dir() {
+        // `validate` reported it once (`LAYOUT-007`); every check below
+        // reads the code, so each would report its own absence.
+        unreached_decisions(layout, &domain, &mut report);
+        if let Some(since) = &opts.since {
+            since_report(layout, since, &domain, &mut report)?;
+        }
+        return Ok(report);
+    }
+    if layout.code_is_split() {
+        code_root_state(layout, &domain, &mut report);
+    }
     let modules = module_states(layout)?;
 
     let graph = project_graph(layout)?;
@@ -75,6 +87,87 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
         since_report(layout, since, &domain, &mut report)?;
     }
     Ok(report)
+}
+
+/// `git -C <dir> <args>`, trimmed stdout; `None` when git fails or is absent.
+fn git_in(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// With a separate code root in its own git repository: name the commit
+/// that was checked (info), and warn when that repository has local
+/// changes, or — when it is a submodule of the spec repository — when it is
+/// not at the commit the spec repository records. Nothing when either side
+/// is not in git, or both are in the same repository.
+fn code_root_state(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    let top = |d: &Path| {
+        git_in(d, &["rev-parse", "--show-toplevel"])
+            .and_then(|t| PathBuf::from(t).canonicalize().ok())
+    };
+    let (Some(code_top), Some(spec_top)) = (top(&layout.code_root), top(&layout.project_root))
+    else {
+        return;
+    };
+    if code_top == spec_top {
+        return;
+    }
+    let spec_file = layout.spec_toml_path.display().to_string();
+    let head = git_in(&code_top, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+    report.push(
+        Finding::new(
+            "code_root_commit",
+            severity(domain, "code_root_commit", Severity::Info),
+            format!(
+                "checked the code at commit {head} in {}",
+                code_top.display()
+            ),
+        )
+        .with_file(spec_file.clone()),
+    );
+    if git_in(&code_top, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) {
+        report.push(
+            Finding::new(
+                "code_root_clean",
+                severity(domain, "code_root_clean", Severity::Warning),
+                format!(
+                    "the code repository {} has local changes: this check read them, not commit {head}",
+                    code_top.display()
+                ),
+            )
+            .with_file(spec_file.clone()),
+        );
+    }
+    let Ok(rel) = code_top.strip_prefix(&spec_top) else {
+        return;
+    };
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    let Some(status) = git_in(&spec_top, &["submodule", "status", "--", &rel]) else {
+        return;
+    };
+    if status.starts_with('+') {
+        let recorded = git_in(&spec_top, &["ls-tree", "--object-only", "HEAD", "--", &rel])
+            .map(|s| s.chars().take(head.len().max(7)).collect::<String>())
+            .unwrap_or_default();
+        report.push(
+            Finding::new(
+                "code_root_recorded",
+                severity(domain, "code_root_recorded", Severity::Warning),
+                format!(
+                    "the submodule `{rel}` is at {head}, but the spec repository records {recorded}: commit \
+                     the submodule bump with the spec change, or check out the recorded commit"
+                ),
+            )
+            .with_file(spec_file),
+        );
+    }
 }
 
 /// An accepted decision of this project that reaches no module guides no
