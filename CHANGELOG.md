@@ -20,6 +20,11 @@ and it is `1`.
   and the manifests `migrate` reads all resolve against it, and code paths print relative to it. The specs can live
   in their own folder or repository, with the code in another (for example a git submodule). An absolute `code` is
   refused with a clear message.
+- **Gates with a separate code root**: `gate --label` / `--all` run in the code root; `scripts/specdev-gates.sh`
+  runs `check`, then `cd` to the code root, then the gates. `gate --emit` also writes
+  `<code root>/scripts/compile-gates.sh` (the gates only; it names neither the specs nor specdev) and its
+  `.gitattributes` line, and `validate` compares both copies. A workspace root's compile script skips members whose
+  code is outside its code root. Without `[paths] code`, the scripts are unchanged.
 
 ### Fixed
 

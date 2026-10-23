@@ -12,6 +12,13 @@
 //! 4. Printed code paths (`items diff`, `extract-items`, `report tests`)
 //!    are relative to the code root.
 //! 5. `code` must be relative.
+//! 6. Gates run in the code root: the runner, the spec-side script (after
+//!    `check`, one `cd`) and the compile-only script in the code root, which
+//!    names neither the specs nor the tool. Without a split, neither the
+//!    `cd` nor the compile script appears.
+//! 7. `validate` reports a stale or missing compile script.
+//! 8. A workspace root's compile script skips members whose code is not
+//!    inside its code root; its spec-side script still runs every member.
 
 use crate::ci;
 
@@ -150,4 +157,183 @@ fn an_absolute_code_root_is_refused() {
     let out = t.analyzer(&["validate"]);
     assert_ne!(out.status.code(), Some(0), "{}", text(&out));
     assert!(text(&out).contains("code"), "{}", text(&out));
+}
+
+// ---------------------------------------------------------------------------
+// Gates with a separate code root.
+// ---------------------------------------------------------------------------
+
+const SCRIPT: &str = "scripts/specdev-gates.sh";
+const COMPILE: &str = "../code/scripts/compile-gates.sh";
+
+/// Replace the inlined profile's `gates:` block with `gates`.
+fn set_gates(t: &Tree, gates: &str) {
+    let rel = "specs/specdev/profile.yaml";
+    let body = t.read(rel);
+    let head = body.split("\ngates:").next().unwrap().to_string();
+    let rest = body
+        .split("\ngates:")
+        .nth(1)
+        .map(|r| {
+            r.split_once("\n\n")
+                .map(|(_, after)| after.to_string())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    t.write(rel, &format!("{head}\n{gates}\n{rest}"));
+}
+
+/// A `library-api` tree with code root `../code` and one gate that records
+/// the folder it ran in.
+fn split_with_gate(tag: &str) -> Tree {
+    let t = tree(tag, "library-api", &[]);
+    let spec = t.read("spec.toml");
+    t.write(
+        "spec.toml",
+        &spec.replacen("[paths]\n", "[paths]\ncode = \"../code\"\n", 1),
+    );
+    set_gates(
+        &t,
+        "gates:\n  - label: where\n    steps:\n      - [/bin/sh, -c, \"pwd -P > where.txt\"]\n",
+    );
+    std::fs::create_dir_all(t.root.join("../code")).unwrap();
+    let out = t.analyzer(&["gate", "--emit"]);
+    assert!(out.status.success(), "gate --emit:\n{}", text(&out));
+    t
+}
+
+fn sh(from: &std::path::Path, script: &std::path::Path) -> std::process::Output {
+    std::process::Command::new("sh")
+        .arg(script)
+        .current_dir(from)
+        .env("SPECDEV_ANALYZER", env!("CARGO_BIN_EXE_specdev-analyzer"))
+        .output()
+        .expect("run sh")
+}
+
+fn ran_in(dir: &std::path::Path) -> bool {
+    dir.join("where.txt").is_file()
+}
+
+#[test]
+fn every_gate_path_runs_in_the_code_root() {
+    let t = split_with_gate("code-root-gates");
+    let code = t.root.join("../code").canonicalize().unwrap();
+    let lab = t.read(SCRIPT);
+    let check = lab.find(" check\n").expect("check line");
+    let cd = lab.find("cd '../code' || exit 2\n").expect("cd line");
+    let gate = lab.find("gate where").expect("gate line");
+    assert!(check < cd && cd < gate, "check, cd, then gates:\n{lab}");
+
+    let public = t.read(COMPILE);
+    for absent in ["specdev", "specs/", " check"] {
+        assert!(
+            !public.contains(absent),
+            "`{absent}` in the compile script:\n{public}"
+        );
+    }
+    assert!(public.contains("gate where"), "{public}");
+    assert!(t
+        .read("../code/.gitattributes")
+        .contains("scripts/compile-gates.sh text eol=lf"));
+
+    // The runner, the spec-side script and the compile script, each started
+    // from an unrelated folder, all run the gate in the code root.
+    let out = t.analyzer(&["gate", "--label", "where"]);
+    assert!(
+        out.status.success() && ran_in(&code),
+        "runner:\n{}",
+        text(&out)
+    );
+    std::fs::remove_file(code.join("where.txt")).unwrap();
+    let out = sh(&std::env::temp_dir(), &t.root.join(SCRIPT));
+    assert!(
+        out.status.success() && ran_in(&code),
+        "lab script:\n{}",
+        text(&out)
+    );
+    std::fs::remove_file(code.join("where.txt")).unwrap();
+    let out = sh(
+        std::path::Path::new("/"),
+        &code.join("scripts/compile-gates.sh"),
+    );
+    assert!(
+        out.status.success() && ran_in(&code),
+        "compile script:\n{}",
+        text(&out)
+    );
+    assert!(!ran_in(&t.root), "nothing ran in the spec folder");
+}
+
+#[test]
+fn without_a_split_there_is_no_cd_and_no_compile_script() {
+    let t = tree("code-root-unsplit", "library-api", &[]);
+    let out = t.analyzer(&["gate", "--emit"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(!t.read(SCRIPT).contains("\ncd '"), "{}", t.read(SCRIPT));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("compile-gates"));
+    assert!(!t.root.join("scripts/compile-gates.sh").exists());
+}
+
+#[test]
+fn validate_reports_a_stale_or_missing_compile_script() {
+    let t = split_with_gate("code-root-gate-validate");
+    let v = |t: &Tree| text(&t.analyzer(&["validate"]));
+    assert!(!v(&t).contains("GATE-SCRIPT"), "{}", v(&t));
+    t.write(COMPILE, "#!/bin/sh\nexit 0\n");
+    let s = v(&t);
+    assert!(
+        s.contains("GATE-SCRIPT-001") && s.contains("compile-gates.sh"),
+        "{s}"
+    );
+    std::fs::remove_file(t.root.join(COMPILE)).unwrap();
+    let s = v(&t);
+    assert!(
+        s.contains("GATE-SCRIPT-002") && s.contains("compile-gates.sh"),
+        "{s}"
+    );
+}
+
+#[test]
+fn a_workspace_compile_script_skips_members_whose_code_is_elsewhere() {
+    let root = tree("code-root-ws", "rust-workspace", &[]);
+    let spec = root.read("spec.toml").replace(
+        "[[workspace.members]]\nname = \"placeholder-member\"\npath = \"crates/placeholder-member\"\n",
+        "[[workspace.members]]\nname = \"split\"\npath = \"members/split\"\n\n\
+         [[workspace.members]]\nname = \"lab\"\npath = \"members/lab\"\n",
+    );
+    root.write(
+        "spec.toml",
+        &spec.replacen("[paths]\n", "[paths]\ncode = \"code\"\n", 1),
+    );
+    let member = |name: &str, code: &str| {
+        format!(
+            "spec_version = \"2.0\"\n\n[project]\nname = \"{name}\"\nprofile = \"library-api\"\n\
+             language = \"rust\"\nmax_parallel_agents = 1\n\n[paths]\nspecs = \"specs\"\n\
+             source = \"src\"\ncode = \"{code}\"\n"
+        )
+    };
+    root.write(
+        "members/split/spec.toml",
+        &member("split", "../../code/crates/split"),
+    )
+    .write("members/lab/spec.toml", &member("lab", "."));
+    std::fs::create_dir_all(root.root.join("code")).unwrap();
+    let out = root.analyzer(&["gate", "--emit"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let public = root.read("code/scripts/compile-gates.sh");
+    assert!(
+        public.contains("(cd 'crates/split' && sh scripts/compile-gates.sh)"),
+        "{public}"
+    );
+    assert!(
+        !public.contains("lab"),
+        "a lab-only member is skipped:\n{public}"
+    );
+    // The spec-side script still runs every member.
+    let lab = root.read(SCRIPT);
+    assert!(
+        lab.contains("members/split") && lab.contains("members/lab"),
+        "{lab}"
+    );
 }
