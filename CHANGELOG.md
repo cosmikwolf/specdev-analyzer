@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-22
+
 ### Added
 
 - **`hello-pyo3` test**: a `python-ffi` package and a `library-api` crate with the `pyo3` block (fixture mirrors
