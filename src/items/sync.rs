@@ -328,7 +328,7 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
         module_name,
         source_map::source_file_override(&value),
         adapter.as_ref(),
-        &layout.project_root,
+        &layout.code_root,
         source_root,
     );
     let floor = extract::profile_visibility_floor(&layout.specdev_root)?;
@@ -372,7 +372,7 @@ pub fn diff_module(layout: &LayoutContext, module_name: &str) -> Result<DiffRepo
     };
     Ok(DiffReport {
         module: module_name.to_string(),
-        source_file: source_file.map(|p| super::util::relative_to(&layout.project_root, &p)),
+        source_file: source_file.map(|p| super::util::relative_to(&layout.code_root, &p)),
         in_spec_only,
         in_source_only: source_remaining,
         both,

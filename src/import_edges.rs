@@ -64,10 +64,10 @@ pub struct Edges {
 /// The import context for the project's own language.
 pub fn context(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> ImportContext {
     ImportContext {
-        project_root: layout.project_root.clone(),
+        code_root: layout.code_root.clone(),
         source_root: PathBuf::from(&layout.spec.paths.source),
         package_name: layout.spec.project.name.clone(),
-        aliases: adapter.import_aliases(&layout.project_root),
+        aliases: adapter.import_aliases(&layout.code_root),
     }
 }
 
@@ -85,7 +85,7 @@ fn slash(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// The imports of one project-relative file, each resolved.
+/// The imports of one file relative to the code root, each resolved.
 pub fn file_imports(
     adapter: &dyn LanguageAdapter,
     ctx: &ImportContext,
@@ -94,7 +94,7 @@ pub fn file_imports(
     let Some(query_src) = adapter.imports_query() else {
         return Ok(Vec::new());
     };
-    let path = ctx.project_root.join(rel);
+    let path = ctx.code_root.join(rel);
     let source =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -164,7 +164,7 @@ pub fn file_imports(
         let resolved = adapter
             .resolve_import(&spec, rel, ctx)
             .into_iter()
-            .find(|cand| ctx.project_root.join(cand).is_file())
+            .find(|cand| ctx.code_root.join(cand).is_file())
             .map(|p| slash(&p));
         if member && resolved.is_none() {
             continue;
@@ -190,7 +190,7 @@ pub fn report_roots(
     let exts = adapter.file_extensions();
     let mut files = BTreeSet::new();
     for r in roots {
-        walk(&ctx.project_root.join(r), &mut files);
+        walk(&ctx.code_root.join(r), &mut files);
     }
     let mut out = Vec::new();
     for abs in files {
@@ -199,7 +199,7 @@ pub fn report_roots(
             continue;
         }
         let rel = abs
-            .strip_prefix(&ctx.project_root)
+            .strip_prefix(&ctx.code_root)
             .unwrap_or(&abs)
             .to_path_buf();
         let imports = file_imports(adapter, ctx, &rel)?;

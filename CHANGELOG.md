@@ -15,6 +15,15 @@ and it is `1`.
 ### Added
 
 - **`hello-ts-library` and `hello-dart-package` tests** for the new library profiles (fixture mirrors).
+- **`[paths] code`**: a code root apart from the spec root (default `"."`, relative only). Module `source_file`,
+  `[paths].source`, `[paths].tests`, the language's test roots, imports, rule-pack code checks, the lockfile check
+  and the manifests `migrate` reads all resolve against it, and code paths print relative to it. The specs can live
+  in their own folder or repository, with the code in another (for example a git submodule). An absolute `code` is
+  refused with a clear message.
+
+### Fixed
+
+- `extract-items` resolved and printed source paths against the working folder, not the project root.
 
 ## [0.4.0] — 2026-10-22
 

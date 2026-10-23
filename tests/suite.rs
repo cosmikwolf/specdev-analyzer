@@ -28,6 +28,7 @@ mod checked_intent_matrix;
 mod checked_intent_migrate;
 mod cli_help_text;
 mod clone_layout;
+mod code_root;
 mod context_files;
 mod context_profile_specific;
 mod context_subcommand;

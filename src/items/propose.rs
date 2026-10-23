@@ -141,7 +141,7 @@ pub fn build_proposal(layout: &LayoutContext, module_name: &str) -> Result<Propo
     let source_text = match report
         .source_file
         .as_ref()
-        .map(|p| layout.project_root.join(p))
+        .map(|p| layout.code_root.join(p))
     {
         Some(p) => Some(
             std::fs::read_to_string(&p)
