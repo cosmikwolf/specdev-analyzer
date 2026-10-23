@@ -1940,6 +1940,20 @@ pub(crate) fn print_emit_report(r: &specdev_analyzer::gates::EmitReport) {
     if r.gitattributes_line_missing {
         println!("add this line to .gitattributes, so the script stays LF on every checkout:\n  {GITATTRIBUTES_LINE}");
     }
+    if let Some(c) = &r.compile {
+        let line = specdev_analyzer::gates::COMPILE_GITATTRIBUTES_LINE;
+        if c.written {
+            println!("wrote {}", c.path);
+        } else {
+            println!("{} is current", c.path);
+        }
+        if c.gitattributes_written {
+            println!("wrote .gitattributes in the code root ({line})");
+        }
+        if c.gitattributes_line_missing {
+            println!("add this line to .gitattributes in the code root, so the script stays LF on every checkout:\n  {line}");
+        }
+    }
 }
 
 fn run_one_gate(layout: &LayoutContext, label: &str) -> ExitCode {
