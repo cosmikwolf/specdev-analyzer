@@ -1,0 +1,99 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/ts-library/module.schema.yaml"
+title: "ts-library module spec (v1)"
+description: >
+  Shape of a single module spec in `specs/modules/*.toml`. One module
+  per file; filename should match the `name` field. ts-library targets
+  TypeScript packages published to npm whose load-bearing concern is the
+  public API surface. A module is one source file (`src/<name>.ts`) or a
+  directory with an `index.ts`; what it exports is its surface, so the spec
+  carries no visibility field.
+type: object
+# `unevaluatedProperties: false` rather than `additionalProperties: false`
+# because JSON Schema 2020-12's additionalProperties is NOT `allOf`-aware
+# — it would reject keys contributed by inlined block schemas even when
+# those are valid via the aggregator `allOf:` slot. unevaluatedProperties
+# IS allOf-aware.
+unevaluatedProperties: false
+required: [name]
+properties:
+  name:
+    $ref: "enums.schema.yaml#/$defs/Identifier"
+  description:
+    type: string
+  depends_on:
+    description: >
+      Other modules within this library this module depends on. The
+      `modules_acyclic` graph check enforces no cycles.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/ModuleRef" }
+    uniqueItems: true
+  satisfies:
+    description: >
+      Requirement ids this module satisfies. The
+      `module_satisfies_resolves` graph check verifies each id exists.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true
+  bindings:
+    description: >
+      Aggregator slot for bridge contributions. Open in v1.
+    type: object
+    additionalProperties: true
+  items:
+    description: >
+      Exported TypeScript declarations that carry spec significance — one
+      items[] entry per exported function, class, interface, type alias,
+      enum or const, and per public class member (`Class.member`),
+      contributing to the module's contractual surface. Re-exports are
+      their own kind. Sparseness rule (enforced by the language schema). Consumed by the three-stage agentic sync
+      (`items diff` / `items propose` / `items apply`).
+    type: array
+    items:
+      $ref: "inlined/languages/{{language}}/items.schema.yaml"
+    uniqueItems: true
+  planned:
+    description: >
+      Not built yet. Suppresses only findings about something missing (no
+      resolvable source, a unit entry not in the code); code that exists is
+      always checked. `/spec-design` writes it on a new module; remove it
+      when the code lands.
+    type: boolean
+  source_file:
+    description: >
+      Explicit source-file override for items[] extraction and sync
+      Project-root-relative path, e.g. `src/io/packet-reader.ts` for a file
+      whose name is not the module name in snake_case, or `src/index.ts` for
+      the package entry. When absent the analyzer resolves by convention
+      under `[paths].source`: `<snake_case(name)>.ts`, `.tsx`, then
+      `<snake_case(name)>/index.ts`. Precedence: this override, then the
+      adapter candidates, then no source (pre-implementation module — no
+      items extracted, never an error). A declared file that does not
+      exist on disk resolves to no source as well.
+    type: string
+    minLength: 1
+  context_files:
+    description: >
+      Reference reading for whoever edits this module (a datasheet
+      section, a protocol note); `context --module` lists the paths in
+      declared order. Paths are spec-root-relative (directory
+      containing `spec.toml`). Validate-time checks ensure each file
+      exists and is readable; a binary file (an image, a PDF) is allowed (`CONTEXT-001` /
+      `CONTEXT-002` / `CONTEXT-003`). A choice or a known problem
+      belongs in a decision or an open question, not here. Globs and
+      section anchors are bounded deferrals.
+    type: array
+    items:
+      type: string
+      minLength: 1
+    uniqueItems: true
+  guided_by:
+    description: >
+      Decision ids that inform this module's implementation but aren't
+      pinned to any specific requirement (e.g. naming conventions,
+      project-wide build rules). `report decisions --module` lists them
+      alongside the requirement-anchored `decided_by` decisions.
+      Validated by graph check `module_guided_by_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true

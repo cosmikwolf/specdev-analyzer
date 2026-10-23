@@ -1,0 +1,69 @@
+# Manifest — drives analyzer dispatch for ts-library projects.
+# Schema: specdev-analyzer/src/embedded/profile.schema.yaml.
+# Inlined to project at specs/specdev/profile.yaml during bootstrap.
+
+# Contract this manifest is authored against; compared to the
+# analyzer's PROFILE_CONTRACT_VERSION before the schema runs (#117).
+contract_version: 3
+
+name: ts-library
+language: typescript
+
+# Config files written once when absent by `specdev-analyzer bootstrap`,
+# then owned by the project: never rewritten. `tsconfig.json` type-checks
+# the sources and the tests; `tsconfig.build.json` emits the package (`dist/`,
+# JavaScript and declarations) from the sources only.
+paired_files:
+  - { template_file: templates/tsconfig.json.template,       target: tsconfig.json }
+  - { template_file: templates/tsconfig.build.json.template, target: tsconfig.build.json }
+  - { template_file: templates/gitignore.template,           target: .gitignore }
+  - { template_file: templates/specdev-ci.yml.template,      target: .github/workflows/specdev.yml }
+
+# Compile gates, as data, one list per package manager. The project names its
+# tool in spec.toml (`[project] toolchain`); `gate` and the gate script run
+# that tool's list, and `check` reports a lockfile of another tool. Each list
+# installs from the lockfile (frozen), type-checks the sources and the tests,
+# runs the tests, and builds the package. typescript and vitest are the
+# project's dev dependencies.
+toolchains:
+  pnpm:
+    lockfiles: [pnpm-lock.yaml]
+    gates:
+      - label: install
+        steps:
+          - [pnpm, install, --frozen-lockfile]
+      - label: types
+        steps:
+          - [pnpm, exec, tsc, --noEmit]
+      - label: tests
+        steps:
+          - [pnpm, exec, vitest, run]
+      - label: build
+        steps:
+          - [pnpm, exec, tsc, -p, tsconfig.build.json]
+  npm:
+    lockfiles: [package-lock.json]
+    gates:
+      - label: install
+        steps:
+          - [npm, ci]
+      - label: types
+        steps:
+          - [npm, exec, --no, --, tsc, --noEmit]
+      - label: tests
+        steps:
+          - [npm, exec, --no, --, vitest, run]
+      - label: build
+        steps:
+          - [npm, exec, --no, --, tsc, -p, tsconfig.build.json]
+
+bootstrap:
+  steps: []                       # standalone package; no workspace machinery
+
+context:
+  context_subcommand_extras: []
+
+surface:
+  has_modules: true
+  has_requirements: true
+  has_architecture: true

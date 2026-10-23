@@ -1,0 +1,126 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/dart-package/open_questions.schema.yaml"
+title: "dart-package open_questions file (v1)"
+description: >
+  Shape of `specs/open_questions.toml`. Records *known unknowns* —
+  questions whose answer the project hasn't pinned yet. Three statuses
+  shape the lifecycle:
+
+  * `open` — no committed answer. Once a module this question reaches
+    has code, `check` reports it (the `implementation_unblocked` rule —
+    load-bearing). `default_via` and `closed_by` are forbidden.
+  * `default_committed` — a working assumption is committed (via
+    `default_via` pointing to a decision) plus a `verify` line saying
+    how the project will know if the assumption was wrong. Work
+    proceeds; `report decisions` shows the placeholder and verify text.
+  * `closed` — a decision (via `closed_by`) resolved the question.
+    `verify` is forbidden — the question is no longer in flight, so
+    a verification plan would be reasoning-trail noise.
+
+  The `allOf` block enforces the per-status field invariants at
+  schema time. Cross-file resolution of `default_via` / `closed_by` /
+  `affects` happens during validate-time graph checks.
+
+  An empty `open_questions.toml` is valid — `open_question: []` or
+  the file omitted entirely both leave existing projects unaffected.
+type: object
+additionalProperties: false
+properties:
+  open_question:
+    type: array
+    items: { $ref: "#/$defs/OpenQuestion" }
+
+$defs:
+  OpenQuestion:
+    type: object
+    additionalProperties: false
+    required: [id, title, status, text, affects]
+    properties:
+      id:
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      title:
+        description: One-line title; shows in reports.
+        type: string
+        minLength: 1
+      status:
+        description: See file-level description for lifecycle semantics.
+        type: string
+        enum: [open, default_committed, closed]
+      text:
+        description: >
+          The question itself. Should be concrete enough that any of
+          the three exits — answer, commit a default, or close as moot
+          — is a clear next step.
+        type: string
+        minLength: 1
+      default_via:
+        description: >
+          Id of the decision that commits a working default for this
+          question. Required when `status = "default_committed"`;
+          forbidden in `open` and `closed` statuses (the latter would
+          be ambiguous against `closed_by`). Graph check
+          `open_question_default_via_resolves` enforces target exists.
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      closed_by:
+        description: >
+          Id of the decision that resolved this question. Required
+          when `status = "closed"`; forbidden in other statuses.
+          Graph check `open_question_closed_by_resolves` (covered
+          alongside the closing-decision's `closes_questions[]`)
+          enforces target exists.
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      verify:
+        description: >
+          Required when `status = "default_committed"`. One-line
+          falsification plan — "here's how I'll know my placeholder
+          was wrong." `report decisions` lists it with the placeholder
+          for the modules the question reaches, so whoever edits them
+          sees the verification commitment. Forbidden
+          when `status = "closed"` (the question is settled).
+        type: string
+        minLength: 1
+      hard_gate:
+        description: >
+          `true` (the default): a person resolves this question or commits
+          its default. `false`, set by a person: an agent may commit a
+          recorded default; `check --since` reports each one.
+        type: boolean
+        default: true
+      affects:
+        description: >
+          Requirement ids this question affects. The open-question gate
+          (`implementation_unblocked`) reaches every module whose `satisfies[]`
+          overlaps this list. At least one entry required — an open
+          question that affects nothing should be rephrased into a
+          decision or deleted.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        minItems: 1
+        uniqueItems: true
+      category:
+        description: >
+          Informational classifier driving reporting. `hardware_ab`
+          marks questions awaiting bench measurement; `impl_time`
+          marks questions expected to settle naturally during
+          implementation; `design` marks open architectural choices.
+        type: string
+        enum: [hardware_ab, impl_time, design]
+    allOf:
+      - if: { properties: { status: { const: open } } }
+        then:
+          not:
+            anyOf:
+              - required: [default_via]
+              - required: [closed_by]
+              - required: [verify]
+      - if: { properties: { status: { const: default_committed } } }
+        then:
+          required: [default_via, verify]
+          not: { required: [closed_by] }
+      - if: { properties: { status: { const: closed } } }
+        then:
+          required: [closed_by]
+          not:
+            anyOf:
+              - required: [verify]
+              - required: [default_via]
