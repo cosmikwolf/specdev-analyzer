@@ -60,6 +60,21 @@ pub fn run(layout: &LayoutContext) -> Result<Report> {
         ));
     }
     validate_layout(layout, &mut report)?;
+    if layout.code_is_split() && !layout.code_root.is_dir() {
+        report.push(
+            Finding::new(
+                "LAYOUT-007",
+                Severity::Error,
+                format!(
+                    "the code root `{}` (`[paths] code`) does not exist at {}; the checks that read the code \
+                     are skipped. If it is a git submodule, run `git submodule update --init`",
+                    layout.spec.paths.code,
+                    layout.code_root.display()
+                ),
+            )
+            .with_file(layout.spec_toml_path.display().to_string()),
+        );
+    }
     validate_modules(layout, &mut report)?;
     validate_architecture(layout, &mut report)?;
     validate_entries(layout, &mut report)?;

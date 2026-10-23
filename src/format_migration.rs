@@ -410,7 +410,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
 
     // The project's own manifest, for the removal report's marks.
     let facts = crate::lang::adapter_for(&layout.spec.project.language)
-        .and_then(|a| a.manifest_facts(root));
+        .and_then(|a| a.manifest_facts(&layout.code_root));
     let removed_count = std::cell::Cell::new(0usize);
     let report_removed =
         |file: &Path, removed: Vec<crate::field_cuts::Removed>, lines: &mut Vec<String>| {
@@ -491,7 +491,7 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 &m.name,
                 source_file_override(&as_value),
                 a,
-                root,
+                &layout.code_root,
                 &layout.spec.paths.source,
             )
         });
@@ -507,9 +507,9 @@ fn plan_one(layout: &LayoutContext, plugin_root: &Path, opts: FormatOptions) -> 
                 }
             }
             Some(src) => {
-                let rel = rel_to(root, &src);
+                let rel = rel_to(&layout.code_root, &src);
                 if let Some(a) = adapter.as_deref() {
-                    if crate::test_discovery::holds_only_tests(a, root, &rel)? {
+                    if crate::test_discovery::holds_only_tests(a, &layout.code_root, &rel)? {
                         report.tests_only.push(m.name.clone());
                     }
                 }

@@ -120,23 +120,23 @@ pub fn discover_project(layout: &LayoutContext) -> Result<Discovery> {
     let Some(adapter) = crate::lang::adapter_for(&layout.spec.project.language) else {
         return Ok(Discovery::default());
     };
-    let mut roots: Vec<PathBuf> = vec![layout.project_root.join(&layout.spec.paths.source)];
+    let mut roots: Vec<PathBuf> = vec![layout.source_dir.clone()];
     roots.extend(
         layout
             .spec
             .paths
             .tests
             .iter()
-            .map(|t| layout.project_root.join(t)),
+            .map(|t| layout.code_root.join(t)),
     );
     roots.extend(
         adapter
             .conventional_test_roots()
             .iter()
-            .map(|r| layout.project_root.join(r)),
+            .map(|r| layout.code_root.join(r)),
     );
     let modules = module_files(layout, adapter.as_ref());
-    discover(adapter.as_ref(), &layout.project_root, &roots, &modules)
+    discover(adapter.as_ref(), &layout.code_root, &roots, &modules)
 }
 
 /// Discover the tests under explicit `roots` (`report tests --root`).
@@ -172,10 +172,10 @@ fn module_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> BTreeM
             name,
             crate::items::source_map::source_file_override(&doc),
             adapter,
-            &layout.project_root,
+            &layout.code_root,
             &layout.spec.paths.source,
         ) {
-            out.entry(rel(&layout.project_root, &src))
+            out.entry(rel(&layout.code_root, &src))
                 .or_insert_with(|| name.to_string());
         }
     }
@@ -366,19 +366,19 @@ fn discover(
     Ok(disc)
 }
 
-/// Whether the project-relative source file `rel` holds only tests: at
+/// Whether the source file `rel` (relative to `code_root`) holds only tests: at
 /// least one test, and every top-level node either inert (a comment, an
 /// attribute, an import — [`LanguageAdapter::is_inert_top_level`]) or inside
 /// a test or test group. `false` when the language ships no `tests.scm`.
 pub fn holds_only_tests(
     adapter: &dyn LanguageAdapter,
-    project_root: &Path,
+    code_root: &Path,
     rel: &Path,
 ) -> Result<bool> {
     let Some(query_src) = adapter.tests_query() else {
         return Ok(false);
     };
-    let path = project_root.join(rel);
+    let path = code_root.join(rel);
     let source =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let ext = rel.extension().and_then(|e| e.to_str()).unwrap_or("");

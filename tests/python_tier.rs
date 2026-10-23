@@ -114,7 +114,7 @@ fn pytest_discovery_and_node_id_identities() {
 
 fn imports(file: &str, source_root: &str) -> Vec<(String, Option<String>, bool)> {
     let ctx = ImportContext {
-        project_root: fixture(),
+        code_root: fixture(),
         source_root: PathBuf::from(source_root),
         package_name: "midi-py".into(),
         aliases: Vec::new(),

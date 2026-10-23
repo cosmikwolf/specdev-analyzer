@@ -15,6 +15,26 @@ and it is `1`.
 ### Added
 
 - **`hello-ts-library` and `hello-dart-package` tests** for the new library profiles (fixture mirrors).
+- **`[paths] code`**: a code root apart from the spec root (default `"."`, relative only). Module `source_file`,
+  `[paths].source`, `[paths].tests`, the language's test roots, imports, rule-pack code checks, the lockfile check
+  and the manifests `migrate` reads all resolve against it, and code paths print relative to it. The specs can live
+  in their own folder or repository, with the code in another (for example a git submodule). An absolute `code` is
+  refused with a clear message.
+- **Gates with a separate code root**: `gate --label` / `--all` run in the code root; `scripts/specdev-gates.sh`
+  runs `check`, then `cd` to the code root, then the gates. `gate --emit` also writes
+  `<code root>/scripts/compile-gates.sh` (the gates only; it names neither the specs nor specdev) and its
+  `.gitattributes` line, and `validate` compares both copies. A workspace root's compile script skips members whose
+  code is outside its code root. Without `[paths] code`, the scripts are unchanged.
+- **Code root state**: a missing code root is one `LAYOUT-007` error, and `check` skips the checks that read the
+  code. When the code root is in its own git repository, `check` names the commit it read (`code_root_commit`,
+  info) and warns on local changes (`code_root_clean`) and on a submodule that is not at the commit the spec
+  repository records (`code_root_recorded`).
+- **`context --module`** gives `files.source` (the module's source, a path that opens from the project root) and,
+  with a separate code root, `files.code_root`. `resolve` gives `code_root`.
+
+### Fixed
+
+- `extract-items` resolved and printed source paths against the working folder, not the project root.
 
 ## [0.4.0] — 2026-10-22
 

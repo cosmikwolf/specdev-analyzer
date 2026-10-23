@@ -65,7 +65,15 @@ properties:
         minLength: 1
       source:
         type: string
-        description: Source code directory the analyzer audits/reverses against, relative to spec.toml. Conventionally "src".
+        description: Source code directory the analyzer audits/reverses against, relative to the code root (`code`). Conventionally "src".
+        minLength: 1
+      code:
+        type: string
+        description: |
+          The code root, relative to spec.toml. Default ".": the code lives next to the specs. Set it when the
+          specs live in their own folder or repository and the code elsewhere (for example a git submodule):
+          `source`, `tests`, module `source_file`, test discovery, imports and the gates then read from it. It is the
+          only path that may leave the spec folder, and it must be relative.
         minLength: 1
       plugin_root:
         type: string
@@ -79,7 +87,7 @@ properties:
       tests:
         type: array
         description: |
-          Optional extra test roots, relative to spec.toml, for tests that live outside `source`
+          Optional extra test roots, relative to the code root, for tests that live outside `source`
           and outside the language's conventional test locations (for example a bench crate's
           `tests/`). Test discovery walks `source`, these roots, and the conventional locations.
         items: { type: string, minLength: 1 }
