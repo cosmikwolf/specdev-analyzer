@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-23
+
 ### Added
 
 - **`hello-ts-library` and `hello-dart-package` tests** for the new library profiles (fixture mirrors).
