@@ -1,0 +1,9 @@
+# Written once by `specdev-analyzer bootstrap` when absent, then owned by the
+# project. The analyze gate fails on any issue this file enables, infos too.
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true

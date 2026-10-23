@@ -1,0 +1,138 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/ts-library/requirements.schema.yaml"
+title: "ts-library requirements file (v1)"
+description: >
+  Shape of `specs/requirements.toml`. Mirrors the firmware-layered
+  requirements structure: external sources + individual requirements.
+  Library-specific concerns (MSRV, no_std, alloc support) are expressed
+  as free-form text in `requirement.text` for v1; typed fields can be
+  added later if real projects need them.
+type: object
+additionalProperties: false
+properties:
+  source:
+    description: >
+      External documents that requirements in this file may be derived
+      from. Declared once per source and referenced by id from each
+      Requirement's `source` array.
+    type: array
+    items: { $ref: "#/$defs/Source" }
+    uniqueItems: true
+  requirement:
+    type: array
+    items: { $ref: "#/$defs/Requirement" }
+
+$defs:
+  Source:
+    type: object
+    additionalProperties: false
+    required: [id, kind, title]
+    properties:
+      id:
+        description: >
+          Stable identifier referenced by Requirement.source[]. Lowercase
+          kebab-case (e.g. "ecma-262", "user-stories").
+        type: string
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      kind:
+        description: >
+          Origin category. `protocol` = external technical spec or
+          standard. `user` = stakeholder/user requirements. `regulatory`
+          = compliance or certification. `derived` = internal decisions
+          with no external document.
+        type: string
+        enum: [protocol, user, regulatory, derived]
+      title:
+        type: string
+        minLength: 1
+      version:
+        type: string
+        minLength: 1
+      url:
+        type: string
+        format: uri
+
+  Requirement:
+    type: object
+    additionalProperties: false
+    required: [id, text]
+    properties:
+      id:
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      text:
+        type: string
+        minLength: 1
+      nature:
+        description: >
+          What kind of artifact satisfies this requirement.
+          `module` (default) — a TypeScript module is expected to carry the
+          implementation; the `requirements_have_satisfiers` graph check
+          warns if no module declares this requirement in its
+          `satisfies` array. `architecture` — captured by the
+          package's public API shape (the entry `src/index.ts` and the
+          `exports` map), not a module body. `build` — captured by
+          `package.json` and `tsconfig` (dependencies, `exports`, targets).
+          `test` — captured by a test suite; the
+          `requirements_have_satisfiers` check exempts these;
+          `requirements_have_tests` asks for a discovered test named in
+          `verified_by`.
+        type: string
+        enum: [module, architecture, build, test]
+        default: module
+      satisfies:
+        description: Parent requirement ids; forms a requirement tree.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      source:
+        description: Ids of Source entries this requirement is derived from.
+        type: array
+        items:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        uniqueItems: true
+      source_ref:
+        description: >
+          Free-form locator within the source document(s) — section
+          number, page, table, clause.
+        type: string
+        minLength: 1
+      planned:
+        description: >
+          Not built yet. Suppresses only findings about something missing
+          (no satisfying module, no test); code that exists is always
+          checked. `check --since` reports every new flag.
+        type: boolean
+      test_pending:
+        description: >
+          Built, but with no test yet. Exempts only the requirement-to-test
+          checks; "has a place" still applies. `check --since` reports every
+          new flag.
+        type: boolean
+      verified_by:
+        description: >
+          Test names or `Module::function` paths that verify this
+          requirement.
+        type: array
+        items: { type: string, minLength: 1 }
+      decided_by:
+        description: >
+          Decision ids that pin this requirement's *how* / *why*.
+          Replaces the free-form `source_ref = "DEC-NNN"` pattern with
+          a typed reference into `decisions.toml`. Validated by graph
+          check `requirement_decided_by_resolves`. Optional — existing
+          requirements without this field continue to validate.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      retired_by:
+        description: >
+          Only on a requirement whose file is in
+          `specs/requirements/retired/`, where it is required: the
+          id of the accepted decision that retired it (or of one that was
+          superseded by a chain ending at an accepted decision). The
+          folder is the state; this says why. Forbidden on a live
+          requirement. The analyzer admits it on retired files whatever
+          this schema says.
+        type: string
+        minLength: 1
