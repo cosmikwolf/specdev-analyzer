@@ -24,6 +24,8 @@
 //! 10. A code root in its own git repository: `check` names the commit it
 //!     read, and warns on local changes and on a submodule that is not at
 //!     the commit the spec repository records.
+//! 11. `context` names the code root and the module's source as a path that
+//!     opens from the project root.
 
 use crate::ci;
 
@@ -436,4 +438,31 @@ fn a_code_root_in_the_same_repository_reports_nothing() {
         .silent("code_root_commit", "")
         .silent("code_root_clean", "")
         .silent("LAYOUT-007", "");
+}
+
+#[test]
+fn context_names_the_code_root_and_an_openable_source() {
+    let t = split("code-root-context");
+    t.write(
+        "specs/modules/Explicit.toml",
+        &fw_module("Explicit", "source_file = \"src/explicit.rs\"\n"),
+    )
+    .write("../code/src/explicit.rs", "pub fn e() {}\n");
+    let out = t.analyzer(&["context", "--module", "Explicit"]);
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("code_root: ../code\n"), "{}", text(&out));
+    assert!(
+        s.contains("source: ../code/src/explicit.rs\n"),
+        "{}",
+        text(&out)
+    );
+    assert!(t.root.join("../code/src/explicit.rs").is_file());
+
+    let u = tree("code-root-context-unsplit", "firmware-layered", &[]);
+    u.write("specs/modules/Plain.toml", &fw_module("Plain", ""))
+        .write("src/plain.rs", "pub fn p() {}\n");
+    let out = u.analyzer(&["context", "--module", "Plain"]);
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(!s.contains("code_root:"), "{}", text(&out));
+    assert!(s.contains("source: src/plain.rs\n"), "{}", text(&out));
 }

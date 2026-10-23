@@ -29,6 +29,8 @@ and it is `1`.
   code. When the code root is in its own git repository, `check` names the commit it read (`code_root_commit`,
   info) and warns on local changes (`code_root_clean`) and on a submodule that is not at the commit the spec
   repository records (`code_root_recorded`).
+- **`context --module`** gives `files.source` (the module's source, a path that opens from the project root) and,
+  with a separate code root, `files.code_root`. `resolve` gives `code_root`.
 
 ### Fixed
 
