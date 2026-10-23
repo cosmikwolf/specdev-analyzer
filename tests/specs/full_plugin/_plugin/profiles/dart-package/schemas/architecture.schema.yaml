@@ -1,0 +1,21 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/dart-package/architecture.schema.yaml"
+title: "dart-package architecture spec (v1)"
+description: >
+  Shape of `specs/architecture.toml` for dart-package projects. Holds the
+  project-wide decisions list only; dependencies and the SDK constraint
+  live in `pubspec.yaml`, their only source of truth.
+type: object
+additionalProperties: false
+properties:
+  project_decisions:
+    description: >
+      Decision ids that shape the project as a whole (library layout,
+      supported SDK versions, public API conventions). Distinct from
+      module-scope `guided_by`: project_decisions describes commitments
+      that span the architecture itself rather than any one module's
+      implementation. Validated by graph check
+      `architecture_project_decisions_resolves`.
+    type: array
+    items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+    uniqueItems: true

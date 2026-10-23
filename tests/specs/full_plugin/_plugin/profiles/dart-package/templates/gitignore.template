@@ -1,0 +1,7 @@
+# Written once by `specdev-analyzer bootstrap` when absent, then owned by
+# the project.
+.dart_tool/
+
+# A regular package does not commit pubspec.lock (dart.dev, "What not to
+# commit"); an application package does.
+pubspec.lock

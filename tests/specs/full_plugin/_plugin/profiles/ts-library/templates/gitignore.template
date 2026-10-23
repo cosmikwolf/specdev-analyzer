@@ -1,0 +1,9 @@
+# Written once by `specdev-analyzer bootstrap` when absent, then owned by
+# the project. Everything below is tool output that is never committed.
+/node_modules
+/dist
+/coverage
+*.tsbuildinfo
+npm-debug.log*
+.pnpm-debug.log*
+.DS_Store
