@@ -158,6 +158,11 @@ impl LayoutContext {
         }
     }
 
+    /// Whether `[paths] code` puts the code root apart from the project root.
+    pub fn code_is_split(&self) -> bool {
+        self.spec.paths.code != "."
+    }
+
     /// Enumerate every expected layout entry with present/absent flags.
     #[instrument(level = "info", skip(self), fields(specdev_root = %self.specdev_root.display()))]
     pub fn enumerate(&self) -> LayoutInventory {

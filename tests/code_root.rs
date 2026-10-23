@@ -19,6 +19,11 @@
 //! 7. `validate` reports a stale or missing compile script.
 //! 8. A workspace root's compile script skips members whose code is not
 //!    inside its code root; its spec-side script still runs every member.
+//! 9. A missing code root is one error, and the code-side checks are
+//!    skipped.
+//! 10. A code root in its own git repository: `check` names the commit it
+//!     read, and warns on local changes and on a submodule that is not at
+//!     the commit the spec repository records.
 
 use crate::ci;
 
@@ -336,4 +341,99 @@ fn a_workspace_compile_script_skips_members_whose_code_is_elsewhere() {
         lab.contains("members/split") && lab.contains("members/lab"),
         "{lab}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// A missing code root, and the state of its git repository.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_missing_code_root_is_one_error() {
+    let t = split("code-root-missing");
+    t.write(
+        "specs/modules/Explicit.toml",
+        &fw_module("Explicit", "source_file = \"src/explicit.rs\"\n"),
+    );
+    t.check(&[])
+        .fires("LAYOUT-007", "", "error")
+        .says("LAYOUT-007", "", "git submodule update --init")
+        .silent("source_resolves", "Explicit")
+        .exit_is(1);
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(["-c", "protocol.file.allow=always"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+        .env("GIT_COMMITTER_NAME", "fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+        .output()
+        .expect("run git");
+    assert!(out.status.success(), "git {args:?} failed:\n{}", text(&out));
+}
+
+#[test]
+fn a_submodule_code_root_reports_its_commit_and_state() {
+    let t = tree("code-root-submodule", "firmware-layered", &[]);
+    let upstream = t.root.join("../upstream");
+    std::fs::create_dir_all(upstream.join("src")).unwrap();
+    std::fs::write(upstream.join("src/explicit.rs"), "pub fn e() {}\n").unwrap();
+    git(&upstream, &["init", "-q", "-b", "main"]);
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-q", "-m", "code"]);
+    let spec = t.read("spec.toml");
+    t.write(
+        "spec.toml",
+        &spec.replacen("[paths]\n", "[paths]\ncode = \"code\"\n", 1),
+    )
+    .write(
+        "specs/modules/Explicit.toml",
+        &fw_module("Explicit", "source_file = \"src/explicit.rs\"\n"),
+    );
+    git(&t.root, &["init", "-q", "-b", "main"]);
+    let up = upstream.canonicalize().unwrap();
+    git(
+        &t.root,
+        &["submodule", "add", "-q", up.to_str().unwrap(), "code"],
+    );
+    git(&t.root, &["add", "-A"]);
+    git(&t.root, &["commit", "-q", "-m", "specs"]);
+
+    t.check(&[])
+        .fires("code_root_commit", "", "info")
+        .silent("source_resolves", "Explicit")
+        .silent("code_root_clean", "")
+        .silent("code_root_recorded", "");
+
+    let code = t.root.join("code");
+    std::fs::write(code.join("src/new.rs"), "pub fn n() {}\n").unwrap();
+    t.check(&[])
+        .fires("code_root_clean", "", "warning")
+        .silent("code_root_recorded", "");
+
+    git(&code, &["add", "-A"]);
+    git(&code, &["commit", "-q", "-m", "ahead"]);
+    t.check(&[])
+        .silent("code_root_clean", "")
+        .fires("code_root_recorded", "", "warning")
+        .says("code_root_recorded", "", "records");
+}
+
+#[test]
+fn a_code_root_in_the_same_repository_reports_nothing() {
+    let t = tree("code-root-same-repo", "firmware-layered", &[]);
+    let spec = t.read("spec.toml");
+    t.write(
+        "spec.toml",
+        &spec.replacen("[paths]\n", "[paths]\ncode = \"code\"\n", 1),
+    )
+    .write("code/src/lib.rs", "pub fn l() {}\n");
+    t.commit_all("one repository");
+    t.check(&[])
+        .silent("code_root_commit", "")
+        .silent("code_root_clean", "")
+        .silent("LAYOUT-007", "");
 }
