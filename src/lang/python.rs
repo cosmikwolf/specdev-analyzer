@@ -185,7 +185,7 @@ mod tests {
 
     fn ctx(source_root: &str) -> ImportContext {
         ImportContext {
-            project_root: PathBuf::from("/p"),
+            code_root: PathBuf::from("/p"),
             source_root: PathBuf::from(source_root),
             package_name: "my-package".into(),
             aliases: Vec::new(),

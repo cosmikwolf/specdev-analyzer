@@ -157,7 +157,7 @@ fn toolchain_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report:
     let sev = severity(domain, "toolchain_matches_tree", Severity::Warning);
     for (other, chain) in &profile.toolchains {
         for lock in &chain.lockfiles {
-            if other != tool && !mine.contains(lock) && layout.project_root.join(lock).is_file() {
+            if other != tool && !mine.contains(lock) && layout.code_root.join(lock).is_file() {
                 report.push(
                     Finding::new(
                         "toolchain_matches_tree",
@@ -172,7 +172,7 @@ fn toolchain_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report:
             }
         }
     }
-    if !mine.is_empty() && !mine.iter().any(|l| layout.project_root.join(l).is_file()) {
+    if !mine.is_empty() && !mine.iter().any(|l| layout.code_root.join(l).is_file()) {
         report.push(
             Finding::new(
                 "toolchain_matches_tree",
@@ -202,6 +202,14 @@ fn severity(domain: &Option<DomainConfig>, rule: &str, default: Severity) -> Sev
 
 fn rel(layout: &LayoutContext, p: &Path) -> String {
     p.strip_prefix(&layout.project_root)
+        .unwrap_or(p)
+        .display()
+        .to_string()
+}
+
+/// A code-side path relative to the code root.
+fn rel_code(layout: &LayoutContext, p: &Path) -> String {
+    p.strip_prefix(&layout.code_root)
         .unwrap_or(p)
         .display()
         .to_string()
@@ -241,7 +249,7 @@ fn module_states(layout: &LayoutContext) -> Result<Vec<ModuleState>> {
                 &name,
                 source_file_override(&doc),
                 a,
-                &layout.project_root,
+                &layout.code_root,
                 &layout.spec.paths.source,
             )
         });
@@ -275,11 +283,7 @@ fn source_rule(
         .then(|| crate::lang::adapter_for(&layout.spec.project.language))
         .flatten()
         .map(|a| {
-            crate::source_hint::NameIndex::build(
-                &layout.project_root,
-                &layout.project_root.join(&layout.spec.paths.source),
-                a.as_ref(),
-            )
+            crate::source_hint::NameIndex::build(&layout.code_root, &layout.source_dir, a.as_ref())
         });
     for m in modules {
         match (m.planned, &m.source) {
@@ -702,7 +706,7 @@ fn internal_edges(
         .iter()
         .map(|m| crate::import_edges::ModuleNode {
             name: m.name.clone(),
-            source: m.source.as_ref().map(|s| rel(layout, s)),
+            source: m.source.as_ref().map(|s| rel_code(layout, s)),
             depends_on: m.depends_on.clone(),
         })
         .collect();

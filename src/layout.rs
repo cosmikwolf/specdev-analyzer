@@ -27,7 +27,12 @@ pub struct LayoutContext {
     pub spec: SpecConfig,
     /// `<project_root>/<paths.specs>` — the user-visible `specs/` directory.
     pub specs_dir: PathBuf,
-    /// `<project_root>/<paths.source>` — source-code directory for audit/reverse.
+    /// The code root: `project_root` itself when `[paths] code` is
+    /// `"."` (the default), else `<project_root>/<paths.code>` with `.` and
+    /// `..` folded lexically. Every code-side read joins to it; spec-side
+    /// reads stay on `project_root`.
+    pub code_root: PathBuf,
+    /// `<code_root>/<paths.source>` — source-code directory for audit/reverse.
     pub source_dir: PathBuf,
     /// `<specs_dir>/specdev/` — machinery directory.
     pub specdev_root: PathBuf,
@@ -108,7 +113,8 @@ impl LayoutContext {
     /// for tests that want to skip discovery.
     pub fn from_spec(project_root: PathBuf, spec_toml_path: PathBuf, spec: SpecConfig) -> Self {
         let specs_dir = project_root.join(&spec.paths.specs);
-        let source_dir = project_root.join(&spec.paths.source);
+        let code_root = code_root(&project_root, &spec.paths.code);
+        let source_dir = code_root.join(&spec.paths.source);
         let specdev_root = specs_dir.join("specdev");
         let schemas_dir = specdev_root.join("schemas");
         let module_schema_path = schemas_dir.join("module.schema.yaml");
@@ -131,6 +137,7 @@ impl LayoutContext {
             spec_toml_path,
             spec,
             specs_dir,
+            code_root,
             source_dir,
             specdev_root,
             schemas_dir,
@@ -287,6 +294,27 @@ pub struct LayoutEntry {
 pub enum LayoutKind {
     Directory,
     File,
+}
+
+/// The code root for `[paths] code`. `"."` gives `project_root`
+/// unchanged, so every path a project without a split prints stays
+/// byte-identical. Any other value is joined and folded lexically (`a/b/../c`
+/// → `a/c`), so `strip_prefix(code_root)` works on the paths built from it.
+fn code_root(project_root: &Path, code: &str) -> PathBuf {
+    if code == "." {
+        return project_root.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for c in project_root.join(code).components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn list_files_with_extension(dir: &Path, ext: &str) -> Vec<PathBuf> {

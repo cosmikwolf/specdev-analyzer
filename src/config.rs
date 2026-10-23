@@ -102,19 +102,27 @@ pub struct PathsSection {
     /// modules), relative to `spec.toml`. Conventionally `"specs"`.
     pub specs: String,
     /// Source-code directory the analyzer audits and reverse-engineers
-    /// against, relative to `spec.toml`. Conventionally `"src"`.
+    /// against, relative to the code root. Conventionally `"src"`.
     pub source: String,
+    /// The code root, relative to `spec.toml`. Default `"."`: the
+    /// code lives next to the specs. Every code-side read joins to it.
+    #[serde(default = "default_code")]
+    pub code: String,
     /// Optional plugin-root override (path relative to `spec.toml`).
     /// Used by `bootstrap` / `inline` / `inline-bridge` when no
     /// `--plugin-root` flag is passed. See [`crate::plugin_root`] for the
     /// full resolution chain.
     #[serde(default)]
     pub plugin_root: Option<String>,
-    /// Optional extra test roots (relative to `spec.toml`) that test
+    /// Optional extra test roots (relative to the code root) that test
     /// discovery walks besides `source` and the language's conventional
     /// test locations.
     #[serde(default)]
     pub tests: Vec<String>,
+}
+
+fn default_code() -> String {
+    ".".to_string()
 }
 
 impl SpecConfig {
@@ -185,6 +193,20 @@ impl SpecConfig {
         // typed shape. This cannot fail for any document the schema accepts.
         let cfg: SpecConfig = serde_json::from_value(raw_json)
             .with_context(|| format!("deserializing {}", path.display()))?;
+        let code = cfg.paths.code.as_str();
+        if Path::new(code).has_root() || code.as_bytes().get(1) == Some(&b':') {
+            let (line, col) = locate_error_in_toml(text, "/paths/code");
+            return Err(anyhow!(LocatedError::new(
+                path,
+                line,
+                col,
+                format!(
+                    "[paths].code: `{code}` is absolute; write it relative to spec.toml, so the \
+                     project works on every machine and in CI"
+                )
+            ))
+            .context(format!("validating {}", path.display())));
+        }
         Ok(cfg)
     }
 }
