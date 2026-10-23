@@ -49,6 +49,7 @@ mod gate_run;
 mod gate_script;
 mod global_no_color;
 mod hello_firmware;
+mod hello_libraries;
 mod hello_plugin_smoke;
 mod hello_pyo3;
 mod hello_python;

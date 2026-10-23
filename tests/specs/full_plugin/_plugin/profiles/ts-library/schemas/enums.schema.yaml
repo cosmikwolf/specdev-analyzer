@@ -1,0 +1,31 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/ts-library/enums.schema.yaml"
+title: "ts-library enums (v1)"
+description: >
+  Shared closed vocabularies used across the ts-library profile. Each
+  enum is a $defs entry; module/architecture/requirements schemas
+  reference these via $ref.
+
+$defs:
+  Identifier:
+    description: camelCase, snake_case or PascalCase identifier usable in TypeScript source.
+    type: string
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+  ModuleRef:
+    description: >
+      Reference to a module: a bare `Module` identifier, or a
+      package-qualified `<package>::<Module>` form for multi-package
+      projects.
+    type: string
+    pattern: "^([a-z][a-z0-9_]*::)?[A-Za-z_][A-Za-z0-9_]*$"
+
+  RequirementId:
+    description: >
+      Identifier of a requirement defined under specs/requirements.toml.
+      Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-API-001, ZFM-001, RFC-7-12).
+      The leading prefix is open: projects can adopt their published
+      requirement scheme (REQ-, ZFM-, RFC-, STORY-, …) without rename
+      ceremony. Prefix and AREA tokens are uppercase A-Z and 0-9.
+    type: string
+    pattern: "^[A-Z0-9]+(-[A-Z0-9]+)*-\\d+$"

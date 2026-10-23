@@ -1,0 +1,213 @@
+metaschema_version: "v1"
+
+# Project-level entity declarations for ts-library. The kinds that
+# exist at the profile root, before any block contributes its own.
+
+entities:
+  # Modules — one per `specs/modules/*.toml`.
+  - kind: Module
+    extends: structural
+    from: "specs/modules/*.toml"
+    name: "${.name}"
+
+  # Source documents, one file each in `specs/sources/`.
+  - kind: Source
+    extends: structural
+    from: "specs/sources/*.toml"
+    for_each: "source[]"
+    name: "${.id}"
+    attrs:
+      kind: ".kind"
+      title: ".title"
+
+  # Individual requirements.
+  - kind: Requirement
+    extends: structural
+    from: "specs/requirements/*.toml"
+    for_each: "requirement[]"
+    name: "${.id}"
+    attrs:
+      text: ".text"
+      nature: ".nature"
+
+  # Architecture singleton — one per project. Materializes the
+  # `architecture.toml` file as a graph node so top-level relations
+  # (project_decisions, future architecture-anchored references) have
+  # a source endpoint to attach to.
+  - kind: Architecture
+    extends: structural
+    from: "specs/architecture.toml"
+    name: "architecture"
+
+  # Decisions — the *how & why*. One per `[[decision]]` entry in
+  # `specs/decisions/`. `report decisions` traverses only
+  # `accepted` decisions; `superseded` entries persist as reasoning
+  # trail.
+  - kind: Decision
+    extends: structural
+    from: "specs/decisions/*.toml"
+    for_each: "decision[]"
+    name: "${.id}"
+    attrs:
+      title: ".title"
+      status: ".status"
+      text: ".text"
+
+  # Open questions — the *known unknowns*. One per `[[open_question]]`.
+  # Three statuses (open / default_committed / closed) shape the gate
+  # behavior; the open-question gate (`implementation_unblocked`) consumes
+  # this kind alongside the OpenQuestion → Requirement relation.
+  - kind: OpenQuestion
+    extends: structural
+    from: "specs/open_questions/*.toml"
+    for_each: "open_question[]"
+    name: "${.id}"
+    attrs:
+      title: ".title"
+      status: ".status"
+      text: ".text"
+      closed_by: ".closed_by"
+      default_via: ".default_via"
+
+relations:
+  # Module-to-module dependency edges (drives modules_acyclic).
+  - kind: depends_on
+    extends: depends_on
+    from_kind: Module
+    to_kind: Module
+    from_spec: "specs/modules/*.toml"
+    for_each: "depends_on[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Requirement-to-parent traceability.
+  - kind: satisfies
+    extends: depends_on
+    from_kind: Requirement
+    to_kind: Requirement
+    from_spec: "specs/requirements/*.toml"
+    for_each: "requirement[].satisfies[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Module-to-requirement traceability (distinct kind from the
+  # requirement-tree `satisfies` so graph checks can target each
+  # independently).
+  - kind: module_satisfies
+    extends: depends_on
+    from_kind: Module
+    to_kind: Requirement
+    from_spec: "specs/modules/*.toml"
+    for_each: "satisfies[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Requirement → Decision: pin a requirement's *how*. Drives
+  # `requirement_decided_by_resolves`.
+  - kind: requirement_decided_by_decision
+    extends: depends_on
+    from_kind: Requirement
+    to_kind: Decision
+    from_spec: "specs/requirements/*.toml"
+    for_each: "requirement[].decided_by[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Module → Decision: inform a module without pinning a requirement.
+  # Drives `module_guided_by_resolves`.
+  - kind: module_guided_by_decision
+    extends: depends_on
+    from_kind: Module
+    to_kind: Decision
+    from_spec: "specs/modules/*.toml"
+    for_each: "guided_by[]"
+    endpoints:
+      from: "${parent.name}"
+      to: "${.}"
+
+  # Architecture → Decision: project-shape commitments. Drives
+  # `architecture_project_decisions_resolves`.
+  - kind: architecture_project_decision
+    extends: depends_on
+    from_kind: Architecture
+    to_kind: Decision
+    from_spec: "specs/architecture.toml"
+    for_each: "project_decisions[]"
+    endpoints:
+      from: "architecture"
+      to: "${.}"
+
+  # Decision → Decision: supersession chain. Walks the `supersedes[]`
+  # field on accepted decisions; the targeted decisions must carry
+  # `status = "superseded"`. The chain is one-way — no
+  # `superseded_by` back-pointer exists. Drives
+  # `decision_supersedes_resolves` and feeds the
+  # `decision_supersedes_chain_consistency` graph check.
+  - kind: decision_supersedes_decision
+    extends: depends_on
+    from_kind: Decision
+    to_kind: Decision
+    from_spec: "specs/decisions/*.toml"
+    for_each: "decision[].supersedes[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Decision → OpenQuestion: questions a decision closes (status flips
+  # to `closed`). Drives `decision_closes_questions_resolve`.
+  - kind: decision_closes_open_question
+    extends: depends_on
+    from_kind: Decision
+    to_kind: OpenQuestion
+    from_spec: "specs/decisions/*.toml"
+    for_each: "decision[].closes_questions[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # Decision → OpenQuestion: questions whose default this decision
+  # commits (status stays `default_committed`). Drives
+  # `decision_defaults_for_resolve`.
+  - kind: decision_defaults_open_question
+    extends: depends_on
+    from_kind: Decision
+    to_kind: OpenQuestion
+    from_spec: "specs/decisions/*.toml"
+    for_each: "decision[].defaults_for[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # OpenQuestion → Requirement: which requirements this question
+  # affects. The open-question gate (`implementation_unblocked`) walks
+  # Module.satisfies → Requirement and back through this relation to
+  # determine whether any reachable OQ is `open`. Drives
+  # `open_question_affects_resolve`.
+  - kind: open_question_affects_requirement
+    extends: depends_on
+    from_kind: OpenQuestion
+    to_kind: Requirement
+    from_spec: "specs/open_questions/*.toml"
+    for_each: "open_question[].affects[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
+  # OpenQuestion → Decision: the decision that committed a working
+  # default for this question (set when status = `default_committed`).
+  # The for_each walks the singular-optional field directly so OQs
+  # without `default_via` (status = open / closed) emit no edge.
+  # Drives `open_question_default_via_resolves`.
+  - kind: open_question_default_via_decision
+    extends: depends_on
+    from_kind: OpenQuestion
+    to_kind: Decision
+    from_spec: "specs/open_questions/*.toml"
+    for_each: "open_question[].default_via"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"

@@ -1,0 +1,139 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specdev.dev/profiles/ts-library/decisions.schema.yaml"
+title: "ts-library decisions file (v1)"
+description: >
+  Shape of `specs/decisions.toml`. Records the *how & why* alongside
+  requirements (the *what*) and modules (where the *what* is
+  satisfied). A decision pins an implementation choice over the
+  alternatives that were considered, optionally references the open
+  questions it closes or commits a default for, and may participate
+  in a supersession chain.
+
+  Decisions and requirements share the `RequirementId` shape — the
+  open prefix grammar (DEC-002, OQ-005, REQ-API-001, ZFM-001) lets a
+  project keep a single id namespace across all four artifact types.
+  The `decision_ids_unique` graph check enforces uniqueness inside
+  this file. No check spans artifact types: a decision and a
+  requirement that share one id both validate.
+
+  Existing projects with no `decisions.toml` continue to validate
+  unchanged — the file is optional, and the typed cross-references
+  on Requirement / Module / architecture (`decided_by`, `guided_by`,
+  `project_decisions`) are also optional.
+type: object
+additionalProperties: false
+properties:
+  decision:
+    type: array
+    items: { $ref: "#/$defs/Decision" }
+
+$defs:
+  Decision:
+    type: object
+    additionalProperties: false
+    required: [id, title, status, text]
+    properties:
+      id:
+        $ref: "enums.schema.yaml#/$defs/RequirementId"
+      title:
+        description: One-line title; shows in reports.
+        type: string
+        minLength: 1
+      status:
+        description: >
+          `accepted` decisions drive current behavior — `report
+          decisions` lists them for the modules they reach, and graph
+          checks treat their back-references as live. `superseded`
+          decisions persist as reasoning trail; the report skips them. The successor
+          (status = accepted) lists the older entry in `supersedes[]`;
+          superseded entries carry no forward pointer.
+        type: string
+        enum: [accepted, superseded]
+      text:
+        description: The decision body — what was chosen.
+        type: string
+        minLength: 1
+      context:
+        description: Optional. The situation that demanded a decision.
+        type: string
+        minLength: 1
+      consequences:
+        description: >
+          Optional. What follows from this decision — second-order
+          effects, downstream costs, what's now constrained.
+        type: string
+        minLength: 1
+      alternatives:
+        description: >
+          Optional. The options considered and rejected, with brief
+          rationale per option. Listed for the modules the decision
+          reaches only on opt-in via `codegen_include`.
+        type: string
+        minLength: 1
+      verification:
+        description: >
+          Optional. How the decision will be tested or validated.
+          Listed for the modules the decision reaches on opt-in via
+          `codegen_include`.
+        type: string
+        minLength: 1
+      source:
+        description: >
+          Source ids (kebab-case) that informed this decision. Free
+          vocabulary in v1 — not validated against
+          `requirements.toml`'s `[[source]]` table; the field is
+          informational and shows up in reporting.
+        type: array
+        items:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        uniqueItems: true
+      source_ref:
+        description: >
+          Free-form locator within the source document(s) — page,
+          section, line, file path. Mirrors `Requirement.source_ref`.
+        type: string
+        minLength: 1
+      supersedes:
+        description: >
+          Ids of older decisions this one replaces. Optional on
+          `accepted` decisions; the targeted decisions must carry
+          `status = "superseded"`. The chain is one-way —
+          there is no `superseded_by` back-pointer; the
+          `decision_supersedes_chain_consistency` graph check walks
+          these arrays to validate orphans, cycles, and unique
+          successorship.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      closes_questions:
+        description: >
+          Open-question ids this decision closes (the question's
+          status flips to `closed`; resolved answer travels with the
+          closing decision). Graph-check `decision_closes_questions_resolve`
+          ensures each id exists.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      defaults_for:
+        description: >
+          Open-question ids this decision commits a working default
+          for (the question stays open as `default_committed`). Graph
+          check `decision_defaults_for_resolve` enforces resolution.
+        type: array
+        items: { $ref: "enums.schema.yaml#/$defs/RequirementId" }
+        uniqueItems: true
+      codegen_include:
+        description: >
+          Which prose fields `report decisions` lists as applying to
+          the modules this decision reaches (the name is historical).
+          Default (when omitted) is `[text, consequences]`. Add
+          `verification` or `alternatives` for decisions that want
+          their full reasoning surface in front of whoever edits the
+          code.
+        type: array
+        items:
+          type: string
+          enum: [text, context, consequences, alternatives, verification]
+        uniqueItems: true
+        minItems: 1
