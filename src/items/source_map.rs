@@ -21,18 +21,19 @@ use crate::lang::LanguageAdapter;
 use super::util::snake_case_variants;
 
 /// Resolve a spec module name to a source file path. `source_file` is the
-/// module spec's explicit override, if declared. Returns `None` when
+/// module spec's explicit override, if declared, relative to the code
+/// root, as `source_root` is. Returns `None` when
 /// neither the override nor any convention candidate exists on disk —
 /// callers treat that as "no items extracted," not as an error.
 pub fn resolve_source_path(
     module_name: &str,
     source_file: Option<&str>,
     adapter: &dyn LanguageAdapter,
-    project_root: &Path,
+    code_root: &Path,
     source_root: &str,
 ) -> Option<PathBuf> {
     if let Some(rel) = source_file.map(str::trim).filter(|s| !s.is_empty()) {
-        let explicit = project_root.join(rel);
+        let explicit = code_root.join(rel);
         if explicit.is_file() {
             return Some(explicit);
         }
@@ -41,7 +42,7 @@ pub fn resolve_source_path(
         // convention candidates are NOT tried — the author named a file.
         return None;
     }
-    let base = project_root.join(source_root);
+    let base = code_root.join(source_root);
     snake_case_variants(module_name)
         .iter()
         .flat_map(|snake| adapter.module_file_candidates(snake))

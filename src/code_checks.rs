@@ -156,10 +156,7 @@ pub fn modules_with_checked_entries(
 fn source_files(layout: &LayoutContext, adapter: &dyn LanguageAdapter) -> Vec<PathBuf> {
     let exts = adapter.file_extensions();
     let mut all = BTreeSet::new();
-    crate::import_edges::walk(
-        &layout.project_root.join(&layout.spec.paths.source),
-        &mut all,
-    );
+    crate::import_edges::walk(&layout.source_dir, &mut all);
     all.into_iter()
         .filter(|p| {
             p.extension()
@@ -253,7 +250,7 @@ fn code_values(
                 continue;
             };
             let key = strip_quotes(&source[key_node.byte_range()]).to_string();
-            let rel = file.strip_prefix(&layout.project_root).unwrap_or(file);
+            let rel = file.strip_prefix(&layout.code_root).unwrap_or(file);
             let entry = out.entry(key).or_default();
             entry.sites.insert(format!(
                 "{}:{}",

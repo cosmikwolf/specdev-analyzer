@@ -79,6 +79,15 @@ pub struct ContextFiles {
     /// editing it (hardware notes, UI reference data). Project-relative.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub module_context: Vec<String>,
+    /// `[paths] code`, when the code root is apart from the project root.
+    /// The code paths other commands print (`extract-items`, `items diff`,
+    /// `report tests`, `report imports`) are relative to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_root: Option<String>,
+    /// The module's source file, when it resolves: project-relative like
+    /// every path here, so through `code_root` when the code is apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -258,6 +267,32 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         })
         .unwrap_or_default();
 
+    let source = crate::lang::adapter_for(&layout.spec.project.language).and_then(|a| {
+        let doc = std::fs::read_to_string(&target_module_path)
+            .ok()
+            .and_then(|t| t.parse::<toml::Value>().ok());
+        let abs = crate::items::source_map::resolve_source_path(
+            module,
+            doc.as_ref()
+                .and_then(crate::items::source_map::source_file_override),
+            a.as_ref(),
+            &layout.code_root,
+            &layout.spec.paths.source,
+        )?;
+        Some(if layout.code_is_split() {
+            format!(
+                "{}/{}",
+                layout.spec.paths.code,
+                rel(&abs, &layout.code_root)
+            )
+        } else {
+            rel(&abs, &layout.project_root)
+        })
+    });
+    let code_root = layout
+        .code_is_split()
+        .then(|| layout.spec.paths.code.clone());
+
     Ok(ContextFiles {
         schema,
         block_readmes,
@@ -267,6 +302,8 @@ fn build_files(layout: &LayoutContext, module: &str) -> Result<ContextFiles> {
         architecture,
         target_module,
         module_context,
+        code_root,
+        source,
     })
 }
 

@@ -389,7 +389,7 @@ pub enum ReportAction {
         /// Language whose `imports.scm` to use (default: the project's).
         #[arg(long)]
         language: Option<String>,
-        /// Root to walk, relative to the project. Repeatable.
+        /// Root to walk, relative to the code root (`[paths] code`). Repeatable.
         #[arg(long)]
         root: Vec<PathBuf>,
         /// Output format: `yaml` (default).
@@ -408,7 +408,7 @@ pub enum ReportAction {
         #[arg(long)]
         language: Option<String>,
         /// Root to walk instead of the project's test roots, relative to the
-        /// project. Repeatable.
+        /// code root (`[paths] code`). Repeatable.
         #[arg(long)]
         root: Vec<PathBuf>,
         /// Output format: `yaml` (default).
@@ -955,7 +955,7 @@ fn run_extract_items(
             &name,
             override_path.as_deref(),
             adapter.as_ref(),
-            &project,
+            &layout.code_root,
             source_root,
         );
         let items = match &source_file {
@@ -974,7 +974,7 @@ fn run_extract_items(
         modules_out.push(ModuleItems {
             module_name: name,
             source_file: source_file
-                .map(|p| specdev_analyzer::items::util::relative_to(&project, &p)),
+                .map(|p| specdev_analyzer::items::util::relative_to(&layout.code_root, &p)),
             items,
         });
     }
@@ -1940,6 +1940,20 @@ pub(crate) fn print_emit_report(r: &specdev_analyzer::gates::EmitReport) {
     if r.gitattributes_line_missing {
         println!("add this line to .gitattributes, so the script stays LF on every checkout:\n  {GITATTRIBUTES_LINE}");
     }
+    if let Some(c) = &r.compile {
+        let line = specdev_analyzer::gates::COMPILE_GITATTRIBUTES_LINE;
+        if c.written {
+            println!("wrote {}", c.path);
+        } else {
+            println!("{} is current", c.path);
+        }
+        if c.gitattributes_written {
+            println!("wrote .gitattributes in the code root ({line})");
+        }
+        if c.gitattributes_line_missing {
+            println!("add this line to .gitattributes in the code root, so the script stays LF on every checkout:\n  {line}");
+        }
+    }
 }
 
 fn run_one_gate(layout: &LayoutContext, label: &str) -> ExitCode {
@@ -2068,13 +2082,13 @@ fn run_report_tests(
             return ExitCode::from(2);
         };
         let roots: Vec<PathBuf> = if roots.is_empty() {
-            vec![layout.project_root.clone()]
+            vec![layout.code_root.clone()]
         } else {
-            roots.iter().map(|r| layout.project_root.join(r)).collect()
+            roots.iter().map(|r| layout.code_root.join(r)).collect()
         };
         specdev_analyzer::test_discovery::discover_roots(
             adapter.as_ref(),
-            &layout.project_root,
+            &layout.code_root,
             &roots,
         )
     };

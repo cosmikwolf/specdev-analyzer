@@ -343,8 +343,9 @@ pub trait LanguageAdapter: Send + Sync {
 /// What [`LanguageAdapter::resolve_import`] knows about the project.
 #[derive(Debug, Clone)]
 pub struct ImportContext {
-    pub project_root: PathBuf,
-    /// `[paths].source`, project-relative.
+    /// The code root; every path below is relative to it.
+    pub code_root: PathBuf,
+    /// `[paths].source`, relative to the code root.
     pub source_root: PathBuf,
     /// The project's own package name (`[project].name`).
     pub package_name: String,
