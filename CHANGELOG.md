@@ -12,6 +12,12 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Added
+
+- **`source_root_exists`** (#275, warning): `[paths] source` holds no file of the project's language while the
+  tree has some elsewhere — the path is wrong. Silent on a new tree with no code.
+- **Bootstrap placeholder `{{project_identifier}}`** (#274): the project name with each `-` as `_`.
+
 ### Fixed
 
 - **An unknown requirement `source` id is an error** (#272), through the profiles' new

@@ -83,6 +83,7 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     pack_code_checks(layout, &graph, &modules, &domain, &mut report);
     unreached_decisions(layout, &domain, &mut report);
     toolchain_rule(layout, &domain, &mut report);
+    source_root_rule(layout, &domain, &mut report);
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -279,6 +280,47 @@ fn toolchain_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report:
             .with_file(spec_file),
         );
     }
+}
+
+/// `[paths].source` names the folder the code is in. When it holds no file
+/// of the project's language but the tree holds some elsewhere, the path is
+/// wrong: an existing codebase whose bootstrap default does not fit. A tree
+/// with no code at all is a new project, and says nothing.
+fn source_root_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    let Some(adapter) = crate::lang::adapter_for(&layout.spec.project.language) else {
+        return;
+    };
+    let exts = adapter.file_extensions();
+    let code_files = |dir: &Path| {
+        let mut files = BTreeSet::new();
+        crate::import_edges::walk(dir, &mut files);
+        files
+            .into_iter()
+            .filter(|f| {
+                !f.starts_with(&layout.specdev_root)
+                    && f.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| exts.contains(&e))
+            })
+            .count()
+    };
+    let rel = &layout.spec.paths.source;
+    let source_dir = layout.code_root.join(rel);
+    if (source_dir.is_dir() && code_files(&source_dir) > 0) || code_files(&layout.code_root) == 0 {
+        return;
+    }
+    report.push(
+        Finding::new(
+            "source_root_exists",
+            severity(domain, "source_root_exists", Severity::Warning),
+            format!(
+                "`[paths] source = \"{rel}\"` holds no {} file, but the tree has some elsewhere: \
+                 point it at the folder the code is in",
+                layout.spec.project.language
+            ),
+        )
+        .with_file(layout.spec_toml_path.display().to_string()),
+    );
 }
 
 fn load_domain(layout: &LayoutContext) -> Option<DomainConfig> {
