@@ -224,6 +224,22 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 /// The reduction graph as a value with every `provenance` removed and every
 /// sequence sorted, so that moving entries between files compares equal.
+/// The relation kinds the project's inlined reductions declare.
+fn relation_kinds_declared(project: &Path) -> std::collections::BTreeSet<String> {
+    let dir = project.join("specs/specdev/reductions");
+    let mut kinds = std::collections::BTreeSet::new();
+    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+        let doc: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(e.path()).unwrap()).unwrap();
+        for r in doc["relations"].as_sequence().into_iter().flatten() {
+            if let Some(k) = r["kind"].as_str() {
+                kinds.insert(k.to_string());
+            }
+        }
+    }
+    kinds
+}
+
 fn graph_without_provenance(project: &Path) -> serde_json::Value {
     fn normalize(v: &mut serde_json::Value) {
         match v {
@@ -366,8 +382,24 @@ fn the_open_question_gate_still_refuses_after_migrate() {
 fn migrate_keeps_the_graph_and_validates_clean() {
     let project = build_v1_project("graph");
     let before = graph_without_provenance(&project);
+    let v1_kinds = relation_kinds_declared(&project);
     migrate(&project);
-    let after = graph_without_provenance(&project);
+    let mut after = graph_without_provenance(&project);
+    // An unedited reduction takes the plugin's bytes, so a relation kind the
+    // plugin added since the 1.x tree may appear. Every other relation, and
+    // every entity, is unchanged.
+    if let Some(rels) = after["relations"].as_array_mut() {
+        rels.retain(|r| {
+            let kind = r["kind"].as_str().unwrap_or_default();
+            v1_kinds.contains(kind) || {
+                assert!(
+                    relation_kinds_declared(&project).contains(kind),
+                    "relation `{kind}` is in no reduction"
+                );
+                false
+            }
+        });
+    }
     assert_eq!(before, after, "the graph changed across migrate");
 
     let out = analyzer(&project, &["validate"]);

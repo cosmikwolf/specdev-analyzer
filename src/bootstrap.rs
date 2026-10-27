@@ -50,6 +50,9 @@ pub struct BootstrapInputs {
 const PLACEHOLDER_PROJECT_NAME: &str = "{{project_name}}";
 const PLACEHOLDER_LANGUAGE: &str = "{{language}}";
 const PLACEHOLDER_PROFILE: &str = "{{profile}}";
+/// The project name as an identifier: each `-` becomes `_` (a Python import
+/// package, a Rust crate's import name).
+const PLACEHOLDER_PROJECT_IDENTIFIER: &str = "{{project_identifier}}";
 
 /// Read the plugin's `plugin.json` and extract `version`. Mirrors
 /// [`crate::inline::plugin_version`]; lifted here so bootstrap doesn't
@@ -76,6 +79,7 @@ fn now_iso8601() -> String {
 /// prevents a profile template from silently shipping a placeholder that
 /// nothing fills.
 fn substitute(text: &str, inputs: &BootstrapInputs, source_label: &str) -> Result<String> {
+    let identifier = inputs.project_name.replace('-', "_");
     let mut out = String::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -93,9 +97,10 @@ fn substitute(text: &str, inputs: &BootstrapInputs, source_label: &str) -> Resul
                 PLACEHOLDER_PROJECT_NAME => &inputs.project_name,
                 PLACEHOLDER_LANGUAGE => &inputs.language,
                 PLACEHOLDER_PROFILE => &inputs.profile,
+                PLACEHOLDER_PROJECT_IDENTIFIER => &identifier,
                 _ => {
                     return Err(anyhow!(
-                        "[BOOTSTRAP-002] {source_label}: unknown placeholder {token:?}; supported: {PLACEHOLDER_PROJECT_NAME}, {PLACEHOLDER_LANGUAGE}, {PLACEHOLDER_PROFILE}",
+                        "[BOOTSTRAP-002] {source_label}: unknown placeholder {token:?}; supported: {PLACEHOLDER_PROJECT_NAME}, {PLACEHOLDER_PROJECT_IDENTIFIER}, {PLACEHOLDER_LANGUAGE}, {PLACEHOLDER_PROFILE}",
                     ));
                 }
             };

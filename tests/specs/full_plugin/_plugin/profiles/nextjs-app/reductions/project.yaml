@@ -142,6 +142,18 @@ relations:
       from: "${parent.id}"
       to: "${.}"
 
+  # Requirement → Source: each id in a requirement's `source` names a
+  # `[[source]]` entry; an unknown id is REDUCE_UNRESOLVED.
+  - kind: requirement_derived_from_source
+    extends: depends_on
+    from_kind: Requirement
+    to_kind: Source
+    from_spec: "specs/requirements/*.toml"
+    for_each: "requirement[].source[]"
+    endpoints:
+      from: "${parent.id}"
+      to: "${.}"
+
   # Module → Decision: inform a module without pinning a requirement.
   # Drives `module_guided_by_resolves`.
   - kind: module_guided_by_decision

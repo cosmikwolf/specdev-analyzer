@@ -2,7 +2,7 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/flutter-app/requirements.schema.yaml"
 title: "flutter-app requirements file (v1)"
 description: >
-  Shape of `specs/requirements.toml`: external sources + individual
+  Shape of one requirement file in `specs/requirements/` (sources live in `specs/sources/`): external sources + individual
   requirements. App-specific concerns (accessibility targets, store
   policy constraints, offline behavior) are expressed as free-form text
   in `requirement.text` for v1; typed fields can be added later if real
@@ -12,7 +12,7 @@ additionalProperties: false
 properties:
   source:
     description: >
-      External documents that requirements in this file may be derived
+      External documents that requirements may be derived
       from. Declared once per source and referenced by id from each
       Requirement's `source` array.
     type: array
