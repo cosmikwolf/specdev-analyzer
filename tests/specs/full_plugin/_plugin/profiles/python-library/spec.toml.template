@@ -10,6 +10,6 @@ toolchain = "uv"
 
 [paths]
 specs = "specs"
-# The import package's directory in a `src/` layout. It is the import name:
-# when the project name has a `-`, write `_` here (`my-pkg` → `src/my_pkg`).
-source = "src/{{project_name}}"
+# The import package's directory in a `src/` layout. It is the import name,
+# so a `-` in the project name is `_` here (`my-pkg` → `src/my_pkg`).
+source = "src/{{project_identifier}}"

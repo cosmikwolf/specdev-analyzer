@@ -132,3 +132,33 @@ fn rust_workspace_bootstrap_substitutes_project_name() {
     let target = bootstrap_at(&full_plugin(), "rust-workspace", "myws", "ws");
     assert_substituted_outputs_have_no_placeholders(&target, "rust-workspace");
 }
+
+/// A Python import package cannot hold a `-`: a project named `my-pkg` is
+/// imported as `my_pkg`, so `[paths].source` must say `src/my_pkg`.
+#[test]
+fn python_source_path_uses_the_import_name() {
+    for profile in ["python-library", "python-ffi"] {
+        let workspace = tmp_workspace(&format!("ident-{profile}"));
+        let target = workspace.join("proj");
+        std::fs::create_dir_all(&target).unwrap();
+        bootstrap::run_bootstrap(
+            &full_plugin(),
+            &BootstrapInputs {
+                profile: profile.into(),
+                language: "python".into(),
+                project_name: "pattern-analysis".into(),
+                target_dir: target.clone(),
+            },
+        )
+        .unwrap();
+        let spec = std::fs::read_to_string(target.join("spec.toml")).unwrap();
+        assert!(
+            spec.contains("source = \"src/pattern_analysis\""),
+            "{profile}: spec.toml source path:\n{spec}"
+        );
+        assert!(
+            spec.contains("name = \"pattern-analysis\""),
+            "{profile}: the project name keeps its `-`:\n{spec}"
+        );
+    }
+}

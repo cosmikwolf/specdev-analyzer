@@ -682,3 +682,43 @@ fn extract_items_help_lists_module_flag() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("--module"), "stdout: {stdout}");
 }
+
+/// `[paths].source` must name the folder the code is in. Bootstrap creates
+/// the folder, so a wrong path shows as an empty source folder while the
+/// tree has code elsewhere: a warning. A new tree with no code says nothing.
+#[test]
+fn a_source_folder_without_code_is_reported() {
+    let check = |target: &Path| {
+        let out = Command::new(analyzer_bin())
+            .args(["check", "--no-color"])
+            .current_dir(target)
+            .output()
+            .expect("run check");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let fresh = bootstrapped("srcroot-fresh", "python-library", "python");
+    let text = check(&fresh);
+    assert!(!text.contains("source_root_exists"), "fresh tree: {text}");
+
+    let existing = bootstrapped("srcroot-existing", "python-library", "python");
+    std::fs::create_dir_all(existing.join("lib/other")).unwrap();
+    std::fs::write(existing.join("lib/other/x.py"), "def f():\n    pass\n").unwrap();
+    let text = check(&existing);
+    assert!(
+        text.lines()
+            .any(|l| l.contains("source_root_exists") && l.contains("warning")),
+        "existing code elsewhere: {text}"
+    );
+
+    // The same tree with the path fixed is quiet.
+    let spec = std::fs::read_to_string(existing.join("spec.toml")).unwrap();
+    let fixed = spec.replace("source = \"src/demo\"", "source = \"lib/other\"");
+    assert_ne!(spec, fixed, "spec.toml has the default source path");
+    std::fs::write(existing.join("spec.toml"), fixed).unwrap();
+    let text = check(&existing);
+    assert!(!text.contains("source_root_exists"), "fixed path: {text}");
+}

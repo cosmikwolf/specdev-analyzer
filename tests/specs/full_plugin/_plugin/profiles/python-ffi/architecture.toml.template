@@ -5,7 +5,7 @@
 # checks the package's `.pyi` stub of it against the built module. Write `_`
 # where the project name has a `-`.
 [native]
-module = "{{project_name}}._native"
+module = "{{project_identifier}}._native"
 
 # Decisions that shape the project as a whole.
 # project_decisions = ["DEC-001"]
