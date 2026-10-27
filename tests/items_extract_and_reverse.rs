@@ -263,6 +263,115 @@ fn reverse_profile_vocabulary_emits_reverse_004_and_succeeds() {
     assert!(!stderr.contains("REVERSE-002"), "stderr: {stderr}");
 }
 
+/// Every profile that needs no block to describe a module declares
+/// `reverse.vocabulary: profile`, so a fresh tree passes the pre-flight with
+/// REVERSE-004. The profiles whose modules name block fields (firmware,
+/// audio plugin, workspace root) still need a block and are not listed.
+const PROFILE_VOCABULARY: &[(&str, &str)] = &[
+    ("library-api", "rust"),
+    ("rust-app", "rust"),
+    ("nextjs-app", "typescript"),
+    ("ts-library", "typescript"),
+    ("dart-package", "dart"),
+    ("flutter-app", "dart"),
+    ("python-library", "python"),
+    ("python-ffi", "python"),
+];
+
+fn bootstrapped(tag: &str, profile: &str, language: &str) -> PathBuf {
+    let target = tmp_dir(tag).join("proj");
+    std::fs::create_dir_all(&target).unwrap();
+    bootstrap::run_bootstrap(
+        &full_plugin(),
+        &BootstrapInputs {
+            profile: profile.into(),
+            language: language.into(),
+            project_name: "demo".into(),
+            target_dir: target.clone(),
+        },
+    )
+    .unwrap_or_else(|e| panic!("bootstrap {profile}: {e}"));
+    target
+}
+
+#[test]
+fn every_blockless_profile_passes_the_reverse_preflight() {
+    for (profile, language) in PROFILE_VOCABULARY {
+        let target = bootstrapped(&format!("vocab-{profile}"), profile, language);
+        let out = Command::new(analyzer_bin())
+            .arg("reverse")
+            .arg("--project")
+            .arg(&target)
+            .output()
+            .expect("run reverse");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() && stdout.contains("REVERSE-004"),
+            "{profile}: stdout: {stdout}\nstderr: {stderr}"
+        );
+    }
+}
+
+/// A requirement's `source` ids resolve to `[[source]]` entries in every
+/// profile that has requirements: an unknown id is an error, a known one is
+/// not.
+#[test]
+fn a_requirement_source_id_must_resolve_in_every_profile() {
+    let profiles = PROFILE_VOCABULARY
+        .iter()
+        .copied()
+        .chain([("firmware-layered", "rust"), ("audio-plugin", "rust")]);
+    for (profile, language) in profiles {
+        let target = bootstrapped(&format!("source-{profile}"), profile, language);
+        std::fs::create_dir_all(target.join("specs/requirements")).unwrap();
+        std::fs::create_dir_all(target.join("specs/sources")).unwrap();
+        std::fs::write(
+            target.join("specs/sources/read-from-code.toml"),
+            "[[source]]\nid = \"read-from-code\"\nkind = \"derived\"\ntitle = \"Read from the code\"\n",
+        )
+        .unwrap();
+        let req = |id: &str, source: &str| {
+            format!(
+                "[[requirement]]\nid = \"{id}\"\ntext = \"The system shall do {id}.\"\nnature = \"module\"\ntest_pending = true\nsource = [\"{source}\"]\n"
+            )
+        };
+        std::fs::write(
+            target.join("specs/requirements/REQ-SRC-001.toml"),
+            req("REQ-SRC-001", "read-from-code"),
+        )
+        .unwrap();
+        std::fs::write(
+            target.join("specs/requirements/REQ-SRC-002.toml"),
+            req("REQ-SRC-002", "no-such-source"),
+        )
+        .unwrap();
+        let out = Command::new(analyzer_bin())
+            .arg("validate")
+            .arg("--no-color")
+            .current_dir(&target)
+            .output()
+            .expect("run validate");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let unresolved: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("REDUCE_UNRESOLVED"))
+            .collect();
+        assert!(
+            unresolved.iter().any(|l| l.contains("no-such-source")),
+            "{profile}: unknown source id not reported:\n{text}"
+        );
+        assert!(
+            !unresolved.iter().any(|l| l.contains("read-from-code")),
+            "{profile}: a defined source id was reported:\n{text}"
+        );
+    }
+}
+
 #[test]
 fn reverse_into_unknown_block_emits_reverse_001() {
     let dir = tmp_dir("reverse-bad-into");
