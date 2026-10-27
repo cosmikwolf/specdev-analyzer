@@ -81,6 +81,25 @@ the secret `SPECDEV_ANALYZER_TOKEN` to build the private analyzer.
 
 CI installs are frozen: commit the lockfile, or the CI install refuses to change it.
 
+## Reverse
+
+Inference rules for `/spec-reverse` on fields the schema cannot explain alone. Quote the source lines for each.
+
+- `layer` — from what the module calls: register access → `pac` or `driver`; only drivers → `middleware`; policy or
+  business logic, or calls into middleware → `application`.
+- `actions[]` — each public function. `params` inline when ≤ 3, `direction` from the parameter mode (`in` / `out` /
+  `inout`); `blocking = true` when it can await, loop on IO or take a mutex; `isr_safe = true` only when the function
+  is clearly safe in interrupt context.
+- `state_machines[]` — an enum that a `match` on the current state dispatches on; states are its variants; events,
+  initial state and transitions only when the dispatch shows them.
+- `ports[]` — each trait the module implements.
+- `hardware` — pins, peripherals and clocks it initializes or uses; cross-check with `specs/architecture.toml`.
+- `errors[]` — the variants of the module's error enum.
+- `metadata.MemoryModel.allocation` — `static_alloc` for statics and fixed arrays, `heap_alloc` for `Vec`/`Box`.
+- `metadata.ConcurrencyModel.protection` — from the guards the code uses (critical section, mutex, atomics).
+- `metadata.ErrorHandling.strategy` — panic, or errors returned and propagated.
+- Block fields (`tasks`, `channels`, `peripherals`, `bindings`) — only for blocks in the pre-flight's vocabulary.
+
 ## Extending
 
 Add blocks with `/spec-inline <block>` and bridges with `/spec-inline-bridge <a>+<b>`. Project-local bridges live

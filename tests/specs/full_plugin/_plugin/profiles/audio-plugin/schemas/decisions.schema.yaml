@@ -81,7 +81,7 @@ $defs:
         description: >
           Source ids (kebab-case) that informed this decision. Free
           vocabulary in v1 — not validated against
-          `requirements.toml`'s `[[source]]` table; the field is
+          the `[[source]]` entries in `specs/sources/`; the field is
           informational and shows up in reporting.
         type: array
         items:

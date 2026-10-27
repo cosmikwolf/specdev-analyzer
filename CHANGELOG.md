@@ -12,6 +12,25 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Added
+
+- **`source_root_exists`** (#275, warning): `[paths] source` holds no file of the project's language while the
+  tree has some elsewhere — the path is wrong. Silent on a new tree with no code.
+- **Bootstrap placeholder `{{project_identifier}}`** (#274): the project name with each `-` as `_`.
+
+### Fixed
+
+- **`LAYOUT-006` names both folders** (#277): requirements under `specs/requirements/`, sources under
+  `specs/sources/`.
+- **An unknown requirement `source` id is an error** (#272), through the profiles' new
+  `requirement_derived_from_source` relation (`REDUCE_UNRESOLVED`). Fixture profiles mirror it; tests cover every
+  profile with requirements. In an existing project, `drift` shows the inlined reduction as behind the plugin.
+
+### Changed
+
+- The fixture profiles mirror the plugin's `reverse.vocabulary: profile` on five more profiles (#273); a test
+  checks that every profile that needs no block passes the `reverse` pre-flight.
+
 ## [0.5.0] — 2026-10-23
 
 ### Added
