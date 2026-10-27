@@ -9,6 +9,12 @@ contract_version: 3
 name: dart-package
 language: dart
 
+reverse:
+  # A module of this profile names no block field, so its reverse
+  # vocabulary is the profile's own schema. The pre-flight reads this and
+  # reports REVERSE-004 (info) instead of stopping on REVERSE-002.
+  vocabulary: profile
+
 # Config files written once when absent by `specdev-analyzer bootstrap`,
 # then owned by the project: never rewritten.
 paired_files:
