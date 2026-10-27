@@ -140,7 +140,7 @@ pub fn validate_entries(layout: &LayoutContext, report: &mut Report) -> Result<(
             Severity::Info,
             if per_entry {
                 format!(
-                    "no requirement or source entries under {} — none authored yet",
+                    "no requirement entries under {} and no source entries under specs/sources/ — none authored yet",
                     expected.display()
                 )
             } else {

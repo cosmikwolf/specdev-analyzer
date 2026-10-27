@@ -108,6 +108,16 @@ derivation — list it in the module's `context_files = ["docs/protocol-notes.md
 --module` lists those paths for whoever edits the module; a missing file is `CONTEXT-001`. A choice belongs in a
 decision, not a context file.
 
+## Reverse
+
+Rules for `/spec-reverse` on fields the schema cannot explain alone.
+
+- `visibility` — from the `mod` declaration that brings the module in (`pub mod` → `pub`, `pub(crate) mod` → `crate`,
+  bare `mod` → `private`). A private module whose types the crate root re-exports (`pub use error::Error`) stays
+  `private`: the re-export is an item of the root module (`kind = "re_export"`).
+- The crate root (`src/lib.rs`) is a module when it holds code or re-exports, named after the crate, with
+  `source_file = "src/lib.rs"`.
+
 ## Extending
 
 Add blocks with `/spec-inline <block>` and bridges with `/spec-inline-bridge <a>+<b>`. Edit

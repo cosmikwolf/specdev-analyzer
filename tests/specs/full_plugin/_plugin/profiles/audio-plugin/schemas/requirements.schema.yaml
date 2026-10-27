@@ -2,7 +2,7 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/audio-plugin/requirements.schema.yaml"
 title: "audio-plugin requirements file (v1)"
 description: >
-  Shape of `specs/requirements.toml` for an audio-plugin project.
+  Shape of one requirement file in `specs/requirements/` for an audio-plugin project (its `[[requirement]]` entries); sources live in `specs/sources/`.
   Identical structurally to the firmware-layered / library-api
   requirements schema — cross-profile parity is intentional so authors
   see the same shape regardless of profile. Modules reference
@@ -12,7 +12,7 @@ additionalProperties: false
 properties:
   source:
     description: >
-      External documents that requirements in this file may be derived
+      External documents that requirements may be derived
       from. Declared once per source and referenced by id from each
       Requirement's `source` array. Typical audio-plugin sources:
       `vst3-spec`, `clap-spec`, `audio-engine-design-doc`,

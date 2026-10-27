@@ -22,7 +22,7 @@ $defs:
 
   RequirementId:
     description: >
-      Identifier of a requirement defined under specs/requirements.toml.
+      Identifier of a requirement defined in `specs/requirements/`.
       Format: PREFIX-(AREA-)*NUMBER (e.g. REQ-API-001, ZFM-001, RFC-7-12).
       The leading prefix is open: projects can adopt their published
       requirement scheme (REQ-, ZFM-, RFC-, STORY-, …) without rename

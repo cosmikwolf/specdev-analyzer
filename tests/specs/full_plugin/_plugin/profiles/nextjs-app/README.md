@@ -12,7 +12,7 @@ load-bearing concerns are the route tree and the client/server boundary.
 
 Not this profile:
 
-- A publishable TypeScript *library* — no profile covers that shape yet.
+- A publishable TypeScript *library* — use `ts-library`.
 - A Pages Router application — out of scope.
 - A monorepo with several packages — no profile drives a pnpm workspace root yet.
 
