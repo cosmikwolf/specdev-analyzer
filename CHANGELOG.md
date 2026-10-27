@@ -20,6 +20,8 @@ and it is `1`.
 
 ### Fixed
 
+- **`LAYOUT-006` names both folders** (#277): requirements under `specs/requirements/`, sources under
+  `specs/sources/`.
 - **An unknown requirement `source` id is an error** (#272), through the profiles' new
   `requirement_derived_from_source` relation (`REDUCE_UNRESOLVED`). Fixture profiles mirror it; tests cover every
   profile with requirements. In an existing project, `drift` shows the inlined reduction as behind the plugin.

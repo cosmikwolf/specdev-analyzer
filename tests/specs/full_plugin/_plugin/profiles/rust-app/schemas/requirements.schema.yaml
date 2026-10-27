@@ -2,7 +2,7 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://specdev.dev/profiles/rust-app/requirements.schema.yaml"
 title: "rust-app requirements file (v1)"
 description: >
-  Shape of `specs/requirements.toml`. Mirrors the firmware-layered
+  Shape of one requirement file in `specs/requirements/` (its `[[requirement]]` entries); sources live in `specs/sources/`. Mirrors the firmware-layered
   requirements structure: external sources + individual requirements.
   Library-specific concerns (MSRV, no_std, alloc support) are expressed
   as free-form text in `requirement.text` for v1; typed fields can be
@@ -12,7 +12,7 @@ additionalProperties: false
 properties:
   source:
     description: >
-      External documents that requirements in this file may be derived
+      External documents that requirements may be derived
       from. Declared once per source and referenced by id from each
       Requirement's `source` array.
     type: array
