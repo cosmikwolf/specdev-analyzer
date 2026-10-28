@@ -284,6 +284,19 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         project: PathBuf,
     },
+    /// Write the spec's decisions, requirements and open questions as
+    /// Markdown under `[export] path` (relative to the code root), for
+    /// publication beside the code. A workspace root exports every member
+    /// too. `--check` writes nothing: it lists the files that differ and
+    /// exits 1 when any do.
+    Export {
+        /// Project root (directory the analyzer searches from). Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        /// Compare only; write nothing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Reports over the validated spec: requirement coverage, decisions per
     /// module, imports, discovered tests, and the module dependency graph.
     Report {
@@ -613,6 +626,7 @@ pub fn dispatch(command: Command, globals: GlobalArgs) -> ExitCode {
             plan_unresolved,
         ),
         Command::Drift { project } => run_drift(project, spec_path.as_deref(), plugin_flag),
+        Command::Export { project, check } => run_export(project, spec_path.as_deref(), check),
         Command::Gate {
             project,
             label,
@@ -1820,6 +1834,53 @@ fn short_hash(h: &str) -> String {
         "<empty>".to_string()
     } else {
         take
+    }
+}
+
+fn run_export(project: PathBuf, spec_path: Option<&std::path::Path>, check: bool) -> ExitCode {
+    let layout = match LayoutContext::discover(&project, spec_path) {
+        Ok(l) => l,
+        Err(e) => {
+            report_error(&e);
+            return ExitCode::from(2);
+        }
+    };
+    if check {
+        let Some(export) = &layout.spec.export else {
+            eprintln!("[EXPORT-003] spec.toml has no `[export]` table");
+            return ExitCode::from(2);
+        };
+        return match crate::export::differences(&layout, export) {
+            Ok(diffs) if diffs.is_empty() => {
+                println!("export is current");
+                ExitCode::SUCCESS
+            }
+            Ok(diffs) => {
+                for (rel, why) in &diffs {
+                    println!("{}: {why}", rel.display());
+                }
+                ExitCode::from(1)
+            }
+            Err(e) => {
+                report_error(&e);
+                ExitCode::from(2)
+            }
+        };
+    }
+    match crate::export::write(&layout) {
+        Ok(w) => {
+            println!(
+                "exported {} file(s) to {} ({} removed)",
+                w.written,
+                w.dir.display(),
+                w.removed
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            report_error(&e);
+            ExitCode::from(2)
+        }
     }
 }
 

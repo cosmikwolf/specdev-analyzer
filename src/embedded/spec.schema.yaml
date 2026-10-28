@@ -92,6 +92,35 @@ properties:
           `tests/`). Test discovery walks `source`, these roots, and the conventional locations.
         items: { type: string, minLength: 1 }
         uniqueItems: true
+  export:
+    description: |
+      The spec content `specdev-analyzer export` writes as Markdown, for
+      publication in the code root (a split project's public repository).
+      When set, `check` reports an export that differs from what `export`
+      writes now (`export_current`).
+    type: object
+    additionalProperties: false
+    required: [path]
+    properties:
+      path:
+        description: The export folder, relative to the code root; it may not leave it.
+        type: string
+        minLength: 1
+      entities:
+        description: The entry kinds exported. Default all three.
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          enum: [decision, requirement, open_question]
+      omit:
+        description: Fields left out, per entry kind (`requirement = ["source_ref"]`). A decision's `record` is never exported.
+        type: object
+        additionalProperties: false
+        properties:
+          decision: { type: array, items: { type: string } }
+          requirement: { type: array, items: { type: string } }
+          open_question: { type: array, items: { type: string } }
   workspace:
     description: |
       Workspace marker. Presence signals "this spec.toml

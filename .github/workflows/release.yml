@@ -1,9 +1,9 @@
-# Create a GitHub Release when a v* tag is pushed.
-#
-# Source-only by decision: the Release is the tag plus its notes, and users
-# install with `cargo install --git … --tag`. Per-platform binaries were
-# considered and deferred — a build matrix is the larger half of this work and
-# nothing yet needs it.
+# Create a GitHub Release when a v* tag is pushed, then build the analyzer
+# for each target and attach it: `specdev-analyzer-<target>-<tag>.tgz` (`.zip`
+# on Windows), the binary at the archive root. `cargo binstall` finds them by
+# the `[package.metadata.binstall]` pattern in Cargo.toml; while the repository
+# is private, `gh release download` fetches the same files. `workflow_dispatch`
+# builds and attaches the binaries for an existing tag (no new Release).
 #
 # Actions are pinned to a major tag checked against the release API at
 # authoring time (2026-09-15). Re-check before adding a new one; do not assume
@@ -14,6 +14,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing release tag (vX.Y.Z) to build and attach binaries for
+        required: true
 
 permissions:
   contents: write
@@ -21,6 +26,7 @@ permissions:
 jobs:
   release:
     name: publish the GitHub Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,3 +58,57 @@ jobs:
             --title "specdev-analyzer $GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             --verify-tag
+
+  binaries:
+    name: binary ${{ matrix.target }}
+    needs: release
+    # Runs after the Release on a tag push, and alone on workflow_dispatch.
+    if: always() && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Package
+        id: pkg
+        run: |
+          set -euo pipefail
+          name="specdev-analyzer-${{ matrix.target }}-${TAG}"
+          bin="target/${{ matrix.target }}/release/specdev-analyzer"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "${bin}.exe" specdev-analyzer.exe
+            7z a "${name}.zip" specdev-analyzer.exe
+            echo "file=${name}.zip" >> "$GITHUB_OUTPUT"
+          else
+            cp "$bin" specdev-analyzer
+            tar czf "${name}.tgz" specdev-analyzer
+            echo "file=${name}.tgz" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: ./specdev-analyzer --version
+      - name: Attach to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "${{ steps.pkg.outputs.file }}" --clobber
