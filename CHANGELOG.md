@@ -12,6 +12,8 @@ and it is `1`.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-27
+
 ### Added
 
 - **`export`** (#283): writes the spec's decisions, requirements and open questions as Markdown under `[export] path`
