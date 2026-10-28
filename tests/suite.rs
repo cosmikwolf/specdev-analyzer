@@ -41,6 +41,7 @@ mod egui_block;
 mod egui_nih_plug_bridge;
 mod embassy_stm32_blocks;
 mod embedded_language_queries;
+mod export;
 mod field_cuts;
 mod field_feedback_2;
 mod field_feedback_3;

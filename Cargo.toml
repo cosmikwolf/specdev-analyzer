@@ -21,6 +21,17 @@ readme = "README.md"
 # `cargo test --test suite <file>::`.
 autotests = false
 
+# `cargo binstall --git https://github.com/cosmikwolf/specdev-analyzer
+# specdev-analyzer` installs the Release binary `release.yml` attaches. The URL
+# names the canonical repository (forks mirror tags but build no binaries).
+[package.metadata.binstall]
+pkg-url = "https://github.com/cosmikwolf/specdev-analyzer/releases/download/v{ version }/{ name }-{ target }-v{ version }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [lib]
 name = "specdev_analyzer"
 path = "src/lib.rs"
