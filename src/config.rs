@@ -35,6 +35,31 @@ pub struct SpecConfig {
     /// find the first ancestor `spec.toml` carrying this table.
     #[serde(default)]
     pub workspace: Option<WorkspaceSection>,
+    /// `[export]`: the spec content `specdev-analyzer export` writes as
+    /// Markdown for publication in the code root. Absent: no export, and
+    /// `check` compares nothing.
+    #[serde(default)]
+    pub export: Option<ExportSection>,
+}
+
+/// `[export]` table.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportSection {
+    /// The export folder, relative to the code root.
+    pub path: String,
+    /// The entry kinds exported (`decision`, `requirement`,
+    /// `open_question`). Default: all three.
+    #[serde(default = "default_export_entities")]
+    pub entities: Vec<String>,
+    /// Fields left out, per entry kind (`requirement = ["source_ref"]`).
+    #[serde(default)]
+    pub omit: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+fn default_export_entities() -> Vec<String> {
+    ["decision", "requirement", "open_question"]
+        .map(String::from)
+        .to_vec()
 }
 
 /// `[project]` keys a `1.x` `spec.toml` may carry that `2.0` removed: their

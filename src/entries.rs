@@ -27,7 +27,7 @@ use crate::config::SpecConfig;
 use crate::layout::LayoutContext;
 
 /// A kind of spec entry kept outside the module files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EntryKind {
     Decision,
     Requirement,

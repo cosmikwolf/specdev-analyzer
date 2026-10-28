@@ -94,6 +94,14 @@ $defs:
           section, line, file path. Mirrors `Requirement.source_ref`.
         type: string
         minLength: 1
+      record:
+        description: >
+          Process notes: who accepted the decision and when, the session
+          or review it came from. Not part of the decision's content:
+          `specdev-analyzer export` never writes it, so the decision text
+          stays free of them.
+        type: string
+        minLength: 1
       supersedes:
         description: >
           Ids of older decisions this one replaces. Optional on
