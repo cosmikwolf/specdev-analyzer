@@ -84,6 +84,8 @@ pub fn run(layout: &LayoutContext, opts: &CheckOptions) -> Result<Report> {
     unreached_decisions(layout, &domain, &mut report);
     toolchain_rule(layout, &domain, &mut report);
     source_root_rule(layout, &domain, &mut report);
+    export_rule(layout, &domain, &mut report);
+    cited_ids_rule(layout, &domain, &mut report);
     if let Some(since) = &opts.since {
         since_report(layout, since, &domain, &mut report)?;
     }
@@ -321,6 +323,243 @@ fn source_root_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, repor
         )
         .with_file(layout.spec_toml_path.display().to_string()),
     );
+}
+
+/// `export_current`: with `[export]` set, the exported files equal what
+/// `export` writes now. One finding lists every file that differs.
+fn export_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    let Some(export) = &layout.spec.export else {
+        return;
+    };
+    let sev = severity(domain, "export_current", Severity::Error);
+    match crate::export::differences(layout, export) {
+        Ok(diffs) if diffs.is_empty() => {}
+        Ok(diffs) => {
+            let mut listed: Vec<String> = diffs
+                .iter()
+                .take(10)
+                .map(|(rel, why)| format!("{} ({why})", rel.display()))
+                .collect();
+            if diffs.len() > 10 {
+                listed.push(format!("and {} more", diffs.len() - 10));
+            }
+            report.push(
+                Finding::new(
+                    "export_current",
+                    sev,
+                    format!(
+                        "the export in `{}` is stale: {}; run `specdev-analyzer export`",
+                        export.path,
+                        listed.join(", ")
+                    ),
+                )
+                .with_file(export.path.clone()),
+            );
+        }
+        Err(e) => report.push(Finding::new("export_current", sev, format!("{e:#}"))),
+    }
+}
+
+/// What a cited id names.
+struct CitedEntity {
+    kind: crate::entries::EntryKind,
+    /// Retired (`retired_by`) or superseded: the id that replaces it.
+    replaced_by: Option<String>,
+    retired: bool,
+}
+
+/// The family of an id: the id without its trailing `-<number>`.
+fn id_family(id: &str) -> Option<&str> {
+    let (stem, n) = id.rsplit_once('-')?;
+    (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && !stem.is_empty()).then_some(stem)
+}
+
+/// A word shaped like an id: `[A-Z][A-Z0-9]*(-[A-Z0-9]+)*-[0-9]+`.
+fn looks_like_id(word: &str) -> bool {
+    let Some(stem) = id_family(word) else {
+        return false;
+    };
+    stem.starts_with(|c: char| c.is_ascii_uppercase())
+        && stem.split('-').all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+}
+
+/// The ids the code root's text files cite, with the count and the first
+/// place of each: id -> (count, "file:line").
+fn cited_ids(
+    layout: &LayoutContext,
+    families: &BTreeSet<String>,
+    skip: &[PathBuf],
+) -> BTreeMap<String, (usize, String)> {
+    let mut files = BTreeSet::new();
+    crate::import_edges::walk(&layout.code_root, &mut files);
+    let mut out: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for f in files {
+        if skip.iter().any(|s| f.starts_with(s)) {
+            continue;
+        }
+        if std::fs::metadata(&f)
+            .map(|m| m.len() > 4_000_000)
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let rel = f
+            .strip_prefix(&layout.code_root)
+            .unwrap_or(&f)
+            .display()
+            .to_string();
+        for (n, line) in text.lines().enumerate() {
+            for word in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+                let word = word.trim_matches('-');
+                if !looks_like_id(word) || !id_family(word).is_some_and(|f| families.contains(f)) {
+                    continue;
+                }
+                let e = out
+                    .entry(word.to_string())
+                    .or_insert_with(|| (0, format!("{rel}:{}", n + 1)));
+                e.0 += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Spec ids that the code root's text files cite (comments, docs, tests):
+/// one that names nothing (`cited_ids_resolve`, warning), one whose kind is
+/// not exported (`cited_ids_published`, error, only with `[export]`), one
+/// that is retired or superseded (`cited_ids_current`, warning). Only ids of
+/// the project's own families are read. Reports only: the trace stays
+/// `source_file` and `verified_by`. A workspace member is checked at its
+/// root, which knows every member's ids.
+fn cited_ids_rule(layout: &LayoutContext, domain: &Option<DomainConfig>, report: &mut Report) {
+    use crate::entries::EntryKind;
+    if matches!(
+        crate::layout::find_workspace_root_spec(&layout.project_root),
+        Ok(Some(_))
+    ) {
+        return;
+    }
+    let Ok(roots) = crate::export::roots(layout) else {
+        return;
+    };
+    let mut known: BTreeMap<String, CitedEntity> = BTreeMap::new();
+    let mut skip: Vec<PathBuf> = vec![layout.specs_dir.clone()];
+    if let Some(ws) = &layout.spec.workspace {
+        for m in &ws.members {
+            skip.push(layout.project_root.join(&m.path).join("specs"));
+        }
+    }
+    for root in &roots {
+        let decisions = root.store.load_lenient(EntryKind::Decision);
+        let mut superseder: BTreeMap<String, String> = BTreeMap::new();
+        for d in &decisions {
+            if let (Some(id), Some(toml::Value::Array(old))) = (d.id(), d.value.get("supersedes")) {
+                for o in old.iter().filter_map(|v| v.as_str()) {
+                    superseder.insert(o.to_string(), id.to_string());
+                }
+            }
+        }
+        for d in &decisions {
+            let Some(id) = d.id() else { continue };
+            let superseded = d.value.get("status").and_then(|v| v.as_str()) == Some("superseded");
+            known.entry(id.to_string()).or_insert(CitedEntity {
+                kind: EntryKind::Decision,
+                replaced_by: superseder.get(id).cloned(),
+                retired: superseded,
+            });
+        }
+        for r in root.store.load_lenient(EntryKind::Requirement) {
+            let Some(id) = r.id() else { continue };
+            let by = r
+                .value
+                .get("retired_by")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            known.entry(id.to_string()).or_insert(CitedEntity {
+                kind: EntryKind::Requirement,
+                retired: by.is_some(),
+                replaced_by: by,
+            });
+        }
+        for q in root.store.load_lenient(EntryKind::OpenQuestion) {
+            let Some(id) = q.id() else { continue };
+            known.entry(id.to_string()).or_insert(CitedEntity {
+                kind: EntryKind::OpenQuestion,
+                replaced_by: None,
+                retired: false,
+            });
+        }
+    }
+    let families: BTreeSet<String> = known
+        .keys()
+        .filter_map(|id| id_family(id).map(str::to_string))
+        .collect();
+    if families.is_empty() {
+        return;
+    }
+    let exported: Option<BTreeSet<String>> = layout.spec.export.as_ref().map(|e| {
+        if let Ok(dir) = crate::export::export_dir(layout, e) {
+            skip.push(dir);
+        }
+        e.entities.iter().cloned().collect()
+    });
+    for (id, (count, first)) in cited_ids(layout, &families, &skip) {
+        let times = if count == 1 {
+            "once".to_string()
+        } else {
+            format!("{count} times")
+        };
+        let Some(ent) = known.get(&id) else {
+            report.push(
+                Finding::new(
+                    "cited_ids_resolve",
+                    severity(domain, "cited_ids_resolve", Severity::Warning),
+                    format!("`{id}` is cited {times} (first at {first}) but names no requirement, decision or open question"),
+                )
+                .with_file(first)
+                .with_entity(id),
+            );
+            continue;
+        };
+        if let Some(kinds) = &exported {
+            if !kinds.contains(ent.kind.table()) {
+                report.push(
+                    Finding::new(
+                        "cited_ids_published",
+                        severity(domain, "cited_ids_published", Severity::Error),
+                        format!(
+                            "`{id}` is cited {times} (first at {first}), but `[export] entities` leaves out {}s: a reader of the code cannot open it",
+                            ent.kind.table()
+                        ),
+                    )
+                    .with_file(first.clone())
+                    .with_entity(id.clone()),
+                );
+            }
+        }
+        if ent.retired {
+            let to = match &ent.replaced_by {
+                Some(r) => format!("; see `{r}`"),
+                None => String::new(),
+            };
+            report.push(
+                Finding::new(
+                    "cited_ids_current",
+                    severity(domain, "cited_ids_current", Severity::Warning),
+                    format!("`{id}` is cited {times} (first at {first}) but is retired or superseded{to}"),
+                )
+                .with_file(first)
+                .with_entity(id),
+            );
+        }
+    }
 }
 
 fn load_domain(layout: &LayoutContext) -> Option<DomainConfig> {

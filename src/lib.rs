@@ -113,6 +113,7 @@ pub mod domain;
 pub mod drift;
 pub mod embedded_schemas;
 pub mod entries;
+pub mod export;
 pub mod field_cuts;
 pub mod format_migration;
 pub mod gates;

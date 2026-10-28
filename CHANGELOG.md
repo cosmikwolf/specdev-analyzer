@@ -14,6 +14,19 @@ and it is `1`.
 
 ### Added
 
+- **`export`** (#283): writes the spec's decisions, requirements and open questions as Markdown under `[export] path`
+  (relative to the code root; refused outside it), with an anchor per id and links; deterministic; a workspace root
+  exports every member. `--check` compares only. `[export] omit` leaves fields out; a decision's `record` is never
+  exported.
+- **`export_current`** (#283, error): the exported files differ from what `export` writes now.
+- **Cited ids** (#283): `check` reads the code root's text files for ids of the project's own families —
+  `cited_ids_resolve` (warning, names nothing), `cited_ids_current` (warning, retired or superseded, names the
+  successor), `cited_ids_published` (error, kind not in `[export] entities`). Reports only; checked at a single
+  project or a workspace root.
+- **Release binaries** (#284): each release attaches `specdev-analyzer-<target>-<tag>` for macOS arm64/x86_64, Linux
+  x86_64 (musl) and Windows x86_64; `[package.metadata.binstall]` lets `cargo binstall` find them once the repository
+  is public.
+
 - **`source_root_exists`** (#275, warning): `[paths] source` holds no file of the project's language while the
   tree has some elsewhere — the path is wrong. Silent on a new tree with no code.
 - **Bootstrap placeholder `{{project_identifier}}`** (#274): the project name with each `-` as `_`.
