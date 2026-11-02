@@ -10,7 +10,7 @@ edition = "2021"
 # because nothing ever built against it.
 rust-version = "1.86"
 description = "Domain-agnostic analyzer for TOML specs. Parse, validate, extract, and audit spec-driven projects."
-license = "MIT"
+license = "Apache-2.0"
 # `repository` is deliberately unset: both repositories are private and the
 # org differs per install, so any single URL here is wrong for someone.
 # See README "Install" for how to resolve the org.
