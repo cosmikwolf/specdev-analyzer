@@ -12,6 +12,11 @@ and it is `1`.
 
 ## [Unreleased]
 
+### Changed
+
+- **License: Apache-2.0** (was MIT). `LICENSE` holds the Apache-2.0 text and `NOTICE` the copyright line;
+  `LICENSE.md` is gone.
+
 ## [0.6.0] — 2026-10-27
 
 ### Added

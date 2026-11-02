@@ -153,4 +153,4 @@ the library.
 
 ## License
 
-MIT. See `LICENSE.md`.
+Apache-2.0. See `LICENSE` and `NOTICE`.
