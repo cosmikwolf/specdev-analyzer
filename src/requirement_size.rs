@@ -2,10 +2,10 @@
 //!
 //! ISO/IEC/IEEE 29148 asks that a requirement be *singular* and the INCOSE
 //! Guide to Writing Requirements (R18) one sentence with one thought; neither
-//! sets a number. The number comes from the Kink development kit
-//! (`rsv-dev-kit`, whose PRD check caps an entry at 120 words), so the two
-//! tools agree; words are counted as that kit counts them: whitespace-separated
-//! tokens that hold a letter or a digit. A longer text is a warning, not an
+//! sets a number. The number comes from an earlier PRD checker, which caps
+//! an entry at 120 words, so the two tools agree; words are counted as that
+//! checker counts them: whitespace-separated tokens that hold a letter or a
+//! digit. A longer text is a warning, not an
 //! error: length is a sign of several behaviours, not a proof. Retired
 //! requirements are exempt.
 
@@ -21,7 +21,7 @@ pub const RULE: &str = "requirement_size";
 /// The most words a requirement's `text` may have before the warning.
 pub const MAX_WORDS: usize = 120;
 
-/// Words as `rsv-dev-kit` counts them.
+/// Words: whitespace-separated tokens that hold a letter or a digit.
 pub fn word_count(text: &str) -> usize {
     text.split_whitespace()
         .filter(|w| w.chars().any(char::is_alphanumeric))

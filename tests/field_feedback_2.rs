@@ -539,8 +539,8 @@ fn sized(id: &str, words: usize, dashes: usize, extra: &str) -> String {
 }
 
 /// F6: a requirement states one behaviour (ISO 29148 singular, INCOSE R18).
-/// More than 120 words is a warning; words are counted as `rsv-dev-kit`
-/// counts them (a token holding a letter or digit); retired ones are exempt.
+/// More than 120 words is a warning; a word is a whitespace-separated token
+/// holding a letter or digit; retired ones are exempt.
 #[test]
 fn a_long_requirement_is_a_warning() {
     let t = retire_tree("size");

@@ -190,7 +190,7 @@ and it is `1`.
   `member <path>:` heading, one summary line, the worst exit code; `--format yaml` adds a `members:` list. Without
   the flag the root's summary line says how many members it did not check.
 - **`requirement_size`** (#232): a warning on a requirement whose `text` has more than 120 words (whitespace-separated
-  tokens holding a letter or digit, as `rsv-dev-kit` counts them): a requirement states one behaviour.
+  tokens holding a letter or digit): a requirement states one behaviour.
 - **`check --since` reports each newly retired requirement and each deleted requirement id** (#229), naming the
   decision and whether it is new in the range.
 
