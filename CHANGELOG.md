@@ -16,6 +16,9 @@ and it is `1`.
 
 - **License: Apache-2.0** (was MIT). `LICENSE` holds the Apache-2.0 text and `NOTICE` the copyright line;
   `LICENSE.md` is gone.
+- **Public repositories.** CI checks out the public plugin with the default token (the
+  `SPECDEV_PLUGIN_READ_TOKEN` secret is no longer used); `Cargo.toml` names `repository`; the README install
+  names `cosmikwolf`.
 
 ## [0.6.0] — 2026-10-27
 

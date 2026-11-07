@@ -11,9 +11,7 @@ edition = "2021"
 rust-version = "1.86"
 description = "Domain-agnostic analyzer for TOML specs. Parse, validate, extract, and audit spec-driven projects."
 license = "Apache-2.0"
-# `repository` is deliberately unset: both repositories are private and the
-# org differs per install, so any single URL here is wrong for someone.
-# See README "Install" for how to resolve the org.
+repository = "https://github.com/cosmikwolf/specdev-analyzer"
 readme = "README.md"
 # One test program, not one per file: macOS scans each new binary on its first
 # launch (~10 s), and a `src/` change rebuilds them all. Each `tests/*.rs` is a

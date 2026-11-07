@@ -35,30 +35,19 @@ declares one, and the analyzer refuses a manifest whose `contract_version` it do
 
 ## Install
 
-Both repositories are **private**, so the install URL depends on which organization you were granted
-access to. Read the org off the plugin's own remote rather than guessing it:
-
 ```sh
-git -C "${CLAUDE_PLUGIN_ROOT}" remote get-url origin
-# git@github.com:<org>/specdev.git  ->  <org>
+cargo install --git https://github.com/cosmikwolf/specdev-analyzer
 ```
 
-Then:
-
-```sh
-cargo install --git https://github.com/<org>/specdev-analyzer
-```
-
-That URL is HTTPS while every remote in this project is SSH, so `cargo` needs a working HTTPS
-credential for a private repo (a credential helper, or a `~/.gitconfig` `insteadOf` rule pointing
-HTTPS at SSH). If you have repo access and the command still fails to authenticate, that mismatch is
-why.
+Add `--tag vX.Y.Z` for a release. Install it as a pair with the
+[`specdev`](https://github.com/cosmikwolf/specdev) plugin, from the same owner: the analyzer embeds
+the schemas it checks the plugin's files against. Each
+[Release](https://github.com/cosmikwolf/specdev-analyzer/releases) also carries prebuilt binaries.
 
 Requires a stable Rust toolchain. MSRV is **1.86**, set by the dependency graph rather than by this
 crate's own source: `clap_builder` needs edition 2024, and eleven `icu_*` packages need 1.86.
 Measured with `cargo check --lib` — 1.81 and 1.85 fail, 1.86 and 1.88 pass. CI declares an `msrv`
-job that builds on exactly that toolchain, though note that workflow needs a cross-repo token it
-does not yet have, so treat the number as measured-by-hand until it has a green run behind it.
+job that builds on exactly that toolchain.
 
 Re-run `cargo install` with `--force` whenever the plugin updates. The two move together, and
 nothing warns you when the installed binary falls behind — a stale binary can silently lack guards

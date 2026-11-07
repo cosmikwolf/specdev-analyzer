@@ -1,8 +1,8 @@
 # Create a GitHub Release when a v* tag is pushed, then build the analyzer
 # for each target and attach it: `specdev-analyzer-<target>-<tag>.tgz` (`.zip`
 # on Windows), the binary at the archive root. `cargo binstall` finds them by
-# the `[package.metadata.binstall]` pattern in Cargo.toml; while the repository
-# is private, `gh release download` fetches the same files. `workflow_dispatch`
+# the `[package.metadata.binstall]` pattern in Cargo.toml; `gh release download`
+# fetches the same files. `workflow_dispatch`
 # builds and attaches the binaries for an existing tag (no new Release).
 #
 # Actions are pinned to a major tag checked against the release API at
